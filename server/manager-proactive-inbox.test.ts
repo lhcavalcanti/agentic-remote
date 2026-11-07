@@ -167,6 +167,30 @@ describe('ManagerProactiveInbox', () => {
     ])
   })
 
+  it('admits one blocked event when a running task reaches a pending request', async () => {
+    const inbox = await openInbox()
+    await inbox.observe(observation())
+
+    const result = await inbox.observe(observation({
+      revision: 2,
+      status: 'waiting',
+      hasPendingRequest: true,
+    }))
+    await inbox.observe(observation({
+      revision: 3,
+      status: 'waiting',
+      hasPendingRequest: true,
+    }))
+
+    expect(result).toMatchObject({
+      outcome: 'admitted',
+      event: { kind: 'blocked', taskGeneration: 1 },
+    })
+    expect(inbox.pending()).toMatchObject([
+      { kind: 'blocked', taskGeneration: 1, revision: 2 },
+    ])
+  })
+
   it('snapshots an observation before its queued mutation runs', async () => {
     const inbox = await openInbox()
     const input = observation()
@@ -369,48 +393,42 @@ describe('ManagerProactiveInbox', () => {
     expect(inbox.pending()).toEqual([])
   })
 
-  it('keeps a task active while queue and lifecycle guards remain', async () => {
+  it('keeps a task active while non-actionable lifecycle guards remain', async () => {
     const inbox = await openInbox()
 
     await inbox.observe(observation())
     await inbox.observe(observation({
       revision: 2,
-      status: 'waiting',
-    }))
-    expect(inbox.pending()).toEqual([])
-    await inbox.observe(observation({
-      revision: 3,
       status: 'idle',
       queuedCount: 1,
     }))
     await inbox.observe(observation({
-      revision: 4,
+      revision: 3,
       status: 'idle',
       queuedCount: 0,
       isOpen: false,
     }))
     await inbox.observe(observation({
-      revision: 5,
+      revision: 4,
       status: 'idle',
       suspended: true,
     }))
     await inbox.observe(observation({
-      revision: 6,
+      revision: 5,
       status: 'idle',
       recovering: true,
     }))
     expect(inbox.pending()).toEqual([])
 
-    await inbox.observe(observation({ revision: 7, status: 'idle' }))
+    await inbox.observe(observation({ revision: 6, status: 'idle' }))
 
     expect(inbox.pending()).toMatchObject([
-      { kind: 'finished', taskGeneration: 1, revision: 7 },
+      { kind: 'finished', taskGeneration: 1, revision: 6 },
     ])
   })
 
   it.each([
     ['queued input', { queuedCount: 1 }],
-    ['a pending request', { hasPendingRequest: true }],
     ['a closed session', { isOpen: false }],
     ['suspension', { suspended: true }],
     ['recovery', { recovering: true }],
@@ -432,7 +450,7 @@ describe('ManagerProactiveInbox', () => {
     ])
   })
 
-  it('waits for a pending request to clear before finishing exactly once', async () => {
+  it('blocks once for a pending request without later inventing completion', async () => {
     const inbox = await openInbox()
 
     await inbox.observe(observation())
@@ -441,8 +459,6 @@ describe('ManagerProactiveInbox', () => {
       status: 'idle',
       hasPendingRequest: true,
     }))
-    expect(inbox.pending()).toEqual([])
-
     await inbox.observe(observation({
       revision: 3,
       status: 'idle',
@@ -455,7 +471,7 @@ describe('ManagerProactiveInbox', () => {
     }))
 
     expect(inbox.pending()).toMatchObject([
-      { kind: 'finished', taskGeneration: 1, revision: 3 },
+      { kind: 'blocked', taskGeneration: 1, revision: 2 },
     ])
   })
 
@@ -1431,7 +1447,7 @@ describe('ManagerProactiveInbox', () => {
     expect(await readFile(statePath(directory), 'utf8')).toBe(serialized)
   })
 
-  it('accepts legal active waiting, queued, and pending-request histories on reopen', async () => {
+  it('accepts a durable blocked history on reopen', async () => {
     const inbox = await openInbox()
     await inbox.observe(observation())
     await inbox.observe(observation({
@@ -1451,7 +1467,9 @@ describe('ManagerProactiveInbox', () => {
       now,
     })
     await reopened.initialize()
-    expect(reopened.pending()).toEqual([])
+    expect(reopened.pending()).toMatchObject([
+      { kind: 'blocked', taskGeneration: 1, revision: 2 },
+    ])
   })
 
   it('enforces a lower retained-event bound without evicting evidence', async () => {

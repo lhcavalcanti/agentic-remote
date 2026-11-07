@@ -18,7 +18,52 @@ export type ManagerStatus = 'idle' | 'working' | 'recovering' | 'offline'
 export type ManagerMessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 
 /** Trusted hub-side provenance for a user message. */
-export type ManagerMessageSource = 'typed' | 'voice'
+export type ManagerMessageSource =
+  | 'typed'
+  | 'voice'
+  | 'scheduled'
+  | 'proactive'
+  | 'task'
+
+export interface ManagerAutomaticContext {
+  kind: 'proactive' | 'task'
+  taskId?: string
+  eventIds?: string[]
+  sessionRefs?: ManagerSessionRef[]
+}
+
+export type ManagerProactiveOutcome =
+  | {
+      kind: 'task'
+      eventIds: string[]
+      title: string
+      summary: string
+      nextAction: string
+      owner: 'oracle' | 'user'
+      executionPrompt?: string
+    }
+  | {
+      kind: 'no-action'
+      eventIds: string[]
+      reason: string
+    }
+
+export const managerCheckCadences = [60, 120, 240, 480] as const
+export type ManagerCheckCadenceMinutes = (typeof managerCheckCadences)[number]
+
+export interface ManagerProactiveSettings {
+  enabled: boolean
+  cadenceMinutes: ManagerCheckCadenceMinutes
+  timeZone: string
+  quietStartHour: number
+  quietEndHour: number
+}
+
+export interface ManagerProactiveSnapshot extends ManagerProactiveSettings {
+  nextCheckAt?: string
+  latestCheckAt?: string
+  latestCheckState?: ManagerMessageState
+}
 
 /** Delivery state of a message you sent the manager. */
 export type ManagerMessageState =
@@ -33,6 +78,14 @@ export interface ManagerSessionRef {
   computerId: string
   sessionId: string
   title?: string
+  /** Immediate root prompt ID, or the durable queued prompt receipt. */
+  promptId?: string
+  /** Root user message before a queued delivery was appended. */
+  promptAnchorId?: string
+  /** One-based FIFO position after the anchor for a queued delivery. */
+  promptQueuePosition?: number
+  /** SHA-256 of the exact queued prompt content. */
+  promptDigest?: string
 }
 
 /**
@@ -68,6 +121,8 @@ export interface ManagerMessage {
    * persisted user messages without it are treated as typed.
    */
   readonly source?: ManagerMessageSource
+  /** Trusted automatic-turn scope, immutable after the message is queued. */
+  readonly automatic?: ManagerAutomaticContext
   /**
    * When Oracle first started on it. From then on it is no longer the user's
    * to edit, even if a restart or Retry puts it back in the queue.
@@ -75,6 +130,10 @@ export interface ManagerMessage {
   startedAt?: string
   /** Why a message failed, shown beside its Retry. */
   error?: string
+  /** Durable retries of the same message after its first terminal result. */
+  retryCount?: number
+  /** A completed scheduled check inside its quiet window must not alert. */
+  suppressNotification?: boolean
   /** The message of yours a reply or activity belongs to. */
   replyTo?: string
   /** The tool behind an activity. */
@@ -91,9 +150,13 @@ export interface ManagerMessage {
  */
 export interface ManagerClientDefaults {
   computerId?: string
+  /** @deprecated Ignored: Oracle reads the New-session runtime from the hub's settings profile. */
   mode?: AgentMode
+  /** @deprecated Ignored: Oracle reads the New-session runtime from the hub's settings profile. */
   provider?: AgentProvider
+  /** @deprecated Ignored: Oracle reads the New-session runtime from the hub's settings profile. */
   model?: string
+  /** @deprecated Ignored: Oracle reads the New-session runtime from the hub's settings profile. */
   reasoningEffort?: RuntimeReasoningEffort
   /** Default folder per computer ID. */
   folders?: Record<string, string>
@@ -105,6 +168,14 @@ export type ManagerSubmissionSource = ManagerMessageSource
 export interface ManagerSubmissionOptions {
   answerOnly?: boolean
   source?: ManagerSubmissionSource
+}
+
+export interface ManagerInternalSubmission {
+  id: string
+  content: string
+  source: 'proactive' | 'task'
+  answerOnly: boolean
+  automatic: ManagerAutomaticContext
 }
 
 /** Oracle's own runtime settings, kept on the hub. */
@@ -136,6 +207,7 @@ export interface ManagerSettingsSnapshot extends ManagerSettings {
    * a client MUST NOT read its absence as the SDK.
    */
   sessionBackend?: ManagerSessionBackend
+  proactive?: ManagerProactiveSnapshot
 }
 
 export interface ManagerSnapshot {
@@ -173,6 +245,8 @@ export interface UpdateManagerSettingsInput {
   sessionFolders?: Record<string, string | null>
   /** How Oracle opens the sessions it starts; absent leaves it as it is. */
   sessionBackend?: ManagerSessionBackend
+  /** Opt-in read-only periodic status checks. */
+  proactive?: ManagerProactiveSettings
 }
 
 export type ManagerEvent =
@@ -183,6 +257,7 @@ export type ManagerEvent =
       lastError?: string
     }
   | { type: 'manager.message'; message: ManagerMessage }
+  | { type: 'manager.reorder'; messages: ManagerMessage[] }
   | { type: 'manager.delta'; messageId: string; content: string }
   | { type: 'manager.sessions'; managedSessions: string[] }
   | { type: 'manager.reset'; snapshot: ManagerSnapshot }

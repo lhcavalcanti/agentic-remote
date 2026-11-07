@@ -28,13 +28,56 @@ export interface DreamerPlanEdit {
     messageId: string
     resultDigest: string
   }
+  investigate?: {
+    itemId: string
+    requestId: string
+  }
+  taskCompletion?: {
+    taskId: string
+    taskRevision: number
+    attemptId: string
+    computerId: string
+    sessionId: string
+    sessionRevision: number
+    messageId: string
+    resultDigest: string
+  }
 }
 
-async function request(path: string, input?: DreamerSettingsEdit | DreamerPlanEdit): Promise<DreamerSnapshot> {
+export interface DreamerTaskDispatch {
+  revision: number
+  requestId: string
+}
+
+export interface DreamerTaskCompletion {
+  revision: number
+  attemptId: string
+  computerId: string
+  sessionId: string
+  sessionRevision: number
+  messageId: string
+  resultDigest: string
+}
+
+export interface DreamerTaskDisposition {
+  revision: number
+  status: 'completed' | 'dismissed'
+}
+
+async function request(
+  path: string,
+  input?:
+    | DreamerSettingsEdit
+    | DreamerPlanEdit
+    | DreamerTaskDispatch
+    | DreamerTaskCompletion
+    | DreamerTaskDisposition,
+  method: 'PUT' | 'POST' = 'PUT',
+): Promise<DreamerSnapshot> {
   const response = await fetch(`/api/manager/dreamer${path}`, {
     cache: 'no-store',
     ...(input ? {
-      method: 'PUT',
+      method,
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(input),
     } : {}),
@@ -64,3 +107,9 @@ async function request(path: string, input?: DreamerSettingsEdit | DreamerPlanEd
 export const getDreamer = () => request('')
 export const saveDreamerSettings = (input: DreamerSettingsEdit) => request('/settings', input)
 export const updateDreamerPlan = (input: DreamerPlanEdit) => request('/plan', input)
+export const dispatchDreamerTask = (taskId: string, input: DreamerTaskDispatch) =>
+  request(`/tasks/${encodeURIComponent(taskId)}/dispatch`, input, 'POST')
+export const completeDreamerTask = (taskId: string, input: DreamerTaskCompletion) =>
+  request(`/tasks/${encodeURIComponent(taskId)}/complete`, input, 'POST')
+export const resolveDreamerTask = (taskId: string, input: DreamerTaskDisposition) =>
+  request(`/tasks/${encodeURIComponent(taskId)}/disposition`, input, 'POST')

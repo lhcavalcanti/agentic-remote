@@ -2,8 +2,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
-import type { ManagerSessionBackend } from '../shared/manager.js'
+import type { ComputerSummary, ManagedSession, RuntimeModelOption } from '../shared/contracts.js'
+import type { ManagerMessageSource, ManagerSessionBackend } from '../shared/manager.js'
+import type { NewSessionRuntimesSetting } from '../shared/settings-profile.js'
 import { ManagerMemory } from './manager-memory.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import {
@@ -25,6 +26,15 @@ const computers: ComputerSummary[] = [
   { id: 'node', name: 'production', isLocal: false, online: false, providers: [] },
 ]
 
+// Neutral synthetic catalogs: real ids come from each provider's discovery.
+const copilotModels: RuntimeModelOption[] = [
+  { id: 'model-a', name: 'Model A', reasoningEfforts: ['low', 'high'], contextTiers: ['default'] },
+  { id: 'model-b', name: 'model-b', reasoningEfforts: [], contextTiers: ['default', 'long_context'] },
+]
+const claudeModels: RuntimeModelOption[] = [
+  { id: 'claude-agent-model', name: 'Claude Agent model', reasoningEfforts: [], contextTiers: ['default'] },
+]
+
 function session(id: string, change: Partial<ManagedSession> = {}): ManagedSession {
   return {
     id, computerId: 'hub', computerName: 'development', cwd: '/home/me/src/app',
@@ -39,9 +49,12 @@ describe('manager tools', () => {
   let activities: ManagerToolActivity[]
   let tools: Map<string, ManagerTool>
   let answerOnly: boolean
-  let source: 'typed' | 'voice'
+  let source: ManagerMessageSource
+  let proactiveSessionIds: Set<string>
+  let taskSessionIds: Set<string>
   let oracleFolders: Record<string, string>
   let backend: ManagerSessionBackend
+  let runtimes: NewSessionRuntimesSetting
 
   const call = async (name: string, args: unknown, toolCallId = 't') => {
     const tool = tools.get(name)
@@ -54,9 +67,12 @@ describe('manager tools', () => {
     activities = []
     answerOnly = false
     source = 'typed'
+    proactiveSessionIds = new Set()
+    taskSessionIds = new Set()
     oracleFolders = {}
     backend = 'sdk'
-    const created = session('new1', { cwd: '/home/me/src/web' })
+    runtimes = { copilot: { model: 'model-a', reasoningEffort: '', contextTier: 'default', mode: 'autopilot' } }
+    const created = session('new1', { cwd: '/home/me/src/web', runtime: { model: 'model-a' } })
     host = {
       computers: () => computers,
       findComputer: (nameOrId) => computers.find((computer) => computer.id === nameOrId || computer.name === nameOrId),
@@ -69,6 +85,8 @@ describe('manager tools', () => {
       })),
       askSession: vi.fn(async () => 'It fixed the bug and opened PR #12.'),
       createSession: vi.fn(async () => created),
+      providerModels: vi.fn(async (_computerId: string, provider: string) =>
+        provider === 'claude' ? claudeModels : copilotModels),
       renameSession: vi.fn(async (_computerId: string, id: string, title: string) => session(id, { title })),
       sendMessage: vi.fn(async (_computerId: string, id: string) => session(id)),
       replyPermission: vi.fn(async (_computerId: string, id: string) => session(id)),
@@ -82,6 +100,15 @@ describe('manager tools', () => {
       registry: () => ({}),
       answerOnly: () => answerOnly,
       messageSource: () => source,
+      proactiveSessionRefs: () => [...proactiveSessionIds].map((sessionId) => ({
+        computerId: 'hub',
+        sessionId,
+      })),
+      taskSessionRefs: () => [...taskSessionIds].map((sessionId) => ({
+        computerId: 'hub',
+        sessionId,
+      })),
+      recordProactiveOutcomes: vi.fn(async () => 'Recorded 1 proactive outcome.'),
       sessionFolders: () => oracleFolders,
       setSessionFolder: vi.fn(async (computerId: string, folder?: string) => {
         if (folder === '~/missing') throw new Error('Folder does not exist')
@@ -96,10 +123,18 @@ describe('manager tools', () => {
         return next
       }),
       memory: new ManagerMemory(path.join(root, 'memory')),
-      defaults: () => ({ computerId: 'hub', mode: 'autopilot', provider: 'copilot', model: 'gpt-6-sol', folders: { hub: '~/src/web' } }),
+      configuredRuntime: (provider) => runtimes[provider],
+      defaults: () => ({ computerId: 'hub', folders: { hub: '~/src/web' } }),
       now: () => new Date('2026-10-15T12:00:00.000Z'),
     }
-    tools = new Map(createManagerTools(host, (activity) => activities.push(activity), { pollMs: 1, trustWaitMs: 40 })
+    tools = new Map(createManagerTools(host, (activity) => {
+      activities.push(activity)
+      if (source === 'task') {
+        for (const reference of activity.sessionRefs ?? []) {
+          taskSessionIds.add(reference.sessionId)
+        }
+      }
+    }, { pollMs: 1, trustWaitMs: 40 })
       .map((tool) => [tool.name, tool]))
   })
 
@@ -110,9 +145,9 @@ describe('manager tools', () => {
   it('offers only management tools, none of which prompt for permission', () => {
     expect([...tools.keys()].sort()).toEqual([
       'answer_session', 'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
-      'list_computers', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
-      'memory_list', 'memory_read', 'memory_write', 'rename_session', 'send_to_session',
-      'set_session_backend', 'set_session_folder',
+      'list_computers', 'list_models', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
+      'memory_list', 'memory_read', 'memory_write', 'record_proactive_outcomes',
+      'rename_session', 'send_to_session', 'set_session_backend', 'set_session_folder',
     ])
     for (const tool of tools.values()) {
       expect(tool.skipPermission).toBe(true)
@@ -121,13 +156,13 @@ describe('manager tools', () => {
     }
   })
 
-  it('starts a session from the user defaults, names it, hands it the task, and reports it', async () => {
+  it('starts a session from the configured defaults, names it, hands it the task, and reports it', async () => {
     const result = await call('create_session', { title: 'Fix "login"\nbug', prompt: 'Fix the login bug. Use the systematic-debugging skill.' })
 
     // Oracle opens its sessions with the Copilot SDK unless its setting says a terminal.
     expect(host.createSession).toHaveBeenCalledWith('hub', {
       cwd: '~/src/web', provider: 'copilot', terminalBacked: false, allowAllPermissions: true,
-      mode: 'autopilot', model: 'gpt-6-sol',
+      mode: 'autopilot', model: 'model-a', contextTier: 'default',
     })
     expect(host.renameSession).toHaveBeenCalledWith('hub', 'new1', "Fix 'login' bug")
     expect(host.markManaged).toHaveBeenCalledWith(expect.objectContaining({ id: 'new1' }), 'Fix the login bug. Use the systematic-debugging skill.')
@@ -136,9 +171,140 @@ describe('manager tools', () => {
     expect(String(result)).toContain('?computer=hub&session=new1')
     expect(activities).toEqual([{
       tool: 'create_session',
-      content: 'Started "Fix \'login\' bug" on development',
+      content: 'Started "Fix \'login\' bug" on development with model-a',
       sessionRefs: [{ computerId: 'hub', sessionId: 'new1', title: "Fix 'login' bug" }],
     }])
+  })
+
+  it('records the exact delivered prompt identity on task session activity', async () => {
+    vi.mocked(host.sendMessage).mockResolvedValueOnce(session('new1', {
+      title: "Fix 'login' bug",
+      queuedPrompts: [{
+        id: 'queued-task-prompt',
+        content: 'Fix the login bug.',
+        createdAt: '2026-10-15T12:00:00.000Z',
+      }],
+    }))
+
+    await call('create_session', {
+      title: 'Fix login bug',
+      prompt: 'Fix the login bug.',
+    })
+
+    expect(activities.at(-1)).toMatchObject({
+      tool: 'create_session',
+      sessionRefs: [{
+        computerId: 'hub',
+        sessionId: 'new1',
+        promptId: 'queued-task-prompt',
+        promptDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        promptQueuePosition: 1,
+      }],
+    })
+  })
+
+  it.each([
+    {
+      name: 'ignores queued commands and steers that do not become root turns',
+      before: session('abc12345-aaaa', {
+        messages: [{
+          id: 'anchor-root',
+          role: 'user',
+          content: 'Current root task.',
+          createdAt: '2026-10-15T11:50:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued-command',
+          content: '/help',
+          createdAt: '2026-10-15T11:51:00.000Z',
+          command: true,
+        }, {
+          id: 'queued-steer',
+          content: 'Adjust the running turn.',
+          createdAt: '2026-10-15T11:52:00.000Z',
+          steer: true,
+        }],
+      }),
+      after: session('abc12345-aaaa', {
+        messages: [{
+          id: 'anchor-root',
+          role: 'user',
+          content: 'Current root task.',
+          createdAt: '2026-10-15T11:50:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued-command',
+          content: '/help',
+          createdAt: '2026-10-15T11:51:00.000Z',
+          command: true,
+        }, {
+          id: 'queued-steer',
+          content: 'Adjust the running turn.',
+          createdAt: '2026-10-15T11:52:00.000Z',
+          steer: true,
+        }, {
+          id: 'queued-task',
+          content: 'Run the focused queue test.',
+          createdAt: '2026-10-15T12:00:00.000Z',
+        }],
+      }),
+      anchor: 'anchor-root',
+    },
+    {
+      name: 'uses the post-enqueue anchor when an earlier prompt drains',
+      before: session('abc12345-aaaa', {
+        messages: [{
+          id: 'old-anchor-root',
+          role: 'user',
+          content: 'Current root task.',
+          createdAt: '2026-10-15T11:50:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued-earlier',
+          content: 'Run the earlier check.',
+          createdAt: '2026-10-15T11:51:00.000Z',
+        }],
+      }),
+      after: session('abc12345-aaaa', {
+        messages: [{
+          id: 'old-anchor-root',
+          role: 'user',
+          content: 'Current root task.',
+          createdAt: '2026-10-15T11:50:00.000Z',
+        }, {
+          id: 'drained-root',
+          role: 'user',
+          content: 'Run the earlier check.',
+          createdAt: '2026-10-15T11:59:00.000Z',
+        }],
+        queuedPrompts: [{
+          id: 'queued-task',
+          content: 'Run the focused queue test.',
+          createdAt: '2026-10-15T12:00:00.000Z',
+        }],
+      }),
+      anchor: 'drained-root',
+    },
+  ])('$name', async ({ before, after, anchor }) => {
+    vi.mocked(host.listSessions).mockResolvedValue([before])
+    vi.mocked(host.sendMessage).mockResolvedValueOnce(after)
+
+    await call('send_to_session', {
+      sessionId: 'abc12345',
+      message: 'Run the focused queue test.',
+    })
+
+    expect(activities.at(-1)).toMatchObject({
+      tool: 'send_to_session',
+      sessionRefs: [{
+        computerId: 'hub',
+        sessionId: 'abc12345-aaaa',
+        promptId: 'queued-task',
+        promptAnchorId: anchor,
+        promptQueuePosition: 1,
+        promptDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }],
+    })
   })
 
   it('opens a terminal session when its setting says so, for a provider that has one', async () => {
@@ -165,11 +331,318 @@ describe('manager tools', () => {
     expect(host.createSession).not.toHaveBeenCalled()
   })
 
-  it('uses an SDK session for a provider without tmux and drops a model meant for another provider', async () => {
+  it("uses an SDK session for a provider without tmux, with that provider's own configured defaults", async () => {
     await call('create_session', { title: 'Review', prompt: 'Review it', provider: 'claude', cwd: '/srv/x' })
-    expect(host.createSession).toHaveBeenCalledWith('hub', {
-      cwd: '/srv/x', provider: 'claude', terminalBacked: false, allowAllPermissions: true, mode: 'autopilot',
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', {
+      cwd: '/srv/x', provider: 'claude', terminalBacked: false, allowAllPermissions: true,
     })
+
+    runtimes.claude = { model: 'claude-agent-model', reasoningEffort: '', contextTier: 'default', mode: 'plan' }
+    await call('create_session', { title: 'Review', prompt: 'Review it', provider: 'claude', cwd: '/srv/x' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', {
+      cwd: '/srv/x', provider: 'claude', terminalBacked: false, allowAllPermissions: true,
+      mode: 'plan', model: 'claude-agent-model', contextTier: 'default',
+    })
+  })
+
+  it('lists the exact model ids a provider offers, Copilot unless another provider is asked for', async () => {
+    const copilot = String(await call('list_models', {}))
+    expect(host.providerModels).toHaveBeenLastCalledWith('hub', 'copilot')
+    expect(copilot).toContain("Models for copilot on development (hub); pass the exact id as create_session's model with provider copilot:")
+    expect(copilot).toContain('- model-a — Model A · effort low/high · the configured default')
+    expect(copilot).toMatch(/^- model-b$/m)
+
+    const claude = String(await call('list_models', { provider: 'claude' }))
+    expect(host.providerModels).toHaveBeenLastCalledWith('hub', 'claude')
+    expect(claude).toContain('with provider claude')
+    expect(claude).toMatch(/^- claude-agent-model — Claude Agent model$/m)
+    expect(claude).toContain("No New-session model is configured for claude, so a session started without a model uses claude's own default on development.")
+
+    runtimes.copilot = { model: 'model-z', reasoningEffort: '', contextTier: 'default', mode: '' }
+    expect(String(await call('list_models', {}))).toContain(
+      "The configured default model-z is not offered here, so a session started without a model uses copilot's own default on development.",
+    )
+
+    const offline = await call('list_models', { computer: 'production' })
+    expect(JSON.stringify(offline)).toContain('production is offline')
+    expect(host.providerModels).toHaveBeenCalledTimes(3)
+    expect(activities).toEqual([])
+  })
+
+  it('starts a named model on a Copilot session and reports the model the session runs', async () => {
+    vi.mocked(host.createSession).mockResolvedValueOnce(session('new1', { runtime: { model: 'model-b' } }))
+
+    const result = String(await call('create_session', {
+      title: 'Review', prompt: 'Review it', provider: 'copilot', model: 'model-b',
+    }))
+
+    expect(host.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({
+      provider: 'copilot', model: 'model-b',
+    }))
+    expect(result).toContain(', model model-b. Its task was sent.')
+    expect(activities.at(-1)).toMatchObject({
+      tool: 'create_session',
+      content: 'Started "Review" on development with model-b',
+    })
+  })
+
+  it('reports a model the session started with that differs from the one requested', async () => {
+    vi.mocked(host.createSession).mockResolvedValueOnce(session('new1', { runtime: { model: 'model-b' } }))
+    vi.mocked(host.sendMessage).mockResolvedValueOnce(session('new1', { runtime: { model: 'model-a' } }))
+
+    const result = String(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))
+
+    expect(result).toContain('model model-a, not the requested model-b')
+    expect(activities.at(-1)).toMatchObject({ content: 'Started "T" on development with model-a, not the requested model-b' })
+
+    vi.mocked(host.createSession).mockResolvedValueOnce(session('new1', { runtime: { model: 'model-b' } }))
+    const configured = String(await call('create_session', { title: 'T', prompt: 'P' }))
+    expect(configured).toContain('model model-b, not the configured default model-a')
+    expect(activities.at(-1)).toMatchObject({ content: 'Started "T" on development with model-b, not the configured default model-a' })
+  })
+
+  it('says when a session has not reported its model yet, or runs the default model', async () => {
+    vi.mocked(host.createSession).mockResolvedValue(session('new1'))
+    const configured = String(await call('create_session', { title: 'T', prompt: 'P' }))
+    expect(configured).toContain('the configured default model model-a requested; the session has not reported its model yet')
+    expect(activities.at(-1)).toMatchObject({ content: 'Started "T" on development with model-a requested' })
+
+    const named = String(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))
+    expect(named).toContain('model model-b requested; the session has not reported its model yet')
+
+    runtimes = {}
+    const asked = vi.mocked(host.providerModels).mock.calls.length
+    const unset = String(await call('create_session', { title: 'T', prompt: 'P' }))
+    expect(unset).toContain("copilot's own default model on development; the session has not reported which yet")
+    expect(activities.at(-1)).toMatchObject({ content: 'Started "T" on development with the default model' })
+    vi.mocked(host.createSession).mockResolvedValueOnce(session('new1', { runtime: { model: 'model-b' } }))
+    expect(String(await call('create_session', { title: 'T', prompt: 'P' })))
+      .toContain("model model-b, copilot's own default on development")
+    // Without a model there is nothing to check against the catalog.
+    expect(vi.mocked(host.providerModels).mock.calls.length).toBe(asked)
+  })
+
+  it('starts ordinary work on Copilot with its configured default, read when each session starts', async () => {
+    runtimes.claude = { model: 'claude-agent-model', reasoningEffort: '', contextTier: 'default', mode: 'plan' }
+    // What a browser once sent with the message is not consulted for the runtime.
+    host.defaults = () => ({ computerId: 'hub', mode: 'interactive', provider: 'claude', model: 'claude-agent-model', folders: { hub: '~/src/web' } })
+
+    await call('create_session', { title: 'T', prompt: 'P' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ provider: 'copilot', model: 'model-a', mode: 'autopilot' }))
+
+    runtimes.copilot = { model: 'model-b', reasoningEffort: '', contextTier: 'long_context', mode: '' }
+    await call('create_session', { title: 'T', prompt: 'P' })
+    const input = vi.mocked(host.createSession).mock.lastCall![1]
+    expect(input).toMatchObject({ provider: 'copilot', model: 'model-b', contextTier: 'long_context' })
+    expect(input).not.toHaveProperty('mode')
+
+    await call('create_session', { title: 'T', prompt: 'P', model: 'model-a' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ provider: 'copilot', model: 'model-a' }))
+    expect(host.providerModels).toHaveBeenLastCalledWith('hub', 'copilot')
+
+    await call('create_session', { title: 'T', prompt: 'P', provider: 'claude' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ provider: 'claude', model: 'claude-agent-model', mode: 'plan' }))
+  })
+
+  it('applies the configured effort and context only where the model offers them', async () => {
+    runtimes.copilot = { model: 'model-a', reasoningEffort: 'high', contextTier: 'long_context', mode: '' }
+    await call('create_session', { title: 'T', prompt: 'P' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', {
+      cwd: '~/src/web', provider: 'copilot', terminalBacked: false, allowAllPermissions: true,
+      model: 'model-a', reasoningEffort: 'high',
+    })
+
+    runtimes.copilot = { model: 'model-b', reasoningEffort: 'max', contextTier: 'long_context', mode: '' }
+    await call('create_session', { title: 'T', prompt: 'P' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', {
+      cwd: '~/src/web', provider: 'copilot', terminalBacked: false, allowAllPermissions: true,
+      model: 'model-b', contextTier: 'long_context',
+    })
+
+    // A named model that is the configured default keeps its configured context;
+    // another named model starts with its own effort and context.
+    await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ model: 'model-b', contextTier: 'long_context' }))
+    runtimes.copilot = { model: 'model-a', reasoningEffort: 'high', contextTier: 'default', mode: '' }
+    await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' })
+    const input = vi.mocked(host.createSession).mock.lastCall![1]
+    expect(input).toMatchObject({ model: 'model-b' })
+    expect(input).not.toHaveProperty('reasoningEffort')
+    expect(input).not.toHaveProperty('contextTier')
+  })
+
+  it("starts on the provider's own default, and says so, when the configured model is not offered", async () => {
+    runtimes.copilot = { model: 'model-z', reasoningEffort: 'high', contextTier: 'long_context', mode: 'autopilot' }
+    vi.mocked(host.createSession).mockResolvedValueOnce(session('new1'))
+
+    const result = String(await call('create_session', { title: 'T', prompt: 'P' }))
+
+    expect(host.createSession).toHaveBeenCalledWith('hub', {
+      cwd: '~/src/web', provider: 'copilot', terminalBacked: false, allowAllPermissions: true, mode: 'autopilot',
+    })
+    expect(result).toContain("copilot's own default model on development; the session has not reported which yet. Its task was sent.")
+    expect(result).toContain("The configured default model-z is not available from copilot on development, so the session uses copilot's own default; tell the user.")
+    expect(activities.at(-1)).toMatchObject({
+      content: 'Started "T" on development with the default model; the configured default model-z is not available',
+    })
+  })
+
+  it("falls back to the provider's own default when it refuses the configured model before creating anything", async () => {
+    vi.mocked(host.providerModels).mockRejectedValue(new Error('catalog offline'))
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('Selected model is not available'))
+      .mockResolvedValueOnce(session('new1', { runtime: { model: 'model-b' } }))
+
+    const result = String(await call('create_session', { title: 'T', prompt: 'P' }))
+
+    expect(host.createSession).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(host.createSession).mock.calls[0][1]).toMatchObject({ model: 'model-a', contextTier: 'default' })
+    expect(host.createSession).toHaveBeenLastCalledWith('hub', {
+      cwd: '~/src/web', provider: 'copilot', terminalBacked: false, allowAllPermissions: true, mode: 'autopilot',
+    })
+    expect(result).toContain("model model-b, copilot's own default on development")
+    expect(result).toContain("The configured default model-a is not available from copilot on development (Selected model is not available), so the session uses copilot's own default; tell the user.")
+    expect(activities.at(-1)).toMatchObject({
+      content: 'Started "T" on development with model-b; the configured default model-a is not available',
+    })
+
+    // Any other failure is not a refusal of the model, so nothing is retried.
+    vi.mocked(host.createSession).mockRejectedValueOnce(new Error('disk full'))
+    expect(JSON.stringify(await call('create_session', { title: 'T', prompt: 'P' }))).toContain('disk full')
+    expect(host.createSession).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps a configured model the provider accepts when it refuses only its configured effort or context', async () => {
+    vi.mocked(host.providerModels).mockRejectedValue(new Error('catalog offline'))
+    runtimes.copilot = { model: 'model-a', reasoningEffort: 'high', contextTier: 'long_context', mode: '' }
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('Selected reasoning effort is not supported by this model'))
+      .mockRejectedValueOnce(new Error('Selected context tier is not supported by this model'))
+      .mockResolvedValueOnce(session('new1', { runtime: { model: 'model-a' } }))
+
+    const result = String(await call('create_session', { title: 'T', prompt: 'P' }))
+
+    const inputs = vi.mocked(host.createSession).mock.calls.map(([, input]) => input)
+    expect(inputs).toHaveLength(3)
+    expect(inputs[0]).toMatchObject({ model: 'model-a', reasoningEffort: 'high', contextTier: 'long_context' })
+    expect(inputs[1]).toMatchObject({ model: 'model-a', contextTier: 'long_context' })
+    expect(inputs[1]).not.toHaveProperty('reasoningEffort')
+    expect(inputs[2]).toMatchObject({ model: 'model-a' })
+    expect(inputs[2]).not.toHaveProperty('reasoningEffort')
+    expect(inputs[2]).not.toHaveProperty('contextTier')
+    expect(result).toContain('model model-a. Its task was sent.')
+    expect(result).not.toContain('not available')
+  })
+
+  it('returns the choices, not a raw error or another setting, when an effort the user asks for cannot run', async () => {
+    vi.mocked(host.providerModels).mockRejectedValueOnce(new Error('catalog offline'))
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('Selected reasoning effort is not supported by this model'))
+    const refused = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', reasoningEffort: 'max' }))
+    expect(refused).toContain('No session was started: model-a from copilot on development does not offer effort max (Selected reasoning effort is not supported by this model).')
+    expect(refused).toContain('Available copilot models: model-a (effort low/high), model-b.')
+    expect(host.createSession).toHaveBeenCalledOnce()
+
+    // Copilot takes an effort only with a model, and none is configured.
+    runtimes = {}
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('A model is required when setting effort or context'))
+    const unset = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', reasoningEffort: 'high' }))
+    expect(vi.mocked(host.createSession).mock.lastCall![1]).toMatchObject({ reasoningEffort: 'high' })
+    expect(unset).toContain('No session was started: effort high needs a model from copilot on development (A model is required when setting effort or context).')
+    expect(unset).toContain('Available copilot models: model-a (effort low/high), model-b.')
+    expect(unset).toContain('do not switch model or provider on your own')
+
+    // The effort asked for outlives a configured default that is not offered.
+    runtimes.copilot = { model: 'model-z', reasoningEffort: 'low', contextTier: 'default', mode: '' }
+    vi.mocked(host.createSession)
+      .mockRejectedValueOnce(new Error('A model is required when setting effort or context'))
+    const missing = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', reasoningEffort: 'high' }))
+    const input = vi.mocked(host.createSession).mock.lastCall![1]
+    expect(input).toMatchObject({ reasoningEffort: 'high' })
+    expect(input).not.toHaveProperty('model')
+    expect(missing).toContain('No session was started: effort high needs a model from copilot on development, and the configured default model-z is not available there (A model is required when setting effort or context).')
+    expect(host.createSession).toHaveBeenCalledTimes(3)
+    expect(host.sendMessage).not.toHaveBeenCalled()
+    expect(activities).toEqual([])
+  })
+
+  it('starts nothing for a model or effort the provider lacks, and lists its models instead of switching', async () => {
+    const missing = await call('create_session', { title: 'T', prompt: 'P', model: 'model-z' })
+    expect(missing).toMatchObject({ resultType: 'failure' })
+    const text = JSON.stringify(missing)
+    expect(text).toContain('No session was started: model-z is not available from copilot on development.')
+    expect(text).toContain('Available copilot models: model-a (effort low/high), model-b.')
+    expect(text).toContain('do not switch model or provider on your own')
+
+    const effort = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', model: 'model-a', reasoningEffort: 'max' }))
+    expect(effort).toContain('No session was started: model-a from copilot on development does not offer effort max.')
+    expect(effort).toContain('Available copilot models: model-a (effort low/high), model-b.')
+
+    expect(host.providerModels).toHaveBeenCalledWith('hub', 'copilot')
+    expect(host.createSession).not.toHaveBeenCalled()
+    expect(host.renameSession).not.toHaveBeenCalled()
+    expect(host.sendMessage).not.toHaveBeenCalled()
+    expect(host.markManaged).not.toHaveBeenCalled()
+    expect(activities).toEqual([])
+  })
+
+  it('leaves the final word to the provider when its catalog is unreadable or changed', async () => {
+    vi.mocked(host.providerModels).mockRejectedValueOnce(new Error('catalog offline'))
+    expect(String(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))).toContain('Its task was sent.')
+    expect(host.createSession).toHaveBeenCalledOnce()
+
+    vi.mocked(host.createSession).mockRejectedValueOnce(new Error('Selected model is not available'))
+    const changed = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))
+    expect(changed).toContain('No session was started: model-b is not available from copilot on development (Selected model is not available).')
+    expect(changed).toContain('Available copilot models: model-a (effort low/high), model-b.')
+
+    vi.mocked(host.createSession).mockRejectedValueOnce(new Error('Selected model is not available'))
+    vi.mocked(host.providerModels)
+      .mockResolvedValueOnce(copilotModels)
+      .mockRejectedValueOnce(new Error('catalog offline'))
+    const unread = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))
+    expect(unread).toContain('Its model list could not be read (catalog offline); call list_models.')
+
+    vi.mocked(host.createSession).mockRejectedValueOnce(new Error('disk full'))
+    expect(JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))).toContain('disk full')
+  })
+
+  it('asks discovery about a provider last reported unavailable before refusing it', async () => {
+    let recordedAvailable = false
+    let loggedIn = false
+    const current = () => computers.map((computer) => computer.id !== 'hub' ? computer : {
+      ...computer,
+      providers: computer.providers?.map((provider) => provider.id !== 'claude' || recordedAvailable
+        ? provider
+        : { ...provider, available: false, unavailableReason: 'Run claude auth login on this computer' }),
+    })
+    host.computers = current
+    host.findComputer = (nameOrId) => current().find((computer) => computer.id === nameOrId || computer.name === nameOrId)
+    vi.mocked(host.providerModels).mockImplementation(async (_computerId, provider) => {
+      if (provider !== 'claude') return copilotModels
+      if (!loggedIn) throw new Error('Run claude auth login on this computer')
+      // As the hub does, an answer refreshes what the computer reports.
+      recordedAvailable = true
+      return claudeModels
+    })
+
+    const listRefused = await call('list_models', { provider: 'claude' })
+    expect(listRefused).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(listRefused)).toContain('claude is not available on development: Run claude auth login on this computer.')
+    const createRefused = await call('create_session', { title: 'T', prompt: 'P', provider: 'claude' })
+    expect(JSON.stringify(createRefused)).toContain('claude is not available on development: Run claude auth login on this computer.')
+    expect(host.createSession).not.toHaveBeenCalled()
+
+    loggedIn = true
+    expect(String(await call('list_models', { provider: 'claude' }))).toMatch(/^- claude-agent-model — Claude Agent model$/m)
+
+    recordedAvailable = false
+    const asked = vi.mocked(host.providerModels).mock.calls.length
+    await call('create_session', { title: 'T', prompt: 'P', provider: 'claude', model: 'claude-agent-model' })
+    expect(host.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({ provider: 'claude', model: 'claude-agent-model' }))
+    // The catalog that answered is the one the model is checked against.
+    expect(vi.mocked(host.providerModels).mock.calls.length - asked).toBe(1)
   })
 
   it('refuses an offline or unknown computer with a readable failure', async () => {
@@ -346,8 +819,8 @@ describe('manager tools', () => {
       .toBeLessThan(vi.mocked(host.sendMessage).mock.invocationCallOrder[0])
     expect(String(result)).toContain('Its task was sent.')
     expect(activities.map((activity) => activity.content)).toEqual([
-      'Started "LLM lab" on development',
       'Trusted /home/me/src/llmlab for "LLM lab"',
+      'Started "LLM lab" on development with model-a',
     ])
   })
 
@@ -454,6 +927,49 @@ describe('manager tools', () => {
     expect(host.sendMessage).toHaveBeenCalledWith('hub', 'def67890-bbbb', 'Focus on the failing test', { steer: true })
     expect(result).toContain('steered into the work it is doing')
     expect(result).not.toContain('queued')
+  })
+
+  it('does not replace a task root prompt with a busy-session steer receipt', async () => {
+    source = 'task'
+    taskSessionIds = new Set(['def67890-bbbb'])
+    const rootPrompt = {
+      id: 'root-task-prompt',
+      role: 'user' as const,
+      content: 'Run the focused queue test.',
+      createdAt: '2026-10-15T11:50:00.000Z',
+    }
+    vi.mocked(host.listSessions).mockResolvedValue([
+      session('def67890-bbbb', {
+        status: 'running',
+        messages: [rootPrompt],
+      }),
+    ])
+    vi.mocked(host.sendMessage).mockResolvedValueOnce(
+      session('def67890-bbbb', {
+        status: 'running',
+        messages: [rootPrompt],
+        queuedPrompts: [{
+          id: 'steer-receipt',
+          content: 'Focus on the failing test',
+          createdAt: '2026-10-15T12:00:00.000Z',
+          steer: true,
+        }],
+      }),
+    )
+
+    await call('send_to_session', {
+      sessionId: 'def67890',
+      message: 'Focus on the failing test',
+    })
+
+    expect(activities.at(-1)).toMatchObject({
+      tool: 'send_to_session',
+      sessionRefs: [{
+        computerId: 'hub',
+        sessionId: 'def67890-bbbb',
+      }],
+    })
+    expect(activities.at(-1)!.sessionRefs![0]!.promptId).toBeUndefined()
   })
 
   it('queues for a busy session only when the steer was refused before anything was sent', async () => {
@@ -753,6 +1269,7 @@ describe('manager tools', () => {
     expect(activities).toEqual([])
 
     expect(String(await call('list_computers', {}))).toContain('development')
+    expect(String(await call('list_models', {}))).toContain('model-a')
     expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
     expect(String(await call('get_session', { sessionId: 'abc12345' })))
       .toContain('Run npm publish')
@@ -763,6 +1280,158 @@ describe('manager tools', () => {
     expect(String(await call('list_skills', {}))).toContain('brainstorming')
     expect(String(await call('memory_list', {}))).toContain('MEMORY.md')
     expect(await call('memory_read', { path: 'MEMORY.md' })).toBe('# Trusted')
+  })
+
+  it('lets proactive turns record outcomes but refuses every other mutation', async () => {
+    source = 'proactive'
+    const eventId = 'a'.repeat(64)
+    expect(await call('record_proactive_outcomes', {
+      outcomes: [{
+        kind: 'task',
+        eventIds: [eventId],
+        title: 'Run the focused queue test',
+        summary: 'The queue regression needs execution.',
+        nextAction: 'Start a session and run the focused test.',
+        owner: 'oracle',
+        executionPrompt: 'Reproduce the queue regression and run its focused test.',
+      }],
+    })).toContain('Recorded')
+
+    const result = await call('create_session', { title: 'X', prompt: 'Y' })
+    expect(result).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(result)).toContain('proactive')
+    expect(JSON.stringify(result)).toContain('read-only')
+    expect(host.createSession).not.toHaveBeenCalled()
+  })
+
+  it('requires an execution prompt for every Oracle-owned proactive task', async () => {
+    source = 'proactive'
+    const result = await call('record_proactive_outcomes', {
+      outcomes: [{
+        kind: 'task',
+        eventIds: ['b'.repeat(64)],
+        title: 'Run the focused queue test',
+        summary: 'The queue regression needs execution.',
+        nextAction: 'Start a session and run its focused test.',
+        owner: 'oracle',
+      }],
+    })
+
+    expect(result).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(result)).toContain('executionPrompt')
+    expect(host.recordProactiveOutcomes).not.toHaveBeenCalled()
+  })
+
+  it('enforces the durable execution prompt limit for proactive tasks', async () => {
+    source = 'proactive'
+    const outcome = {
+      kind: 'task' as const,
+      eventIds: ['d'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The queue regression needs execution.',
+      nextAction: 'Start a session and run its focused test.',
+      owner: 'oracle' as const,
+    }
+
+    expect(await call('record_proactive_outcomes', {
+      outcomes: [{ ...outcome, executionPrompt: 'x'.repeat(4_000) }],
+    })).toContain('Recorded')
+    vi.mocked(host.recordProactiveOutcomes!).mockClear()
+
+    const rejected = await call('record_proactive_outcomes', {
+      outcomes: [{ ...outcome, executionPrompt: 'x'.repeat(4_001) }],
+    })
+    expect(rejected).toMatchObject({ resultType: 'failure' })
+    expect(host.recordProactiveOutcomes).not.toHaveBeenCalled()
+  })
+
+  it('limits proactive transcript reads to sessions in the current batch', async () => {
+    source = 'proactive'
+    proactiveSessionIds = new Set(['abc12345-aaaa'])
+
+    expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
+    expect(String(await call('list_sessions', {}))).not.toContain('def67890-bbbb')
+    expect(String(await call('get_session', { sessionId: 'abc12345' }))).toContain('message 11')
+    expect(await call('ask_session', {
+      sessionId: 'abc12345',
+      question: 'What did you find?',
+    })).toBe('It fixed the bug and opened PR #12.')
+
+    for (const [name, args] of [
+      ['get_session', { sessionId: 'def67890' }],
+      ['ask_session', { sessionId: 'def67890', question: 'What did you find?' }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('proactive batch')
+    }
+  })
+
+  it('allows task execution tools only on sessions owned by the durable task', async () => {
+    source = 'task'
+    taskSessionIds = new Set(['def67890-bbbb'])
+    expect(String(await call('create_session', {
+      title: 'Task execution',
+      prompt: 'Run the focused queue test.',
+    }))).toContain('Started')
+    vi.mocked(host.listSessions).mockResolvedValue([
+      session('abc12345-aaaa'),
+      session('def67890-bbbb', { status: 'running' }),
+      session('new1', { cwd: '/home/me/src/web' }),
+    ])
+    expect(String(await call('send_to_session', {
+      sessionId: 'def67890',
+      message: 'Continue the focused queue test.',
+    }))).toContain('Sent')
+    expect(String(await call('send_to_session', {
+      sessionId: 'new1',
+      message: 'Run the focused assertion too.',
+    }))).toContain('Sent')
+
+    for (const [name, args] of [
+      ['send_to_session', { sessionId: 'abc12345', message: 'Unrelated work.' }],
+      ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
+      ['cancel_session', { sessionId: 'abc12345' }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('durable task')
+    }
+
+    for (const [name, args] of [
+      ['set_session_folder', { folder: '~/src/task' }],
+      ['set_session_backend', { backend: 'terminal' }],
+      ['rename_session', { sessionId: 'abc12345', title: 'Changed by task' }],
+      ['close_session', { sessionId: 'abc12345' }],
+      ['memory_write', { path: 'MEMORY.md', content: '# Task mutation' }],
+      ['record_proactive_outcomes', { outcomes: [{
+        kind: 'no-action',
+        eventIds: ['c'.repeat(64)],
+        reason: 'Not a proactive turn.',
+      }] }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('task')
+    }
+  })
+
+  it('fails closed at the handler for scheduled mutations but permits status reads', async () => {
+    source = 'scheduled'
+    answerOnly = true
+    for (const [name, args] of [
+      ['create_session', { title: 'X', prompt: 'Y' }],
+      ['set_session_folder', { folder: '~/src/scheduled' }],
+      ['send_to_session', { sessionId: 'abc12345', message: 'hi' }],
+      ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
+      ['memory_write', { path: 'MEMORY.md', content: '# Replaced' }],
+    ] as const) {
+      const result = await call(name, args)
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('Scheduled Oracle checks are read-only')
+    }
+    expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
+    expect(String(await call('get_session', { sessionId: 'abc12345' }))).toContain('message 11')
   })
 
   it('classifies unknown future tools as mutations so voice fails closed', () => {

@@ -11,11 +11,19 @@ const appVersion = (
   ) as { version: string }
 ).version
 
-interface StoredNodeIdentity {
+interface StoredNodeIdentityV1 {
   version: 1
   id: string
   name: string
   token: string
+}
+
+interface StoredNodeIdentity {
+  version: 2
+  id: string
+  name: string
+  token: string
+  lifecycleGeneration: string
 }
 
 export class NodeIdentityStore {
@@ -29,16 +37,26 @@ export class NodeIdentityStore {
   async initialize(): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
     try {
-      const parsed = JSON.parse(await readFile(this.filePath, 'utf8')) as StoredNodeIdentity
+      const parsed = JSON.parse(
+        await readFile(this.filePath, 'utf8'),
+      ) as StoredNodeIdentity | StoredNodeIdentityV1
       if (
-        parsed.version !== 1 ||
+        (parsed.version !== 1 && parsed.version !== 2) ||
         !parsed.id?.trim() ||
         !parsed.name?.trim() ||
-        !parsed.token?.trim()
+        !parsed.token?.trim() ||
+        (parsed.version === 2 && !parsed.lifecycleGeneration?.trim())
       ) {
         throw new Error('Invalid Agentic Remote node identity')
       }
-      this.identity = parsed
+      this.identity = parsed.version === 2
+        ? parsed
+        : {
+            ...parsed,
+            version: 2,
+            lifecycleGeneration: randomUUID(),
+          }
+      if (parsed.version === 1) await this.persist()
       const configuredName = process.env.AGENTIC_REMOTE_NODE_NAME?.trim()
       if (configuredName && configuredName !== parsed.name) {
         this.identity.name = configuredName
@@ -49,10 +67,11 @@ export class NodeIdentityStore {
         throw error
       }
       this.identity = {
-        version: 1,
+        version: 2,
         id: randomUUID(),
         name: process.env.AGENTIC_REMOTE_NODE_NAME?.trim() || hostname(),
         token: randomBytes(32).toString('base64url'),
+        lifecycleGeneration: randomUUID(),
       }
       await this.persist()
     }
@@ -69,6 +88,10 @@ export class NodeIdentityStore {
 
   get token(): string {
     return this.requireIdentity().token
+  }
+
+  get lifecycleGeneration(): string {
+    return this.requireIdentity().lifecycleGeneration
   }
 
   private requireIdentity(): StoredNodeIdentity {

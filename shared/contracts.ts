@@ -423,6 +423,8 @@ export interface ComputerSummary {
   isLocal: boolean
   online: boolean
   baseUrl?: string
+  /** Durable pairing lifetime; stable across reconnects and process restarts. */
+  lifecycleGeneration?: string
   /** Opaque runtime registration lifetime; changes on a same-ID re-pair. */
   registrationId?: string
   providers?: AgentProviderCapability[]

@@ -13,8 +13,15 @@
 }
 
 .dreamer-actions button,
-.dreamer-morning button {
+.dreamer-morning button,
+.dreamer-actions a {
   min-height: 40px;
+}
+
+.dreamer-actions a {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .dreamer-morning {
@@ -44,6 +51,159 @@
 .dreamer-priorities {
   padding-inline-start: 24px;
   margin: 12px 0;
+}
+
+.dreamer-follow-up {
+  margin: 16px 0 20px;
+}
+
+.dreamer-follow-up h3,
+.dreamer-suggestions {
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.dreamer-task-list {
+  display: grid;
+  gap: 10px;
+}
+
+.dreamer-task {
+  --task-state: var(--muted);
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-inline-start: 4px solid var(--task-state);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  overflow-wrap: anywhere;
+}
+
+.dreamer-task[data-status='ready'],
+.dreamer-task[data-status='review'],
+.dreamer-task[data-status='completed'] {
+  --task-state: var(--success);
+}
+
+.dreamer-task[data-status='blocked'] {
+  --task-state: var(--warning);
+}
+
+.dreamer-task[data-owner='user'][data-status='ready'] {
+  --task-state: var(--warning);
+}
+
+.dreamer-task[data-status='failed'] {
+  --task-state: var(--danger);
+}
+
+.dreamer-task[data-status='queued'],
+.dreamer-task[data-status='running'] {
+  --task-state: var(--accent-foreground);
+}
+
+.dreamer-task__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dreamer-task__heading p,
+.dreamer-task__next p {
+  margin: 5px 0 0;
+  line-height: 1.45;
+}
+
+.dreamer-task__status {
+  flex: 0 0 auto;
+  color: var(--task-state);
+  font-weight: 600;
+}
+
+.dreamer-task__next {
+  margin: 12px 0;
+}
+
+.dreamer-task__next > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dreamer-task__notice {
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--task-state) 12%, transparent);
+  line-height: 1.45;
+}
+
+.dreamer-evidence {
+  margin: 10px 0;
+}
+
+.dreamer-attempts {
+  margin: 8px 0;
+  color: var(--muted-strong);
+}
+
+.dreamer-attempts > summary {
+  min-height: 40px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+
+.dreamer-attempts ol {
+  margin: 0 0 8px;
+  padding-inline-start: 22px;
+}
+
+.dreamer-attempts li {
+  margin: 5px 0;
+  line-height: 1.4;
+}
+
+.dreamer-evidence > summary {
+  min-height: 40px;
+  padding: 10px 0;
+  cursor: pointer;
+  color: var(--muted-strong);
+}
+
+.dreamer-evidence ul {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  border-inline-start: 2px solid var(--border);
+}
+
+.dreamer-evidence li {
+  position: relative;
+  padding: 4px 0 8px 14px;
+}
+
+.dreamer-evidence li::before {
+  position: absolute;
+  inset-inline-start: -5px;
+  top: 9px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  content: '';
+}
+
+.dreamer-evidence li[data-status='running']::before {
+  background: var(--accent-foreground);
+}
+
+.dreamer-evidence li[data-status='failed']::before {
+  background: var(--danger);
+}
+
+.dreamer-evidence li p {
+  margin: 4px 0 0;
+  color: var(--muted-strong);
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .dreamer-item {
@@ -96,5 +256,14 @@
 @media (max-width: 600px) {
   #settings-dreamer input:not([type='checkbox']) {
     font-size: 16px;
+  }
+
+  .dreamer-task__heading {
+    display: block;
+  }
+
+  .dreamer-task__status {
+    display: inline-block;
+    margin-top: 8px;
   }
 }

@@ -344,6 +344,53 @@ describe('DreamerProgress refresh', () => {
     expect(source.reads).toEqual([])
   })
 
+  it('starts a session over when its answering computer reports a lower revision', async () => {
+    const { source, progress, entry } = setup()
+    const before = {
+      revision: 40,
+      status: 'waiting' as const,
+      messages: [reply('Old incarnation.')],
+      pendingUserInput: { requestId: 'q', question: 'Which branch?', choices: [], allowFreeform: true },
+    }
+    progress.applyEvent({ type: 'session.upserted', session: session(before) })
+    progress.applyEvent({
+      type: 'session.upserted',
+      session: session({ ...before, computerId: 'c2', computerName: 'production' }),
+    })
+    // c1 lost its session store; c2 did not answer, so its copy is the hub's own.
+    source.answered = ['c1']
+    source.sessions = [
+      session({ revision: 2, status: 'running' }),
+      session({ revision: 2, status: 'running', computerId: 'c2', computerName: 'production' }),
+    ]
+
+    await progress.refresh()
+
+    expect(entry('s1', 'c1')).toMatchObject({ revision: 2, status: 'running', isOpen: true })
+    expect(entry('s1', 'c1')?.latest).toBeUndefined()
+    expect(entry('s1', 'c1')?.request).toBeUndefined()
+    expect(source.reads).toEqual(['c1/s1'])
+    expect(entry('s1', 'c2')).toMatchObject({
+      revision: 40,
+      status: 'waiting',
+      latest: { excerpt: 'Old incarnation.' },
+      request: { kind: 'question', excerpt: 'Which branch?' },
+    })
+  })
+
+  it('reopens a closed session that its answering computer lists at a lower revision', async () => {
+    const { source, progress, entry } = setup()
+    progress.applyEvent({ type: 'session.upserted', session: session({ revision: 40, messages: [reply('Old.')] }) })
+    progress.applyEvent({ type: 'session.removed', computerId: 'c1', sessionId: 's1' })
+    source.sessions = [session({ revision: 1 })]
+
+    await progress.refresh()
+
+    expect(entry()).toMatchObject({ revision: 1, isOpen: true })
+    expect(entry()).not.toHaveProperty('closedAt')
+    expect(entry()?.latest).toBeUndefined()
+  })
+
   it('reads stale transcripts on answering computers, most urgent first, within the caps', async () => {
     const { source, progress } = setup({ readsPerRefresh: 4, readConcurrency: 2 })
     const listed = [

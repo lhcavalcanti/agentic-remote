@@ -179,7 +179,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * transcript on demand.
  *
  * Every source merges monotonically: an older listing, read or event never
- * replaces a newer one.
+ * replaces a newer one. The exception is a computer that answered with a lower
+ * revision, which only a lost session store explains.
  */
 export class DreamerProgress {
   private readonly now: () => Date
@@ -310,9 +311,17 @@ export class DreamerProgress {
       if (!registered.has(session.computerId)) continue
       const key = keyOf(session.computerId, session.id)
       listed.add(key)
-      if (answered.has(session.computerId)) this.strikes.delete(key)
+      const authoritative = answered.has(session.computerId)
+      if (authoritative) this.strikes.delete(key)
       // An event that arrived while the listing was in flight is at least as new.
-      if (!touches.has(key)) this.merge(session, false)
+      if (touches.has(key)) continue
+      // Revisions persist and only grow, so a lower one from a computer that
+      // answered means it lost its session store: start the entry over.
+      const current = this.entries.get(key)
+      if (authoritative && current && session.revision !== undefined && session.revision < current.revision) {
+        this.drop(key)
+      }
+      this.merge(session, false)
     }
     for (const [key, entry] of this.entries) {
       if (!entry.isOpen || !answered.has(entry.computerId) || listed.has(key) || touches.has(key)) {

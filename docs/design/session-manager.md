@@ -115,7 +115,7 @@ Every prompt sent to the SDK is the user's text wrapped like this:
 ```
 <agentic_remote_context generated="ISO time">
 Computers: …
-Open sessions (N): one line each — id · computer · title · status · provider · cwd · updated · origin · activity
+Open sessions (N): one line each — id · computer · title · status · provider/mode · model (when reported) · cwd · updated · origin · activity
 Changes since your last turn: …
 Memory index (MEMORY.md): … (only when changed, after a new SDK session, or after compaction)
 Notes: … (an interrupted previous turn, or a recovery)
@@ -199,10 +199,11 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | Tool | Purpose |
 |---|---|
 | `list_computers` | Computers, online state, and providers |
+| `list_models` | A provider's models on a computer (Copilot unless asked), by the exact ID `create_session` takes, from that provider's own discovery. Read-only, so voice may use it |
 | `list_sessions` | Open sessions, or recent history with `includeClosed` |
 | `get_session` | Detail and the last N messages (default 6, maximum 30, each truncated), read as recorded: the session is never opened or resumed. A waiting session's request shows its `requestId`, options, choices, and form fields, so it can be answered |
 | `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it; a session mid-turn has its current state added (Copilot only) |
-| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder. It opens with the Copilot SDK unless Oracle's `sessionBackend` setting is `terminal`; a provider without a terminal always uses its SDK |
+| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder. It opens with the Copilot SDK unless Oracle's `sessionBackend` setting is `terminal`; a provider without a terminal always uses its SDK. A named model without a provider starts on Copilot. The model and effort are checked against the provider's catalog before anything is created (an unreadable catalog leaves that to the provider); one it lacks starts nothing, and the failure lists that provider's models and tells Oracle to ask rather than switch model or provider. The result and activity name the session's recorded model: the catalog-checked one it was created with until the session reports its own |
 | `set_session_folder` | Change Oracle's session folder for a computer when you ask; checked on that computer, kept with Oracle's settings, and allowed in Ask mode since it touches no session |
 | `set_session_backend` | Change how Oracle opens new sessions (`sdk` or `terminal`) when you ask; kept with Oracle's settings and allowed in Ask mode |
 | `send_to_session` | Send a follow-up to any session. A busy session is steered: the message is typed into its running turn (a terminal that is not ready yet takes it as soon as its composer is back). Only a refusal that certainly sent nothing falls back to the session's queue; a possibly-delivered steer is never retried. A closed session is reopened and a suspended one resumed first. A folder-trust prompt is answered only when it is Copilot's genuine terminal prompt (exact options) naming the session's own folder |

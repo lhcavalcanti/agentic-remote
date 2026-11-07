@@ -55,6 +55,13 @@ describe('manager turn context', () => {
     )
   })
 
+  it('shows the model a session reports, and nothing when it has reported none', () => {
+    expect(rosterLine(session('m', { runtime: { mode: 'autopilot', model: 'model-b' } }), undefined, now))
+      .toContain('· copilot/autopilot · model model-b · /home/me/src/app ·')
+    expect(rosterLine(session('d', { runtime: { mode: 'autopilot' } }), undefined, now))
+      .not.toContain('model')
+  })
+
   it('flags sessions waiting for the user and shows the latest reply when idle', () => {
     expect(rosterLine(session('w', { status: 'waiting', pendingUserInput: { requestId: 'r', question: 'Which DB?' } as never }), undefined, now))
       .toContain('· waiting for the user (question)')
@@ -99,6 +106,22 @@ describe('manager turn context', () => {
     expect(buildTurnContext(base)).toContain('Your new sessions open with the Copilot SDK.')
     expect(buildTurnContext({ ...base, sessionBackend: 'sdk' })).toContain('Your new sessions open with the Copilot SDK.')
     expect(buildTurnContext({ ...base, sessionBackend: 'terminal' })).toContain('Your new sessions open in a terminal (tmux).')
+  })
+
+  it('starts a model the user names on a Copilot session, never the Claude provider by inference', () => {
+    const rule = MANAGER_SYSTEM_PROMPT.split('\n').find((line) => line.includes('list_models'))
+    expect(rule).toBeDefined()
+    // Copilot hosts Claude models, so a model name alone keeps the provider.
+    expect(rule).toMatch(/names a model[^\n]*provider copilot/)
+    expect(rule).toMatch(/Claude model does not mean the claude provider/)
+    expect(rule).toMatch(/provider claude only when the user asks for the Claude Agent provider itself/)
+    // Exact ids come from discovery, never from memory or a guess.
+    expect(rule).toMatch(/exact id[^\n]*list_models|list_models[^\n]*exact id/)
+    // Evidence, and a fallback that asks rather than switching.
+    expect(rule).toMatch(/model the session started with/)
+    expect(rule).toMatch(/not available[^\n]*ask/)
+    expect(rule).toMatch(/never switch to another model or provider on your own/)
+    expect(MANAGER_SYSTEM_PROMPT).toContain('provider/mode · model')
   })
 
   it('tells Oracle how to change how its sessions open', () => {

@@ -788,6 +788,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Session links in replies use `?computer=<id>&session=<id>` and open that
   session. Your default folder, mode, and model for new sessions are sent with
   each message and apply to the sessions Oracle starts.
+- When you name a model, Oracle MUST start a Copilot session with that model's
+  exact ID from discovery, because Copilot hosts Claude and other model
+  families; it uses the Claude Agent provider only when you ask for that
+  provider. It reports the model the session started with. A model the
+  provider lacks starts nothing: Oracle lists the available models and asks,
+  never switching model or provider itself.
 
 ### 3.8 Oracle Dreamer foundation
 

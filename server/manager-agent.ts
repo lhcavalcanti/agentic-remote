@@ -2,10 +2,12 @@ import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type {
+  AgentProvider,
   ComputerSummary,
   CreateSessionInput,
   ManagedSession,
   PermissionReplyInput,
+  ProviderRuntimeOptions,
   RenameSessionInput,
   RuntimeReasoningEffort,
   SendMessageInput,
@@ -79,6 +81,8 @@ export interface ManagerHub {
   /** The folder as an absolute path on that computer, or an error saying why it cannot hold sessions. */
   validateSessionDirectory(computerId: string, path: string): Promise<string>
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
+  /** The provider's model catalog on that computer, freshly discovered. */
+  providerRuntimeOptions(computerId: string, provider: AgentProvider): Promise<ProviderRuntimeOptions>
   renameSession(computerId: string, sessionId: string, input: RenameSessionInput): Promise<ManagedSession>
   sendMessage(computerId: string, sessionId: string, input: SendMessageInput): Promise<ManagedSession>
   replyPermission(computerId: string, sessionId: string, requestId: string, input: PermissionReplyInput): Promise<ManagedSession>
@@ -1231,6 +1235,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       readSession: (computerId, sessionId) => hub.readSession(computerId, sessionId),
       askSession: (computerId, sessionId, question) => hub.askSession(computerId, sessionId, question),
       createSession: (computerId, input) => hub.createSession(computerId, input),
+      providerModels: async (computerId, provider) =>
+        (await hub.providerRuntimeOptions(computerId, provider)).models,
       renameSession: (computerId, sessionId, title) => hub.renameSession(computerId, sessionId, { title }),
       sendMessage: (computerId, sessionId, content, options) =>
         hub.sendMessage(computerId, sessionId, { content, enqueue: !options?.steer }),

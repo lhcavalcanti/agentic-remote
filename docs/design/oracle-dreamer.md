@@ -29,7 +29,15 @@ an OpenClaw runtime.
    read-only outside exact batch-scoped session transcripts and may only record
    schema-validated outcomes. Oracle-owned outcomes require an execution prompt;
    execution still starts only from an explicit task action.
-5. **Presentation refinements.** Optional morning delivery after quiet hours
+5. **Periodic progress refresh (#511).** While enabled, every 5 minutes and at
+   start or enable, Dreamer lists sessions with per-computer authority and
+   passively reads changed open sessions into an in-memory progress cache. After
+   each refresh it reconciles tasks and, when the listing succeeded, sweeps the
+   lifecycle inbox, so a transition missed during a restart or disconnect still
+   reaches proactive analysis once. Oracle's user, voice and task turns see the
+   cache; proactive turns stay batch-scoped. It makes no model call, never
+   rewrites the morning plan, and replaces the undeployed Periodic checks.
+6. **Presentation refinements.** Optional morning delivery after quiet hours
    through the existing notification policy/outbox; no 02:00 push or speech.
    Do not add a second notification/control plane.
 
@@ -41,15 +49,16 @@ todo store. Structured memory has no todo kind. The UI must name these limits.
 
 ## Safety and privacy
 
-The deterministic daily plan makes no model call. Enabling Dreamer also enables
-proactive Oracle analysis, which may call the selected Oracle model for
-admitted lifecycle events. That turn receives bounded event metadata and may
-read or ask only the exact sessions named by its batch. It cannot mutate
-sessions, settings or memory; its only mutation records one bounded outcome per
-event. There are no embeddings, directory walks, external services, automatic
-execution or new memory authority. Plans continue to use identity/status/update
-metadata and structured-memory identity/kind/scope/authority/validity metadata,
-not source prompts or memory contents.
+The deterministic daily plan and the progress refresh make no model call.
+Enabling Dreamer also enables proactive Oracle analysis, which may call the
+selected Oracle model for admitted lifecycle events. That turn receives bounded
+event metadata and may read or ask only the exact sessions named by its batch.
+It cannot mutate sessions, settings or memory; its only mutation records one
+bounded outcome per event. There are no embeddings, directory walks, external
+services, automatic execution or new memory authority. Plans continue to use
+identity/status/update metadata and structured-memory
+identity/kind/scope/authority/validity metadata, not source prompts or memory
+contents.
 
 Respect structured-memory mode: off/shadow must not expose record contents or
 turn shadow retrieval into visible memory authority. Use active on-mode records
@@ -59,18 +68,27 @@ not instructions. Source IDs must be bounded and encoded, never executable URLs.
 The structured-memory store projects metadata before it leaves the store;
 Dreamer does not obtain a full memory snapshot and redact it afterwards.
 
-The narrow completion adapter is the sole content-read exception: it reads the
-exact owning session through remote-aware routing, accepts only a successful
-root `task_complete` marker projected by the server, and returns a bounded
-transient summary plus SHA-256 digest. Plain assistant text, background-agent
-results, failed tools and stale UI state are not completion evidence. Result
-text is never persisted in Dreamer state. Confirmation binds the evidence to
-the exact computer ID, session ID, authoritative session revision, root result
-source, message and tool call before storing provenance. Plan-item evidence must occur after the latest root user turn. Durable Oracle
-task evidence is stricter: every execution activity records the exact
-dispatched root prompt ID, and only a trusted completion in that prompt's turn
-can complete the attempt. Transcript order, not timestamps across computers,
-binds the evidence.
+There are two content-read exceptions. The first, the narrow completion adapter,
+reads the exact owning session through remote-aware routing, accepts only a
+successful root `task_complete` marker projected by the server, and returns a
+bounded transient summary plus SHA-256 digest. Plain assistant text,
+background-agent results, failed tools and stale UI state are not completion
+evidence. Result text is never persisted in Dreamer state. Confirmation binds
+the evidence to the exact computer ID, session ID, authoritative session
+revision, root result source, message and tool call before storing provenance.
+Plan-item evidence must occur after the latest root user turn. Durable Oracle
+task evidence is stricter: every execution activity records the exact dispatched
+root prompt ID, and only a trusted completion in that prompt's turn can complete
+the attempt. Transcript order, not timestamps across computers, binds the
+evidence.
+
+The second, the progress refresh, passively reads at most 12 changed open
+sessions per refresh (3 at a time, 10 s timeout, 15 minutes before retrying a
+failed read). It keeps only the latest assistant reply and a pending question or
+permission, as single-line excerpts of at most 300 characters, in memory for at
+most 200 open and 20 closed sessions (closed ones for 24 h). The excerpts are
+never persisted and never become planning input. Oracle sees them escaped, cut
+to 160 characters and labelled untrusted data.
 
 Single trusted hub owner and single process writer; this does not add hostile
 multi-user isolation. APIs inherit hub Host/Origin checks and no-store responses;
@@ -165,7 +183,9 @@ together while preserving the active draft and review ordering.
 Shared types live in `shared/dreamer.ts`:
 
 - `DreamerSnapshot`: `revision`, `settings: { enabled, timeZone }`,
-  optional `plan`, optional safe `lastError`, and `available` boolean.
+  optional `plan`, optional safe `lastError`, and `available` boolean. While
+  the refresh runs it adds `progress`: `refreshedAt?`, `nextRefreshAt?`,
+  `staleComputers` (unreachable computer names) and a safe `error?`.
 - `DreamerPlan`: `id`, `localDate`, `timeZone`, `createdAt`, ordered `items`,
   `coverage: string[]`, `omitted: number`.
 - `DreamerPlanItem`: `id`, `label`, `reason`, `status: pending|skipped|done`,
@@ -226,8 +246,9 @@ identity rendering, coordinated task refresh, error recovery and empty state.
 
 1. Define and implement hub-readable durable todo metadata with source revision
    and explicit user-owned completion; integrate only after read-only tests.
-2. Add bounded authoritative open/history metadata collection with per-computer
-   freshness/offline statuses; never interpret cached absence as deletion.
+2. Add bounded authoritative history metadata collection, beyond the progress
+   cache's open sessions and 24 h of closed ones, with per-computer freshness;
+   never interpret cached absence as deletion.
 3. Add source-linked review detail using on-demand scope-checked reads and
    deterministic redaction, honoring correction/forgetting in derived plans.
 4. Only then consider semantic provider planning with explicit egress consent,

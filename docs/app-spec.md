@@ -772,10 +772,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - This first slice MUST perform deterministic local metadata review:
   journal-observed session state and eligible structured-memory metadata, not
   prompts, titles, general transcript contents, memory contents or external
-  inference. Its only session-content adapter MAY passively read the exact
-  owning session to validate a successful root `task_complete` result carrying
-  the server's trusted marker. That result MUST remain transient and MUST NOT
-  become planning input.
+  inference. Only two adapters MAY passively read session content: completion
+  review MAY read the exact owning session to validate a successful root
+  `task_complete` result carrying the server's trusted marker, and the
+  progress refresh below MAY read changed open sessions. What they read MUST
+  remain transient and MUST NOT become planning input.
   Unavailable durable todos, incomplete history and source freshness limits
   MUST be visible rather than represented as a complete review. Session
   candidates MUST use the exact computer/session identity, deduplicate current
@@ -845,6 +846,36 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Every successful Dreamer or task mutation MUST return the reconciled
   authoritative plan, task, evidence and available action projection in that
   response; the UI MUST NOT temporarily lose task controls until refresh.
+- While enabled and available, Dreamer MUST refresh session progress at start,
+  on enablement and every 5 minutes, without a model call or a morning-plan
+  rewrite:
+  - A computer that answered the listing is authoritative: an open session it
+    omits from two consecutive answers becomes closed, and a lower revision
+    than the cached one starts that entry over. An unreachable computer keeps
+    its last-known sessions and MUST be named; unregistered computers' sessions
+    are dropped. A removal without a replacement closes rather than deletes.
+  - Otherwise events, listings and reads MUST merge monotonically by revision,
+    then update time. An event received while a listing is in flight wins over
+    that listing, and a read MUST NOT reopen a session.
+  - It MAY passively read at most 12 changed open sessions per refresh, keeping
+    only the latest assistant reply and a pending question or permission as
+    bounded single-line excerpts, in memory only, for at most 200 open sessions
+    and 20 closed ones for 24 h.
+  - Each refresh MUST then reconcile tasks and, after a successful listing,
+    sweep the proactive lifecycle inbox with it so a missed transition is
+    admitted once.
+  - A failed refresh MUST show a safe error, retry at the next interval and
+    leave the morning plan alone. Disable, stop and storage failure MUST stop
+    the refresh, fence any in-flight one and clear the cache.
+- While Dreamer is on, Oracle's user, voice and task turns MUST include that
+  progress: each roster session's last reply and pending request, the refresh
+  time, unreachable computers, sessions closed in the last 24 h and open
+  follow-up tasks. Live listing data wins over the cache. Quoted text MUST be
+  single-line, bounded, escaped and labelled untrusted data. Proactive turns
+  MUST NOT receive it, and an unreadable cache MUST NOT block an answer.
+- Dreamer settings and the morning plan MUST show the last refresh time,
+  unreachable computers and any refresh error; settings also show the next
+  refresh. There is no manual refresh or extra setting.
 - Dreamer MUST NOT raise overnight notifications, send speech or automatically
   dispatch work. Proactive analysis uses the existing hub lifecycle stream and
   durable Oracle queue; execution begins only from an explicit task action.

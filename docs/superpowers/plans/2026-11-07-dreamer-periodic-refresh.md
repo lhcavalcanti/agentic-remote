@@ -66,11 +66,11 @@ undeployed Periodic checks.
   `ManagerState` loses `proactive`. `updateMessage` still sets
   `suppressNotification` for terminal proactive messages.
 
-- [ ] Delete the scheduled-check tests and assertions. Add a store test: a
+- [x] Delete the scheduled-check tests and assertions. Add a store test: a
   `state.json` containing `proactive` loads, and the next write omits it.
-- [ ] Run `pnpm vitest run server/manager-store.test.ts -t proactive`. Expected:
+- [x] Run `pnpm vitest run server/manager-store.test.ts -t proactive`. Expected:
   FAIL, because the legacy field is kept.
-- [ ] Remove the code. In `ManagerStore.initialize`, delete the legacy field:
+- [x] Remove the code. In `ManagerStore.initialize`, delete the legacy field:
 
 ```ts
 const { proactive: _legacyPeriodicChecks, ...current } =
@@ -78,9 +78,9 @@ const { proactive: _legacyPeriodicChecks, ...current } =
 this.current = { ...emptyState(), ...current }
 ```
 
-- [ ] Run `pnpm vitest run server/manager-*.test.ts shared/notifications.test.ts src/OracleSettings.test.tsx src/ManagerAssistant.test.tsx src/App.test.tsx`.
+- [x] Run `pnpm vitest run server/manager-*.test.ts shared/notifications.test.ts src/OracleSettings.test.tsx src/ManagerAssistant.test.tsx src/App.test.tsx`.
   Expected: PASS.
-- [ ] Commit: `refactor: remove undeployed Oracle periodic checks`.
+- [x] Commit: `refactor: remove undeployed Oracle periodic checks`.
 
 ### Task 2: Progress cache
 
@@ -91,22 +91,22 @@ this.current = { ...emptyState(), ...current }
 - Produces:
 
 ```ts
-export const DREAMER_PROGRESS_REFRESH_MS = 5 * 60_000
+export const DREAMER_PROGRESS_REFRESH_MS = 5 * 60_000 // moved to shared/dreamer.ts in Task 5
 export interface DreamerProgressLimits { excerptLength: number; openEntries: number;
   closedEntries: number; closedRetentionMs: number; readsPerRefresh: number;
   readConcurrency: number; readTimeoutMs: number; readRetryMs: number }
 export interface DreamerProgressEntry { computerId: string; sessionId: string;
   computerName: string; title: string; status: SessionStatus; isOpen: boolean;
-  suspended: boolean; queuedCount: number; revision: number; updatedAt: string;
+  revision: number; updatedAt: string;
   latest?: { excerpt: string; at: string; taskComplete: boolean };
   request?: { kind: 'question' | 'permission'; excerpt: string };
   detail?: { revision: number; updatedAt: string };
-  closedAt?: string; deleted?: boolean; retryReadAt?: string }
+  closedAt?: string; retryReadAt?: string }
 export interface DreamerProgressSnapshot { refreshedAt?: string;
   staleComputers: { id: string; name: string }[]; entries: DreamerProgressEntry[] }
 export interface DreamerProgressSource {
   listSessionsWithAuthority(): Promise<{ sessions: ManagedSession[]; answeredComputerIds: string[] }>
-  listComputers(): ComputerSummary[]
+  listComputers(): Pick<ComputerSummary, 'id' | 'name'>[]
   readSession(computerId: string, sessionId: string): Promise<ManagedSession> }
 export class DreamerProgress {
   constructor(source: DreamerProgressSource, options?: { now?: () => Date; limits?: Partial<DreamerProgressLimits> })
@@ -116,7 +116,7 @@ export class DreamerProgress {
   snapshot(): DreamerProgressSnapshot }
 ```
 
-- [ ] Write failing tests for each of these:
+- [x] Write failing tests for each of these:
   1. A full event sets `latest` from the last non-empty assistant message, with
      its time and `taskComplete`. It sets `request` from a pending question or
      permission.
@@ -124,32 +124,34 @@ export class DreamerProgress {
   3. An older event is ignored. An equal revision with a newer `updatedAt`
      applies.
   4. `session.removed` with `replacedBy` drops the entry, and without it the
-     entry is marked deleted.
-  5. A listing from a computer that answered closes open entries it no longer
-     lists. An unanswered computer keeps its entries and is reported in
-     `staleComputers`. Unregistered computers are dropped.
-  6. A listing from a computer that answered with a lower revision resets the
-     transcript.
+     entry is closed.
+  5. A listing from a computer that answered closes an open entry once two
+     consecutive answers omit it, and an event that arrived while the listing
+     was in flight wins over it. An unanswered computer keeps its entries and
+     is reported in `staleComputers`. Unregistered computers are dropped.
+  6. A listing from a computer that answered with a lower revision starts the
+     entry over, dropping its excerpts so it is read again.
   7. Read selection:
      - only stale transcripts on computers that answered are read;
      - waiting or error first, then running, then newest;
      - at most `readsPerRefresh`, and never more than `readConcurrency` at once.
   8. A read that never settles times out after `readTimeoutMs`. Its entry gets
      `retryReadAt` and is skipped until then.
-  9. A read result older than a newer event is discarded.
+  9. A read result older than a newer event is discarded, and a read never
+     reopens a session an event closed meanwhile.
   10. `clear()` during a refresh makes it resolve `undefined` without
       repopulating the cache.
   11. Pruning:
       - closed entries older than 24 h are dropped;
       - beyond 20 closed or 200 open, the oldest go first.
   12. Excerpts collapse whitespace and are cut at the limit with `…`.
-- [ ] Run `pnpm vitest run server/dreamer-progress.test.ts`. Expected: FAIL
+- [x] Run `pnpm vitest run server/dreamer-progress.test.ts`. Expected: FAIL
   (missing module).
-- [ ] Implement the class, with helpers `transcriptProgress(session, limit)`,
-  `notOlder(a, b)` and `runPool(items, concurrency, worker)`, and a timeout that
-  wraps each read.
-- [ ] Run the same file. Expected: PASS.
-- [ ] Commit: `feat: add Dreamer session progress cache`.
+- [x] Implement the class, with helpers `transcriptProgress(session, limit)` and
+  `notOlder(a, b)`, the exported `mapWithConcurrency` from `computer-manager.ts`,
+  and a timeout that wraps each read.
+- [x] Run the same file. Expected: PASS.
+- [x] Commit: `feat: add Dreamer session progress cache`.
 
 ### Task 3: Dreamer refresh lifecycle and lifecycle sweep
 
@@ -175,7 +177,7 @@ export class DreamerProgress {
 
     ```ts
     DreamerProgressView = DreamerProgressSnapshot & {
-      followUps: { title: string; owner: OracleTaskOwner; status: OracleTaskStatus }[]
+      followUps: { title: string; owner: OracleTaskOwner; status: OracleTaskStatus; nextAction: string }[]
     }
     ```
 
@@ -191,7 +193,7 @@ export class DreamerProgress {
     }
     ```
 
-- [ ] Write failing service tests:
+- [x] Write failing service tests:
   1. `start()` with Dreamer enabled refreshes once and arms an interval of
      `progressRefreshMs`. With Dreamer disabled it does neither.
   2. Enabling refreshes, and disabling clears the cache, stops the timer and
@@ -201,28 +203,30 @@ export class DreamerProgress {
   4. A listing that throws sets `progress.error`, keeps the morning-plan timer
      active, and the next tick clears the error.
   5. Upkeep runs `sweepLifecycle` with the authoritative sessions and
-     reconciles tasks.
+     reconciles tasks. A failed listing still reconciles tasks but does not
+     sweep.
   6. Concurrent `refreshProgress()` calls share one run.
   7. `progressView()` lists open tasks only, with `undefined` when disabled.
   8. `handleHubEvent` is ignored while disabled.
-- [ ] Write failing coordinator tests. `sweep` admits a missed `finished`
+- [x] Write failing coordinator tests. `sweep` admits a missed `finished`
   transition once (a second sweep with the same revision admits nothing). It is
   a no-op when disabled.
-- [ ] Implement:
+- [x] Implement:
   - A second unref'd interval, `progressTimer`. It is started by `start()` and
     by enabling `updateSettings`, and stopped by `stop()`, by disabling, and by
     `markScheduledFailure`.
-  - Single-flight `refreshProgress` with a fence on `lifecycleGeneration`.
+  - Single-flight `refreshProgress` fenced by its own `progressGeneration`,
+    since a timezone change bumps `lifecycleGeneration` without stopping it.
   - A safe error `'Dreamer could not refresh session progress.'`.
   - `progress` in `snapshot()`.
-- [ ] Wire `server/app.ts`:
+- [x] Wire `server/app.ts`:
   - `progressSource` comes from `ComputerManager`.
   - `sweepLifecycle` calls `proactiveCoordinator?.sweep`.
   - The hub event listener calls `dreamerService.handleHubEvent(event)` before
     reconciling tasks.
-- [ ] Run `pnpm vitest run server/dreamer-service.test.ts server/manager-proactive-coordinator.test.ts server/dreamer-app.test.ts`.
+- [x] Run `pnpm vitest run server/dreamer-service.test.ts server/manager-proactive-coordinator.test.ts server/dreamer-app.test.ts`.
   Expected: PASS.
-- [ ] Commit: `feat: refresh session progress and follow-ups from Dreamer`.
+- [x] Commit: `feat: refresh session progress and follow-ups from Dreamer`.
 
 ### Task 4: Oracle context
 
@@ -237,7 +241,7 @@ export class DreamerProgress {
   - `rosterLine(session, entry, now, progress?: DreamerProgressEntry)`
   - `ManagerAgentOptions.progressContext?: () => DreamerProgressView | undefined`
 
-- [ ] Write failing context tests:
+- [x] Write failing context tests:
   1. An idle session shows `last reply HH:MM: "…"`, or
      `last reply HH:MM (task complete): "…"`.
   2. A running session that reports activity shows `doing:` and no last reply.
@@ -249,14 +253,14 @@ export class DreamerProgress {
      closed sessions, and at most 8 follow-ups plus an omitted count.
   6. Before the first refresh it reads `Dreamer progress: not refreshed yet.`
   7. Without `progress`, the output equals today's.
-- [ ] Write a failing agent test. A typed turn's prompt includes the Dreamer
+- [x] Write a failing agent test. A typed turn's prompt includes the Dreamer
   progress section. A proactive turn's prompt does not. A throwing
   `progressContext` still completes the turn.
-- [ ] Implement it, and update the "Context you receive" bullet in the system
+- [x] Implement it, and update the "Context you receive" bullet in the system
   prompt.
-- [ ] Run `pnpm vitest run server/manager-context.test.ts server/manager-agent.test.ts`.
+- [x] Run `pnpm vitest run server/manager-context.test.ts server/manager-agent.test.ts`.
   Expected: PASS.
-- [ ] Commit: `feat: show Dreamer session progress in Oracle context`.
+- [x] Commit: `feat: show Dreamer session progress in Oracle context`.
 
 ### Task 5: Dreamer UI
 
@@ -267,16 +271,19 @@ export class DreamerProgress {
 **Interfaces:**
 - Consumes: `DreamerSnapshot.progress`.
 
-- [ ] Write failing tests:
+- [x] Write failing tests:
   1. The settings copy mentions the 5-minute session progress refresh.
   2. The settings status shows the refresh time, unreachable computer names,
      and a refresh error.
-  3. The Morning plan panel shows `Session progress updated <time>`, and nothing
-     when `progress` is absent.
-- [ ] Implement a `DreamerProgressStatus` component used in both places, with
-  local time formatted as `HH:MM` through `toLocaleTimeString`.
-- [ ] Run `pnpm vitest run src/OracleDreamer.test.tsx`. Expected: PASS.
-- [ ] Commit: `feat: show Dreamer progress refresh status`.
+  3. The Morning plan panel shows `Session progress updated <time>`, the
+     unreachable computers and a refresh error, and nothing when `progress` is
+     absent.
+- [x] Move `DREAMER_PROGRESS_REFRESH_MS` to `shared/dreamer.ts` so the copy
+  derives from it. Implement a `SessionProgressStatus` component used in both
+  places. Times use `sessionActivityTime` (a time today, otherwise a date) in a
+  `<time>` element titled with the full local time.
+- [x] Run `pnpm vitest run src/OracleDreamer.test.tsx`. Expected: PASS.
+- [x] Commit: `feat: show Dreamer progress refresh status`.
 
 ### Task 6: Docs, version, graph, gate
 
@@ -286,18 +293,19 @@ export class DreamerProgress {
   - `docs/design/oracle-dreamer.md`
   - `docs/superpowers/specs/2026-11-04-oracle-periodic-checks-design.md`
   - `docs/superpowers/plans/2026-11-04-oracle-periodic-checks.md`
+  - this plan and its spec, for what changed during implementation
   - the version files
   - `graphify/*`
 
-- [ ] Update `docs/app-spec.md`. Remove the Periodic checks bullets and the
+- [x] Update `docs/app-spec.md`. Remove the Periodic checks bullets and the
   Scheduled check label. Add the Dreamer refresh, the cache bounds, Oracle
   context, upkeep and failure rules to the Dreamer section.
-- [ ] Update `docs/design/oracle-dreamer.md`:
+- [x] Update `docs/design/oracle-dreamer.md`:
   - Add a phase: "Periodic progress refresh".
   - Add the second content-read exception, an in-memory excerpt cache.
   - Add the API field.
   - Narrow follow-up 2 to history collection.
-- [ ] Add a "Superseded by #511" line to the Periodic checks spec and plan.
+- [x] Add a "Superseded by #511" line to the Periodic checks spec and plan.
 - [ ] Bump the version to 1.40.0, then run the version-policy test.
 - [ ] Update graphify, then run `pnpm check` and `NODE_ENV=production pnpm check`.
 - [ ] Commit: `docs: describe Dreamer periodic refresh` and `chore: release 1.40.0`.

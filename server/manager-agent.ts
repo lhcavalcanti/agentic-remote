@@ -2,16 +2,18 @@ import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 import type {
+  AgentProvider,
   ComputerSummary,
   CreateSessionInput,
   ManagedSession,
   PermissionReplyInput,
+  ProviderRuntimeOptions,
   RenameSessionInput,
   RuntimeReasoningEffort,
   SendMessageInput,
   UserInputReplyInput,
 } from '../shared/contracts.js'
-import type { OracleResponseStyle } from '../shared/settings-profile.js'
+import type { NewSessionRuntimesSetting, OracleResponseStyle } from '../shared/settings-profile.js'
 import {
   MANAGER_MESSAGE_MAX_LENGTH,
   MANAGER_SNAPSHOT_MESSAGES,
@@ -72,6 +74,8 @@ export interface ManagerHub {
   /** The folder as an absolute path on that computer, or an error saying why it cannot hold sessions. */
   validateSessionDirectory(computerId: string, path: string): Promise<string>
   createSession(computerId: string, input: CreateSessionInput): Promise<ManagedSession>
+  /** The provider's model catalog on that computer, freshly discovered. */
+  providerRuntimeOptions(computerId: string, provider: AgentProvider): Promise<ProviderRuntimeOptions>
   renameSession(computerId: string, sessionId: string, input: RenameSessionInput): Promise<ManagedSession>
   sendMessage(computerId: string, sessionId: string, input: SendMessageInput): Promise<ManagedSession>
   replyPermission(computerId: string, sessionId: string, requestId: string, input: PermissionReplyInput): Promise<ManagedSession>
@@ -163,6 +167,8 @@ export interface ManagerAgentOptions {
   responseStyle?: () => OracleResponseStyle | undefined
   /** Dreamer's session progress and open tasks, read as each turn's prompt is built. */
   progressContext?: () => DreamerProgressView | undefined
+  /** The New-session runtimes from App settings, read as each session starts. */
+  newSessionRuntimes?: () => NewSessionRuntimesSetting | undefined
   structuredMemory?: ManagerStructuredMemoryRuntime
   recordProactiveOutcomes?: (input: {
     message: ManagerMessage
@@ -312,6 +318,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly reasoningEffort?: RuntimeReasoningEffort
   private readonly responseStyle: () => OracleResponseStyle | undefined
   private readonly progressContext: () => DreamerProgressView | undefined
+  private readonly newSessionRuntimes: () => NewSessionRuntimesSetting | undefined
   private readonly turnTimeoutMs: number
   private readonly retryDelaysMs: number[]
   private readonly idleStopMs: number
@@ -374,6 +381,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.reasoningEffort = options.reasoningEffort
     this.responseStyle = options.responseStyle ?? (() => undefined)
     this.progressContext = options.progressContext ?? (() => undefined)
+    this.newSessionRuntimes = options.newSessionRuntimes ?? (() => undefined)
     this.turnTimeoutMs = options.turnTimeoutMs ?? 15 * 60 * 1000
     this.retryDelaysMs = options.retryDelaysMs ?? [1000, 4000]
     this.idleStopMs = options.idleStopMs ?? 10 * 60 * 1000
@@ -1001,6 +1009,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       readSession: (computerId, sessionId) => hub.readSession(computerId, sessionId),
       askSession: (computerId, sessionId, question) => hub.askSession(computerId, sessionId, question),
       createSession: (computerId, input) => hub.createSession(computerId, input),
+      providerModels: async (computerId, provider) =>
+        (await hub.providerRuntimeOptions(computerId, provider)).models,
       renameSession: (computerId, sessionId, title) => hub.renameSession(computerId, sessionId, { title }),
       sendMessage: (computerId, sessionId, content, options) =>
         hub.sendMessage(computerId, sessionId, { content, enqueue: !options?.steer }),
@@ -1080,6 +1090,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           }
         : {}),
       defaults: () => this.store.state().defaults ?? {},
+      configuredRuntime: (provider) => this.newSessionRuntimes()?.[provider],
       now: () => this.now(),
     }
   }

@@ -132,9 +132,13 @@ export interface ManagerMessage {
  */
 export interface ManagerClientDefaults {
   computerId?: string
+  /** @deprecated Ignored: Oracle reads the New-session runtime from the hub's settings profile. */
   mode?: AgentMode
+  /** @deprecated Ignored: Oracle reads the New-session runtime from the hub's settings profile. */
   provider?: AgentProvider
+  /** @deprecated Ignored: Oracle reads the New-session runtime from the hub's settings profile. */
   model?: string
+  /** @deprecated Ignored: Oracle reads the New-session runtime from the hub's settings profile. */
   reasoningEffort?: RuntimeReasoningEffort
   /** Default folder per computer ID. */
   folders?: Record<string, string>

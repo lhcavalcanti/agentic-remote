@@ -2,7 +2,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ComputerSummary, ManagedSession } from '../shared/contracts.js'
+import type { ComputerSummary, ManagedSession, ProviderRuntimeOptions } from '../shared/contracts.js'
+import type { NewSessionRuntimesSetting } from '../shared/settings-profile.js'
 import {
   MANAGER_MESSAGE_MAX_LENGTH,
   MANAGER_SNAPSHOT_MESSAGES,
@@ -178,6 +179,9 @@ describe('ManagerAgent', () => {
       resumeSession: vi.fn(async (_computerId: string, id: string) => session(id)),
       cancel: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
+      providerRuntimeOptions: vi.fn(async (): Promise<ProviderRuntimeOptions> => ({
+        models: [{ id: 'model-a', name: 'Model A', reasoningEfforts: [], contextTiers: ['default'] }],
+      })),
     }
     store = await openStore()
   })
@@ -1237,10 +1241,54 @@ describe('ManagerAgent', () => {
     const activity = agent!.snapshot().messages.find((message) => message.role === 'activity')!
     expect(activity).toMatchObject({
       tool: 'create_session',
-      content: 'Started "Docs" on development',
+      content: 'Started "Docs" on development with the default model',
       sessionRefs: [{ computerId: 'hub', sessionId: 'worker-1', title: 'Docs' }],
     })
     expect(agent!.snapshot().managedSessions).toEqual(['hub:worker-1'])
+  })
+
+  it("starts sessions with the hub's configured New-session runtime, not what a browser last sent", async () => {
+    let runtimes: NewSessionRuntimesSetting = {
+      copilot: { model: 'model-a', reasoningEffort: '', contextTier: 'default', mode: 'autopilot' },
+    }
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      reply('Started it.')(fakeSession, '')
+    })
+    await start({ newSessionRuntimes: () => runtimes })
+    await agent!.send('start docs work', {
+      computerId: 'hub', mode: 'interactive', provider: 'claude', model: 'stale-model', reasoningEffort: 'max',
+    })
+    await settled()
+    expect(hub.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({
+      provider: 'copilot', model: 'model-a', mode: 'autopilot', contextTier: 'default',
+    }))
+    expect(vi.mocked(hub.createSession).mock.lastCall![1]).not.toHaveProperty('reasoningEffort')
+
+    runtimes = {}
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('create_session')({ title: 'More', prompt: 'More docs' })
+      reply('Started it.')(fakeSession, '')
+    })
+    await agent!.send('more docs work')
+    await settled()
+    const input = vi.mocked(hub.createSession).mock.lastCall![1]
+    expect(input).toMatchObject({ provider: 'copilot' })
+    expect(input).not.toHaveProperty('model')
+    expect(input).not.toHaveProperty('mode')
+  })
+
+  it('reads models from the hub catalog of the computer and provider asked about', async () => {
+    let listed: unknown
+    sdk.behaviors.push(async (fakeSession) => {
+      listed = await fakeSession.tool('list_models')({ provider: 'claude' })
+      reply('Listed them.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('which models can a session use?')
+    await settled()
+    expect(hub.providerRuntimeOptions).toHaveBeenCalledWith('hub', 'claude')
+    expect(String(listed)).toContain('- model-a')
   })
 
   it('flushes streamed reply text before publishing its tool activity boundary', async () => {
@@ -1353,7 +1401,7 @@ describe('ManagerAgent', () => {
     await start()
     await agent!.send('start docs work')
     await settled()
-    expect(sdk.prompts[1]).toContain('A previous attempt at this message failed after: Started "Docs" on development. Do not repeat these')
+    expect(sdk.prompts[1]).toContain('A previous attempt at this message failed after: Started "Docs" on development with the default model. Do not repeat these')
   })
 
   it('stops the current turn on cancel and keeps going with the queue', async () => {

@@ -420,6 +420,8 @@ export async function buildApp(
         responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
         // Unset until Dreamer starts, and while it is off.
         progressContext: () => dreamerService?.progressView(),
+        // App settings → Models, read as each Oracle session starts.
+        newSessionRuntimes: () => settingsProfileStore?.snapshot().values.newSessionRuntimes,
         structuredMemory: managerStructuredMemory,
         recordProactiveOutcomes: (input) => {
           if (!proactiveCoordinator) {

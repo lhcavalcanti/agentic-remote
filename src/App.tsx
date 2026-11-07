@@ -310,12 +310,13 @@ import {
   oracleNotificationTags,
   type NotificationScope,
 } from '../shared/notifications'
-import type {
-  AppearanceSetting,
-  NewSessionBackendSetting,
-  OracleResponseStyle,
-  SettingsProfileKey,
-  SettingsProfileValues,
+import {
+  DEFAULT_SESSION_PROVIDER,
+  type AppearanceSetting,
+  type NewSessionBackendSetting,
+  type OracleResponseStyle,
+  type SettingsProfileKey,
+  type SettingsProfileValues,
 } from '../shared/settings-profile'
 import { knowledgeRestoreAction } from './knowledge-restore'
 import {
@@ -2229,7 +2230,7 @@ function NewSessionDialog({
   ) => void
 }) {
   const [computerId, setComputerId] = useState('')
-  const [provider, setProvider] = useState<AgentProvider>('copilot')
+  const [provider, setProvider] = useState<AgentProvider>(DEFAULT_SESSION_PROVIDER)
   const [cwd, setCwd] = useState('~')
   const [directoryListing, setDirectoryListing] =
     useState<DirectoryListing>()
@@ -2291,7 +2292,7 @@ function NewSessionDialog({
     initialized.current = true
     initialSelection.current = initialComputerId
     setComputerId(initialComputerId)
-    setProvider('copilot')
+    setProvider(DEFAULT_SESSION_PROVIDER)
     setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
     setDirectoryComputerId(initialComputerId)
     setDirectoryListing(undefined)
@@ -2584,7 +2585,7 @@ function NewSessionDialog({
               const nextComputerId = event.target.value
               directoryRequest.current += 1
               setComputerId(nextComputerId)
-              setProvider('copilot')
+              setProvider(DEFAULT_SESSION_PROVIDER)
               setHistoryKey('')
               setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
               setDirectoryListing(undefined)
@@ -7540,23 +7541,18 @@ function App() {
       saveSetting('newSessionFolders', Object.keys(next).length ? next : null),
     [saveSetting],
   )
-  // Your new-session defaults live in this browser, so each message to the
-  // manager carries them for the sessions it starts for you.
+  // Oracle reads the New-session runtime from the hub's settings profile as
+  // each session starts; a message carries only this device's computer and folders.
   const managerDefaults = useMemo<ManagerClientDefaults>(() => {
-    const copilot = defaultRuntimes.copilot
     const folders = Object.fromEntries(
       Object.entries(defaultSessionFolders).filter(([, folder]) => folder.trim()),
     )
     const local = computers.find((computer) => computer.isLocal)
     return {
-      provider: 'copilot',
       ...(local ? { computerId: local.id } : {}),
-      ...(copilot.mode ? { mode: copilot.mode } : {}),
-      ...(copilot.model ? { model: copilot.model } : {}),
-      ...(copilot.model && copilot.reasoningEffort ? { reasoningEffort: copilot.reasoningEffort } : {}),
       ...(Object.keys(folders).length ? { folders } : {}),
     }
-  }, [computers, defaultRuntimes, defaultSessionFolders])
+  }, [computers, defaultSessionFolders])
   const accentTheme: AccentTheme = profile.accent ?? 'agentic'
   const appearanceSetting: AppearanceSetting = profile.appearance ?? 'system'
   const prefersLight = useSyncExternalStore(subscribePrefersLight, prefersLightNow)

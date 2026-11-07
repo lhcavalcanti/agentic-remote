@@ -46,10 +46,15 @@ The cache lives only in memory, for the hub process, while Dreamer is enabled.
     is closed: a node resync reports a session that merely closed this way too.
   - `computer.removed` drops that computer's entries.
 - **Monotonic.** An update applies only when its `(revision, updatedAt)` is not
-  older than the entry's, and an event that arrives while a listing is in flight
-  wins over that listing. The one exception is a listing from a computer that
-  answered: revisions persist and only grow, so a lower one means the computer
-  lost its session store, and the entry starts over and is read again.
+  older than the entry's, and an event applied while a listing is in flight
+  wins over that listing; an older event changes nothing. The one exception is
+  a listing from a computer that answered: revisions persist and only grow, so
+  a lower one means the computer lost its session store, and the entry starts
+  over and is read again.
+- **Closure time.** Closing leaves `updatedAt` alone, and a reconnecting
+  computer reports closes late. A close is dated by `archivedAt`, else when
+  observed for an entry cached open, else by `updatedAt` for a session first
+  seen closed, and never later than now. Retention and the closed cap use it.
 - **Bounds.**
   - 200 open entries, keeping the most recently updated.
   - 20 closed entries, each retained for 24 h.

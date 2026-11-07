@@ -855,8 +855,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
     its last-known sessions and MUST be named; unregistered computers' sessions
     are dropped. A removal without a replacement closes rather than deletes.
   - Otherwise events, listings and reads MUST merge monotonically by revision,
-    then update time. An event received while a listing is in flight wins over
+    then update time. An event applied while a listing is in flight wins over
     that listing, and a read MUST NOT reopen a session.
+  - A close MUST be dated by the session's archive time, else when observed
+    for a session cached open, else by its last update, never later than now.
   - It MAY passively read at most 12 changed open sessions per refresh, keeping
     only the latest assistant reply and a pending question or permission as
     bounded single-line excerpts, in memory only, for at most 200 open sessions

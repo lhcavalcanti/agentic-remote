@@ -205,8 +205,11 @@ export class DreamerProgress {
   applyEvent(event: HubEvent): void {
     switch (event.type) {
       case 'session.upserted':
-        this.touch(keyOf(event.session.computerId, event.session.id))
-        this.merge(event.session, event.summary !== true)
+        // An older event says nothing about now, so it neither excuses an
+        // absence nor overrides the listing in flight.
+        if (this.merge(event.session, event.summary !== true)) {
+          this.touch(keyOf(event.session.computerId, event.session.id))
+        }
         break
       case 'session.removed': {
         const key = keyOf(event.computerId, event.sessionId)
@@ -377,10 +380,11 @@ export class DreamerProgress {
     })
   }
 
-  private merge(session: ManagedSession, transcript: boolean): void {
+  /** Returns whether the session was new enough to apply. */
+  private merge(session: ManagedSession, transcript: boolean): boolean {
     const key = keyOf(session.computerId, session.id)
     const current = this.entries.get(key)
-    if (current && !notOlder(session, current)) return
+    if (current && !notOlder(session, current)) return false
     const next: DreamerProgressEntry = {
       computerId: session.computerId,
       sessionId: session.id,
@@ -404,8 +408,23 @@ export class DreamerProgress {
       if (current.detail) next.detail = current.detail
       if (current.retryReadAt) next.retryReadAt = current.retryReadAt
     }
-    if (!next.isOpen) next.closedAt = current?.closedAt ?? this.now().toISOString()
+    if (!next.isOpen) next.closedAt = this.closedAt(session, current)
     this.entries.set(key, next)
+    return true
+  }
+
+  /**
+   * Closing leaves updatedAt alone and a reconnecting computer reports closes
+   * late, so: an archive's own time, else now for a session seen open, else
+   * no earlier than its last update. Never later than now.
+   */
+  private closedAt(session: ManagedSession, current: DreamerProgressEntry | undefined): string {
+    if (current?.closedAt) return current.closedAt
+    const now = this.now().getTime()
+    const at = session.archivedAt
+      ? timeOf(session.archivedAt)
+      : current ? now : timeOf(session.updatedAt)
+    return new Date(Math.min(at, now)).toISOString()
   }
 
   private close(entry: DreamerProgressEntry): void {

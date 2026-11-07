@@ -243,12 +243,68 @@ describe('DreamerProgress events', () => {
 
   it('closes a session that reports itself closed and reopens it when it returns', () => {
     const { progress, entry } = setup()
+    progress.applyEvent({ type: 'session.upserted', session: session() })
     progress.applyEvent({ type: 'session.upserted', session: session({ isOpen: false, revision: 2 }) })
     expect(entry()).toMatchObject({ isOpen: false, closedAt: '2026-11-07T10:05:00.000Z' })
 
     progress.applyEvent({ type: 'session.upserted', session: session({ isOpen: true, revision: 3 }) })
     expect(entry()?.isOpen).toBe(true)
     expect(entry()).not.toHaveProperty('closedAt')
+  })
+
+  it('dates a close it saw happen now, even for a session idle for days, and keeps that date', () => {
+    const { clock, progress, entry } = setup()
+    // Closing bumps the revision but not updatedAt.
+    const idle = { updatedAt: '2026-11-04T10:00:00.000Z' }
+    progress.applyEvent({ type: 'session.upserted', session: session(idle) })
+    progress.applyEvent({ type: 'session.upserted', session: session({ ...idle, isOpen: false, revision: 2 }) })
+    expect(entry()).toMatchObject({ isOpen: false, closedAt: '2026-11-07T10:05:00.000Z' })
+
+    clock.now = new Date('2026-11-07T10:30:00.000Z')
+    progress.applyEvent({
+      type: 'session.upserted',
+      session: session({ ...idle, isOpen: false, revision: 3, title: 'Renamed' }),
+    })
+    expect(entry()).toMatchObject({ title: 'Renamed', closedAt: '2026-11-07T10:05:00.000Z' })
+  })
+
+  it('dates a session first seen closed by its own record, never later than now', () => {
+    const { progress, entry } = setup()
+    const closed = (id: string, overrides: Partial<ManagedSession>) => progress.applyEvent({
+      type: 'session.upserted',
+      summary: true,
+      session: session({ id, isOpen: false, revision: 9, ...overrides }),
+    })
+    closed('archived', { updatedAt: '2026-11-01T08:00:00.000Z', archivedAt: '2026-11-07T08:00:00.000Z' })
+    closed('closed', { updatedAt: '2026-11-07T09:00:00.000Z' })
+    closed('old-archive', { updatedAt: '2026-11-01T08:00:00.000Z', archivedAt: '2026-11-05T08:00:00.000Z' })
+    closed('old-close', { updatedAt: '2026-11-05T08:00:00.000Z' })
+    closed('ahead', { archivedAt: '2026-11-07T11:00:00.000Z' })
+
+    expect(entry('archived')?.closedAt).toBe('2026-11-07T08:00:00.000Z')
+    expect(entry('closed')?.closedAt).toBe('2026-11-07T09:00:00.000Z')
+    expect(entry('old-archive')).toBeUndefined()
+    expect(entry('old-close')).toBeUndefined()
+    expect(entry('ahead')?.closedAt).toBe('2026-11-07T10:05:00.000Z')
+  })
+
+  it('dates an archive by its record even when it last saw the session open', () => {
+    const { progress, entry } = setup()
+    progress.applyEvent({ type: 'session.upserted', session: session({ id: 'recent' }) })
+    progress.applyEvent({ type: 'session.upserted', session: session({ id: 'outage' }) })
+
+    progress.applyEvent({
+      type: 'session.upserted',
+      session: session({ id: 'recent', isOpen: false, revision: 2, archivedAt: '2026-11-07T10:04:00.000Z' }),
+    })
+    // Archived while its computer was unreachable, and reported on reconnect.
+    progress.applyEvent({
+      type: 'session.upserted',
+      session: session({ id: 'outage', isOpen: false, revision: 2, archivedAt: '2026-11-04T10:00:00.000Z' }),
+    })
+
+    expect(entry('recent')?.closedAt).toBe('2026-11-07T10:04:00.000Z')
+    expect(entry('outage')).toBeUndefined()
   })
 
   it('forgets every session of a removed computer', () => {
@@ -376,6 +432,37 @@ describe('DreamerProgress refresh', () => {
       latest: { excerpt: 'Old incarnation.' },
       request: { kind: 'question', excerpt: 'Which branch?' },
     })
+  })
+
+  it('starts a session over even when an older event for it raced the listing', async () => {
+    const { source, progress, entry } = setup()
+    progress.applyEvent({
+      type: 'session.upserted',
+      session: session({ revision: 40, messages: [reply('Old incarnation.')] }),
+    })
+    source.answered = ['c1']
+    source.sessions = [session({ revision: 3, status: 'running' })]
+    source.beforeListing = () => {
+      // The new incarnation's events are older than the cache, so they change nothing.
+      progress.applyEvent({ type: 'session.upserted', session: session({ revision: 2, status: 'running' }) })
+    }
+
+    await progress.refresh()
+
+    expect(entry()).toMatchObject({ revision: 3, status: 'running' })
+    expect(entry()?.latest).toBeUndefined()
+  })
+
+  it('does not let an older event excuse a session that listings omit', async () => {
+    const { clock, progress, entry } = setup()
+    progress.applyEvent({ type: 'session.upserted', session: session({ revision: 5 }) })
+    await progress.refresh()
+
+    progress.applyEvent({ type: 'session.upserted', session: session({ revision: 4 }) })
+    clock.now = new Date('2026-11-07T10:10:00.000Z')
+    await progress.refresh()
+
+    expect(entry()).toMatchObject({ isOpen: false, closedAt: '2026-11-07T10:10:00.000Z' })
   })
 
   it('reopens a closed session that its answering computer lists at a lower revision', async () => {
@@ -533,7 +620,10 @@ describe('DreamerProgress bounds', () => {
     const { clock, progress } = setup({ closedEntries: 2, openEntries: 3 })
     for (const [index, id] of ['c-a', 'c-b', 'c-c'].entries()) {
       clock.now = new Date(`2026-11-07T10:0${index}:00.000Z`)
-      progress.applyEvent({ type: 'session.upserted', session: session({ id, isOpen: false }) })
+      progress.applyEvent({
+        type: 'session.upserted',
+        session: session({ id, isOpen: false, updatedAt: clock.now.toISOString() }),
+      })
     }
     for (const index of [1, 2, 3, 4]) {
       progress.applyEvent({
@@ -548,5 +638,22 @@ describe('DreamerProgress bounds', () => {
     clock.now = new Date('2026-11-08T10:01:30.000Z')
     progress.applyEvent({ type: 'session.upserted', session: session({ id: 'o-4', revision: 2 }) })
     expect(ids()).toEqual(['c-c', 'o-2', 'o-3', 'o-4'])
+  })
+
+  it('keeps recent closures when a reconnecting computer reports older archives', () => {
+    const { clock, progress } = setup({ closedEntries: 2 })
+    for (const [index, id] of ['a', 'b'].entries()) {
+      progress.applyEvent({ type: 'session.upserted', session: session({ id }) })
+      clock.now = new Date(`2026-11-07T10:1${index}:00.000Z`)
+      progress.applyEvent({ type: 'session.upserted', session: session({ id, isOpen: false, revision: 2 }) })
+    }
+
+    progress.applyEvent({
+      type: 'session.upserted',
+      summary: true,
+      session: session({ id: 'archived', isOpen: false, archivedAt: '2026-11-07T02:00:00.000Z' }),
+    })
+
+    expect(progress.snapshot().entries.map(({ sessionId }) => sessionId).sort()).toEqual(['a', 'b'])
   })
 })

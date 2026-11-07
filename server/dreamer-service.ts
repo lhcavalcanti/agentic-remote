@@ -1,14 +1,16 @@
 import { createHash } from 'node:crypto'
 import {
+  DREAMER_PROGRESS_REFRESH_MS,
   hasDreamerSessionIdentity,
   isDreamerSessionItem,
   type DreamerCompletionCandidate,
   type DreamerPlan,
+  type DreamerProgressStatus,
   type DreamerSettings,
   type DreamerSnapshot,
   type DreamerTaskCompletionProvenance,
 } from '../shared/dreamer.js'
-import type { ManagedSession } from '../shared/contracts.js'
+import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import type {
   ManagerInternalSubmission,
   ManagerMessage,
@@ -18,6 +20,8 @@ import type {
   OracleTaskAttempt,
   OracleTaskCompletionCandidate,
   OracleTaskEvidence,
+  OracleTaskOwner,
+  OracleTaskStatus,
   OracleTaskView,
 } from '../shared/oracle-task.js'
 import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
@@ -53,10 +57,33 @@ import {
   dreamerScheduleDecision,
   validateDreamerTimeZone,
 } from './dreamer-schedule.js'
+import {
+  DreamerProgress,
+  type DreamerProgressLimits,
+  type DreamerProgressRefresh,
+  type DreamerProgressSnapshot,
+  type DreamerProgressSource,
+} from './dreamer-progress.js'
 
 export interface DreamerPlannerExecutionInput extends DreamerPlannerInput {
   defaultPlan: DreamerPlanDraft
 }
+
+export interface DreamerFollowUp {
+  title: string
+  owner: OracleTaskOwner
+  status: OracleTaskStatus
+  nextAction: string
+}
+
+/** What Oracle is told about session progress and the open task list. */
+export interface DreamerProgressView extends DreamerProgressSnapshot {
+  error?: string
+  /** Open tasks, most recently changed first. */
+  followUps: DreamerFollowUp[]
+}
+
+const PROGRESS_REFRESH_ERROR = 'Dreamer could not refresh session progress.'
 
 export interface DreamerServiceOptions {
   now?: () => Date
@@ -78,6 +105,12 @@ export interface DreamerServiceOptions {
   ) => Promise<ManagerMessage>
   managerMessages?: () => ManagerMessage[]
   managerMessage?: (id: string) => ManagerMessage | undefined
+  /** Without a source Dreamer keeps no session progress. */
+  progressSource?: DreamerProgressSource
+  progressRefreshMs?: number
+  progressLimits?: Partial<DreamerProgressLimits>
+  /** Runs after each refresh with the sessions computers answered for. */
+  sweepLifecycle?: (sessions: ManagedSession[]) => Promise<void>
 }
 
 export class DreamerUnavailableError extends Error {
@@ -184,10 +217,19 @@ export class DreamerService {
   private readonly enqueueManagerTask?: DreamerServiceOptions['enqueueManagerTask']
   private readonly managerMessages?: DreamerServiceOptions['managerMessages']
   private readonly managerMessage?: DreamerServiceOptions['managerMessage']
+  private readonly progress?: DreamerProgress
+  private readonly progressRefreshMs: number
+  private readonly sweepLifecycle?: DreamerServiceOptions['sweepLifecycle']
   private initialized = false
   private initializing?: Promise<void>
   private started = false
   private timer?: ReturnType<typeof setInterval>
+  /** Armed exactly while progress is being kept: enabled and started. */
+  private progressTimer?: ReturnType<typeof setInterval>
+  private progressGeneration = 0
+  private progressRun?: Promise<void>
+  private progressDueAt?: string
+  private progressError?: string
   private lifecycleGeneration = 0
   private activeRun?: Promise<DreamerSnapshot>
   private activeCommit?: Promise<void>
@@ -214,6 +256,14 @@ export class DreamerService {
     this.enqueueManagerTask = options.enqueueManagerTask
     this.managerMessages = options.managerMessages
     this.managerMessage = options.managerMessage
+    this.progress = options.progressSource
+      ? new DreamerProgress(options.progressSource, {
+          now: this.now,
+          limits: options.progressLimits,
+        })
+      : undefined
+    this.progressRefreshMs = options.progressRefreshMs ?? DREAMER_PROGRESS_REFRESH_MS
+    this.sweepLifecycle = options.sweepLifecycle
   }
 
   initialize(): Promise<void> {
@@ -237,6 +287,7 @@ export class DreamerService {
     const snapshot = this.store.snapshot()
     if (!snapshot.settings.enabled) return
     this.startTimer()
+    this.startProgress()
     if (this.activeRun) {
       this.scheduleAfterActive(this.activeRun, this.lifecycleGeneration)
       return
@@ -248,15 +299,18 @@ export class DreamerService {
     this.lifecycleGeneration += 1
     this.started = false
     this.stopTimer()
+    this.stopProgress()
     const commit = this.activeCommit
     if (commit) await commit.catch(() => undefined)
   }
 
   snapshot(): DreamerSnapshot {
     this.requireAvailable()
+    const progress = this.progressStatus()
     return {
       ...publicSnapshot(this.store.snapshot(), this.now()),
       tasks: this.taskStore?.snapshot().tasks ?? [],
+      ...(progress ? { progress } : {}),
     }
   }
 
@@ -278,6 +332,53 @@ export class DreamerService {
     return this.timer !== undefined
   }
 
+  /** Keeps progress current between refreshes; ignored unless enabled. */
+  handleHubEvent(event: HubEvent): void {
+    if (!this.progressTimer) return
+    try {
+      this.progress?.applyEvent(event)
+    } catch {
+      // Progress is advisory; a bad event must never break hub delivery.
+    }
+  }
+
+  /**
+   * Refreshes session progress, then reconciles tasks and sweeps lifecycle
+   * from the same listing. Callers that arrive mid-refresh share it, and a
+   * refresh that outlives a disable or stop publishes nothing. Never rejects.
+   */
+  refreshProgress(): Promise<void> {
+    if (!this.progress || !this.progressTimer) return Promise.resolve()
+    if (this.progressRun) return this.progressRun
+    const run = this.runProgress(this.progress, this.progressGeneration)
+    this.progressRun = run
+    const settle = () => {
+      if (this.progressRun === run) this.progressRun = undefined
+    }
+    run.then(settle, settle)
+    return run
+  }
+
+  progressView(): DreamerProgressView | undefined {
+    if (!this.progress || !this.progressTimer) return undefined
+    let tasks: OracleTask[] = []
+    try {
+      tasks = this.taskStore?.snapshot().tasks ?? []
+    } catch {
+      tasks = []
+    }
+    const followUps = tasks
+      .filter(({ status }) => status !== 'completed' && status !== 'dismissed')
+      .sort((left, right) =>
+        left.updatedAt < right.updatedAt ? 1 : left.updatedAt > right.updatedAt ? -1 : 0)
+      .map(({ title, owner, status, nextAction }) => ({ title, owner, status, nextAction }))
+    return {
+      ...this.progress.snapshot(),
+      ...(this.progressError ? { error: this.progressError } : {}),
+      followUps,
+    }
+  }
+
   async updateSettings(input: DreamerSettings & { revision: number }): Promise<DreamerSnapshot> {
     await this.initialize()
     this.requireAvailable()
@@ -297,6 +398,7 @@ export class DreamerService {
     if (!settings.enabled) {
       this.lifecycleGeneration += 1
       this.stopTimer()
+      this.stopProgress()
       await this.setProactiveEnabled?.(false)
       return this.snapshot()
     }
@@ -305,6 +407,7 @@ export class DreamerService {
     }
     this.started = true
     this.startTimer()
+    this.startProgress()
     await this.setProactiveEnabled?.(true)
     // A settings save is also the startup/enablement check. This keeps the
     // route deterministic without adding a manual-run endpoint.
@@ -1551,6 +1654,63 @@ export class DreamerService {
     this.timer = undefined
   }
 
+  private startProgress(): void {
+    if (!this.progress || this.progressTimer || !this.started || this.runtimeError) return
+    const interval = this.progressRefreshMs
+    const due = () => new Date(this.now().getTime() + interval).toISOString()
+    this.progressTimer = this.setIntervalImpl(() => {
+      this.progressDueAt = due()
+      void this.refreshProgress()
+    }, interval)
+    const unref = (this.progressTimer as unknown as { unref?: () => void }).unref
+    unref?.call(this.progressTimer)
+    this.progressDueAt = due()
+    void this.refreshProgress()
+  }
+
+  /** Forgets all progress; a refresh still running publishes nothing. */
+  private stopProgress(): void {
+    this.progressGeneration += 1
+    this.progressRun = undefined
+    this.progressDueAt = undefined
+    this.progressError = undefined
+    this.progress?.clear()
+    if (!this.progressTimer) return
+    this.clearIntervalImpl(this.progressTimer)
+    this.progressTimer = undefined
+  }
+
+  private async runProgress(progress: DreamerProgress, generation: number): Promise<void> {
+    let refreshed: DreamerProgressRefresh | undefined
+    try {
+      refreshed = await progress.refresh()
+    } catch {
+      if (generation === this.progressGeneration) this.progressError = PROGRESS_REFRESH_ERROR
+    }
+    if (generation !== this.progressGeneration) return
+    if (refreshed) this.progressError = undefined
+    // Task upkeep reads Oracle's messages, not the listing, so it runs even
+    // when the listing failed.
+    await this.reconcileTasks().catch(() => undefined)
+    if (!refreshed || generation !== this.progressGeneration || !this.sweepLifecycle) return
+    try {
+      await this.sweepLifecycle(refreshed.authoritative)
+    } catch {
+      // The next refresh sweeps again; the inbox keeps its own cursor.
+    }
+  }
+
+  private progressStatus(): DreamerProgressStatus | undefined {
+    if (!this.progress || !this.progressTimer) return undefined
+    const { refreshedAt, staleComputers } = this.progress.snapshot()
+    return {
+      ...(refreshedAt ? { refreshedAt } : {}),
+      ...(this.progressDueAt ? { nextRefreshAt: this.progressDueAt } : {}),
+      staleComputers: staleComputers.map(({ name }) => name),
+      ...(this.progressError ? { error: this.progressError } : {}),
+    }
+  }
+
   private requireAvailable(): void {
     if (!this.initialized) throw new DreamerUnavailableError('Dreamer is not initialized.')
     if (this.runtimeError) throw new DreamerUnavailableError()
@@ -1588,6 +1748,7 @@ export class DreamerService {
   ): void {
     this.runtimeError = safeError
     this.stopTimer()
+    this.stopProgress()
   }
 
   private scheduleAfterActive(

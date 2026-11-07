@@ -156,10 +156,15 @@ Oracle never picks a model for the sessions it starts. `create_session` uses:
 | 2 | The provider's runtime in **App settings → Models** (`newSessionRuntimes` in the hub's settings profile), read as each session starts | Model not offered, or refused before creation: level 3 once, reported. Effort or context it refuses: the same model without that setting |
 | 3 | No model: the provider's own default on that computer. For Copilot, its `model` setting (`/config model`) or `COPILOT_MODEL` | — |
 
-Configured effort and context apply only to the configured model, and only
-where the model offers and accepts them. An effort the user asks for is kept:
-if it cannot run (Copilot needs a model for one), nothing starts and Oracle
-lists models and asks. Copilot is the default provider.
+Configured effort applies only to the configured model, and only where the
+model offers and accepts it. The configured context size applies to whichever
+model runs, the configured one or one the user names, where that model offers
+and accepts it; otherwise the session runs with default context and the result
+says so. An effort or context size the user asks for (`contextTier`) is kept:
+if it cannot run (Copilot needs a model for an effort, and long context needs a
+model that offers it), nothing starts and Oracle lists the models that offer it
+and asks. With no model the provider's default carries no context size.
+Copilot is the default provider.
 
 ### Notifications
 
@@ -214,17 +219,17 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | Tool | Purpose |
 |---|---|
 | `list_computers` | Computers, online state, and providers |
-| `list_models` | A provider's models on a computer (Copilot unless asked), by the exact ID `create_session` takes, from that provider's own discovery. A provider recorded unavailable is asked again before it is refused, here and in `create_session`, so one that has recovered since is used. Read-only, so voice may use it |
+| `list_models` | A provider's models on a computer (Copilot unless asked), by the exact ID `create_session` takes, from that provider's own discovery, marking those with long context. A provider recorded unavailable is asked again before it is refused, here and in `create_session`, so one that has recovered since is used. Read-only, so voice may use it |
 | `list_sessions` | Open sessions, or recent history with `includeClosed` |
 | `get_session` | Detail and the last N messages (default 6, maximum 30, each truncated), read as recorded: the session is never opened or resumed. A waiting session's request shows its `requestId`, options, choices, and form fields, so it can be answered |
 | `ask_session` | A side question answered from a fork of the session's finished history, without prompting or interrupting it; a session mid-turn has its current state added (Copilot only) |
-| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder. It opens with the Copilot SDK unless Oracle's `sessionBackend` setting is `terminal`; a provider without a terminal always uses its SDK. Without a provider it starts on Copilot; without a model it uses the configured default (see New-session model precedence). The model and effort are checked against the provider's catalog before anything is created (an unreadable catalog leaves that to the provider). A named model it lacks starts nothing, and the failure lists that provider's models and tells Oracle to ask rather than switch model or provider; a configured default it lacks gives way to the provider's own default, which the result reports. A provider that refuses a listed model only once the task runs leaves the session with that failed turn, which Oracle reads and reports before asking. The result and activity name the session's recorded model: the catalog-checked one it was created with until the session reports its own |
+| `create_session` | Start a session (computer, cwd, title, prompt, provider, model, effort, context size, mode), name it, and send the task. Without a `cwd` it starts in Oracle's session folder for that computer, else your default folder. It opens with the Copilot SDK unless Oracle's `sessionBackend` setting is `terminal`; a provider without a terminal always uses its SDK. Without a provider it starts on Copilot; without a model it uses the configured default (see New-session model precedence). The model, effort, and context size are checked against the provider's catalog before anything is created (an unreadable catalog leaves that to the provider). A named model or asked-for context size it lacks starts nothing, and the failure lists that provider's models (for a context size, those that offer it) and tells Oracle to ask rather than switch model or provider; a configured default it lacks gives way to the provider's own default, which the result reports. A provider that refuses a listed model only once the task runs leaves the session with that failed turn, which Oracle reads and reports before asking. The result and activity name the session's recorded model: the catalog-checked one it was created with until the session reports its own. The result also says when the session runs with long context, or when the configured long context does not apply |
 | `set_session_folder` | Change Oracle's session folder for a computer when you ask; checked on that computer, kept with Oracle's settings, and allowed in Ask mode since it touches no session |
 | `set_session_backend` | Change how Oracle opens new sessions (`sdk` or `terminal`) when you ask; kept with Oracle's settings and allowed in Ask mode |
 | `send_to_session` | Send a follow-up to any session. A busy session is steered: the message is typed into its running turn (a terminal that is not ready yet takes it as soon as its composer is back). Only a refusal that certainly sent nothing falls back to the session's queue; a possibly-delivered steer is never retried. A closed session is reopened and a suspended one resumed first. A folder-trust prompt is answered only when it is Copilot's genuine terminal prompt (exact options) naming the session's own folder |
 | `answer_session` | Answer what a session waits on, so it carries on without you: a permission request (option by name, or approve/deny), including Copilot's folder trust; a question (a choice or free text), several choices, or a form's values; or dismiss it. An optional `requestId` stops an answer reaching a different prompt |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
-| `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything |
+| `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything. With `sessionClosePolicy: 'oracle-started'` it closes an idle session Oracle started, named by its full id, without asking, under the checks in [Closing without asking](#closing-without-asking) |
 | `list_skills` | Your skills (name and description) through the runtime's `skills.discover`, so delegated prompts can name them |
 | `memory_list`, `memory_read`, `memory_write`, `memory_append`, `memory_delete` | The agent's memory |
 | `structured_memory_search` | Search active records in the exact scopes available to this Oracle turn |
@@ -233,6 +238,39 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 Sessions are addressed by ID; the computer is resolved from the live list. Tool
 errors return as tool results the model can read, never as thrown failures that
 end the turn.
+
+### Closing without asking
+
+`sessionClosePolicy` is `ask` by default; only the settings route changes it.
+Under `oracle-started`, `close_session` still asks, naming the first reason,
+unless every check passes. Each check fails closed: what cannot be read is a
+reason to ask.
+
+| Check | Asks when |
+|---|---|
+| Provenance | The message is not typed (the tool's guards already refuse voice, scheduled, proactive, task, and Ask turns) |
+| Name | The session was named by a shortened id |
+| Origin | The registry entry is not `origin: 'manager'`, or is removed or replaced |
+| Live state | `readSession` fails, or the session is not idle, or has a pending permission or question, queued or dispatching messages, a failed prompt, a pin, or restart recovery |
+| Background work | The list cannot be read or is unsupported, or a task is running or queued, as for suspending |
+| Earlier work | A tool call from another turn, such as a stopped task's, is still running: what it starts or uses is recorded only when it ends. Calls are counted by turn at the tool boundary |
+| Oracle tasks | Tasks cannot be read, or a task that is not completed or dismissed lists the session as its source or in an attempt, or, before reconciliation records it there, an attempt's turn used it: on the turn's message or a reply to it, in the whole conversation, counting activity recorded but not yet written |
+| Turn | The turn the call started in has ended, been stopped, or belongs to an earlier conversation. Each tool call keeps that turn (`AsyncLocalStorage` at the tool boundary), so a late call cannot close under the next message's source or cap |
+| Cap | 5 sessions were already closed without asking for this message. The turn and the cap are checked last, and the close is counted before anything is awaited, so parallel calls cannot exceed it. Retries and a restart count the transcript's records |
+
+A close that passes is recorded as `{ state: 'closing', decidedBy: 'oracle' }`
+before `deleteSession`, then confirmed or failed like a close you confirmed.
+Whatever a call records, a close, a request, or other activity, is filed under
+the message whose turn made the call, even after Stop.
+The tool result reports it, so no note is added; a restart that finishes it adds
+one. **Residual risk:** with the policy on, an instruction injected through a
+transcript during a typed turn can close up to 5 idle sessions Oracle started.
+A session that becomes busy between the live read and the deletion is still
+deleted, as with a close you confirm. After **Start over**, a session an
+earlier conversation's task turn used counts only once reconciliation has
+recorded it on the attempt; so does one a task turn was starting when the hub
+restarted. The SDK does not say which turn a call belongs to, so a call the
+runtime makes after Stop has drained it belongs to the next turn.
 
 ## Runtime and recovery
 
@@ -276,13 +314,15 @@ end the turn.
   `startedAt` records through restarts and Retry; 400 blank; 413 too long), keeping its id and its place,
   which is its first line in `conversation.jsonl`; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
   the hub default) chooses Oracle's model, and with `{ sessionFolders: { <computer id>: path | null } }`
-  its session folders, and with `{ sessionBackend: 'sdk' | 'terminal' }` how
-  it opens new sessions; each part is optional and leaves the rest as it is.
+  its session folders, with `{ sessionBackend: 'sdk' | 'terminal' }` how
+  it opens new sessions, and with `{ sessionClosePolicy: 'ask' | 'oracle-started' }`
+  whether it may close idle sessions it started without asking; each part is optional and leaves the rest as it is.
   Only `null` clears a folder (a blank one is a 400), and a computer that is
   not paired is a 404 unless a folder kept for it is being removed.
   The snapshot reports them as `settings` and the socket as
-  `manager.settings`; `sessionBackend` is always reported, `sdk` by default. `state.json` keeps `sessionFolders`,
-  `sessionBackend` only when it is `terminal`, the model the SDK
+  `manager.settings`; `sessionBackend` is always reported, `sdk` by default, and
+  `sessionClosePolicy`, `ask` by default. `state.json` keeps `sessionFolders`,
+  `sessionBackend` only when it is `terminal`, `sessionClosePolicy` only when it is `oracle-started`, the model the SDK
   conversation runs on (`sessionRuntime`), and the model and effort that
   could not start (`unavailableRuntime`); each answer compares the choice with
   `sessionRuntime`, so a change survives a restart or a switch in progress.
@@ -364,6 +404,14 @@ end the turn.
   follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
+- Every stored prompt, answer, notice, tool activity, and close card shows the
+  time the hub recorded it (`createdAt`) through `MessageTime`
+  (`src/MessageTime.tsx`), which session transcripts share: the viewer's
+  locale, calendar, and timezone, the time alone today, the day added on other
+  days, the year in other calendar years, and the full date as its title.
+  Waiting prompts keep theirs in the queue, including while edited. A reply
+  still streaming has no time until it is stored; an unreadable time shows
+  nothing.
 - Sessions Oracle started get a small **Oracle** badge in the session list.
 - Startup, manual Refresh, reconnect, and visibility return re-read Oracle
   alongside sessions and Dreamer. An in-place refresh keeps the last snapshot

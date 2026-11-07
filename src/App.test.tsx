@@ -2108,6 +2108,9 @@ describe('App', () => {
       if (input.expectedRevision !== previous.revision) {
         throw new SessionKnowledgeRequestError('Root changed in another client', 409, previous)
       }
+      if ('knowledgeBasePath' in input) {
+        throw new Error('The UI fixture uses catalog-root mode')
+      }
       const root = fixtureKnowledgeRoots.find((candidate) => candidate.id === input.rootId)
       if (input.rootId && !root) throw new Error('Fixture Knowledge root is not registered')
       const binding: SessionKnowledgeBinding = {
@@ -4158,6 +4161,28 @@ describe('App', () => {
     )
   })
 
+  it('dates a session message from another day and leaves out a time it cannot read', async () => {
+    const older = '2020-01-02T03:04:00.000Z'
+    const datedSession = {
+      ...session,
+      messages: [
+        { id: 'old-1', role: 'user' as const, content: 'From long ago', createdAt: older },
+        { id: 'bad-1', role: 'assistant' as const, content: 'No readable time', createdAt: 'not a time' },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([datedSession])
+    vi.mocked(getSession).mockResolvedValue(datedSession)
+    render(<App />)
+
+    const full = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).format(new Date(older))
+    const oldTime = (await screen.findByText('From long ago')).closest('.message')?.querySelector('time')
+    expect(oldTime).toHaveTextContent(full)
+    expect(oldTime).toHaveAttribute('title', full)
+    expect(screen.getByText('No readable time').closest('.message')?.querySelector('time')).toBeNull()
+  })
+
   it('renders MCP activity as a compact, identifiable tool row', async () => {
     const mcpSession: ManagedSession = {
       ...session,
@@ -5167,6 +5192,38 @@ describe('App', () => {
         contextTier: 'default',
       }),
     )
+  })
+
+  it('keeps the default context size across a model change when the new model offers it', async () => {
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (_computerId, provider) => ({
+        models: provider === 'copilot'
+          ? [
+              { id: 'fixture-model', name: 'Fixture Model', reasoningEfforts: ['high'], contextTiers: ['default', 'long_context'] },
+              { id: 'fixture-long', name: 'Long Model', reasoningEfforts: [], contextTiers: ['default', 'long_context'] },
+              { id: 'fixture-fast', name: 'Fast Model', reasoningEfforts: ['low'], contextTiers: ['default'] },
+            ]
+          : [],
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const model = await screen.findByLabelText('GitHub Copilot default model')
+    fireEvent.change(model, { target: { value: 'fixture-model' } })
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default context size'), {
+      target: { value: 'long_context' },
+    })
+
+    fireEvent.change(model, { target: { value: 'fixture-long' } })
+    expect(screen.getByLabelText('GitHub Copilot default context size')).toHaveValue('long_context')
+    expect(savedSetting('newSessionRuntimes')?.copilot).toEqual({
+      model: 'fixture-long', reasoningEffort: '', contextTier: 'long_context', mode: '',
+    })
+
+    fireEvent.change(model, { target: { value: 'fixture-fast' } })
+    expect(screen.getByLabelText('GitHub Copilot default context size')).toHaveValue('default')
+    expect(savedSetting('newSessionRuntimes')?.copilot).toMatchObject({ model: 'fixture-fast', contextTier: 'default' })
   })
 
   it('refreshes both provider catalogs every time app settings is reopened', async () => {
@@ -10951,7 +11008,9 @@ describe('App', () => {
     }
     const steer = 'End the story with the word mango'
     const pendingBubble = () =>
-      screen.queryByRole('article', { name: 'Your message, pending in the terminal' })
+      screen.queryByRole('article', {
+        name: 'Your message was sent to the terminal and is waiting for the agent',
+      })
     const emit = (event: unknown) => act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
       data: JSON.stringify(event),
     } as MessageEvent))
@@ -10968,10 +11027,10 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
       const bubble = await screen.findByRole('article', {
-        name: 'Your message, pending in the terminal',
+        name: 'Your message was sent to the terminal and is waiting for the agent',
       })
       expect(bubble).toHaveTextContent(steer)
-      expect(bubble).toHaveTextContent('Pending')
+      expect(bubble).toHaveTextContent('Pending in terminal')
       expect(textarea).toHaveValue('')
       expect(sendMessage).toHaveBeenCalledOnce()
 
@@ -11004,7 +11063,7 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
 
       const bubble = await screen.findByRole('article', {
-        name: 'Your message, pending in the terminal',
+        name: 'Your message was sent to the terminal and is waiting for the agent',
       })
       expect(bubble.parentElement).toHaveClass('message-stack')
       expect(
@@ -11025,7 +11084,7 @@ describe('App', () => {
       fireEvent.change(textarea, { target: { value: steer } })
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
       expect(await screen.findByRole('article', {
-        name: 'Your message, pending in the terminal',
+        name: 'Your message was sent to the terminal and is waiting for the agent',
       })).toHaveTextContent(steer)
     })
 
@@ -11047,6 +11106,27 @@ describe('App', () => {
       expect(pendingBubble()).toBeNull()
     })
 
+    it('queues with Ctrl+Enter without showing the terminal-pending echo', async () => {
+      vi.mocked(listSessions).mockResolvedValue([running])
+      vi.mocked(getSession).mockResolvedValue(running)
+      vi.mocked(sendMessage).mockResolvedValue({
+        ...running,
+        queuedPrompts: [{ id: 'q1', content: steer, createdAt: new Date().toISOString() }],
+      })
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+
+      fireEvent.change(textarea, { target: { value: steer } })
+      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        { content: steer, enqueue: true },
+      ))
+      expect(pendingBubble()).toBeNull()
+    })
+
     it('labels a steer the busy terminal will take as soon as it can', async () => {
       vi.mocked(listSessions).mockResolvedValue([running])
       vi.mocked(getSession).mockResolvedValue(running)
@@ -11060,9 +11140,193 @@ describe('App', () => {
 
       fireEvent.change(textarea, { target: { value: steer } })
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-      const label = await screen.findByTitle('Typed into the running turn as soon as the terminal is ready')
+      const delivery = await screen.findByRole('region', { name: 'Steering prompts' })
+      expect(delivery).toHaveTextContent('Steering when ready')
+      expect(delivery).not.toHaveTextContent('Queued for later')
+      expect(delivery).toHaveAttribute(
+        'aria-description',
+        'The next message is waiting for a safe terminal composer to join the running turn',
+      )
+      const label = await screen.findByTitle(
+        'Waits for an empty terminal composer, then joins the running turn at the next safe input point',
+      )
       expect(label).toHaveTextContent('Steer')
       expect(label.parentElement).toHaveTextContent(steer)
+    })
+
+    it('does not label a queued command with stale steer metadata as steering', async () => {
+      const queued = {
+        ...running,
+        queuedPrompts: [{
+          id: 'q1',
+          content: '/usage',
+          createdAt: new Date().toISOString(),
+          command: true,
+          steer: true,
+        }],
+      }
+      vi.mocked(listSessions).mockResolvedValue([queued])
+      vi.mocked(getSession).mockResolvedValue(queued)
+      render(<App />)
+
+      const delivery = await screen.findByRole('region', { name: 'Queued prompts' })
+      expect(delivery).toHaveTextContent('Queued for later')
+      expect(delivery).not.toHaveTextContent('Steering when ready')
+      expect(screen.queryByTitle(
+        'Waits for an empty terminal composer, then joins the running turn at the next safe input point',
+      )).toBeNull()
+    })
+
+    it('does not label an errored steer as steering until its error is resolved', async () => {
+      const queued = {
+        ...running,
+        queuedPrompts: [{
+          id: 'q1',
+          content: steer,
+          createdAt: new Date().toISOString(),
+          steer: true,
+        }],
+        queueState: {
+          state: 'error' as const,
+          promptId: 'q1',
+          message: 'The terminal owner disappeared. The queued prompt was not sent.',
+          updatedAt: new Date().toISOString(),
+        },
+      }
+      vi.mocked(listSessions).mockResolvedValue([queued])
+      vi.mocked(getSession).mockResolvedValue(queued)
+      render(<App />)
+
+      const delivery = await screen.findByRole('region', { name: 'Queued prompts' })
+      expect(delivery).toHaveTextContent('Queued for later')
+      expect(delivery).not.toHaveTextContent('Steering when ready')
+    })
+
+    it.each([
+      {
+        name: 'a running mixed queue whose head can steer',
+        state: {
+          ...running,
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+            { id: 'q2', content: 'Later work', createdAt: new Date().toISOString() },
+          ],
+        },
+        region: 'Steering prompts',
+        heading: 'Steering when ready',
+        description: 'The next message is waiting for a safe terminal composer to join the running turn',
+        steering: true,
+      },
+      {
+        name: 'a running mixed queue whose head waits for later',
+        state: {
+          ...running,
+          queuedPrompts: [
+            { id: 'q1', content: 'Older work', createdAt: new Date().toISOString() },
+            { id: 'q2', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+      {
+        name: 'an idle all-steer queue',
+        state: {
+          ...running,
+          status: 'idle' as const,
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+      {
+        name: 'an archived all-steer queue',
+        state: {
+          ...running,
+          isOpen: false,
+          archivedAt: new Date().toISOString(),
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Retained prompts',
+        heading: 'Retained until reopened',
+        description: 'Messages retained until this session is reopened',
+        steering: false,
+      },
+      {
+        name: 'a running steer queue blocked by failed delivery recovery',
+        state: {
+          ...running,
+          failedPrompt: {
+            content: 'Confirm delivery first',
+            failedAt: new Date().toISOString(),
+          },
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+      {
+        name: 'a running SDK fallback queue with stale steer metadata',
+        state: {
+          ...running,
+          executionMode: 'sdk' as const,
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+      {
+        name: 'a running steer follower behind an unsettled terminal dispatch',
+        state: {
+          ...running,
+          terminalQueueDispatchPending: true,
+          queuedPrompts: [
+            { id: 'q2', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
+    ])('labels $name from lifecycle and its runnable head', async ({
+      state,
+      region,
+      heading,
+      description,
+      steering,
+    }) => {
+      vi.mocked(listSessions).mockResolvedValue([state])
+      vi.mocked(getSession).mockResolvedValue(state)
+      render(<App />)
+
+      const delivery = await screen.findByRole('region', { name: region })
+      expect(delivery).toHaveTextContent(heading)
+      expect(delivery).toHaveAttribute('aria-description', description)
+      if (steering) {
+        expect(within(delivery).getByText(/^Steer ·/)).toHaveAttribute(
+          'title',
+          'Waits for an empty terminal composer, then joins the running turn at the next safe input point',
+        )
+      } else {
+        expect(within(delivery).queryByText(/^Steer ·/)).toBeNull()
+      }
     })
 
     it('is not shown for a failed send, which goes back to the composer', async () => {
@@ -15050,6 +15314,20 @@ describe('App', () => {
       })
     render(<App />)
     await screen.findByText('First queued prompt')
+    const queue = screen.getByRole('region', { name: 'Queued prompts' })
+    expect(queue).toHaveTextContent('Queued for later')
+    expect(queue).toHaveAttribute(
+      'aria-description',
+      'Messages waiting for later delivery',
+    )
+    expect(screen.getByRole('button', { name: 'Queue message' }))
+      .toHaveAttribute('title', 'Queue for later delivery')
+    expect(screen.getByRole('button', { name: 'Queue message' }))
+      .toHaveAttribute(
+        'aria-description',
+        'Queues this message for later delivery',
+      )
+    expect(screen.getByText(/Ctrl\/⌘\+Enter queue for later/)).toBeInTheDocument()
 
     // Editing opens the message for rewriting and leaves it where it is. It
     // used to take it off the queue, so changing your mind, or simply closing

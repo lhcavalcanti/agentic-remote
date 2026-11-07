@@ -21,7 +21,6 @@ export type ManagerMessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 export type ManagerMessageSource =
   | 'typed'
   | 'voice'
-  | 'scheduled'
   | 'proactive'
   | 'task'
 
@@ -47,23 +46,6 @@ export type ManagerProactiveOutcome =
       eventIds: string[]
       reason: string
     }
-
-export const managerCheckCadences = [60, 120, 240, 480] as const
-export type ManagerCheckCadenceMinutes = (typeof managerCheckCadences)[number]
-
-export interface ManagerProactiveSettings {
-  enabled: boolean
-  cadenceMinutes: ManagerCheckCadenceMinutes
-  timeZone: string
-  quietStartHour: number
-  quietEndHour: number
-}
-
-export interface ManagerProactiveSnapshot extends ManagerProactiveSettings {
-  nextCheckAt?: string
-  latestCheckAt?: string
-  latestCheckState?: ManagerMessageState
-}
 
 /** Delivery state of a message you sent the manager. */
 export type ManagerMessageState =
@@ -100,6 +82,11 @@ export interface ManagerConfirmation {
   /** `closing` is recorded before the deletion, so a restart can finish it. */
   state: 'pending' | 'closing' | 'confirmed' | 'declined' | 'failed'
   error?: string
+  /**
+   * Oracle closed it without asking, as `sessionClosePolicy` allows; such a
+   * close is never pending. Absent when the user answered.
+   */
+  decidedBy?: 'oracle'
 }
 
 export interface ManagerMessage {
@@ -132,7 +119,7 @@ export interface ManagerMessage {
   error?: string
   /** Durable retries of the same message after its first terminal result. */
   retryCount?: number
-  /** A completed scheduled check inside its quiet window must not alert. */
+  /** A finished proactive observation is bookkeeping and must not alert. */
   suppressNotification?: boolean
   /** The message of yours a reply or activity belongs to. */
   replyTo?: string
@@ -182,6 +169,13 @@ export interface ManagerInternalSubmission {
 /** How Oracle opens the sessions it starts: the Copilot SDK, or a terminal (tmux). */
 export type ManagerSessionBackend = 'sdk' | 'terminal'
 
+/**
+ * `ask` (the default) confirms every close in the app. `oracle-started` lets
+ * a typed Delegate message close an idle session Oracle started, named by its
+ * full id, that no unfinished Oracle task uses; anything else still asks.
+ */
+export type ManagerSessionClosePolicy = 'ask' | 'oracle-started'
+
 export interface ManagerSettings {
   /** Unset uses the hub's default: AGENTIC_REMOTE_MANAGER_MODEL, else Copilot's. */
   model?: string
@@ -207,7 +201,11 @@ export interface ManagerSettingsSnapshot extends ManagerSettings {
    * a client MUST NOT read its absence as the SDK.
    */
   sessionBackend?: ManagerSessionBackend
-  proactive?: ManagerProactiveSnapshot
+  /**
+   * Whether Oracle asks before closing a session. A hub from before this
+   * setting omits it and always asks.
+   */
+  sessionClosePolicy?: ManagerSessionClosePolicy
 }
 
 export interface ManagerSnapshot {
@@ -245,8 +243,8 @@ export interface UpdateManagerSettingsInput {
   sessionFolders?: Record<string, string | null>
   /** How Oracle opens the sessions it starts; absent leaves it as it is. */
   sessionBackend?: ManagerSessionBackend
-  /** Opt-in read-only periodic status checks. */
-  proactive?: ManagerProactiveSettings
+  /** Whether Oracle asks before closing a session; absent leaves it as it is. */
+  sessionClosePolicy?: ManagerSessionClosePolicy
 }
 
 export type ManagerEvent =
@@ -257,7 +255,6 @@ export type ManagerEvent =
       lastError?: string
     }
   | { type: 'manager.message'; message: ManagerMessage }
-  | { type: 'manager.reorder'; messages: ManagerMessage[] }
   | { type: 'manager.delta'; messageId: string; content: string }
   | { type: 'manager.sessions'; managedSessions: string[] }
   | { type: 'manager.reset'; snapshot: ManagerSnapshot }

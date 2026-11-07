@@ -3,20 +3,24 @@ import { z } from 'zod'
 import type {
   AgentMode,
   AgentProvider,
+  BackgroundTaskSnapshot,
   ComputerSummary,
   CreateSessionInput,
   ManagedSession,
   PendingPermission,
   RuntimeModelOption,
   RuntimeReasoningEffort,
+  SessionStatus,
   UserInputField,
   UserInputReplyInput,
 } from '../shared/contracts.js'
 import type {
   ManagerClientDefaults,
+  ManagerConfirmation,
   ManagerMessageSource,
   ManagerProactiveOutcome,
   ManagerSessionBackend,
+  ManagerSessionClosePolicy,
   ManagerSessionRef,
 } from '../shared/manager.js'
 import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
@@ -30,6 +34,8 @@ import {
 } from './manager-structured-memory-search.js'
 import type { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import { registryKey, type ManagerRegistry } from './manager-store.js'
+
+type ContextTier = NewSessionRuntime['contextTier']
 
 export interface ManagerSkillSummary {
   name: string
@@ -61,8 +67,43 @@ export interface ManagerToolHost {
   /** Resumes a suspended session, so it can be steered. */
   resumeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
-  /** Asks you, in the app, to confirm closing a session. Nothing is deleted until you do. */
-  requestCloseConfirmation(session: ManagedSession, reason?: string): Promise<void>
+  /**
+   * Asks you, in the app, to confirm closing a session. Nothing is deleted
+   * until you do. `why` says why Oracle asked when your setting would
+   * otherwise have let it close the session itself.
+   */
+  requestCloseConfirmation(session: ManagedSession, reason?: string, why?: string): Promise<void>
+  /** Whether Oracle asks before closing a session; absent always asks. */
+  sessionClosePolicy?(): ManagerSessionClosePolicy
+  /**
+   * Sessions an Oracle task that is not completed or dismissed still uses.
+   * Throws when the tasks cannot be read; absent counts as unreadable.
+   */
+  unfinishedTaskSessions?(): Array<{ computerId: string; sessionId: string }>
+  /** How many sessions Oracle has closed without asking while answering the current message. */
+  autonomousClosesThisTurn?(): number
+  /** Background work still running in a session; absent counts as unreadable. */
+  backgroundTasks?(computerId: string, sessionId: string): Promise<BackgroundTaskSnapshot>
+  /**
+   * The turn the tool call being handled started in, which stays its turn
+   * however long the call takes. Absent or undefined: no turn is being
+   * answered, so nothing may be closed without asking.
+   */
+  callTurn?(): ManagerTurn | undefined
+  /**
+   * Whether a tool call from a turn other than `turn` is still running, such
+   * as a stopped task's: what it starts or uses is recorded only when it
+   * ends. Absent counts as running.
+   */
+  earlierWorkRunning?(turn: ManagerTurn): boolean
+  /**
+   * Closes a session without asking, recorded in Oracle's transcript before
+   * anything is deleted. Counts toward `autonomousClosesThisTurn` before it
+   * awaits anything, and refuses, before counting or recording anything,
+   * unless the call's turn is still live and under the cap. Gives back how
+   * it ended: `confirmed` or `failed`.
+   */
+  closeWithoutAsking?(session: ManagedSession, reason?: string): Promise<ManagerConfirmation>
   discoverSkills(projectPaths: string[]): Promise<ManagerSkillSummary[]>
   markManaged(session: ManagedSession, task: string): Promise<void>
   registry(): ManagerRegistry
@@ -105,6 +146,15 @@ export interface ManagerToolActivity {
   tool: string
   content: string
   sessionRefs?: ManagerSessionRef[]
+}
+
+/** One turn of Oracle answering a message, as its tool calls see it. */
+export interface ManagerTurn {
+  /** The message being answered. */
+  readonly messageId: string
+  readonly source: ManagerMessageSource
+  /** False once the turn has ended or been stopped, even while a call it made still runs. */
+  live(): boolean
 }
 
 export interface ManagerToolInvocation {
@@ -198,6 +248,32 @@ const proactiveOutcomesSchema = z.object({
 
 function failure(message: string): ManagerToolResult {
   return { textResultForLlm: `Error: ${message}`, resultType: 'failure', error: message }
+}
+
+/** At most this many sessions close without asking while Oracle answers one message. */
+export const AUTONOMOUS_CLOSE_LIMIT = 5
+
+const TURN_ENDED = 'Oracle is no longer answering the message that asked for it'
+
+const EARLIER_WORK = 'Oracle may still be finishing work for an earlier message'
+
+const BUSY_STATUS: Record<Exclude<SessionStatus, 'idle'>, string> = {
+  running: 'it is still running',
+  waiting: 'it is waiting for an answer',
+  error: 'it stopped with an error',
+}
+
+/** Why a session is not idle enough to close without asking, if it is not. */
+function busyReason(session: ManagedSession): string | undefined {
+  if (session.pendingPermission || session.pendingUserInput) return BUSY_STATUS.waiting
+  if (session.status !== 'idle') return BUSY_STATUS[session.status]
+  if (session.queuedCount || session.queuedPrompts?.length || session.queuedDispatch || session.queueState) {
+    return 'it has queued messages'
+  }
+  if (session.failedPrompt) return 'it holds a message that failed to send'
+  if (session.retention?.pinned) return 'it is pinned'
+  if (session.interruption || session.restartRecovery || session.recoverySeedState) return 'it is recovering from a restart'
+  return undefined
 }
 
 function errorMessage(error: unknown): string {
@@ -437,6 +513,60 @@ export function createManagerTools(
     )
   }
 
+  /**
+   * Why closing this session must still ask the user, or undefined when
+   * their setting lets Oracle close it now. Each check fails closed: what
+   * cannot be read is a reason to ask.
+   */
+  async function whyCloseMustAsk(session: ManagedSession, named: string, turn: ManagerTurn | undefined): Promise<string | undefined> {
+    if (!turn) return TURN_ENDED
+    if (turn.source !== 'typed') return 'only a typed message lets Oracle close sessions without asking'
+    if (named !== session.id) return 'it was named by a shortened id'
+    const entry = host.registry()[registryKey(session.computerId, session.id)]
+    if (entry?.origin !== 'manager' || entry.removedAt || entry.replacedBy) return 'it was not started by Oracle'
+    // The roster may be stale, so decide on the session as it is now.
+    let live: ManagedSession
+    try {
+      live = await host.readSession(session.computerId, session.id)
+    } catch {
+      return 'its current state could not be read'
+    }
+    const busy = busyReason(live)
+    if (busy) return busy
+    let background: BackgroundTaskSnapshot
+    try {
+      if (!host.backgroundTasks) throw new Error('unavailable')
+      background = await host.backgroundTasks(session.computerId, session.id)
+    } catch {
+      return 'its background tasks could not be read'
+    }
+    // As suspending a session does: an empty list from a runtime that could
+    // not be asked is not the same as nothing running.
+    if (!background.supported) return 'its background tasks could not be read'
+    const active = background.tasks.filter((task) => task.status === 'running' || task.status === 'queued').length
+    if (active > 0) return `it has ${active} background task${active === 1 ? '' : 's'} running or queued`
+    // No call from another turn can start while this one is live, so once
+    // none is running, the tasks below show all that one started or used.
+    if (host.earlierWorkRunning?.(turn) !== false) return EARLIER_WORK
+    let unfinished: Array<{ computerId: string; sessionId: string }>
+    try {
+      if (!host.unfinishedTaskSessions) throw new Error('unavailable')
+      unfinished = host.unfinishedTaskSessions()
+    } catch {
+      return 'Oracle tasks could not be read'
+    }
+    if (unfinished.some((reference) => reference.computerId === session.computerId && reference.sessionId === session.id)) {
+      return 'an unfinished Oracle task uses it'
+    }
+    return undefined
+  }
+
+  function closeCapReached(): string | undefined {
+    return (host.autonomousClosesThisTurn?.() ?? AUTONOMOUS_CLOSE_LIMIT) >= AUTONOMOUS_CLOSE_LIMIT
+      ? `Oracle already closed ${AUTONOMOUS_CLOSE_LIMIT} sessions without asking this turn`
+      : undefined
+  }
+
   async function resolveSession(
     sessionId: string,
     computer?: string,
@@ -532,9 +662,6 @@ export function createManagerTools(
           !TASK_EXECUTION_MUTATION_TOOLS.has(name)
         ) {
           return failure('This task turn may execute its durable task, but unrelated session settings, naming, closure, proactive outcomes, and memory mutations are not allowed.')
-        }
-        if (host.messageSource() === 'scheduled' && managerToolMutability(name) !== 'read') {
-          return failure('Scheduled Oracle checks are read-only. They cannot change sessions, permissions, confirmations, Oracle settings, or memory.')
         }
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
@@ -811,6 +938,15 @@ export function createManagerTools(
       }).join(', ')}.`
     : `${provider} reported no models.`
 
+  const contextName = (tier: ContextTier) => tier === 'long_context' ? 'long context' : 'default context'
+
+  const contextChoices = (models: RuntimeModelOption[], provider: AgentProvider, tier: ContextTier) => {
+    const offering = models.filter((option) => option.contextTiers.includes(tier))
+    return offering.length
+      ? `Available ${provider} models with ${contextName(tier)}: ${offering.slice(0, 60).map((option) => option.id).join(', ')}.`
+      : `No ${provider} model offers ${contextName(tier)}.`
+  }
+
   // Nothing was created, so the choice goes back to the user rather than to
   // another model or provider picked here.
   const modelRefusal = (problem: string, choices: string) => new ToolFailure(
@@ -883,6 +1019,7 @@ export function createManagerTools(
             const parts = [model.name && model.name !== model.id ? `${model.id} — ${model.name}` : model.id]
             const efforts = modelEfforts(model)
             if (efforts) parts.push(efforts)
+            if (model.contextTiers.includes('long_context')) parts.push('long context')
             if (model.id === configured) parts.push('the configured default')
             return `- ${parts.join(' · ')}`
           }),
@@ -977,7 +1114,7 @@ export function createManagerTools(
     ),
     define(
       'create_session',
-      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer and mode default to the user\'s settings. Without a model it runs the model configured for its provider in App settings, else that provider\'s own default on the computer. It opens with the Copilot SDK or in a terminal (tmux) as your setting says; a provider without a terminal always uses its SDK. The session appears in the user\'s app immediately. The result names the model the session reports; a named model the provider lacks starts nothing and lists the models it has, a configured default it lacks gives way to the provider\'s own default, which the result says, and a refusal that comes only once the task runs shows as the session\'s failed turn.',
+      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer and mode default to the user\'s settings. Without a model it runs the model configured for its provider in App settings, else that provider\'s own default on the computer; the context size configured there applies to whichever model runs whenever that model offers it. It opens with the Copilot SDK or in a terminal (tmux) as your setting says; a provider without a terminal always uses its SDK. The session appears in the user\'s app immediately. The result names the model the session reports and any long context; a named model or asked-for context size the provider lacks starts nothing and lists what it has, a configured default it lacks gives way to the provider\'s own default, which the result says, and a refusal that comes only once the task runs shows as the session\'s failed turn.',
       z.object({
         title: z.string().trim().min(1).max(100).describe('Short descriptive name, at most 60 characters.'),
         prompt: z.string().trim().min(1).max(100_000).describe('The self-contained task: goal, context, constraints, acceptance criteria, what to report back, and which of the user\'s skills to use.'),
@@ -990,6 +1127,8 @@ export function createManagerTools(
           .describe('Only when the user names a model: its exact id from list_models for this provider. Never choose one yourself; unset runs the configured default.'),
         reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional()
           .describe('Only when the user asks for one; unset uses the effort configured with the model.'),
+        contextTier: z.enum(['default', 'long_context']).optional()
+          .describe('Only when the user asks for a context size; long_context is the larger window some models offer. Unset uses the size configured in App settings whenever the model offers it.'),
       }),
       async (args) => {
         const defaults = host.defaults()
@@ -1002,22 +1141,28 @@ export function createManagerTools(
         const configuredModel = configured?.model.trim() || undefined
         const mode: AgentMode | undefined = args.mode ?? (configured?.mode || undefined)
         // A model the user names overrides the configured one, which keeps its
-        // effort and context only when it is that same model.
+        // effort only when it is that same model. The configured context size
+        // is a preference for any model that offers it, as when the session's
+        // own Model and context dialog switches model.
         const requested = args.model
         let model = requested ?? configuredModel
         const asConfigured = Boolean(model) && model === configuredModel
         let reasoningEffort: RuntimeReasoningEffort | undefined =
           args.reasoningEffort ?? (asConfigured ? configured?.reasoningEffort || undefined : undefined)
-        let contextTier = asConfigured ? configured?.contextTier : undefined
+        let contextTier: ContextTier | undefined = args.contextTier ?? configured?.contextTier
+        // A configured size the model lacks, which the result reports.
+        let unofferedContext: ContextTier | undefined
         let unavailableDefault: { model: string, reason?: string } | undefined
         // A configured default the provider lacks gives way to the provider's
         // own default on that computer, the next configured choice. An effort
-        // the user asked for stays.
+        // or context size the user asked for stays.
         const dropConfiguredDefault = (reason?: string) => {
           unavailableDefault = { model: model!, ...(reason ? { reason } : {}) }
           model = undefined
           reasoningEffort = args.reasoningEffort
-          contextTier = undefined
+          // The provider's own default takes no context size.
+          unofferedContext = args.contextTier ? undefined : unofferedContext ?? contextTier
+          contextTier = args.contextTier
         }
         if (model) {
           // Checked before anything is created, on any computer; a catalog that
@@ -1039,7 +1184,16 @@ export function createManagerTools(
               }
               reasoningEffort = undefined
             }
-            if (contextTier && !listed.contextTiers.includes(contextTier)) contextTier = undefined
+            if (contextTier && !listed.contextTiers.includes(contextTier)) {
+              if (args.contextTier) {
+                throw modelRefusal(
+                  `${model} from ${provider} on ${computer.name} does not offer ${contextName(contextTier)}`,
+                  contextChoices(catalog, provider, contextTier),
+                )
+              }
+              unofferedContext = contextTier
+              contextTier = undefined
+            }
           }
         }
         const input = (): CreateSessionInput => ({
@@ -1052,15 +1206,28 @@ export function createManagerTools(
           ...(reasoningEffort ? { reasoningEffort } : {}),
           ...(model && contextTier ? { contextTier } : {}),
         })
-        const readChoices = async () => {
+        const readChoices = async (
+          format: (models: RuntimeModelOption[]) => string = (models) => modelChoices(models, provider),
+        ) => {
           try {
-            return modelChoices(await host.providerModels(computer.id, provider), provider)
+            return format(await host.providerModels(computer.id, provider))
           } catch (listError) {
             return `Its model list could not be read (${errorMessage(listError)}); call list_models.`
           }
         }
+        const readContextChoices = (tier: ContextTier) => readChoices((models) => contextChoices(models, provider, tier))
         let created: ManagedSession | undefined
         while (!created) {
+          // Copilot takes a context size only with a model, which is never
+          // chosen here, so a larger window asked for without one goes back.
+          if (args.contextTier === 'long_context' && !model) {
+            throw modelRefusal(
+              `long context needs a model from ${provider} on ${computer.name}${
+                unavailableDefault ? `, and the configured default ${unavailableDefault.model} is not available there` : ''
+              }`,
+              await readContextChoices('long_context'),
+            )
+          }
           try {
             created = await host.createSession(computer.id, input())
           } catch (error) {
@@ -1068,14 +1235,17 @@ export function createManagerTools(
             let refused = creationRefusal(message)
             if (!refused) throw error
             // Refusing a setting that was not sent refuses the model itself.
-            if ((refused === 'effort' && !reasoningEffort) || (refused === 'context' && !contextTier)) refused = 'model'
+            const sentContext = model ? contextTier : undefined
+            if ((refused === 'effort' && !reasoningEffort) || (refused === 'context' && !sentContext)) refused = 'model'
             // Refused before anything was created, so another attempt cannot
             // leave a second session behind. Each one gives up a configured
             // setting the user did not ask for, which is never restored, so
             // the attempts end; what the user asked for goes back to them.
             if (refused === 'effort' && !args.reasoningEffort) reasoningEffort = undefined
-            else if (refused === 'context') contextTier = undefined
-            else if (refused === 'model' && model && !requested) dropConfiguredDefault(message)
+            else if (refused === 'context' && !args.contextTier) {
+              unofferedContext = contextTier
+              contextTier = undefined
+            } else if (refused === 'model' && model && !requested) dropConfiguredDefault(message)
             else {
               const named = model ?? `${provider}'s own default model`
               throw modelRefusal(
@@ -1085,8 +1255,10 @@ export function createManagerTools(
                   } (${message})`
                   : refused === 'effort'
                     ? `${named} from ${provider} on ${computer.name} does not offer effort ${reasoningEffort} (${message})`
-                    : `${named}${reasoningEffort ? ` with effort ${reasoningEffort}` : ''} is not available from ${provider} on ${computer.name} (${message})`,
-                await readChoices(),
+                    : refused === 'context' && sentContext
+                      ? `${named} from ${provider} on ${computer.name} does not offer ${contextName(sentContext)} (${message})`
+                      : `${named}${reasoningEffort ? ` with effort ${reasoningEffort}` : ''} is not available from ${provider} on ${computer.name} (${message})`,
+                refused === 'context' && sentContext ? await readContextChoices(sentContext) : await readChoices(),
               )
             }
           }
@@ -1141,7 +1313,21 @@ export function createManagerTools(
             unavailableDefault.reason ? ` (${unavailableDefault.reason})` : ''
           }, so the session uses ${provider}'s own default; tell the user.`
           : ''
-        return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}, ${modelNote}. Its task was sent.${fallback}`
+        // The context the session reports, else the one it was created with.
+        const startedContext = model ? contextTier : undefined
+        const runsWith = [delivered, session, created]
+          .map((candidate) => candidate.runtime?.contextTier)
+          .find(Boolean) ?? startedContext
+        const contextNote = runsWith === 'long_context'
+          ? ' It runs with long context.'
+          : unofferedContext === 'long_context'
+            ? model
+              ? ` ${model} does not offer the configured long context, so it runs with default context; tell the user.`
+              : ' It runs with default context, since the configured long context needs a model.'
+            : startedContext === 'long_context' && runsWith === 'default'
+              ? ' It reports default context, not the long context asked for; tell the user.'
+              : ''
+        return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}, ${modelNote}. Its task was sent.${fallback}${contextNote}`
       },
       { actsOnSessions: true }
     ),
@@ -1326,16 +1512,38 @@ export function createManagerTools(
     ),
     define(
       'close_session',
-      "Ask the user to close a session, which permanently deletes it and its history. This does not close anything itself: the user confirms or declines in the app, and the session stays open until they confirm. Only ask when the user wants that specific session closed.",
+      "Close a session, which permanently deletes it and its history. By default this only asks: the user confirms or declines in the app, and the session stays open until they confirm. When the context says the user lets you close idle sessions you started without asking, such a session named by its full id closes at once; any safety check that fails makes it ask instead, and the result says which happened and why. Only close a session the user wants closed, or one you started whose work is finished and reported.",
       z.object({
         sessionId: sessionIdField,
         computer: computerField.optional(),
-        reason: z.string().trim().max(300).optional().describe('One short line on why, shown to the user beside the request.'),
+        reason: z.string().trim().max(300).optional().describe('One short line on why, shown to the user beside the request or the close.'),
       }),
       async ({ sessionId, computer, reason }) => {
+        const turn = host.callTurn?.()
         const session = await resolveSession(sessionId, computer)
-        await host.requestCloseConfirmation(session, reason)
-        return `Asked the user to confirm closing ${link(session)} in the app. It stays open until they confirm; the outcome appears in your next turn.`
+        const policy = host.closeWithoutAsking && host.autonomousClosesThisTurn
+          ? host.sessionClosePolicy?.()
+          : undefined
+        if (policy !== 'oracle-started') {
+          await host.requestCloseConfirmation(session, reason)
+          return `Asked the user to confirm closing ${link(session)} in the app. It stays open until they confirm; the outcome appears in your next turn.`
+        }
+        // Whether the turn is still live, and the cap, are checked last, with
+        // nothing awaited before the close counts: a call that outlived its
+        // turn cannot close for the next one, and closes running side by side
+        // cannot all slip under the cap.
+        const why = (await whyCloseMustAsk(session, sessionId, turn))
+          ?? (turn?.live() ? closeCapReached() : TURN_ENDED)
+        if (why) {
+          await host.requestCloseConfirmation(session, reason, why)
+          return `Asked the user to confirm closing ${link(session)} in the app, because ${why}. It stays open until they confirm; the outcome appears in your next turn.`
+        }
+        const outcome = await host.closeWithoutAsking!(session, reason)
+        const name = `"${session.title}" (${session.id})`
+        if (outcome.state !== 'confirmed') {
+          throw new ToolFailure(`Could not close ${name}: ${outcome.error ?? 'it was not deleted'}. Tell the user; it may still be open.`)
+        }
+        return `Closed ${name} without asking, as the user's setting allows; it is permanently deleted.`
       },
       { actsOnSessions: true }
     ),

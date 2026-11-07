@@ -151,14 +151,24 @@ const directoryQuerySchema = z.object({
 const directoryValidationSchema = z.object({
   path: z.string().trim().min(1).max(4096),
 })
+const sessionKnowledgeBaseSchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+  create: z.boolean().optional().default(false),
+}).strict()
+const knowledgeValidationSchema = z.object({
+  path: z.string().trim().min(1).max(4096),
+  confinement: z.string().trim().min(1).max(4096).optional(),
+}).strict()
 const knowledgeQuerySchema = z.object({
   root: z.string().trim().min(1).max(4096),
   path: z.string().trim().max(4096).optional(),
+  confinement: z.string().trim().min(1).max(4096).optional(),
 })
 
 const knowledgeFileQuerySchema = z.object({
   root: z.string().trim().min(1).max(4096),
   path: z.string().trim().min(1).max(4096),
+  confinement: z.string().trim().min(1).max(4096).optional(),
 })
 
 const workspaceFileQuerySchema = z.object({
@@ -525,11 +535,41 @@ export async function registerNodeRoutes(
         return { path: await service.validateSessionDirectory(input.path) }
       })
 
+      node.put<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/knowledge-base',
+        async (request) => {
+          const input = sessionKnowledgeBaseSchema.parse(request.body)
+          return service.ensureSessionKnowledgeBase(
+            request.params.sessionId,
+            input.path,
+            input.create,
+          )
+        },
+      )
+
+      node.post('/knowledge/validate', async (request) => {
+        const input = knowledgeValidationSchema.parse(request.body)
+        return {
+          path: await service.validateKnowledgeRoot(
+            input.path,
+            input.confinement,
+          ),
+        }
+      })
+
       node.get<{ Querystring: { root?: string; path?: string } }>(
         '/knowledge/entries',
         async (request) => {
           const query = knowledgeQuerySchema.parse(request.query)
-          return service.listKnowledge(query.root, query.path)
+          const listing = await service.listKnowledge(
+            query.root,
+            query.path,
+            query.confinement,
+          )
+          return {
+            ...listing,
+            ...(query.confinement ? { confinementApplied: true } : {}),
+          }
         },
       )
 
@@ -537,7 +577,15 @@ export async function registerNodeRoutes(
         '/knowledge/file',
         async (request) => {
           const query = knowledgeFileQuerySchema.parse(request.query)
-          return service.readKnowledgeFile(query.root, query.path)
+          const file = await service.readKnowledgeFile(
+            query.root,
+            query.path,
+            query.confinement,
+          )
+          return {
+            ...file,
+            ...(query.confinement ? { confinementApplied: true } : {}),
+          }
         },
       )
 

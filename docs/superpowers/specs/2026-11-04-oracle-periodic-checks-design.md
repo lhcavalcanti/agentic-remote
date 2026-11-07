@@ -1,5 +1,10 @@
 # Oracle Periodic Checks and Draft Status Design
 
+> **Superseded by #511.** Periodic checks were removed before any hub ran them;
+> Dreamer now keeps Oracle current with a periodic session-progress refresh
+> ([design](2026-11-07-dreamer-periodic-refresh-design.md)). The
+> draft-status change still stands.
+
 ## Status and scope
 
 This follow-up contains two ordered changes:

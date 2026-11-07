@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  DREAMER_PROGRESS_REFRESH_MS,
   isDreamerSessionItem,
   type DreamerPlanItem,
+  type DreamerProgressStatus,
   type DreamerSnapshot,
 } from '../shared/dreamer'
 import type { OracleTaskView } from '../shared/oracle-task'
@@ -15,6 +17,7 @@ import {
   updateDreamerPlan,
 } from './dreamer-api'
 import type { DreamerPlanEdit } from './dreamer-api'
+import { sessionActivityTime } from './session-presentation'
 import './dreamer.css'
 
 const reason = (error: unknown) => error instanceof Error ? error.message : 'Dreamer could not be reached.'
@@ -149,6 +152,38 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
   return { snapshot, setSnapshot, error, unavailable, refreshing, stale, failMutation, refresh }
 }
 
+function ProgressTime({ at }: { at: string }) {
+  const time = sessionActivityTime(at)
+  return <time dateTime={time.dateTime} title={new Date(at).toLocaleString()}>{time.label}</time>
+}
+
+/** How current Dreamer's session progress is; nothing while Dreamer is off. */
+function SessionProgressStatus({ progress, showNext = false }: {
+  progress?: DreamerProgressStatus
+  showNext?: boolean
+}) {
+  if (!progress) return null
+  return (
+    <>
+      <p className="dialog-message">
+        {progress.refreshedAt
+          ? <>Session progress updated <ProgressTime at={progress.refreshedAt} /></>
+          : 'Dreamer has not refreshed session progress yet'}
+        {showNext && progress.nextRefreshAt
+          ? <>; next refresh <ProgressTime at={progress.nextRefreshAt} /></>
+          : null}
+        .
+      </p>
+      {progress.staleComputers.length ? (
+        <p className="dialog-message">
+          Showing last-known progress for unreachable computers: {progress.staleComputers.join(', ')}.
+        </p>
+      ) : null}
+      {progress.error ? <p className="form-error" role="status">{progress.error}</p> : null}
+    </>
+  )
+}
+
 export function DreamerSettings({ active = true }: { active?: boolean }) {
   const { snapshot, setSnapshot, error: loadError, failMutation, refresh } = useDreamer(active)
   const [draft, setDraft] = useState<{
@@ -220,10 +255,13 @@ export function DreamerSettings({ active = true }: { active?: boolean }) {
       <h4>Dreamer</h4>
       <p className="dialog-message">
         Enabling Dreamer opts this hub into a 02:00 metadata review and proactive
-        Oracle analysis. Oracle may use the selected model to turn lifecycle
-        findings into follow-up tasks; session work still starts only when you
-        choose it.
+        Oracle analysis. While on, it refreshes session progress every{' '}
+        {DREAMER_PROGRESS_REFRESH_MS / 60_000} minutes, holding each session&apos;s
+        latest reply in memory, so Oracle and follow-up work stay current.
+        Oracle may use the selected model to turn lifecycle findings into
+        follow-up tasks; session work still starts only when you choose it.
       </p>
+      <SessionProgressStatus progress={snapshot?.progress} showNext />
       {!snapshot && !loadError ? <p className="dialog-message">Loading Dreamer...</p> : null}
       {snapshot?.available ? (
         <form onSubmit={(event) => { event.preventDefault(); void save() }}>
@@ -455,6 +493,7 @@ export function DreamerMorningPlan({ active = true }: { active?: boolean }) {
           </p>
         ) : null}
         {plan ? <p className="dreamer-date">{plan.localDate} ({plan.timeZone})</p> : null}
+        <SessionProgressStatus progress={snapshot?.progress} />
         <p className="dialog-message">
           Suggestions are observations, not proof that work ran. Follow-up work is
           durable and completes only from verified execution evidence.

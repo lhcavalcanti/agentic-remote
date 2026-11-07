@@ -1573,7 +1573,10 @@ clear replacement IDs without losing, duplicating, or reordering content.
   symbolic link and verify the opened file identity before reading content.
   Paired nodes MUST acknowledge that they applied this confinement; the hub
   MUST reject a confined response from an older or rolled-back node that omits
-  that acknowledgment. A confinement added to an existing catalog root MUST be
+  that acknowledgment. Confined roots and their confinement metadata MUST
+  persist outside the catalog file earlier hub releases read, so a rolled-back
+  hub hides them instead of serving them unconfined, and upgrading again
+  restores them. A confinement added to an existing catalog root MUST be
   recoverable across restart: retain it only when a path-mode binding for the
   claimed root ID and root path exists at the exact committed revision,
   otherwise roll it back. Finalization MUST promote only the claim token

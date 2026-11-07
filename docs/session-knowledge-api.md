@@ -143,6 +143,10 @@ matching claim before moving or removing its binding.
   filesystem. The persisted association remains readable while that computer is
   offline.
 - Hub/browser restarts reload the same association.
+- Rolling the hub back to an earlier release hides confined roots rather than
+  serving them unconfined; upgrading again restores them. They keep their
+  confinement metadata in `knowledge-confined.json`, which earlier releases
+  never read, while `knowledge.json` lists only unconfined roots.
 - Conversation clear/replacement carries the association through the existing
   session lineage unless the replacement already has an explicit association.
 - Removing a shared root leaves a named unavailable association.

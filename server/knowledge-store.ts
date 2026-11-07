@@ -21,8 +21,17 @@ interface KnowledgeState {
   }>
 }
 
+/**
+ * Releases before session confinement read only `roots` from knowledge.json
+ * and serve every root in it unconfined. Confined roots and all confinement
+ * metadata live in this file instead, which those releases never open, so a
+ * rollback hides a confined root rather than serving it past its session cwd.
+ */
+const CONFINED_STATE_FILE = 'knowledge-confined.json'
+
 interface PersistedKnowledgeState
   extends Partial<Omit<KnowledgeState, 'provisionalRootConfinements'>> {
+  order?: unknown
   provisionalRootConfinements?: Record<string, {
     path?: unknown
     claims?: Array<
@@ -84,8 +93,94 @@ export class KnowledgeRootConfinementConflictError extends Error {
   }
 }
 
+function parseMetadata(
+  parsed: PersistedKnowledgeState,
+): Omit<KnowledgeState, 'roots'> {
+  return {
+    provisionalRootIds: Array.isArray(parsed.provisionalRootIds)
+      ? parsed.provisionalRootIds.filter(
+          (id): id is string => typeof id === 'string',
+        )
+      : [],
+    rootConfinements:
+      parsed.rootConfinements &&
+      typeof parsed.rootConfinements === 'object'
+        ? Object.fromEntries(
+            Object.entries(parsed.rootConfinements).filter(
+              (entry): entry is [string, string] =>
+                typeof entry[1] === 'string',
+            ),
+          )
+        : {},
+    provisionalRootConfinements:
+      parsed.provisionalRootConfinements &&
+      typeof parsed.provisionalRootConfinements === 'object'
+        ? Object.fromEntries(
+            Object.entries(parsed.provisionalRootConfinements).flatMap(
+              ([rootId, value]) => {
+                if (
+                  !value ||
+                  typeof value !== 'object' ||
+                  typeof value.path !== 'string' ||
+                  !Array.isArray(value.claims)
+                ) {
+                  return []
+                }
+                const claims = value.claims.flatMap((claim) => {
+                  if (
+                    !claim ||
+                    typeof claim !== 'object' ||
+                    typeof claim.token !== 'string' ||
+                    typeof claim.computerId !== 'string' ||
+                    typeof claim.sessionId !== 'string'
+                  ) {
+                    return []
+                  }
+                  const committedRevision =
+                    typeof claim.committedRevision === 'number' &&
+                    Number.isSafeInteger(claim.committedRevision) &&
+                    claim.committedRevision > 0
+                      ? claim.committedRevision
+                      : typeof claim.expectedRevision === 'number' &&
+                          Number.isSafeInteger(claim.expectedRevision) &&
+                          claim.expectedRevision >= 0 &&
+                          claim.expectedRevision < Number.MAX_SAFE_INTEGER
+                        ? claim.expectedRevision + 1
+                        : undefined
+                  if (committedRevision === undefined) return []
+                  return [{
+                    token: claim.token,
+                    computerId: claim.computerId,
+                    sessionId: claim.sessionId,
+                    committedRevision,
+                    rootPath:
+                      typeof claim.rootPath === 'string'
+                        ? claim.rootPath
+                        : '.',
+                  }]
+                })
+                return claims.length > 0
+                  ? [[rootId, { path: value.path, claims }]]
+                  : []
+              },
+            ),
+          )
+        : {},
+  }
+}
+
+async function readOptional(file: string): Promise<string | undefined> {
+  try {
+    return await readFile(file, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
 export class KnowledgeStore {
   private readonly statePath: string
+  private readonly confinedStatePath: string
   private state: KnowledgeState = {
     roots: [],
     provisionalRootIds: [],
@@ -94,98 +189,55 @@ export class KnowledgeStore {
   }
   private readonly rootReservations = new Map<string, Set<string>>()
   private writeQueue: Promise<void> = Promise.resolve()
+  /** The text each file last held, so an unchanged file is not rewritten. */
+  private persistedText: { catalog?: string; confined?: string } = {}
 
   constructor(private readonly directory: string) {
     this.statePath = path.join(directory, 'knowledge.json')
+    this.confinedStatePath = path.join(directory, CONFINED_STATE_FILE)
   }
 
   async initialize(): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
-    try {
-      const parsed = JSON.parse(
-        await readFile(this.statePath, 'utf8'),
-      ) as PersistedKnowledgeState
-      // Rebuild from known fields so a file written before roots replaced
-      // bookmarks loads, and the obsolete key is not carried forward.
-      this.state = {
-        roots: parsed.roots ?? [],
-        provisionalRootIds: Array.isArray(parsed.provisionalRootIds)
-          ? parsed.provisionalRootIds.filter(
-              (id): id is string => typeof id === 'string',
-            )
-          : [],
-        rootConfinements:
-          parsed.rootConfinements &&
-          typeof parsed.rootConfinements === 'object'
-            ? Object.fromEntries(
-                Object.entries(parsed.rootConfinements).filter(
-                  (entry): entry is [string, string] =>
-                    typeof entry[1] === 'string',
-                ),
-              )
-            : {},
-        provisionalRootConfinements:
-          parsed.provisionalRootConfinements &&
-          typeof parsed.provisionalRootConfinements === 'object'
-            ? Object.fromEntries(
-                Object.entries(parsed.provisionalRootConfinements).flatMap(
-                  ([rootId, value]) => {
-                    if (
-                      !value ||
-                      typeof value !== 'object' ||
-                      typeof value.path !== 'string' ||
-                      !Array.isArray(value.claims)
-                    ) {
-                      return []
-                    }
-                    const claims = value.claims.flatMap((claim) => {
-                      if (
-                        !claim ||
-                        typeof claim !== 'object' ||
-                        typeof claim.token !== 'string' ||
-                        typeof claim.computerId !== 'string' ||
-                        typeof claim.sessionId !== 'string'
-                      ) {
-                        return []
-                      }
-                      const committedRevision =
-                        typeof claim.committedRevision === 'number' &&
-                        Number.isSafeInteger(claim.committedRevision) &&
-                        claim.committedRevision > 0
-                          ? claim.committedRevision
-                          : typeof claim.expectedRevision === 'number' &&
-                              Number.isSafeInteger(claim.expectedRevision) &&
-                              claim.expectedRevision >= 0 &&
-                              claim.expectedRevision < Number.MAX_SAFE_INTEGER
-                            ? claim.expectedRevision + 1
-                            : undefined
-                      if (committedRevision === undefined) return []
-                      return [{
-                        token: claim.token,
-                        computerId: claim.computerId,
-                        sessionId: claim.sessionId,
-                        committedRevision,
-                        rootPath:
-                          typeof claim.rootPath === 'string'
-                            ? claim.rootPath
-                            : '.',
-                      }]
-                    })
-                    return claims.length > 0
-                      ? [[rootId, { path: value.path, claims }]]
-                      : []
-                  },
-                ),
-              )
-            : {},
-      }
-      this.rootReservations.clear()
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error
-      }
-      await this.persist()
+    const catalogText = await readOptional(this.statePath)
+    const confinedText = await readOptional(this.confinedStatePath)
+    // Rebuild from known fields so a file written before roots replaced
+    // bookmarks loads, and the obsolete key is not carried forward.
+    const catalog = catalogText === undefined
+      ? {}
+      : JSON.parse(catalogText) as { roots?: KnowledgeRoot[] }
+    const confined = confinedText === undefined
+      ? {}
+      : JSON.parse(confinedText) as PersistedKnowledgeState
+    const metadata = parseMetadata(confined)
+    // An interrupted move can leave a root in both files; its confined copy
+    // wins. A root the confined file lists without a confinement is dropped.
+    const hidden = (confined.roots ?? []).filter(
+      (root) => metadata.rootConfinements[root.id] !== undefined,
+    )
+    const hiddenIds = new Set(hidden.map((root) => root.id))
+    const loaded = [
+      ...(catalog.roots ?? []).filter((root) => !hiddenIds.has(root.id)),
+      ...hidden,
+    ]
+    const order = new Map(
+      (Array.isArray(confined.order) ? confined.order : [])
+        .filter((id): id is string => typeof id === 'string')
+        .map((id, index) => [id, index] as const),
+    )
+    this.state = {
+      // A root an earlier release added while it ran is the newest.
+      roots: [
+        ...loaded.filter((root) => !order.has(root.id)),
+        ...loaded
+          .filter((root) => order.has(root.id))
+          .sort((left, right) => order.get(left.id)! - order.get(right.id)!),
+      ],
+      ...metadata,
     }
+    this.persistedText = { catalog: catalogText, confined: confinedText }
+    this.rootReservations.clear()
+    if (catalogText === undefined) await this.persist()
   }
 
   listRoots(): KnowledgeRoot[] {
@@ -731,8 +783,66 @@ export class KnowledgeStore {
   }
 
   private async write(state: KnowledgeState): Promise<void> {
-    const temporary = `${this.statePath}.tmp`
-    await writeFile(temporary, JSON.stringify(state, null, 2), { mode: 0o600 })
-    await rename(temporary, this.statePath)
+    const confined = (root: KnowledgeRoot, from: KnowledgeState) =>
+      from.rootConfinements[root.id] !== undefined
+    const catalog = JSON.stringify(
+      { roots: state.roots.filter((root) => !confined(root, state)) },
+      null,
+      2,
+    )
+    const hiddenRoots = state.roots.filter((root) => confined(root, state))
+    const metadata = {
+      provisionalRootIds: state.provisionalRootIds,
+      rootConfinements: state.rootConfinements,
+      provisionalRootConfinements: state.provisionalRootConfinements,
+    }
+    const hidden = JSON.stringify(
+      {
+        order: state.roots.map((root) => root.id),
+        roots: hiddenRoots,
+        ...metadata,
+      },
+      null,
+      2,
+    )
+    // A hub that has never confined or reserved a root needs no second file.
+    const unused =
+      this.persistedText.confined === undefined &&
+      hiddenRoots.length === 0 &&
+      Object.values(metadata).every((value) => Object.keys(value).length === 0)
+    // The files are replaced one at a time, so the one gaining a root goes
+    // first: an interrupted move then leaves the root in both files, where
+    // the confined copy wins on load, rather than in neither.
+    const revealing = this.state.roots.some(
+      (root) =>
+        confined(root, this.state) &&
+        state.roots.some(
+          (entry) => entry.id === root.id && !confined(entry, state),
+        ),
+    )
+    const writeCatalog = () => this.replace('catalog', this.statePath, catalog)
+    const writeConfined = () =>
+      unused
+        ? Promise.resolve()
+        : this.replace('confined', this.confinedStatePath, hidden)
+    if (revealing) {
+      await writeCatalog()
+      await writeConfined()
+    } else {
+      await writeConfined()
+      await writeCatalog()
+    }
+  }
+
+  private async replace(
+    key: 'catalog' | 'confined',
+    file: string,
+    text: string,
+  ): Promise<void> {
+    if (this.persistedText[key] === text) return
+    const temporary = `${file}.tmp`
+    await writeFile(temporary, text, { mode: 0o600 })
+    await rename(temporary, file)
+    this.persistedText[key] = text
   }
 }

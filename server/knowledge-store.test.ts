@@ -1,4 +1,13 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -25,6 +34,7 @@ describe('KnowledgeStore', () => {
     const directory = await temporaryDirectory()
     const store = new KnowledgeStore(directory)
     await store.initialize()
+    expect(await readdir(directory)).toEqual(['knowledge.json'])
     const input = {
       computerId: 'computer',
       computerName: 'development',
@@ -450,6 +460,121 @@ describe('KnowledgeStore', () => {
     })).rejects.toMatchObject({ statusCode: 409 })
   })
 
+  it('keeps confined roots out of the catalog file earlier releases serve', async () => {
+    const directory = await temporaryDirectory()
+    const catalogPath = path.join(directory, 'knowledge.json')
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const notes = await store.addRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/notes',
+      name: 'notes',
+    })
+    const confined = await store.reserveRoot({
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }, {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    })
+    await confined.finalize()
+
+    // An earlier release loads only `roots` and serves each one unconfined.
+    expect(JSON.parse(await readFile(catalogPath, 'utf8'))).toEqual({
+      roots: [notes],
+    })
+
+    // When it saves, it rewrites that file with only the roots it knows.
+    const added = {
+      id: 'added-by-earlier-release',
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/specs',
+      name: 'specs',
+      createdAt: '2026-11-07T00:00:00.000Z',
+    }
+    await writeFile(catalogPath, JSON.stringify({ roots: [added, notes] }))
+
+    const upgraded = new KnowledgeStore(directory)
+    await upgraded.initialize()
+    expect(upgraded.listRoots()).toEqual([added, confined.root, notes])
+    expect(upgraded.getRootConfinement(confined.root.id)).toBe(
+      '/home/user/project',
+    )
+    expect(
+      (await stat(path.join(directory, 'knowledge-confined.json'))).mode &
+        0o777,
+    ).toBe(0o600)
+  })
+
+  it('hides an existing root from earlier releases only while it is confined', async () => {
+    const directory = await temporaryDirectory()
+    const catalogPath = path.join(directory, 'knowledge.json')
+    const confinedPath = path.join(directory, 'knowledge-confined.json')
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+    const input = {
+      computerId: 'computer',
+      computerName: 'development',
+      path: '/home/user/project/knowledge',
+      name: 'knowledge',
+    }
+    const notes = await store.addRoot({
+      ...input,
+      path: '/home/user/notes',
+      name: 'notes',
+    })
+    const root = await store.addRoot(input)
+    const options = {
+      confinementPath: '/home/user/project',
+      binding: {
+        computerId: 'computer',
+        sessionId: 'session',
+        expectedRevision: 0,
+      },
+    }
+    const legacyRoots = async () =>
+      JSON.parse(await readFile(catalogPath, 'utf8')).roots
+    const reloaded = async () => {
+      const restarted = new KnowledgeStore(directory)
+      await restarted.initialize()
+      return restarted
+    }
+
+    // The two files are replaced one at a time, so a move between them must
+    // never pass through a state in which neither file lists the root.
+    await mkdir(`${confinedPath}.tmp`)
+    await expect(store.reserveRoot(input, options)).rejects.toThrow()
+    expect((await reloaded()).listRoots()).toEqual([root, notes])
+    await rmdir(`${confinedPath}.tmp`)
+
+    await store.reserveRoot(input, options)
+    expect(await legacyRoots()).toEqual([notes])
+    const confined = await reloaded()
+    expect(confined.listRoots()).toEqual([root, notes])
+    expect(confined.getRootConfinement(root.id)).toBe('/home/user/project')
+
+    await mkdir(`${catalogPath}.tmp`)
+    await expect(confined.recoverProvisionalRoots([])).rejects.toThrow()
+    const interrupted = await reloaded()
+    expect(interrupted.listRoots()).toEqual([root, notes])
+    expect(interrupted.getRootConfinement(root.id)).toBe('/home/user/project')
+    await rmdir(`${catalogPath}.tmp`)
+
+    // Without a committed binding, recovery drops the confinement and the
+    // root returns to the catalog every release reads.
+    await interrupted.recoverProvisionalRoots([])
+    expect(interrupted.getRootConfinement(root.id)).toBeUndefined()
+    expect(await legacyRoots()).toEqual([root, notes])
+  })
+
   it('loads a state file written before roots replaced bookmarks', async () => {
     const directory = await temporaryDirectory()
     const root = {
@@ -605,10 +730,15 @@ describe('KnowledgeStore', () => {
     expect(restored.listRoots()).toEqual([])
 
     const persisted = JSON.parse(
-      await readFile(path.join(directory, 'knowledge.json'), 'utf8'),
+      await readFile(path.join(directory, 'knowledge-confined.json'), 'utf8'),
     )
     expect(persisted.provisionalRootIds).toEqual([])
-    expect(persisted.roots).not.toContainEqual(reservation.root)
+    expect(persisted.order).not.toContain(reservation.root.id)
+    expect(
+      JSON.parse(
+        await readFile(path.join(directory, 'knowledge.json'), 'utf8'),
+      ).roots,
+    ).not.toContainEqual(reservation.root)
   })
 
   it('finalizes a referenced provisional root after restart recovery', async () => {

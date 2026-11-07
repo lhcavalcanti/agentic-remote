@@ -543,11 +543,11 @@ describe('session Knowledge routes', () => {
 
   it('returns the committed binding when catalog finalization needs recovery', async () => {
     const { directory, putPath, get, store } = await fixture()
-    let catalogRenames = 0
+    let confinedRenames = 0
     vi.mocked(rename).mockImplementation(async (...args) => {
       if (
-        String(args[1]).endsWith('/knowledge.json') &&
-        ++catalogRenames === 2
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
       ) {
         throw new Error('PRIVATE_FINALIZATION_IO')
       }
@@ -566,7 +566,7 @@ describe('session Knowledge routes', () => {
     })
     expect((await get()).json().binding).toEqual(failed.json().binding)
     expect(JSON.parse(
-      await readFile(path.join(directory, 'knowledge.json'), 'utf8'),
+      await readFile(path.join(directory, 'knowledge-confined.json'), 'utf8'),
     ).provisionalRootIds).toEqual([failed.json().binding.rootId])
 
     vi.mocked(rename).mockImplementation(disk.rename)
@@ -577,7 +577,7 @@ describe('session Knowledge routes', () => {
     expect(recovered.statusCode, recovered.body).toBe(200)
     expect(recovered.json().binding).toEqual(failed.json().binding)
     expect(JSON.parse(
-      await readFile(path.join(directory, 'knowledge.json'), 'utf8'),
+      await readFile(path.join(directory, 'knowledge-confined.json'), 'utf8'),
     ).provisionalRootIds).toEqual([])
 
     const restarted = new KnowledgeStore(directory)
@@ -590,11 +590,11 @@ describe('session Knowledge routes', () => {
 
   it('finalizes a committed path root before a later clear advances the binding', async () => {
     const { directory, put, putPath, store } = await fixture()
-    let catalogRenames = 0
+    let confinedRenames = 0
     vi.mocked(rename).mockImplementation(async (...args) => {
       if (
-        String(args[1]).endsWith('/knowledge.json') &&
-        ++catalogRenames === 2
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
       ) {
         throw new Error('PRIVATE_FINALIZATION_IO')
       }
@@ -622,11 +622,11 @@ describe('session Knowledge routes', () => {
 
   it('finalizes a committed path root before replacement moves its binding', async () => {
     const { app, directory, putPath, store } = await fixture()
-    let catalogRenames = 0
+    let confinedRenames = 0
     vi.mocked(rename).mockImplementation(async (...args) => {
       if (
-        String(args[1]).endsWith('/knowledge.json') &&
-        ++catalogRenames === 2
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
       ) {
         throw new Error('PRIVATE_FINALIZATION_IO')
       }
@@ -658,11 +658,11 @@ describe('session Knowledge routes', () => {
 
   it('finalizes a committed path root before deletion removes its binding', async () => {
     const { app, directory, putPath, store } = await fixture()
-    let catalogRenames = 0
+    let confinedRenames = 0
     vi.mocked(rename).mockImplementation(async (...args) => {
       if (
-        String(args[1]).endsWith('/knowledge.json') &&
-        ++catalogRenames === 2
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
       ) {
         throw new Error('PRIVATE_FINALIZATION_IO')
       }
@@ -692,7 +692,7 @@ describe('session Knowledge routes', () => {
   it('maps catalog reservation persistence failures to a retryable response', async () => {
     const { putPath, store } = await fixture()
     vi.mocked(rename).mockImplementationOnce(async (...args) => {
-      if (String(args[1]).endsWith('/knowledge.json')) {
+      if (String(args[1]).endsWith('/knowledge-confined.json')) {
         throw new Error('PRIVATE_RESERVATION_IO')
       }
       return disk.rename(...args)
@@ -708,11 +708,11 @@ describe('session Knowledge routes', () => {
   it('maps conflict rollback persistence failure to a recoverable response', async () => {
     const { directory, knowledge, put, putPath, root, store } = await fixture()
     expect((await put(root.id)).statusCode).toBe(200)
-    let catalogRenames = 0
+    let confinedRenames = 0
     vi.mocked(rename).mockImplementation(async (...args) => {
       if (
-        String(args[1]).endsWith('/knowledge.json') &&
-        ++catalogRenames === 2
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
       ) {
         throw new Error('PRIVATE_ROLLBACK_IO')
       }
@@ -740,7 +740,7 @@ describe('session Knowledge routes', () => {
   it('maps binding and rollback persistence failures to a recoverable response', async () => {
     const { directory, knowledge, putPath, store } = await fixture()
     const bindingPath = path.join(directory, 'session-knowledge.json')
-    let catalogRenames = 0
+    let confinedRenames = 0
     let bindingRenames = 0
     vi.mocked(rename).mockImplementation(async (...args) => {
       const destination = String(args[1])
@@ -748,8 +748,8 @@ describe('session Knowledge routes', () => {
         throw new Error('PRIVATE_BINDING_IO')
       }
       if (
-        destination.endsWith('/knowledge.json') &&
-        ++catalogRenames === 2
+        destination.endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
       ) {
         throw new Error('PRIVATE_ROLLBACK_IO')
       }
@@ -759,6 +759,7 @@ describe('session Knowledge routes', () => {
     const failed = await putPath('private-notes')
 
     expect(failed.statusCode, failed.body).toBe(503)
+    expect(confinedRenames).toBe(2)
     expect(failed.json().error).not.toMatch(
       /PRIVATE_(?:BINDING|ROLLBACK)_IO/,
     )

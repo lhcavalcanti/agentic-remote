@@ -231,8 +231,11 @@ session-generation checks through its commit point. Finalization is
 unconditional after that commit; attempting a second guarded commit boundary
 could otherwise remove a root that the durable binding already references.
 
-No new persistence file is introduced. Existing `knowledge.json`,
-`session-knowledge.json`, and `session-knowledge-paths.json` remain authoritative.
+Confined roots and their confinement metadata persist in a new hub file,
+`knowledge-confined.json`, which earlier releases never read, so a rollback
+hides a confined root instead of serving it unconfined. `knowledge.json` keeps
+only unconfined roots in the format those releases read;
+`session-knowledge.json` and `session-knowledge-paths.json` are unchanged.
 
 ## Lifecycle
 

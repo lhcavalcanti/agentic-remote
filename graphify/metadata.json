@@ -414,9 +414,9 @@
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
-    ".github/copilot-instructions.md": "a68bee005531380bbd37beaacaab30e1c2297a539a98457571cd7c8c86245301",
+    ".github/copilot-instructions.md": "03d9664de9489495b64bdda845ea7419e677bfa6b14145e03cd9fcc6cca79a30",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "ee4cdf244728aa9d527bbe9c3f35fe526b29ba682bcea15acfe21f501c8fcdba",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "3895af31192466fcb016e7d2696d5c0419506cb01b2a42442b634d90b780a12a",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -1013,25 +1013,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6f5861adeabbb2f3b135be9a1fe89f4e431a6d7902b7c63db6858677e1d4d8cf",
+    "GRAPH_REPORT.md": "e30138abc33a2c60be11aefd6b24db90d5001b1af33b935c3a416069cd33c4e5",
     "communities.json": "5d120f0fa153d7e4e60ec9e7d94adc4a84458174bc53b12ff1472c5b83b21028",
-    "graph.html": "a5d10940d2e711fc5626a2ba9bd896edd1a61b7d4962dc3810c0e513b736a982",
-    "graph.json": "258a8cc715b4389e358d64b67fce5dd5c06ddc5b644cf628cc5c87e04a540b68"
+    "graph.html": "71e2e86189382ce2a516b1aabdb1fc1256976780a728aa9025337b273964c905",
+    "graph.json": "6686333a5dbf1f5f8055aa966b94efc175941f04927dff704198ae46b078af98"
   },
   "schema_version": 1,
-  "source_commit": "0ae4fa051992f46b397e5696ea278d630e7619ef",
-  "source_fingerprint": "571a92fd6d150494689f3994fb0a4077ea93c530fd9f3bfa25d90b0a7ef4b027",
-  "working_tree_changes": [
-    "docs/app-spec.md",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/claude-agent-service.test.ts",
-    "server/claude-agent-service.ts",
-    "server/multi-node.test.ts",
-    "server/refusal-metrics-routes.test.ts",
-    "server/refusal-metrics.test.ts",
-    "server/refusal-metrics.ts",
-    "src/SessionNavigation.test.tsx",
-    "src/SessionNavigation.tsx"
-  ]
+  "source_commit": "2a7c568e3fa262215bfb924a9852ecc1e7a32474",
+  "source_fingerprint": "80cc7f4ef976d17bdcc3ab8e08ccaabc97a28cfb23591b17825e32036087101b",
+  "working_tree_changes": []
 }

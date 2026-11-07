@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { RuntimeReasoningEffort } from '../shared/contracts'
-import type { ManagerSessionBackend, ManagerSettingsSnapshot } from '../shared/manager'
+import type {
+  ManagerSessionBackend,
+  ManagerSessionClosePolicy,
+  ManagerSettingsSnapshot,
+} from '../shared/manager'
 import { getManager, updateManagerSettings } from './api'
 
 /** Which part of App settings a change came from, so its result shows there. */
-export type OracleSettingsPart = 'model' | 'folders' | 'backend'
+export type OracleSettingsPart = 'model' | 'folders' | 'backend' | 'close'
 
 export interface OracleSettingsState {
   settings?: ManagerSettingsSnapshot
@@ -17,6 +21,7 @@ export interface OracleSettingsState {
   saveModel(model: string, reasoningEffort?: RuntimeReasoningEffort): Promise<void>
   saveFolder(computerId: string, path?: string): Promise<void>
   saveBackend(backend: ManagerSessionBackend): Promise<void>
+  saveClosePolicy(policy: ManagerSessionClosePolicy): Promise<void>
 }
 
 /**
@@ -110,5 +115,28 @@ export function useOracleSettings(active = true): OracleSettingsState {
     (next) => next.sessionBackend === backend ? undefined : 'This hub did not keep that choice; update it to choose how Oracle opens sessions.',
   ), [update])
 
-  return { settings, unavailable, loading, saving, saved, error, saveModel, saveFolder, saveBackend }
+  const saveClosePolicy = useCallback((policy: ManagerSessionClosePolicy) => update(
+    { sessionClosePolicy: policy },
+    'close',
+    policy === 'oracle-started'
+      ? 'Saved. Oracle closes idle sessions it started without asking.'
+      : 'Saved. Oracle asks before closing any session.',
+    // A hub from before this setting ignores it and always asks.
+    (next) => next.sessionClosePolicy === policy || (policy === 'ask' && !next.sessionClosePolicy)
+      ? undefined
+      : 'This hub did not keep that choice; update it to let Oracle close sessions without asking.',
+  ), [update])
+
+  return {
+    settings,
+    unavailable,
+    loading,
+    saving,
+    saved,
+    error,
+    saveModel,
+    saveFolder,
+    saveBackend,
+    saveClosePolicy,
+  }
 }

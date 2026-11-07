@@ -26,7 +26,7 @@ const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
 
 function session(computerId: string, id: string, replacedSessionIds?: string[]): ManagedSession {
   return {
-    id, computerId, computerName: computerId, title: 'Same title', cwd: '/project',
+    id, computerId, computerName: computerId, title: 'Same title', cwd: '/projects/current',
     updatedAt: '2026-09-05T00:00:00.000Z', status: 'idle', isOpen: true,
     messages: [], replacedSessionIds,
   }
@@ -66,12 +66,28 @@ class FakeManager extends EventEmitter<{ event: [HubEvent] }> {
   })
   getSession = vi.fn(async () => { throw new Error('Metadata routes must not open a session') })
   activateSession = vi.fn()
+  validateKnowledgeRoot = vi.fn(async (
+    _computerId: string,
+    rootPath: string,
+  ) => rootPath)
+  ensureSessionKnowledgeBase = vi.fn(async (
+    _computerId: string,
+    _sessionId: string,
+    relativePath: string,
+  ) => ({
+    path: `/projects/current/${relativePath}`,
+    confinementPath: '/projects/current',
+  }))
   captureComputerRegistration = vi.fn((computerId: string) => {
     const registration = this.registrations.get(computerId)
     if (!registration) throw new Error('Computer not found')
     return () => this.registrations.get(computerId) === registration
   })
-  listKnowledge = vi.fn(async () => ({ path: '.', entries: [] }))
+  listKnowledge = vi.fn(async (
+    _computerId: string,
+    _root: string,
+    requestedPath = '.',
+  ) => ({ path: requestedPath, entries: [] }))
   deleteSession = vi.fn(async (computerId: string, sessionId: string) => {
     if (![...this.sessions, ...this.history].some((entry) => entry.computerId === computerId && entry.id === sessionId)) {
       throw Object.assign(new Error('Session not found'), { statusCode: 404 })
@@ -127,6 +143,7 @@ async function fixture(options: {
       path: requestedPath,
       entries: [],
     })),
+    validateKnowledgeRoot: vi.fn(async (rootPath: string) => rootPath),
     getSession: vi.fn(),
     openSession: vi.fn(async () => { throw new Error('Must not hydrate or resume an agent') }),
     activateSession: vi.fn(),
@@ -187,6 +204,17 @@ async function fixture(options: {
       method: 'PUT', url: route(computerId, sessionId), headers: trusted,
       payload: { rootId, expectedRevision, ...(rootPath ? { rootPath } : {}) },
     })
+  const putPath = (
+    knowledgeBasePath: string,
+    expectedRevision = 0,
+    computerId = 'hub',
+    sessionId = 'one',
+    create = true,
+  ) =>
+    runtime.app.inject({
+      method: 'PUT', url: route(computerId, sessionId), headers: trusted,
+      payload: { knowledgeBasePath, expectedRevision, create },
+    })
   const updates: SessionKnowledgeBinding[] = []
   const errors: Extract<HubEvent, { type: 'error' }>[] = []
   manager.on('event', (event) => {
@@ -195,7 +223,7 @@ async function fixture(options: {
   })
   return {
     directory, runtime, app: runtime.app, service, manager, knowledge, root,
-    secondRoot, store, initialize, route, get, put, updates, errors,
+    secondRoot, store, initialize, route, get, put, putPath, updates, errors,
   }
 }
 
@@ -250,6 +278,7 @@ describe('session Knowledge routes', () => {
         sessionId: 'one',
         rootId: null,
         rootPath: '.',
+        knowledgeBasePath: null,
         revision: 0,
         available: false,
       },
@@ -299,8 +328,507 @@ describe('session Knowledge routes', () => {
       root.computerId,
       root.path,
       'projects/agentic-remote',
+      undefined,
     )
     expect(manager.getSession).not.toHaveBeenCalled()
+  })
+
+  it('creates or reuses a dedicated path on the session owner without changing cwd', async () => {
+    const { putPath, manager, knowledge, service } = await fixture()
+    const before = structuredClone(manager.sessions)
+
+    const first = await putPath('knowledge')
+    expect(first.statusCode, first.body).toBe(200)
+    expect(first.json().binding).toMatchObject({
+      computerId: 'hub',
+      sessionId: 'one',
+      rootPath: '.',
+      knowledgeBasePath: '/projects/current/knowledge',
+      revision: 1,
+      available: true,
+      root: {
+        computerId: 'hub',
+        path: '/projects/current/knowledge',
+        name: 'knowledge',
+      },
+    })
+    expect(manager.ensureSessionKnowledgeBase).toHaveBeenCalledWith(
+      'hub',
+      'one',
+      'knowledge',
+      true,
+    )
+    expect(manager.sessions).toEqual(before)
+    expect(service.openSession).not.toHaveBeenCalled()
+    expect(service.activateSession).not.toHaveBeenCalled()
+    expect(knowledge.listRoots().filter(
+      (entry) => entry.path === '/projects/current/knowledge',
+    )).toHaveLength(1)
+
+    const repeated = await putPath('knowledge', 1)
+    expect(repeated.statusCode, repeated.body).toBe(200)
+    expect(repeated.json().binding.revision).toBe(1)
+    expect(knowledge.listRoots().filter(
+      (entry) => entry.path === '/projects/current/knowledge',
+    )).toHaveLength(1)
+  })
+
+  it('applies the session cwd confinement whenever a path-created root is read', async () => {
+    const { app, putPath, manager } = await fixture()
+    const created = await putPath('knowledge')
+    const rootId = created.json().binding.rootId
+
+    const listing = await app.inject({
+      url: `/api/knowledge/roots/${rootId}/entries?path=.`,
+      headers: trusted,
+    })
+
+    expect(listing.statusCode, listing.body).toBe(200)
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith(
+      'hub',
+      '/projects/current/knowledge',
+      '.',
+      '/projects/current',
+    )
+  })
+
+  it('keeps the confinement when selecting a nested path in that root', async () => {
+    const { putPath, put, manager } = await fixture()
+    const created = await putPath('knowledge')
+    const rootId = created.json().binding.rootId
+
+    const nested = await put(rootId, 1, 'hub', 'one', 'docs')
+
+    expect(nested.statusCode, nested.body).toBe(200)
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith(
+      'hub',
+      '/projects/current/knowledge',
+      'docs',
+      '/projects/current',
+    )
+  })
+
+  it('persists the canonical root path for root-ID aliases', async () => {
+    const { put, root, manager } = await fixture()
+    manager.validateKnowledgeRoot.mockResolvedValueOnce('/canonical/notes')
+
+    const response = await put(root.id)
+
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().binding).toMatchObject({
+      knowledgeBasePath: '/canonical/notes',
+      root: { id: root.id, path: '/canonical/notes' },
+    })
+  })
+
+  it('uses the legacy unconfined listing path on older paired nodes', async () => {
+    const { put, root, manager } = await fixture()
+    manager.validateKnowledgeRoot.mockRejectedValueOnce(
+      Object.assign(new Error('Validation endpoint not found'), {
+        statusCode: 404,
+      }),
+    )
+
+    const response = await put(root.id)
+
+    expect(response.statusCode, response.body).toBe(200)
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith(
+      root.computerId,
+      root.path,
+      '.',
+      undefined,
+    )
+    expect(response.json().binding).toMatchObject({
+      rootId: root.id,
+      rootPath: '.',
+      knowledgeBasePath: root.path,
+    })
+  })
+
+  it('keeps the capability refusal for confined roots on older paired nodes', async () => {
+    const { put, putPath, manager } = await fixture()
+    const created = await putPath('knowledge')
+    const rootId = created.json().binding.rootId
+    manager.validateKnowledgeRoot.mockRejectedValueOnce(
+      Object.assign(new Error('Validation endpoint not found'), {
+        statusCode: 404,
+      }),
+    )
+    manager.listKnowledge.mockRejectedValueOnce(
+      Object.assign(new Error('Update this runtime for confined reads'), {
+        statusCode: 409,
+      }),
+    )
+
+    const response = await put(rootId, 1, 'hub', 'one', 'docs')
+
+    expect(response.statusCode, response.body).toBe(409)
+    expect(manager.listKnowledge).toHaveBeenLastCalledWith(
+      'hub',
+      '/projects/current/knowledge',
+      'docs',
+      '/projects/current',
+    )
+  })
+
+  it('persists the canonical listed path for an in-root symlink alias', async () => {
+    const { put, root, manager } = await fixture()
+    manager.listKnowledge.mockResolvedValueOnce({
+      path: 'docs/canonical',
+      entries: [],
+    })
+
+    const response = await put(root.id, 0, 'hub', 'one', 'docs/alias')
+
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().binding).toMatchObject({
+      rootId: root.id,
+      rootPath: 'docs/canonical',
+      knowledgeBasePath: `${root.path}/docs/canonical`,
+    })
+  })
+
+  it('commits confinement when path mode converts the current catalog binding', async () => {
+    const { put, putPath, knowledge } = await fixture()
+    const existing = await knowledge.addRoot({
+      computerId: 'hub',
+      computerName: 'Hub',
+      path: '/projects/current/knowledge',
+      name: 'knowledge',
+    })
+    expect((await put(existing.id)).json().binding.revision).toBe(1)
+
+    const converted = await putPath('knowledge', 1)
+    expect(converted.statusCode, converted.body).toBe(200)
+    expect(converted.json().binding.revision).toBe(2)
+
+    const repeated = await putPath('knowledge', 2)
+    expect(repeated.statusCode, repeated.body).toBe(200)
+    expect(repeated.json().binding.revision).toBe(2)
+  })
+
+  it('supports suspended and historical sessions without opening them', async () => {
+    const { putPath, manager, service } = await fixture()
+    manager.sessions.push({ ...session('hub', 'suspended'), suspended: true })
+    manager.history.push({ ...session('hub', 'closed'), isOpen: false })
+
+    expect((await putPath('knowledge', 0, 'hub', 'suspended')).statusCode).toBe(200)
+    expect((await putPath('knowledge', 0, 'hub', 'closed')).statusCode).toBe(200)
+    expect(service.openSession).not.toHaveBeenCalled()
+    expect(service.activateSession).not.toHaveBeenCalled()
+  })
+
+  it('refuses path mode when the owner cannot provide the session cwd', async () => {
+    const { put, putPath, root, manager } = await fixture()
+    expect((await put(root.id)).statusCode).toBe(200)
+    manager.sessions = []
+    manager.answeredComputerIds = ['worker', 'library']
+
+    const response = await putPath('knowledge', 1)
+
+    expect(response.statusCode, response.body).toBe(503)
+    expect(manager.ensureSessionKnowledgeBase).not.toHaveBeenCalled()
+  })
+
+  it('rolls back a newly reserved path root when the binding revision is stale', async () => {
+    const { put, putPath, root, knowledge } = await fixture()
+    expect((await put(root.id)).statusCode).toBe(200)
+    const before = knowledge.listRoots()
+
+    const stale = await putPath('private-notes', 0)
+    expect(stale.statusCode).toBe(409)
+    expect(stale.json().binding).toMatchObject({ rootId: root.id, revision: 1 })
+    expect(knowledge.listRoots()).toEqual(before)
+  })
+
+  it('returns the committed binding when catalog finalization needs recovery', async () => {
+    const { directory, putPath, get, store } = await fixture()
+    let confinedRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
+      ) {
+        throw new Error('PRIVATE_FINALIZATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+    expect(failed.statusCode, failed.body).toBe(503)
+    expect(failed.headers['cache-control']).toBe('no-store')
+    expect(failed.json()).toMatchObject({
+      error: expect.not.stringContaining('PRIVATE_FINALIZATION_IO'),
+      binding: {
+        revision: 1,
+        knowledgeBasePath: '/projects/current/knowledge',
+      },
+    })
+    expect((await get()).json().binding).toEqual(failed.json().binding)
+    expect(JSON.parse(
+      await readFile(path.join(directory, 'knowledge-confined.json'), 'utf8'),
+    ).provisionalRootIds).toEqual([failed.json().binding.rootId])
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const recovered = await putPath(
+      'knowledge',
+      failed.json().binding.revision,
+    )
+    expect(recovered.statusCode, recovered.body).toBe(200)
+    expect(recovered.json().binding).toEqual(failed.json().binding)
+    expect(JSON.parse(
+      await readFile(path.join(directory, 'knowledge-confined.json'), 'utf8'),
+    ).provisionalRootIds).toEqual([])
+
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.getRootConfinement(recovered.json().binding.rootId)).toBe(
+      '/projects/current',
+    )
+  })
+
+  it('finalizes a committed path root before a later clear advances the binding', async () => {
+    const { directory, put, putPath, store } = await fixture()
+    let confinedRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
+      ) {
+        throw new Error('PRIVATE_FINALIZATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+    expect(failed.statusCode, failed.body).toBe(503)
+    const rootId = failed.json().binding.rootId
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const cleared = await put(null, failed.json().binding.revision)
+    expect(cleared.statusCode, cleared.body).toBe(200)
+    expect(cleared.json().binding).toMatchObject({
+      rootId: null,
+      revision: 2,
+    })
+
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.getRoot(rootId)).toBeDefined()
+    expect(restarted.getRootConfinement(rootId)).toBe('/projects/current')
+  })
+
+  it('finalizes a committed path root before replacement moves its binding', async () => {
+    const { app, directory, putPath, store } = await fixture()
+    let confinedRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
+      ) {
+        throw new Error('PRIVATE_FINALIZATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+    expect(failed.statusCode, failed.body).toBe(503)
+    const rootId = failed.json().binding.rootId
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const cleared = await app.inject({
+      method: 'POST',
+      url: '/api/computers/hub/sessions/one/clear',
+      headers: trusted,
+    })
+    expect(cleared.statusCode, cleared.body).toBe(200)
+    expect(store.get('hub', 'one-cleared')).toMatchObject({
+      rootId,
+      revision: 1,
+    })
+
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.getRoot(rootId)).toBeDefined()
+    expect(restarted.getRootConfinement(rootId)).toBe('/projects/current')
+  })
+
+  it('finalizes a committed path root before deletion removes its binding', async () => {
+    const { app, directory, putPath, store } = await fixture()
+    let confinedRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
+      ) {
+        throw new Error('PRIVATE_FINALIZATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+    expect(failed.statusCode, failed.body).toBe(503)
+    const rootId = failed.json().binding.rootId
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/api/computers/hub/sessions/one',
+      headers: trusted,
+    })
+    expect(deleted.statusCode, deleted.body).toBe(204)
+    expect(store.get('hub', 'one').revision).toBe(0)
+
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.getRoot(rootId)).toBeDefined()
+    expect(restarted.getRootConfinement(rootId)).toBe('/projects/current')
+  })
+
+  it('maps catalog reservation persistence failures to a retryable response', async () => {
+    const { putPath, store } = await fixture()
+    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+      if (String(args[1]).endsWith('/knowledge-confined.json')) {
+        throw new Error('PRIVATE_RESERVATION_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('knowledge')
+
+    expect(failed.statusCode, failed.body).toBe(503)
+    expect(failed.json().error).not.toContain('PRIVATE_RESERVATION_IO')
+    expect(store.get('hub', 'one').revision).toBe(0)
+  })
+
+  it('maps conflict rollback persistence failure to a recoverable response', async () => {
+    const { directory, knowledge, put, putPath, root, store } = await fixture()
+    expect((await put(root.id)).statusCode).toBe(200)
+    let confinedRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      if (
+        String(args[1]).endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
+      ) {
+        throw new Error('PRIVATE_ROLLBACK_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('private-notes', 0)
+
+    expect(failed.statusCode, failed.body).toBe(503)
+    expect(failed.json().error).not.toContain('PRIVATE_ROLLBACK_IO')
+    expect(store.get('hub', 'one')).toMatchObject({
+      rootId: root.id,
+      revision: 1,
+    })
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.listRoots()).toEqual(knowledge.listRoots().filter(
+      (entry) => entry.path !== '/projects/current/private-notes',
+    ))
+  })
+
+  it('maps binding and rollback persistence failures to a recoverable response', async () => {
+    const { directory, knowledge, putPath, store } = await fixture()
+    const bindingPath = path.join(directory, 'session-knowledge.json')
+    let confinedRenames = 0
+    let bindingRenames = 0
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      const destination = String(args[1])
+      if (destination === bindingPath && ++bindingRenames === 1) {
+        throw new Error('PRIVATE_BINDING_IO')
+      }
+      if (
+        destination.endsWith('/knowledge-confined.json') &&
+        ++confinedRenames === 2
+      ) {
+        throw new Error('PRIVATE_ROLLBACK_IO')
+      }
+      return disk.rename(...args)
+    })
+
+    const failed = await putPath('private-notes')
+
+    expect(failed.statusCode, failed.body).toBe(503)
+    expect(confinedRenames).toBe(2)
+    expect(failed.json().error).not.toMatch(
+      /PRIVATE_(?:BINDING|ROLLBACK)_IO/,
+    )
+    expect(store.get('hub', 'one').revision).toBe(0)
+
+    vi.mocked(rename).mockImplementation(disk.rename)
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    await restarted.recoverProvisionalRoots(store.listBindings())
+    expect(restarted.listRoots()).toEqual(knowledge.listRoots().filter(
+      (entry) => entry.path !== '/projects/current/private-notes',
+    ))
+  })
+
+  it('serializes simultaneous path updates and keeps only the winning root', async () => {
+    const { putPath, knowledge } = await fixture()
+    const responses = await Promise.all([
+      putPath('knowledge-a'),
+      putPath('knowledge-b'),
+    ])
+    expect(responses.map((response) => response.statusCode).sort())
+      .toEqual([200, 409])
+    const winner = responses.find((response) => response.statusCode === 200)!
+      .json().binding
+    expect(responses.find((response) => response.statusCode === 409)!
+      .json().binding).toEqual(winner)
+    expect(knowledge.listRoots().filter((entry) =>
+      entry.path.startsWith('/projects/current/knowledge-'))).toHaveLength(1)
+  })
+
+  it('rejects a pairing change while the owner resolves the path', async () => {
+    const { putPath, manager, knowledge } = await fixture()
+    const held = gate()
+    manager.ensureSessionKnowledgeBase.mockImplementationOnce(async (
+      _computerId,
+      _sessionId,
+      relativePath,
+    ) => {
+      held.start()
+      await held.wait
+      return {
+        path: `/projects/current/${relativePath}`,
+        confinementPath: '/projects/current',
+      }
+    })
+    const saving = putPath('knowledge')
+    await held.started
+    manager.rePair('hub')
+    held.finish()
+
+    expect((await saving).statusCode).toBe(409)
+    expect(knowledge.listRoots().some(
+      (entry) => entry.path === '/projects/current/knowledge',
+    )).toBe(false)
+  })
+
+  it.each([
+    { knowledgeBasePath: 'knowledge', expectedRevision: 0, rootId: null },
+    { knowledgeBasePath: 'knowledge', expectedRevision: 0, rootPath: '.' },
+    { knowledgeBasePath: 'knowledge', expectedRevision: 0, create: 'yes' },
+    { knowledgeBasePath: '', expectedRevision: 0 },
+  ])('rejects malformed path mode %#', async (payload) => {
+    const { app, route, store, manager } = await fixture()
+    const response = await app.inject({
+      method: 'PUT', url: route(), headers: trusted, payload,
+    })
+    expect(response.statusCode).toBe(400)
+    expect(store.listBindings()).toEqual([])
+    expect(manager.ensureSessionKnowledgeBase).not.toHaveBeenCalled()
   })
 
   it('preserves an explicit unlink and returns the newest binding with a stale-write conflict', async () => {

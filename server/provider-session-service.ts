@@ -26,6 +26,7 @@ import type {
   SideQuestionExchange,
 } from '../shared/contracts.js'
 import type { SessionService } from './session-service.js'
+import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 import {
   readSessionSkills,
   readSessionMcpServers,
@@ -394,12 +395,39 @@ export class ProviderSessionService
     return this.copilot.validateSessionDirectory(inputPath)
   }
 
-  listKnowledge(root: string, path?: string): Promise<WorkspaceListing> {
-    return this.copilot.listKnowledge(root, path)
+  validateKnowledgeRoot(
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string> {
+    return this.copilot.validateKnowledgeRoot(inputPath, confinementPath)
   }
 
-  readKnowledgeFile(root: string, path: string): Promise<WorkspaceFile> {
-    return this.copilot.readKnowledgeFile(root, path)
+  ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<SessionKnowledgeBaseLocation> {
+    return this.serviceFor(sessionId).ensureSessionKnowledgeBase(
+      sessionId,
+      relativePath,
+      create,
+    )
+  }
+
+  listKnowledge(
+    root: string,
+    path?: string,
+    confinementPath?: string,
+  ): Promise<WorkspaceListing> {
+    return this.copilot.listKnowledge(root, path, confinementPath)
+  }
+
+  readKnowledgeFile(
+    root: string,
+    path: string,
+    confinementPath?: string,
+  ): Promise<WorkspaceFile> {
+    return this.copilot.readKnowledgeFile(root, path, confinementPath)
   }
 
   listWorkspace(

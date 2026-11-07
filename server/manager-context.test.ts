@@ -162,6 +162,9 @@ describe('manager turn context', () => {
     // Precedence: the configured default, then Copilot's own default.
     expect(rule).toMatch(/configured in App settings → Models, else Copilot's own default/)
     expect(rule).toMatch(/not available[^\n]*tell the user/)
+    // The configured context size carries to whichever model runs, a named one included.
+    expect(rule).toMatch(/model, reasoningEffort, and contextTier unset unless the user asks/)
+    expect(rule).toMatch(/context size configured there whenever the model that runs offers it, a model the user names included/)
     expect(MANAGER_SYSTEM_PROMPT).not.toMatch(/mode, and model default to the user's own settings/)
   })
 
@@ -398,7 +401,8 @@ describe('manager turn context', () => {
   it('states the management-only role and the deletion rule in the system prompt', () => {
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/^You are Oracle/)
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/never do .*work yourself/i)
-    expect(MANAGER_SYSTEM_PROMPT).toContain('close_session only asks')
+    expect(MANAGER_SYSTEM_PROMPT).toContain('close_session asks the user')
+    expect(MANAGER_SYSTEM_PROMPT).toContain('never close sessions just to tidy up')
     expect(MANAGER_SYSTEM_PROMPT).toContain('?computer=<computerId>&session=<sessionId>')
   })
 
@@ -408,7 +412,7 @@ describe('manager turn context', () => {
       /the actual answer/,
       /uncertainty/,
       /errors and failures[^.;]*with their message/,
-      /every action you took[^.;]*started, messaged, answered, or asked to close/,
+      /every action you took[^.;]*started, messaged, answered, closed, or asked to close/,
       /declined or refused, and why/,
       /waiting for the user/,
       /exact commands, code, paths, IDs, or log lines/,

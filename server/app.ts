@@ -29,7 +29,7 @@ import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtim
 import { ManagerStore } from './manager-store.js'
 import { ManagerProactiveCoordinator } from './manager-proactive-coordinator.js'
 import { ManagerProactiveInbox } from './manager-proactive-inbox.js'
-import { OracleTaskStore } from './oracle-task-store.js'
+import { OracleTaskStore, unfinishedOracleTaskSessions } from './oracle-task-store.js'
 import {
   initializeManagerStructuredMemory,
   ManagerStructuredMemoryRuntime,
@@ -343,6 +343,9 @@ export async function buildApp(
     sessionKnowledgeStore = options.sessionKnowledgeStore ??
       new SessionKnowledgeStore(dataDirectory, knowledgeStore)
     await sessionKnowledgeStore.initialize()
+    await knowledgeStore.recoverProvisionalRoots(
+      sessionKnowledgeStore.listBindings(),
+    )
     // Hub-only: a node serves no UI, so it has no ordering to remember.
     sessionOrderStore = options.sessionOrderStore ?? new SessionOrderStore(dataDirectory)
     await sessionOrderStore.initialize()
@@ -431,6 +434,11 @@ export async function buildApp(
             )
           }
           return proactiveCoordinator.recordProactiveOutcomes(input)
+        },
+        // Unreadable tasks throw, so Oracle asks before closing anything.
+        unfinishedTaskSessions: (messages) => {
+          if (!oracleTaskStore) throw new Error('Oracle tasks are unavailable.')
+          return unfinishedOracleTaskSessions(oracleTaskStore.snapshot().tasks, messages)
         },
       })
       // Before the session service starts, so its first discovery already

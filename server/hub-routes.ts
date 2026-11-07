@@ -486,11 +486,38 @@ export async function registerHubRoutes(
       return reply.code(404).send({ error: 'Computer is not registered' })
     }
     const registrationIsCurrent = manager.captureComputerRegistration(input.computerId)
+    const roots = knowledge.listRoots()
+    const submittedRoot = roots.find(
+      (root) =>
+        root.computerId === input.computerId &&
+        root.path === input.path,
+    )
+    const submittedConfinement = submittedRoot
+      ? knowledge.getRootConfinement(submittedRoot.id)
+      : undefined
     // Browse the folder first so an unreachable or refused root is reported
     // before it is stored, and so the owning computer resolves it.
     let listing
+    let canonicalPath: string
     try {
-      listing = await manager.listKnowledge(input.computerId, input.path)
+      canonicalPath = await manager.validateKnowledgeRoot(
+        input.computerId,
+        input.path,
+        submittedConfinement,
+      )
+      const existingRoot = submittedRoot ?? roots.find(
+        (root) =>
+          root.computerId === input.computerId &&
+          root.path === canonicalPath,
+      )
+      listing = await manager.listKnowledge(
+        input.computerId,
+        canonicalPath,
+        undefined,
+        existingRoot
+          ? knowledge.getRootConfinement(existingRoot.id)
+          : undefined,
+      )
     } catch (error) {
       // A node released before knowledge roots has no such route, which would
       // otherwise surface as a bare "Not Found".
@@ -515,11 +542,11 @@ export async function registerHubRoutes(
     const reservation = await knowledge.reserveRoot({
       computerId: input.computerId,
       computerName: computer.name,
-      path: input.path,
+      path: canonicalPath,
       name:
         input.name?.trim() ||
-        input.path.split('/').filter(Boolean).at(-1) ||
-        input.path,
+        canonicalPath.split('/').filter(Boolean).at(-1) ||
+        canonicalPath,
     })
     const root = reservation.root
     // The registration decision runs inside the store's serialized finalize
@@ -561,6 +588,7 @@ export async function registerHubRoutes(
         root.computerId,
         root.path,
         scopedKnowledgePath(query.basePath, query.path),
+        knowledge.getRootConfinement(root.id),
       )
       return scopeKnowledgeListing(listing, query.basePath)
     },
@@ -578,6 +606,7 @@ export async function registerHubRoutes(
         root.computerId,
         root.path,
         scopedKnowledgePath(query.basePath, query.path),
+        knowledge.getRootConfinement(root.id),
       )
       return scopeKnowledgeFile(file, query.basePath)
     },

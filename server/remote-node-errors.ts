@@ -39,3 +39,25 @@ export class RemoteNodeRedirectError extends RemoteNodeRequestError {
     this.name = 'RemoteNodeRedirectError'
   }
 }
+
+export class RemoteNodeTransportError extends Error {
+  readonly statusCode = 503
+
+  constructor(computerName: string, cause: unknown) {
+    super(`${computerName} is unavailable. Reconnect it and try again.`, {
+      cause,
+    })
+    this.name = 'RemoteNodeTransportError'
+  }
+}
+
+export class RemoteNodeCapabilityError extends Error {
+  readonly statusCode = 409
+
+  constructor(computerName: string) {
+    super(
+      `${computerName} does not support confined Knowledge reads yet. Update it to the latest release.`,
+    )
+    this.name = 'RemoteNodeCapabilityError'
+  }
+}

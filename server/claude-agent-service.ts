@@ -43,6 +43,8 @@ import { listHomeDirectories,
   type DirectoryScope,
 } from './directory-browser.js'
 import {
+  ensureSessionKnowledgeBase as ensureKnowledgeDirectory,
+  type SessionKnowledgeBaseLocation,
   validateKnowledgeRoot,
   validateSessionDirectory,
 } from './session-directory.js'
@@ -1711,14 +1713,41 @@ export class ClaudeAgentService
     return this.validateDirectory(inputPath)
   }
 
-  // Confine the root exactly as a session working directory is confined, so
-  // this stays safe even though the provider aggregator routes to Copilot.
-  async listKnowledge(root: string, path = '.') {
-    return listWorkspace(await validateKnowledgeRoot(root), path)
+  validateKnowledgeRoot(
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string> {
+    return validateKnowledgeRoot(inputPath, confinementPath)
   }
 
-  async readKnowledgeFile(root: string, path: string) {
-    return readWorkspaceFile(await validateKnowledgeRoot(root), path)
+  ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<SessionKnowledgeBaseLocation> {
+    return ensureKnowledgeDirectory(
+      this.requireSession(sessionId).cwd,
+      relativePath,
+      create,
+    )
+  }
+
+  // Confine the root exactly as a session working directory is confined, so
+  // this stays safe even though the provider aggregator routes to Copilot.
+  async listKnowledge(
+    root: string,
+    path = '.',
+    confinementPath?: string,
+  ) {
+    return listWorkspace(root, path, confinementPath)
+  }
+
+  async readKnowledgeFile(
+    root: string,
+    path: string,
+    confinementPath?: string,
+  ) {
+    return readWorkspaceFile(root, path, confinementPath)
   }
 
   listWorkspace(

@@ -82,6 +82,11 @@ export interface ManagerConfirmation {
   /** `closing` is recorded before the deletion, so a restart can finish it. */
   state: 'pending' | 'closing' | 'confirmed' | 'declined' | 'failed'
   error?: string
+  /**
+   * Oracle closed it without asking, as `sessionClosePolicy` allows; such a
+   * close is never pending. Absent when the user answered.
+   */
+  decidedBy?: 'oracle'
 }
 
 export interface ManagerMessage {
@@ -164,6 +169,13 @@ export interface ManagerInternalSubmission {
 /** How Oracle opens the sessions it starts: the Copilot SDK, or a terminal (tmux). */
 export type ManagerSessionBackend = 'sdk' | 'terminal'
 
+/**
+ * `ask` (the default) confirms every close in the app. `oracle-started` lets
+ * a typed Delegate message close an idle session Oracle started, named by its
+ * full id, that no unfinished Oracle task uses; anything else still asks.
+ */
+export type ManagerSessionClosePolicy = 'ask' | 'oracle-started'
+
 export interface ManagerSettings {
   /** Unset uses the hub's default: AGENTIC_REMOTE_MANAGER_MODEL, else Copilot's. */
   model?: string
@@ -189,6 +201,11 @@ export interface ManagerSettingsSnapshot extends ManagerSettings {
    * a client MUST NOT read its absence as the SDK.
    */
   sessionBackend?: ManagerSessionBackend
+  /**
+   * Whether Oracle asks before closing a session. A hub from before this
+   * setting omits it and always asks.
+   */
+  sessionClosePolicy?: ManagerSessionClosePolicy
 }
 
 export interface ManagerSnapshot {
@@ -226,6 +243,8 @@ export interface UpdateManagerSettingsInput {
   sessionFolders?: Record<string, string | null>
   /** How Oracle opens the sessions it starts; absent leaves it as it is. */
   sessionBackend?: ManagerSessionBackend
+  /** Whether Oracle asks before closing a session; absent leaves it as it is. */
+  sessionClosePolicy?: ManagerSessionClosePolicy
 }
 
 export type ManagerEvent =

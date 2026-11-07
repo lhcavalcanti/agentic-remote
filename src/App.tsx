@@ -356,6 +356,7 @@ import {
   type SessionNotificationState,
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
+import { MessageTime } from './MessageTime'
 import { SessionPatchReceiver } from './session-patches'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import {
@@ -398,19 +399,6 @@ function recordingDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
 }
-
-const messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: 'numeric',
-  minute: '2-digit',
-})
-
-const messageDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-})
 
 function slashShortcut(value: string): string {
   const parts = value.split(/[-_]/)
@@ -3262,7 +3250,9 @@ function DefaultRuntimeControls({
                 onChange({
                   model: model.id,
                   reasoningEffort: model.reasoningEfforts[0] || '',
-                  contextTier: 'default',
+                  contextTier: model.contextTiers.includes(selection.contextTier)
+                    ? selection.contextTier
+                    : 'default',
                   mode: selection.mode,
                 })
               }}
@@ -4172,8 +4162,10 @@ function AppSettingsDialog({
               <SettingScope synced />
             </div>
             <p className="dialog-message">
-              New sessions use these provider settings. Existing sessions keep
-              their current model, effort, context, and agent mode.
+              New sessions, including those Oracle starts, use these provider
+              settings. Oracle keeps the context size for a model you name when
+              that model offers it. Existing sessions keep their current model,
+              effort, context, and agent mode.
             </p>
             {(['copilot', 'claude'] as const).map((provider) => (
               <DefaultRuntimeControls
@@ -4864,13 +4856,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
               ? 'Command'
               : 'Agent'}
         </span>
-        <time
-          className="message__timestamp"
-          dateTime={message.createdAt}
-          title={messageDateTimeFormatter.format(new Date(message.createdAt))}
-        >
-          {messageTimeFormatter.format(new Date(message.createdAt))}
-        </time>
+        <MessageTime value={message.createdAt} />
       </div>
       <div className="message__content">
         {message.content ? (

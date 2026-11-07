@@ -27,11 +27,11 @@ import type {
   SessionRecoveryReason,
   SendMessageInput,
   SessionKnowledgeBinding,
+  SessionKnowledgeRootMutationInput,
   SessionFileUpload,
   SideQuestionAnswer,
   SideQuestionInput,
   SlashCommand,
-  UpdateSessionKnowledgeRootInput,
   UserInputReplyInput,
   WorkspaceFile,
   WorkspaceListing,
@@ -495,7 +495,7 @@ export class SessionKnowledgeRequestError extends Error {
 async function requestSessionKnowledgeRoot(
   computerId: string,
   sessionId: string,
-  input?: UpdateSessionKnowledgeRootInput,
+  input?: SessionKnowledgeRootMutationInput,
 ): Promise<SessionKnowledgeBinding> {
   const response = await fetch(`${sessionPath(computerId, sessionId)}/knowledge-root`, {
     cache: 'no-store',
@@ -531,7 +531,7 @@ export async function getSessionKnowledgeRoot(
 export async function updateSessionKnowledgeRoot(
   computerId: string,
   sessionId: string,
-  input: UpdateSessionKnowledgeRootInput,
+  input: SessionKnowledgeRootMutationInput,
 ): Promise<SessionKnowledgeBinding> {
   return requestSessionKnowledgeRoot(computerId, sessionId, input)
 }

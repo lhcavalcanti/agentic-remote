@@ -115,6 +115,13 @@ describe('countsAsRefusal', () => {
     expect(countsAsRefusal(500, route, false)).toBe(false)
     expect(countsAsRefusal(503, route, false)).toBe(false)
   })
+
+  it('counts a 501 only when a matched route raised it with a reason', () => {
+    expect(countsAsRefusal(501, route, true)).toBe(true)
+    expect(countsAsRefusal(501, route, false)).toBe(false)
+    expect(countsAsRefusal(501, undefined, true)).toBe(false)
+    expect(countsAsRefusal(503, route, true)).toBe(false)
+  })
 })
 
 describe('refusalReasonFromError', () => {

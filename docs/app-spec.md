@@ -794,7 +794,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Dreamer MUST be disabled by default and enabled explicitly in App settings
   with a saved hub-wide IANA timezone. Its fixed schedule is 02:00 local time;
   same-day catch-up ends at 08:00. DST repeats MUST NOT duplicate a daily run,
-  and a missing 02:00 MUST use the first later valid local time.
+  and a missing 02:00 MUST use the first later valid local time. Enablement
+  MUST disclose that it also opts the hub into proactive Oracle analysis,
+  which MAY use the selected Oracle model to classify admitted lifecycle
+  findings. It MUST NOT promise that enabling Dreamer makes no model calls.
 - This first slice MUST perform deterministic local metadata review:
   journal-observed session state and eligible structured-memory metadata, not
   prompts, titles, general transcript contents, memory contents or external
@@ -830,9 +833,51 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   MUST remain distinct and actionable. Background Tasks is the live provider
   task surface; the morning plan is durable review state. Review edits affect
   only the latter, while both participate in the same authoritative refresh.
-- Dreamer MUST NOT raise overnight notifications, send speech, execute work
-  or add model calls. Semantic planning, authoritative todo/history adapters
-  and optional morning delivery are separate follow-ups described in
+- A journal-derived plan item is a suggestion only. It MUST say that Oracle has
+  not investigated or assigned the work, MUST NOT expose a generic completion
+  action, and MUST NOT be treated as execution evidence. Asking Oracle to
+  investigate MUST create or reuse a durable task with an owner, next action,
+  status and replay-safe source identity before the suggestion is retired.
+  The task MUST retain its source plan/item identity, and the suggestion MUST
+  persist the linked task ID in the same plan mutation that retires it. Replayed
+  investigation requests, including carried session suggestions, MUST reuse
+  that task and attempt.
+- Durable Oracle tasks MAY be created from the existing proactive lifecycle
+  inbox or an explicit Morning Plan investigation. They MUST persist before
+  inbox acknowledgement or execution dispatch, use idempotent request IDs, and
+  retain attempt history, linked execution sessions, bounded tool/test evidence
+  and explicit failure or blocked reasons. A queued or running attempt MUST NOT
+  be duplicated by another dispatch. Refresh, startup, manager updates and
+  session updates MUST reconcile task state without polling or a second wake
+  endpoint. A failed Oracle manager turn MUST NOT make a task retryable while
+  an authoritatively linked execution session is still running.
+- An Oracle task MUST reach `completed` only after the user reviews and confirms
+  a successful root `task_complete` marker from the exact linked execution
+  session in the exact root user turn dispatched for the current attempt.
+  Durable prompt/message identity and transcript order, not cross-computer
+  timestamps or the latest arbitrary user text, MUST bind the result to the
+  attempt. Journal text, assistant prose, task labels, idle state and failed
+  tools MUST NOT imply completion. Late evidence from an older attempt MAY
+  update that attempt's history but MUST NOT replace the current attempt's
+  status. User-owned tasks instead MUST expose explicit **Mark complete** and
+  **Dismiss** actions; either terminal disposition MUST be durable,
+  idempotent and release active-task capacity.
+- Oracle-owned findings MUST include an executable prompt. Task-origin Oracle
+  turns MAY create, continue, answer or cancel execution sessions only for the
+  durable task; unrelated settings, naming, closure, proactive-outcome and
+  memory mutations MUST fail closed. Generic Oracle queue edit/remove/retry
+  controls MUST reject internal task messages so task identity cannot diverge.
+- Proactive Oracle turns MUST limit session listing, transcript reads and side
+  questions to the exact computer/session identities admitted in their current
+  durable event batch. Terminal manager-message reconciliation MUST use exact
+  durable lookup rather than depending on the bounded public Oracle snapshot.
+- Every successful Dreamer or task mutation MUST return the reconciled
+  authoritative plan, task, evidence and available action projection in that
+  response; the UI MUST NOT temporarily lose task controls until refresh.
+- Dreamer MUST NOT raise overnight notifications, send speech or automatically
+  dispatch work. Proactive analysis uses the existing hub lifecycle stream and
+  durable Oracle queue; execution begins only from an explicit task action.
+  Optional morning delivery remains a separate follow-up described in
   [Oracle Dreamer](design/oracle-dreamer.md).
 
 ## 4. Conversation timeline

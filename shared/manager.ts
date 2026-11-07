@@ -18,7 +18,35 @@ export type ManagerStatus = 'idle' | 'working' | 'recovering' | 'offline'
 export type ManagerMessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 
 /** Trusted hub-side provenance for a user message. */
-export type ManagerMessageSource = 'typed' | 'voice' | 'scheduled'
+export type ManagerMessageSource =
+  | 'typed'
+  | 'voice'
+  | 'scheduled'
+  | 'proactive'
+  | 'task'
+
+export interface ManagerAutomaticContext {
+  kind: 'proactive' | 'task'
+  taskId?: string
+  eventIds?: string[]
+  sessionRefs?: ManagerSessionRef[]
+}
+
+export type ManagerProactiveOutcome =
+  | {
+      kind: 'task'
+      eventIds: string[]
+      title: string
+      summary: string
+      nextAction: string
+      owner: 'oracle' | 'user'
+      executionPrompt?: string
+    }
+  | {
+      kind: 'no-action'
+      eventIds: string[]
+      reason: string
+    }
 
 export const managerCheckCadences = [60, 120, 240, 480] as const
 export type ManagerCheckCadenceMinutes = (typeof managerCheckCadences)[number]
@@ -50,6 +78,14 @@ export interface ManagerSessionRef {
   computerId: string
   sessionId: string
   title?: string
+  /** Immediate root prompt ID, or the durable queued prompt receipt. */
+  promptId?: string
+  /** Root user message before a queued delivery was appended. */
+  promptAnchorId?: string
+  /** One-based FIFO position after the anchor for a queued delivery. */
+  promptQueuePosition?: number
+  /** SHA-256 of the exact queued prompt content. */
+  promptDigest?: string
 }
 
 /**
@@ -85,6 +121,8 @@ export interface ManagerMessage {
    * persisted user messages without it are treated as typed.
    */
   readonly source?: ManagerMessageSource
+  /** Trusted automatic-turn scope, immutable after the message is queued. */
+  readonly automatic?: ManagerAutomaticContext
   /**
    * When Oracle first started on it. From then on it is no longer the user's
    * to edit, even if a restart or Retry puts it back in the queue.
@@ -92,6 +130,8 @@ export interface ManagerMessage {
   startedAt?: string
   /** Why a message failed, shown beside its Retry. */
   error?: string
+  /** Durable retries of the same message after its first terminal result. */
+  retryCount?: number
   /** A completed scheduled check inside its quiet window must not alert. */
   suppressNotification?: boolean
   /** The message of yours a reply or activity belongs to. */
@@ -124,6 +164,14 @@ export type ManagerSubmissionSource = ManagerMessageSource
 export interface ManagerSubmissionOptions {
   answerOnly?: boolean
   source?: ManagerSubmissionSource
+}
+
+export interface ManagerInternalSubmission {
+  id: string
+  content: string
+  source: 'proactive' | 'task'
+  answerOnly: boolean
+  automatic: ManagerAutomaticContext
 }
 
 /** Oracle's own runtime settings, kept on the hub. */

@@ -19,7 +19,7 @@ import {
 } from './manager-agent.js'
 import { JournalRecorder } from './manager-journal.js'
 import { MANAGER_SYSTEM_PROMPT } from './manager-context.js'
-import { ManagerStore } from './manager-store.js'
+import { ManagerStore, registryKey } from './manager-store.js'
 import { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import { managerCheckDefaults, managerScheduledMessageId } from './manager-schedule.js'
@@ -237,6 +237,166 @@ describe('ManagerAgent', () => {
     expect(events.some((event) => event.type === 'manager.delta')).toBe(true)
     expect(events.filter((event) => event.type === 'manager.status').map((event) => event.type === 'manager.status' && event.status))
       .toEqual(expect.arrayContaining(['working', 'idle']))
+  })
+
+  it('runs a later typed message before an automatic proactive message', async () => {
+    agent = new ManagerAgent({
+      store,
+      recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+      hub,
+      clientFactory: sdk.factory,
+      retryDelaysMs: [0, 0],
+      idleStopMs: 60_000,
+      sessionIdFactory: () => `sdk-${++ids}`,
+    })
+    await agent.enqueueInternal({
+      id: 'oracle-proactive-batch-a',
+      content: 'Inspect failed event a.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['a'.repeat(64)],
+      },
+    })
+    await agent.send('User request')
+
+    await agent.start()
+    await settled()
+
+    expect(sdk.prompts[0]).toContain('<user_message>\nUser request')
+    expect(sdk.prompts[1]).toContain('<proactive_observation')
+  })
+
+  it('limits proactive prompt context to sessions in the bound event batch', async () => {
+    sessions = [
+      session('batch-session', {
+        title: 'Batch session',
+        messages: [{
+          id: 'batch-reply',
+          role: 'assistant',
+          content: 'Batch-visible result.',
+          createdAt: '2026-10-15T11:55:00.000Z',
+        }],
+      }),
+      session('unrelated-session', {
+        title: 'Unrelated secret session',
+        messages: [{
+          id: 'secret-reply',
+          role: 'assistant',
+          content: 'Secret unrelated transcript.',
+          createdAt: '2026-10-15T11:55:00.000Z',
+        }],
+      }),
+    ]
+    await store.updateRegistry((registry) => {
+      registry[registryKey('hub', 'batch-session')] = {
+        computerId: 'hub',
+        sessionId: 'batch-session',
+        title: 'Batch session',
+        origin: 'manager',
+        task: 'Batch-visible task.',
+        firstSeenAt: '2026-10-15T11:00:00.000Z',
+      }
+      registry[registryKey('hub', 'unrelated-session')] = {
+        computerId: 'hub',
+        sessionId: 'unrelated-session',
+        title: 'Unrelated secret session',
+        origin: 'manager',
+        task: 'Secret unrelated task.',
+        firstSeenAt: '2026-10-15T11:00:00.000Z',
+      }
+    })
+    await store.appendJournal([{
+      kind: 'status',
+      computerId: 'hub',
+      sessionId: 'batch-session',
+      title: 'Batch session',
+      from: 'running',
+      to: 'idle',
+    }, {
+      kind: 'status',
+      computerId: 'hub',
+      sessionId: 'unrelated-session',
+      title: 'Unrelated secret session',
+      from: 'running',
+      to: 'error',
+    }])
+    await start()
+    await agent!.enqueueInternal({
+      id: 'oracle-proactive-scoped-context',
+      content: 'Inspect the bound session.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['b'.repeat(64)],
+        sessionRefs: [{ computerId: 'hub', sessionId: 'batch-session' }],
+      },
+    })
+
+    await settled()
+
+    expect(sdk.prompts[0]).toContain('Batch-visible result.')
+    expect(sdk.prompts[0]).toContain('Batch-visible task.')
+    expect(sdk.prompts[0]).not.toContain('Secret unrelated transcript.')
+    expect(sdk.prompts[0]).not.toContain('Secret unrelated task.')
+    expect(sdk.prompts[0]).not.toContain('Unrelated secret session')
+  })
+
+  it('deduplicates an identical internal message and rejects an ID collision', async () => {
+    await start()
+    const input = {
+      id: 'oracle-task-message-a',
+      content: 'Run the focused queue test.',
+      source: 'task' as const,
+      answerOnly: false,
+      automatic: {
+        kind: 'task' as const,
+        taskId: 'oracle-task-a',
+      },
+    }
+    const first = await agent!.enqueueInternal(input)
+    const replay = await agent!.enqueueInternal(input)
+    expect(replay.id).toBe(first.id)
+    expect(replay).toMatchObject({
+      source: 'task',
+      automatic: { kind: 'task', taskId: 'oracle-task-a' },
+    })
+    await expect(agent!.enqueueInternal({
+      ...input,
+      content: 'Different payload.',
+    })).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('refuses generic edits of queued deterministic proactive messages', async () => {
+    sdk.behaviors.push(async () => new Promise<void>(() => undefined))
+    await start()
+    const blocking = await agent!.send('Keep Oracle busy.')
+    await vi.waitFor(() => expect(agent!.snapshot().messages.find(
+      (message) => message.id === blocking.id,
+    )?.state).toBe('running'))
+    const proactive = await agent!.enqueueInternal({
+      id: 'oracle-proactive-immutable',
+      content: 'Analyze the admitted lifecycle event.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['c'.repeat(64)],
+      },
+    })
+
+    await expect(agent!.editQueued(
+      proactive.id,
+      'Replace the deterministic event payload.',
+    )).rejects.toMatchObject({ statusCode: 409 })
+    expect(agent!.snapshot().messages.find(
+      (message) => message.id === proactive.id,
+    )).toMatchObject({
+      state: 'queued',
+      content: 'Analyze the admitted lifecycle event.',
+    })
   })
 
   it('enqueues one durable scheduled status check when its persisted time is due', async () => {
@@ -704,6 +864,29 @@ describe('ManagerAgent', () => {
 
     expect(agent!.snapshot().messages.find(
       (message) => message.role === 'user' && message.source === 'scheduled',
+    )).toMatchObject({
+      state: 'done',
+      suppressNotification: true,
+    })
+  })
+
+  it('suppresses notification when automatic proactive analysis completes', async () => {
+    await start()
+
+    await agent!.enqueueInternal({
+      id: 'proactive-notification-silent',
+      content: 'Analyze the admitted lifecycle event.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['a'.repeat(64)],
+      },
+    })
+    await settled()
+
+    expect(agent!.snapshot().messages.find(
+      (message) => message.id === 'proactive-notification-silent',
     )).toMatchObject({
       state: 'done',
       suppressNotification: true,
@@ -2199,6 +2382,51 @@ describe('ManagerAgent', () => {
     )?.state).toBe('cancelled')
   })
 
+  it('does not invoke the model when proactive disable races a queue claim', async () => {
+    let releaseClaim!: () => void
+    let markClaimed!: () => void
+    const claimGate = new Promise<void>((resolve) => {
+      releaseClaim = resolve
+    })
+    const claimed = new Promise<void>((resolve) => {
+      markClaimed = resolve
+    })
+    const originalUpsert = store.upsertMessage.bind(store)
+    vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
+      await originalUpsert(message)
+      if (
+        message.id === 'proactive-disable-claim-race' &&
+        message.role === 'user' &&
+        message.state === 'running'
+      ) {
+        markClaimed()
+        await claimGate
+      }
+    })
+    await start()
+    await agent!.enqueueInternal({
+      id: 'proactive-disable-claim-race',
+      content: 'Analyze the admitted lifecycle event.',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['e'.repeat(64)],
+      },
+    })
+    await claimed
+
+    const disabling = agent!.setProactiveMessagesEnabled(false)
+    releaseClaim()
+    await disabling
+    await settled()
+
+    expect(sdk.prompts).toHaveLength(0)
+    expect(agent!.message('proactive-disable-claim-race')).toMatchObject({
+      state: 'cancelled',
+    })
+  })
+
   it('keeps voice provenance through queue edits, failures, retries, and restart recovery', async () => {
     sdk.behaviors.push(async () => new Promise<void>(() => undefined))
     await start({ turnTimeoutMs: 2_000 })
@@ -2576,6 +2804,38 @@ describe('ManagerAgent', () => {
     await settled()
     expect(sdk.prompts.map((prompt) => prompt.split('<user_message>\n')[1].split('\n')[0])).toEqual(['one', 'three'])
     expect(agent!.snapshot().messages.find((m) => m.id === third.id)!.state).toBe('done')
+  })
+
+  it('rejects generic edit, remove, and retry controls for internal task messages', async () => {
+    agent = new ManagerAgent({
+      store,
+      recorder: new JournalRecorder(store, { flushDelayMs: 0 }),
+      hub,
+      clientFactory: sdk.factory,
+      retryDelaysMs: [0, 0],
+      idleStopMs: 60_000,
+      sessionIdFactory: () => `sdk-${++ids}`,
+    })
+    const queued = await agent.enqueueInternal({
+      id: 'oracle-task-queued',
+      content: 'Run the focused queue test.',
+      source: 'task',
+      answerOnly: false,
+      automatic: { kind: 'task', taskId: 'durable-task-a' },
+    })
+    await expect(agent.editQueued(queued.id, 'Run something else.'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(agent.removeQueued(queued.id))
+      .rejects.toMatchObject({ statusCode: 409 })
+
+    await store.upsertMessage({
+      ...queued,
+      id: 'oracle-task-failed',
+      state: 'failed',
+      error: 'Execution backend unavailable.',
+    })
+    await expect(agent.retry('oracle-task-failed'))
+      .rejects.toMatchObject({ statusCode: 409 })
   })
 
   it('edits a waiting message in place, keeping its identity and place in the queue', async () => {

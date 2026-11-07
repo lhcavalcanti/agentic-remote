@@ -113,8 +113,12 @@ const emptyState = (): ManagerState => ({
 })
 
 function messageSource(source: unknown): ManagerMessageSource {
-  if (source === 'voice' || source === 'scheduled') return source
-  return 'typed'
+  return source === 'voice' ||
+    source === 'scheduled' ||
+    source === 'proactive' ||
+    source === 'task'
+    ? source
+    : 'typed'
 }
 
 function storedMessage(
@@ -128,6 +132,11 @@ function storedMessage(
     source: previous?.role === 'user'
       ? messageSource(previous.source)
       : messageSource(stored.source),
+    ...(previous?.role === 'user'
+      ? (previous.automatic
+          ? { automatic: structuredClone(previous.automatic) }
+          : { automatic: undefined })
+      : {}),
   }
 }
 

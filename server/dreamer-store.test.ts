@@ -66,6 +66,41 @@ describe('DreamerStore', () => {
     await Promise.all([first, second])
   })
 
+  it('persists task-backed plan items without treating journal items as tasks', async () => {
+    const root = await directory()
+    const store = new DreamerStore(root)
+    await store.initialize()
+    await store.updateSettings(0, { enabled: true, timeZone: 'UTC' })
+    const claim = await store.claimRun({
+      key: dreamerRunKey('UTC', '2026-10-29'),
+      localDate: '2026-10-29',
+      timeZone: 'UTC',
+      generation: 1,
+    })
+    if (claim.kind !== 'claimed') throw new Error('expected a claim')
+
+    await store.commitRun(claim.claim, {
+      ...plan,
+      items: [
+        { ...plan.items[0], fingerprint: 'session-a' },
+        {
+          id: 'task-item',
+          label: 'Run the focused queue test',
+          reason: 'Oracle recorded an actionable finding.',
+          status: 'pending',
+          source: 'task',
+          taskId: 'oracle-task-a',
+          fingerprint: 'task-a',
+        },
+      ],
+    }, [])
+
+    const items = store.snapshot().plan?.items
+    expect(items?.[0]).toMatchObject({ source: 'session' })
+    expect(items?.[0].taskId).toBeUndefined()
+    expect(items?.[1]).toMatchObject({ source: 'task', taskId: 'oracle-task-a' })
+  })
+
   it('retries every directory ancestry barrier after a failed first initialization', async () => {
     const root = await directory()
     const nested = path.join(root, 'one', 'two', 'dreamer')

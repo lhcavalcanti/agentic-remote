@@ -132,6 +132,57 @@ describe('ManagerStore', () => {
     })
   })
 
+  it('persists proactive and task provenance with immutable automatic context', async () => {
+    const store = await open()
+    await store.upsertMessage({
+      id: 'proactive',
+      role: 'user',
+      content: 'Inspect the failed session.',
+      createdAt: 't1',
+      state: 'queued',
+      source: 'proactive',
+      automatic: {
+        kind: 'proactive',
+        eventIds: ['a'.repeat(64)],
+      },
+    })
+    await store.upsertMessage({
+      id: 'task',
+      role: 'user',
+      content: 'Run the focused queue test.',
+      createdAt: 't2',
+      state: 'queued',
+      source: 'task',
+      automatic: {
+        kind: 'task',
+        taskId: 'oracle-task-a',
+      },
+    })
+    await store.flush()
+
+    const reopened = await open()
+    expect(reopened.message('proactive')).toMatchObject({
+      source: 'proactive',
+      automatic: { kind: 'proactive', eventIds: ['a'.repeat(64)] },
+    })
+    expect(reopened.message('task')).toMatchObject({
+      source: 'task',
+      automatic: { kind: 'task', taskId: 'oracle-task-a' },
+    })
+
+    await reopened.upsertMessage({
+      ...reopened.message('proactive')!,
+      source: 'typed',
+      automatic: undefined,
+      state: 'failed',
+    })
+    expect(reopened.message('proactive')).toMatchObject({
+      source: 'proactive',
+      automatic: { kind: 'proactive', eventIds: ['a'.repeat(64)] },
+      state: 'failed',
+    })
+  })
+
   it('compacts the conversation log and keeps only the newest messages', async () => {
     const store = await open({ conversationKeep: 3 })
     for (let index = 0; index < 20; index += 1) {

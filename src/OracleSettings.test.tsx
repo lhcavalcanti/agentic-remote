@@ -276,6 +276,8 @@ describe('OracleSettings', () => {
     const policy = await screen.findByRole('combobox', { name: "Closing Oracle's sessions" })
     expect(policy).toHaveValue('ask')
     expect(screen.getByRole('option', { name: 'Ask me every time (default)' })).toBeInTheDocument()
+    // Short enough for a phone to show the whole choice in the closed select.
+    expect(screen.getByRole('option', { name: 'Close idle ones without asking' })).toBeInTheDocument()
     fireEvent.change(policy, { target: { value: 'oracle-started' } })
     await waitFor(() => expect(updateManagerSettings).toHaveBeenCalledWith({ sessionClosePolicy: 'oracle-started' }))
     expect(await screen.findByText('Saved. Oracle closes idle sessions it started without asking.')).toBeInTheDocument()

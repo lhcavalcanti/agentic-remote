@@ -818,8 +818,8 @@
     "src/MermaidDiagram.tsx": "98849de396761797dad407e96ea609fe233756b156462b349150fbb6f69f16a2",
     "src/OracleDreamer.test.tsx": "f93926368c40b03306ebd7e4d9728651b7385ed5ca8ad9911a259c6446ab6941",
     "src/OracleDreamer.tsx": "008d1b715a7c30218dc2faa041dd6413865eec442d0bf1ead218514637c683ef",
-    "src/OracleSettings.test.tsx": "a3912b34069f99bd46715b694bbccc472636621d6550bafe1aacefeb84f7639c",
-    "src/OracleSettings.tsx": "42d117b85c60515527b3c70e5fa04b950cb46d6d42bfd7d0d2babce98cafd6f2",
+    "src/OracleSettings.test.tsx": "1a0251ebe12bb06af3d261cf91399cd348d13ddbb3915eb5fd808e7fcc848350",
+    "src/OracleSettings.tsx": "1d09a8ea5f177b550f885407c60148416d5e43163ea24b4c849a33d087ee13d1",
     "src/ReaderWorkspace.test.tsx": "5656d5bb5f85a10de474e57b94e23cf0203f4354c8e8b2db26d3ed89b748b904",
     "src/ReaderWorkspace.tsx": "6b9e93e705b832217ef733e3b2fbf25810270943609bb963bf94eb1fbfbbdc28",
     "src/SessionActions.test.tsx": "8c3b1e18436507aa07a61b4f229b77466c086ecb3a6f195865ae0f7e41a028c6",
@@ -1013,20 +1013,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "51d9cb45adc12a41c0dc279514516c642b25f5fdbd46d369c316bd9a3358294c",
+    "GRAPH_REPORT.md": "94f2c9d880485f52bfab565220d7769628cad58b61b82ad7875244dc9bb69d16",
     "communities.json": "b092f3d00f50f12b7bc7f51339f92a5e9ffa308e29ff5bcbed9f8d90873b7b43",
-    "graph.html": "bc3aa8bf80aa78ea8fb15b9572d7c9521a650a635d0ba0f4eba04f3f8060451d",
-    "graph.json": "044b1146d5c4b9a12ad475fbbbf35c27e0a3df2762c55717118a8b5149bcaf2f"
+    "graph.html": "35f6d86fde11f4c0444f85a713e95d614fc2e058cf19dbfa2b2f06e63d7a9692",
+    "graph.json": "94e569f94f1a221877eab1d5d3fbed1c4b53e75616905cd1b9410b5854ffd857"
   },
   "schema_version": 1,
-  "source_commit": "899e19a3d4b3db15e17162ad7d9421d945f9058e",
-  "source_fingerprint": "415429132160f26df4fbfb3bac894b976708fea43936d65b36704270d7ea89f4",
+  "source_commit": "08ebef4d6f69b3c3a419d827a8dc8970d985fc3b",
+  "source_fingerprint": "70405c51bd5b07e5c012d18ba7e44c6eb705a10f43e2b290fb5f2d821e1aa45b",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/design/session-manager.md",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-tools.test.ts",
-    "server/manager-tools.ts"
+    "src/OracleSettings.test.tsx",
+    "src/OracleSettings.tsx"
   ]
 }

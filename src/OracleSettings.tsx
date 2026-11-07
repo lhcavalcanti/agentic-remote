@@ -152,7 +152,7 @@ export function OracleModelSettings({
               value={settings.sessionClosePolicy}
             >
               <option value="ask">Ask me every time (default)</option>
-              <option value="oracle-started">Close idle sessions Oracle started without asking</option>
+              <option value="oracle-started">Close idle ones without asking</option>
             </select>
           </label>
           <p className="dialog-message" id={closePolicyHint}>

@@ -868,11 +868,13 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
     leave the morning plan alone. Disable, stop and storage failure MUST stop
     the refresh, fence any in-flight one and clear the cache.
 - While Dreamer is on, Oracle's user, voice and task turns MUST include that
-  progress: each roster session's last reply and pending request, the refresh
-  time, unreachable computers, sessions closed in the last 24 h and open
-  follow-up tasks. Live listing data wins over the cache. Quoted text MUST be
-  single-line, bounded, escaped and labelled untrusted data. Proactive turns
-  MUST NOT receive it, and an unreadable cache MUST NOT block an answer.
+  progress: a roster session's cached last reply when it reports no current
+  activity and the listing carries no reply, its pending request while it
+  waits, the refresh time, unreachable computers, sessions closed in the last
+  24 h and open follow-up tasks. Live listing data wins over the cache. Quoted
+  text MUST be single-line, bounded, escaped and labelled untrusted data.
+  Proactive turns MUST NOT receive it, and an unreadable cache MUST NOT block
+  an answer.
 - Dreamer settings and the morning plan MUST show the last refresh time,
   unreachable computers and any refresh error; settings also show the next
   refresh. There is no manual refresh or extra setting.

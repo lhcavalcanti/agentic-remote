@@ -350,7 +350,7 @@ describe('manager tools', () => {
     expect(host.providerModels).toHaveBeenLastCalledWith('hub', 'copilot')
     expect(copilot).toContain("Models for copilot on development (hub); pass the exact id as create_session's model with provider copilot:")
     expect(copilot).toContain('- model-a — Model A · effort low/high · the configured default')
-    expect(copilot).toMatch(/^- model-b$/m)
+    expect(copilot).toMatch(/^- model-b · long context$/m)
 
     const claude = String(await call('list_models', { provider: 'claude' }))
     expect(host.providerModels).toHaveBeenLastCalledWith('hub', 'claude')
@@ -459,16 +459,71 @@ describe('manager tools', () => {
       model: 'model-b', contextTier: 'long_context',
     })
 
-    // A named model that is the configured default keeps its configured context;
-    // another named model starts with its own effort and context.
+    // A named model keeps the configured context size it offers, but not the
+    // configured effort, which belongs to the configured model.
     await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' })
     expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ model: 'model-b', contextTier: 'long_context' }))
     runtimes.copilot = { model: 'model-a', reasoningEffort: 'high', contextTier: 'default', mode: '' }
     await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' })
     const input = vi.mocked(host.createSession).mock.lastCall![1]
-    expect(input).toMatchObject({ model: 'model-b' })
+    expect(input).toMatchObject({ model: 'model-b', contextTier: 'default' })
     expect(input).not.toHaveProperty('reasoningEffort')
-    expect(input).not.toHaveProperty('contextTier')
+  })
+
+  it('carries the configured context size to a model the user names, and says when it does not run', async () => {
+    runtimes.copilot = { model: 'model-a', reasoningEffort: 'high', contextTier: 'long_context', mode: '' }
+    const named = String(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))
+    const input = vi.mocked(host.createSession).mock.lastCall![1]
+    expect(input).toMatchObject({ model: 'model-b', contextTier: 'long_context' })
+    expect(input).not.toHaveProperty('reasoningEffort')
+    expect(named).toContain('Its task was sent. It runs with long context.')
+
+    runtimes.copilot = { model: 'model-b', reasoningEffort: '', contextTier: 'long_context', mode: '' }
+    const lacking = String(await call('create_session', { title: 'T', prompt: 'P', model: 'model-a' }))
+    expect(vi.mocked(host.createSession).mock.lastCall![1]).not.toHaveProperty('contextTier')
+    expect(lacking).toContain('Its task was sent. model-a does not offer the configured long context, so it runs with default context; tell the user.')
+
+    // What the session reports outranks what was sent.
+    vi.mocked(host.createSession).mockResolvedValueOnce(session('new2', { runtime: { model: 'model-b', contextTier: 'default' } }))
+    const reported = String(await call('create_session', { title: 'T', prompt: 'P' }))
+    expect(vi.mocked(host.createSession).mock.lastCall![1]).toMatchObject({ model: 'model-b', contextTier: 'long_context' })
+    expect(reported).toContain('Its task was sent. It reports default context, not the long context asked for; tell the user.')
+    expect(host.createSession).toHaveBeenCalledTimes(3)
+  })
+
+  it('honors a context size the user asks for, and starts nothing when it cannot run', async () => {
+    runtimes.copilot = { model: 'model-b', reasoningEffort: '', contextTier: 'long_context', mode: '' }
+    await call('create_session', { title: 'T', prompt: 'P', contextTier: 'default' })
+    expect(vi.mocked(host.createSession).mock.lastCall![1]).toMatchObject({ model: 'model-b', contextTier: 'default' })
+
+    runtimes.copilot = { model: 'model-a', reasoningEffort: '', contextTier: 'default', mode: '' }
+    const lacking = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', contextTier: 'long_context' }))
+    expect(lacking).toContain('No session was started: model-a from copilot on development does not offer long context.')
+    expect(lacking).toContain('Available copilot models with long context: model-b.')
+    expect(lacking).toContain('do not switch model or provider on your own')
+
+    // Copilot takes a context size only with a model, and none is configured,
+    runtimes = {}
+    const unset = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', contextTier: 'long_context' }))
+    expect(unset).toContain('No session was started: long context needs a model from copilot on development.')
+    expect(unset).toContain('Available copilot models with long context: model-b.')
+    // or the configured one is not offered.
+    runtimes.copilot = { model: 'model-z', reasoningEffort: '', contextTier: 'long_context', mode: '' }
+    const missing = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', contextTier: 'long_context' }))
+    expect(missing).toContain('No session was started: long context needs a model from copilot on development, and the configured default model-z is not available there.')
+
+    // A refusal from the provider itself goes back to the user too.
+    runtimes.copilot = { model: 'model-b', reasoningEffort: '', contextTier: 'default', mode: '' }
+    vi.mocked(host.providerModels).mockRejectedValueOnce(new Error('catalog offline'))
+    vi.mocked(host.createSession).mockRejectedValueOnce(new Error('Selected context tier is not supported by this model'))
+    const refused = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', contextTier: 'long_context' }))
+    expect(refused).toContain('No session was started: model-b from copilot on development does not offer long context (Selected context tier is not supported by this model).')
+    expect(refused).toContain('Available copilot models with long context: model-b.')
+
+    const claude = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', provider: 'claude', model: 'claude-agent-model', contextTier: 'long_context' }))
+    expect(claude).toContain('No session was started: claude-agent-model from claude on development does not offer long context. No claude model offers long context.')
+    expect(host.createSession).toHaveBeenCalledTimes(2)
+    expect(host.sendMessage).toHaveBeenCalledOnce()
   })
 
   it("starts on the provider's own default, and says so, when the configured model is not offered", async () => {
@@ -481,7 +536,7 @@ describe('manager tools', () => {
       cwd: '~/src/web', provider: 'copilot', terminalBacked: false, allowAllPermissions: true, mode: 'autopilot',
     })
     expect(result).toContain("copilot's own default model on development; the session has not reported which yet. Its task was sent.")
-    expect(result).toContain("The configured default model-z is not available from copilot on development, so the session uses copilot's own default; tell the user.")
+    expect(result).toContain("The configured default model-z is not available from copilot on development, so the session uses copilot's own default; tell the user. It runs with default context, since the configured long context needs a model.")
     expect(activities.at(-1)).toMatchObject({
       content: 'Started "T" on development with the default model; the configured default model-z is not available',
     })
@@ -530,7 +585,7 @@ describe('manager tools', () => {
     expect(inputs[2]).toMatchObject({ model: 'model-a' })
     expect(inputs[2]).not.toHaveProperty('reasoningEffort')
     expect(inputs[2]).not.toHaveProperty('contextTier')
-    expect(result).toContain('model model-a. Its task was sent.')
+    expect(result).toContain('model model-a. Its task was sent. model-a does not offer the configured long context, so it runs with default context; tell the user.')
     expect(result).not.toContain('not available')
   })
 

@@ -128,6 +128,8 @@ import { listHomeDirectories,
   type DirectoryScope,
 } from './directory-browser.js'
 import {
+  ensureSessionKnowledgeBase as ensureKnowledgeDirectory,
+  type SessionKnowledgeBaseLocation,
   validateKnowledgeRoot,
   validateSessionDirectory,
 } from './session-directory.js'
@@ -3031,17 +3033,44 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.validateDirectory(inputPath)
   }
 
+  validateKnowledgeRoot(
+    inputPath: string,
+    confinementPath?: string,
+  ): Promise<string> {
+    return validateKnowledgeRoot(inputPath, confinementPath)
+  }
+
+  ensureSessionKnowledgeBase(
+    sessionId: string,
+    relativePath: string,
+    create: boolean,
+  ): Promise<SessionKnowledgeBaseLocation> {
+    return ensureKnowledgeDirectory(
+      this.requireWorkspaceRoot(sessionId),
+      relativePath,
+      create,
+    )
+  }
+
   /**
    * Browses a knowledge root. The root is confined exactly like a session
    * working directory, and the requested path is confined within it by
    * `listWorkspace`, so no session is involved.
    */
-  async listKnowledge(root: string, path = '.') {
-    return listWorkspace(await validateKnowledgeRoot(root), path)
+  async listKnowledge(
+    root: string,
+    path = '.',
+    confinementPath?: string,
+  ) {
+    return listWorkspace(root, path, confinementPath)
   }
 
-  async readKnowledgeFile(root: string, path: string) {
-    return readWorkspaceFile(await validateKnowledgeRoot(root), path)
+  async readKnowledgeFile(
+    root: string,
+    path: string,
+    confinementPath?: string,
+  ) {
+    return readWorkspaceFile(root, path, confinementPath)
   }
 
   listWorkspace(

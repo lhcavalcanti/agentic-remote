@@ -35,6 +35,8 @@ import {
 import type { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import { registryKey, type ManagerRegistry } from './manager-store.js'
 
+type ContextTier = NewSessionRuntime['contextTier']
+
 export interface ManagerSkillSummary {
   name: string
   description?: string
@@ -939,6 +941,15 @@ export function createManagerTools(
       }).join(', ')}.`
     : `${provider} reported no models.`
 
+  const contextName = (tier: ContextTier) => tier === 'long_context' ? 'long context' : 'default context'
+
+  const contextChoices = (models: RuntimeModelOption[], provider: AgentProvider, tier: ContextTier) => {
+    const offering = models.filter((option) => option.contextTiers.includes(tier))
+    return offering.length
+      ? `Available ${provider} models with ${contextName(tier)}: ${offering.slice(0, 60).map((option) => option.id).join(', ')}.`
+      : `No ${provider} model offers ${contextName(tier)}.`
+  }
+
   // Nothing was created, so the choice goes back to the user rather than to
   // another model or provider picked here.
   const modelRefusal = (problem: string, choices: string) => new ToolFailure(
@@ -1011,6 +1022,7 @@ export function createManagerTools(
             const parts = [model.name && model.name !== model.id ? `${model.id} — ${model.name}` : model.id]
             const efforts = modelEfforts(model)
             if (efforts) parts.push(efforts)
+            if (model.contextTiers.includes('long_context')) parts.push('long context')
             if (model.id === configured) parts.push('the configured default')
             return `- ${parts.join(' · ')}`
           }),
@@ -1105,7 +1117,7 @@ export function createManagerTools(
     ),
     define(
       'create_session',
-      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer and mode default to the user\'s settings. Without a model it runs the model configured for its provider in App settings, else that provider\'s own default on the computer. It opens with the Copilot SDK or in a terminal (tmux) as your setting says; a provider without a terminal always uses its SDK. The session appears in the user\'s app immediately. The result names the model the session reports; a named model the provider lacks starts nothing and lists the models it has, a configured default it lacks gives way to the provider\'s own default, which the result says, and a refusal that comes only once the task runs shows as the session\'s failed turn.',
+      'Start a new session to do a piece of work, name it, and give it its task. The folder defaults to your session folder for that computer, else the user\'s default folder; the computer and mode default to the user\'s settings. Without a model it runs the model configured for its provider in App settings, else that provider\'s own default on the computer; the context size configured there applies to whichever model runs whenever that model offers it. It opens with the Copilot SDK or in a terminal (tmux) as your setting says; a provider without a terminal always uses its SDK. The session appears in the user\'s app immediately. The result names the model the session reports and any long context; a named model or asked-for context size the provider lacks starts nothing and lists what it has, a configured default it lacks gives way to the provider\'s own default, which the result says, and a refusal that comes only once the task runs shows as the session\'s failed turn.',
       z.object({
         title: z.string().trim().min(1).max(100).describe('Short descriptive name, at most 60 characters.'),
         prompt: z.string().trim().min(1).max(100_000).describe('The self-contained task: goal, context, constraints, acceptance criteria, what to report back, and which of the user\'s skills to use.'),
@@ -1118,6 +1130,8 @@ export function createManagerTools(
           .describe('Only when the user names a model: its exact id from list_models for this provider. Never choose one yourself; unset runs the configured default.'),
         reasoningEffort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional()
           .describe('Only when the user asks for one; unset uses the effort configured with the model.'),
+        contextTier: z.enum(['default', 'long_context']).optional()
+          .describe('Only when the user asks for a context size; long_context is the larger window some models offer. Unset uses the size configured in App settings whenever the model offers it.'),
       }),
       async (args) => {
         const defaults = host.defaults()
@@ -1130,22 +1144,28 @@ export function createManagerTools(
         const configuredModel = configured?.model.trim() || undefined
         const mode: AgentMode | undefined = args.mode ?? (configured?.mode || undefined)
         // A model the user names overrides the configured one, which keeps its
-        // effort and context only when it is that same model.
+        // effort only when it is that same model. The configured context size
+        // is a preference for any model that offers it, as when the session's
+        // own Model and context dialog switches model.
         const requested = args.model
         let model = requested ?? configuredModel
         const asConfigured = Boolean(model) && model === configuredModel
         let reasoningEffort: RuntimeReasoningEffort | undefined =
           args.reasoningEffort ?? (asConfigured ? configured?.reasoningEffort || undefined : undefined)
-        let contextTier = asConfigured ? configured?.contextTier : undefined
+        let contextTier: ContextTier | undefined = args.contextTier ?? configured?.contextTier
+        // A configured size the model lacks, which the result reports.
+        let unofferedContext: ContextTier | undefined
         let unavailableDefault: { model: string, reason?: string } | undefined
         // A configured default the provider lacks gives way to the provider's
         // own default on that computer, the next configured choice. An effort
-        // the user asked for stays.
+        // or context size the user asked for stays.
         const dropConfiguredDefault = (reason?: string) => {
           unavailableDefault = { model: model!, ...(reason ? { reason } : {}) }
           model = undefined
           reasoningEffort = args.reasoningEffort
-          contextTier = undefined
+          // The provider's own default takes no context size.
+          unofferedContext = args.contextTier ? undefined : unofferedContext ?? contextTier
+          contextTier = args.contextTier
         }
         if (model) {
           // Checked before anything is created, on any computer; a catalog that
@@ -1167,7 +1187,16 @@ export function createManagerTools(
               }
               reasoningEffort = undefined
             }
-            if (contextTier && !listed.contextTiers.includes(contextTier)) contextTier = undefined
+            if (contextTier && !listed.contextTiers.includes(contextTier)) {
+              if (args.contextTier) {
+                throw modelRefusal(
+                  `${model} from ${provider} on ${computer.name} does not offer ${contextName(contextTier)}`,
+                  contextChoices(catalog, provider, contextTier),
+                )
+              }
+              unofferedContext = contextTier
+              contextTier = undefined
+            }
           }
         }
         const input = (): CreateSessionInput => ({
@@ -1180,15 +1209,28 @@ export function createManagerTools(
           ...(reasoningEffort ? { reasoningEffort } : {}),
           ...(model && contextTier ? { contextTier } : {}),
         })
-        const readChoices = async () => {
+        const readChoices = async (
+          format: (models: RuntimeModelOption[]) => string = (models) => modelChoices(models, provider),
+        ) => {
           try {
-            return modelChoices(await host.providerModels(computer.id, provider), provider)
+            return format(await host.providerModels(computer.id, provider))
           } catch (listError) {
             return `Its model list could not be read (${errorMessage(listError)}); call list_models.`
           }
         }
+        const readContextChoices = (tier: ContextTier) => readChoices((models) => contextChoices(models, provider, tier))
         let created: ManagedSession | undefined
         while (!created) {
+          // Copilot takes a context size only with a model, which is never
+          // chosen here, so a larger window asked for without one goes back.
+          if (args.contextTier === 'long_context' && !model) {
+            throw modelRefusal(
+              `long context needs a model from ${provider} on ${computer.name}${
+                unavailableDefault ? `, and the configured default ${unavailableDefault.model} is not available there` : ''
+              }`,
+              await readContextChoices('long_context'),
+            )
+          }
           try {
             created = await host.createSession(computer.id, input())
           } catch (error) {
@@ -1196,14 +1238,17 @@ export function createManagerTools(
             let refused = creationRefusal(message)
             if (!refused) throw error
             // Refusing a setting that was not sent refuses the model itself.
-            if ((refused === 'effort' && !reasoningEffort) || (refused === 'context' && !contextTier)) refused = 'model'
+            const sentContext = model ? contextTier : undefined
+            if ((refused === 'effort' && !reasoningEffort) || (refused === 'context' && !sentContext)) refused = 'model'
             // Refused before anything was created, so another attempt cannot
             // leave a second session behind. Each one gives up a configured
             // setting the user did not ask for, which is never restored, so
             // the attempts end; what the user asked for goes back to them.
             if (refused === 'effort' && !args.reasoningEffort) reasoningEffort = undefined
-            else if (refused === 'context') contextTier = undefined
-            else if (refused === 'model' && model && !requested) dropConfiguredDefault(message)
+            else if (refused === 'context' && !args.contextTier) {
+              unofferedContext = contextTier
+              contextTier = undefined
+            } else if (refused === 'model' && model && !requested) dropConfiguredDefault(message)
             else {
               const named = model ?? `${provider}'s own default model`
               throw modelRefusal(
@@ -1213,8 +1258,10 @@ export function createManagerTools(
                   } (${message})`
                   : refused === 'effort'
                     ? `${named} from ${provider} on ${computer.name} does not offer effort ${reasoningEffort} (${message})`
-                    : `${named}${reasoningEffort ? ` with effort ${reasoningEffort}` : ''} is not available from ${provider} on ${computer.name} (${message})`,
-                await readChoices(),
+                    : refused === 'context' && sentContext
+                      ? `${named} from ${provider} on ${computer.name} does not offer ${contextName(sentContext)} (${message})`
+                      : `${named}${reasoningEffort ? ` with effort ${reasoningEffort}` : ''} is not available from ${provider} on ${computer.name} (${message})`,
+                refused === 'context' && sentContext ? await readContextChoices(sentContext) : await readChoices(),
               )
             }
           }
@@ -1269,7 +1316,21 @@ export function createManagerTools(
             unavailableDefault.reason ? ` (${unavailableDefault.reason})` : ''
           }, so the session uses ${provider}'s own default; tell the user.`
           : ''
-        return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}, ${modelNote}. Its task was sent.${fallback}`
+        // The context the session reports, else the one it was created with.
+        const startedContext = model ? contextTier : undefined
+        const runsWith = [delivered, session, created]
+          .map((candidate) => candidate.runtime?.contextTier)
+          .find(Boolean) ?? startedContext
+        const contextNote = runsWith === 'long_context'
+          ? ' It runs with long context.'
+          : unofferedContext === 'long_context'
+            ? model
+              ? ` ${model} does not offer the configured long context, so it runs with default context; tell the user.`
+              : ' It runs with default context, since the configured long context needs a model.'
+            : startedContext === 'long_context' && runsWith === 'default'
+              ? ' It reports default context, not the long context asked for; tell the user.'
+              : ''
+        return `Started ${link(session)} — id ${session.id} on ${computer.name} (${computer.id}) in ${created.cwd}${mode ? `, ${mode} mode` : ''}, ${modelNote}. Its task was sent.${fallback}${contextNote}`
       },
       { actsOnSessions: true }
     ),

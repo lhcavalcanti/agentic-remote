@@ -5171,6 +5171,38 @@ describe('App', () => {
     )
   })
 
+  it('keeps the default context size across a model change when the new model offers it', async () => {
+    vi.mocked(getProviderRuntimeOptions).mockImplementation(
+      async (_computerId, provider) => ({
+        models: provider === 'copilot'
+          ? [
+              { id: 'fixture-model', name: 'Fixture Model', reasoningEfforts: ['high'], contextTiers: ['default', 'long_context'] },
+              { id: 'fixture-long', name: 'Long Model', reasoningEfforts: [], contextTiers: ['default', 'long_context'] },
+              { id: 'fixture-fast', name: 'Fast Model', reasoningEfforts: ['low'], contextTiers: ['default'] },
+            ]
+          : [],
+      }),
+    )
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const model = await screen.findByLabelText('GitHub Copilot default model')
+    fireEvent.change(model, { target: { value: 'fixture-model' } })
+    fireEvent.change(screen.getByLabelText('GitHub Copilot default context size'), {
+      target: { value: 'long_context' },
+    })
+
+    fireEvent.change(model, { target: { value: 'fixture-long' } })
+    expect(screen.getByLabelText('GitHub Copilot default context size')).toHaveValue('long_context')
+    expect(savedSetting('newSessionRuntimes')?.copilot).toEqual({
+      model: 'fixture-long', reasoningEffort: '', contextTier: 'long_context', mode: '',
+    })
+
+    fireEvent.change(model, { target: { value: 'fixture-fast' } })
+    expect(screen.getByLabelText('GitHub Copilot default context size')).toHaveValue('default')
+    expect(savedSetting('newSessionRuntimes')?.copilot).toMatchObject({ model: 'fixture-fast', contextTier: 'default' })
+  })
+
   it('refreshes both provider catalogs every time app settings is reopened', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

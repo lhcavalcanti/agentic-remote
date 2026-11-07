@@ -1204,6 +1204,24 @@ describe('ClaudeAgentService', () => {
     suspending.suspendingSessions.delete(session.id)
   })
 
+  it('refuses lifecycle changes as conflicts while a session is working', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    await service.store.updateStatus(session.id, 'running')
+
+    // A refusal the reader can act on, not a generic server error.
+    for (const change of [
+      () => service.suspendSession(session.id),
+      () => service.restartSession(session.id),
+    ]) {
+      await expect(change()).rejects.toMatchObject({
+        message: 'Session must be idle',
+        statusCode: 409,
+      })
+    }
+    expect(service.getSession(session.id)?.suspended).toBeFalsy()
+  })
+
   it('leaves a suspended session where it was when the send is refused', async () => {
     // A refused admission must not change either the transcript or recency.
     const { directory, service } = await fixture(async function* () {})

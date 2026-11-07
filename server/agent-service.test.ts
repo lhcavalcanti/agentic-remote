@@ -2235,11 +2235,48 @@ describe('AgentService deletion', () => {
 
     // A detached shell holds no foreground, so idle says nothing about it.
     // Ending the owner would abandon it, or leave it running behind a session
-    // reporting that nothing is.
-    await expect(service.suspendSession(created.id)).rejects.toThrow(
-      /background tasks finish/,
-    )
+    // reporting that nothing is. Refused as a conflict, so the reader is told
+    // why rather than shown a generic server error.
+    await expect(service.suspendSession(created.id)).rejects.toMatchObject({
+      message: 'Session can only be suspended once its background tasks finish',
+      statusCode: 409,
+      reasonCode: 'suspend.background-tasks',
+    })
     expect(service.getSession(created.id)?.suspended).toBeFalsy()
+  })
+
+  it.each([
+    ['cannot be read', (tasks: { list?: unknown }) => {
+      tasks.list = async () => {
+        throw new Error('task RPC unavailable')
+      }
+    }],
+    ['are not reported', (tasks: { list?: unknown }) => {
+      delete tasks.list
+    }],
+  ])('refuses as a conflict to suspend while its background tasks %s', async (_case, breakTasks) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-unread-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    breakTasks(client.session.rpc.tasks as { list?: unknown })
+
+    // Not knowing what runs is not the same as nothing running, so this
+    // refuses; it is a refusal to retry, not a fault in the server.
+    await expect(service.suspendSession(created.id)).rejects.toMatchObject({
+      message: 'Session cannot be suspended until its background tasks can be read',
+      statusCode: 409,
+      reasonCode: 'suspend.background-tasks-unreadable',
+    })
+    expect(service.getSession(created.id)?.suspended).toBeFalsy()
+    await service.stop()
   })
 
   it('refuses to suspend when work is detached while the check is under way', async () => {
@@ -2277,9 +2314,10 @@ describe('AgentService deletion', () => {
       return originalList()
     }
 
-    await expect(service.suspendSession(created.id)).rejects.toThrow(
-      /background tasks finish/,
-    )
+    await expect(service.suspendSession(created.id)).rejects.toMatchObject({
+      message: 'Session can only be suspended once its background tasks finish',
+      statusCode: 409,
+    })
     expect(service.getSession(created.id)?.suspended).toBeFalsy()
   })
 
@@ -2617,6 +2655,124 @@ describe('AgentService deletion', () => {
     expect(terminal.configure).not.toHaveBeenCalled()
   })
 
+  it.each([
+    {
+      when: 'its transcript cannot be read',
+      external: false, unreadable: 'always', detach: false, closable: true,
+      refusal: {
+        message: 'Session cannot be suspended until its transcript can be read',
+        statusCode: 409, reasonCode: 'suspend.transcript-unreadable',
+      },
+    },
+    {
+      when: 'its transcript stops reading as the pane closes',
+      external: true, unreadable: 'while-stopping', detach: false, closable: true,
+      refusal: {
+        message: 'Session cannot be suspended until its transcript can be read',
+        statusCode: 409, reasonCode: 'suspend.transcript-unreadable',
+      },
+    },
+    {
+      when: 'a task is detached as the pane closes',
+      external: true, unreadable: undefined, detach: true, closable: true,
+      refusal: {
+        message: 'Session can only be suspended once its background tasks finish',
+        statusCode: 409, reasonCode: 'suspend.background-tasks',
+      },
+    },
+    {
+      when: 'its pane cannot be closed from here',
+      external: true, unreadable: undefined, detach: false, closable: false,
+      refusal: {
+        message: 'Terminal session suspend is not available',
+        statusCode: 501, reasonCode: 'suspend.terminal-unsupported',
+      },
+    },
+  ] as const)('refuses explicitly to suspend a terminal session when $when', async ({
+    external, unreadable, detach, closable, refusal,
+  }) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-terminal-refusal-'))
+    directories.push(directory)
+    const store = new SessionStore(path.join(directory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'terminal-refusal',
+        cwd: directory,
+        title: 'Terminal refusal',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    // A shell started detached holds no turn, so the log still reads idle.
+    const detachedShell = {
+      type: 'tool.execution_start',
+      id: 'detached-start',
+      parentId: null,
+      timestamp: '2026-09-02T00:01:00.000Z',
+      data: {
+        toolCallId: 'detached-call',
+        toolName: 'bash',
+        arguments: { command: 'pnpm dev', description: 'Start the dev server', mode: 'async' },
+      },
+    } as unknown as SessionEvent
+    const events: SessionEvent[] = []
+    let stopping = false
+    const stop = vi.fn(async (_id: string, beforeStop?: () => Promise<void> | void) => {
+      stopping = true
+      if (detach) events.push(detachedShell)
+      await beforeStop?.()
+      return true
+    })
+    const service = new AgentService(
+      store,
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+      async () => {
+        if (unreadable === 'always' || (unreadable === 'while-stopping' && stopping)) {
+          throw new Error('event log unreadable')
+        }
+        return [...events]
+      },
+      async () => undefined,
+      {
+        has: vi.fn(async () => true),
+        ...(closable ? { stop } : {}),
+        send: vi.fn(async () => true),
+        cancel: vi.fn(async () => true),
+      },
+    )
+    if (external) service['externalSessionIds'].add('terminal-refusal')
+
+    await expect(service.suspendSession('terminal-refusal')).rejects.toMatchObject(refusal)
+    expect(service.getSession('terminal-refusal')?.suspended).toBeFalsy()
+  })
+
+  it('refuses as a conflict to restart a session that is still working', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-busy-restart-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    await service.store.updateStatus(created.id, 'running')
+
+    await expect(service.restartSession(created.id)).rejects.toMatchObject({
+      message: 'Session can only restart while idle',
+      statusCode: 409,
+      reasonCode: 'restart.not-idle',
+    })
+    await service.stop()
+  })
+
   it('restarts a queue left standing by a drain that failed', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-drain-'))
     directories.push(directory)
@@ -2765,10 +2921,13 @@ describe('AgentService deletion', () => {
     await sending.catch(() => undefined)
     const outcome = await suspension
     expect(settledBeforeSend).toBe(true)
+    // The row still reads idle, so the refusal names what is in the way.
     expect(outcome).toMatchObject({
       error: {
-        message: 'Session can only be suspended while idle',
+        message:
+          'Session can only be suspended while idle; a message is still being delivered to it',
         statusCode: 409,
+        reasonCode: 'suspend.delivery-in-flight',
       },
     })
     await service.stop()

@@ -79,6 +79,7 @@ function NavigationHarness({
   initialShowSuspended = true,
   showSuspendedSaving = false,
   pendingCreations,
+  suspending = false,
 }: {
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
@@ -89,6 +90,7 @@ function NavigationHarness({
   initialShowSuspended?: boolean
   showSuspendedSaving?: boolean
   pendingCreations?: PendingSessionCreation[]
+  suspending?: boolean
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
@@ -97,6 +99,7 @@ function NavigationHarness({
     <DndContext>
       <SessionNavigation
         {...actions}
+        suspending={suspending}
         backgroundTasks={snapshots}
         view={sessionNavigationView(
           computerList,
@@ -515,6 +518,65 @@ describe('session navigation', () => {
     expect(screen.getByRole('button', { name: 'Close Last known work' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Suspend Last known work' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Suspend Choose a direction' })).toBeDisabled()
+  })
+
+  it('offers Suspend only when the owning computer would accept it, and says why not', () => {
+    const interrupted: ManagedSession = {
+      ...session,
+      id: 'interrupted',
+      title: 'Interrupted work',
+      status: 'error',
+      interruption: { detectedAt: '2026-09-01T00:00:00Z', previousStatus: 'running' },
+    }
+    const waitingAgent: ManagedSession = { ...session, id: 'agent', title: 'Waiting agent' }
+    const suspendTitle = (title: string) =>
+      screen.getByRole('button', { name: `Suspend ${title}` })
+    const { rerender } = render(
+      <NavigationHarness
+        sessions={new Map([
+          ['studio', [session, interrupted, waitingAgent]],
+          ['worker', [worker]],
+        ])}
+        snapshots={{
+          ...backgroundTasks,
+          // Queued work is refused too, though it is not counted as running.
+          'studio:agent': {
+            tasks: [{
+              id: 'agent-1', type: 'agent', description: 'Review',
+              status: 'queued', startedAt: '2026-09-01T00:00:00Z', canCancel: true,
+            }],
+            runningCount: 0,
+            supported: true,
+          },
+        }}
+      />,
+    )
+
+    expect(suspendTitle('Review the release')).toBeEnabled()
+    expect(suspendTitle('Review the release')).toHaveAttribute(
+      'title', 'Keep this session but stop what is running for it',
+    )
+    for (const title of ['Build docs', 'Waiting agent']) {
+      expect(suspendTitle(title)).toBeDisabled()
+      expect(suspendTitle(title)).toHaveAttribute(
+        'title', 'Wait for its background tasks to finish before suspending it',
+      )
+    }
+    expect(suspendTitle('Interrupted work')).toBeDisabled()
+    expect(suspendTitle('Interrupted work')).toHaveAttribute(
+      'title', 'Reopen this session before suspending it',
+    )
+
+    rerender(
+      <NavigationHarness
+        sessions={new Map([['studio', [session]]])}
+        suspending
+      />,
+    )
+    expect(suspendTitle('Review the release')).toBeDisabled()
+    expect(suspendTitle('Review the release')).toHaveAttribute(
+      'title', 'Wait for the current suspend or resume to finish',
+    )
   })
 
   it('keeps empty computers and qualifies cached offline task status', () => {

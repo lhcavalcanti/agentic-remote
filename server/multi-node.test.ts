@@ -29,11 +29,13 @@ import type {
   SideQuestionExchange,
 } from '../shared/contracts.js'
 import { SessionPatchReceiver } from '../src/session-patches.js'
+import type { SessionEvent } from '@github/copilot-sdk'
 import {
   ORACLE_VOICE_PROTOCOL,
   ORACLE_VOICE_SAMPLE_RATE,
   type VoiceServerControl,
 } from '../shared/oracle-voice.js'
+import { AgentService, type CopilotClientLike } from './agent-service.js'
 import { buildApp } from './app.js'
 import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
@@ -51,6 +53,7 @@ import { RemoteNodeClient } from './remote-node-client.js'
 import { RemoteNodeRequestError } from './remote-node-errors.js'
 import { SessionDirectoryError } from './session-directory.js'
 import type { SessionService } from './session-service.js'
+import { SessionStore } from './session-store.js'
 import type {
   AudioUpload,
   TranscriptionService,
@@ -1527,6 +1530,103 @@ describe('multi-node hub', () => {
         uncertainDelivery: true,
       })
       expect(unexpected.body).not.toContain('credentials')
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
+  it('reports a remote suspension refused over live background work as a conflict', async () => {
+    // The owning computer is right to refuse while a detached shell runs; the
+    // browser used to be told only "Unexpected server error".
+    const nodeDirectory = await temporaryDirectory('agentic-remote-busy-node')
+    const store = new SessionStore(path.join(nodeDirectory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'busy-terminal',
+        cwd: nodeDirectory,
+        title: 'Busy terminal',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      },
+      { managedOpen: true, backend: 'terminal' },
+    )
+    const detachedShell = {
+      type: 'tool.execution_start',
+      id: 'detached-start',
+      parentId: null,
+      timestamp: '2026-09-02T00:01:00.000Z',
+      data: {
+        toolCallId: 'detached-call',
+        toolName: 'bash',
+        arguments: { command: 'pnpm dev', description: 'Start the dev server', mode: 'async' },
+      },
+    } as unknown as SessionEvent
+    const stop = vi.fn(async () => true)
+    const nodeService = new AgentService(
+      store,
+      {
+        start: async () => undefined,
+        stop: async () => [],
+        listSessions: async () => [],
+        rpc: {
+          models: { list: async () => ({ models: [] }) },
+          commands: { list: async () => ({ commands: [] }) },
+        },
+      } as unknown as CopilotClientLike,
+      async () => [],
+      async () => undefined,
+      async () => [detachedShell],
+      async () => '1',
+      {
+        has: vi.fn(async () => true),
+        stop,
+        send: vi.fn(async () => true),
+        cancel: vi.fn(async () => true),
+      },
+    )
+    nodeService['externalSessionIds'].add('busy-terminal')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-busy-hub'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(session('local-session', 'Local')),
+    })
+    const remote = await buildApp({
+      dataDirectory: path.join(nodeDirectory, 'app'),
+      logger: false,
+      role: 'node',
+      service: nodeService,
+      managerAgent: false,
+      cliCanary: false,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          token: remote.identity.token,
+          name: 'busy-node',
+        },
+      })).statusCode).toBe(201)
+
+      const refused = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remote.identity.info.id}/sessions/busy-terminal/suspend`,
+        payload: {},
+      })
+      expect(refused.statusCode, refused.body).toBe(409)
+      expect(refused.json()).toMatchObject({
+        error: 'Session can only be suspended once its background tasks finish',
+      })
+      expect(stop).not.toHaveBeenCalled()
+      expect(nodeService.getSession('busy-terminal')?.suspended).toBeFalsy()
     } finally {
       await Promise.all([hub.app.close(), remote.app.close()])
     }

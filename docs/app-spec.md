@@ -106,6 +106,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   lifecycle controls. Close MUST use the same confirmed, permanently deleting
   close lifecycle and owning-computer route as **Close session**; Pause and
   Resume retain their existing suspend lifecycle, availability, and labels.
+- Pause MUST be unavailable, with a title naming the reason, while the session
+  is busy (not idle, or holding a question or permission), owns queued or
+  running background tasks, is interrupted or archived, or another suspend or
+  resume is pending. The owning computer MUST enforce the same rules and refuse
+  with a 409 naming the reason (501 where it cannot suspend terminal sessions),
+  never a generic server error; suspending a suspended session returns it
+  unchanged.
 - Needs you MUST include pending questions, permissions, waiting sessions, and
   errors, including queued delivery that requires confirmation. Pending actions
   MUST take precedence over passive runtime status.
@@ -1965,7 +1972,8 @@ guards without disabling legitimate external/native history refresh.
 Every computer counts the user-facing refusals it sends so a refusal that
 fires falsely shows up without a user report:
 
-- A refusal is a 4xx response from a matched route; 404s for unknown routes
+- A refusal is a 4xx response from a matched route, or a 501 a route raises
+  because this computer cannot do what was asked; 404s for unknown routes
   are not counted. A 401 or 403 a route raises as an error, such as a path
   outside the session folder or a refused memory change, is counted. The
   pairing-token and Host/Origin checks reply directly without a reason, so

@@ -291,71 +291,15 @@ Before creating a feature branch or worktree:
 
 ### Owned work follow-through
 
-Proactively follow every pull request or task owned by this coordinator, or by
-an agent it dispatched, until it is merged, explicitly blocked, or waiting on
-a clearly stated user decision. Idle, error, interrupted, or locally complete
-sessions are not terminal outcomes.
+`.github/copilot-instructions.md` holds the canonical contract: terminal
+states, live exact-head evidence, merge eligibility, recovery, and reporting.
+Keep one concise evidence record per owned PR:
 
-Reconcile live GitHub and worktree state before every decision. Fetch current
-refs and read the pull request head, target `main` head, review bodies, commit
-statuses, check runs, mergeability, branch/worktree ownership, and local
-changes. Never rely on a session transcript, journal entry, cached review, or
-earlier status report when the live state is available.
-
-For each owned pull request, keep one concise evidence record containing:
-
-- pull request number, current full head SHA, and observed target `main` SHA;
-- Supervisor marker and verdict for that exact head;
-- hosted check names, head SHAs, and conclusions;
-- `agentic-remote/full-gate` state and summary for that exact head;
-- GitHub mergeability and merge-state result; and
+- PR number, full head SHA, and the `main` SHA observed;
+- the Supervisor marker and verdict for that head;
+- hosted checks and the `agentic-remote/full-gate` state for that head;
+- GitHub mergeability and merge state; and
 - the next action and its owner.
-
-Heavy and full gates on the same host stay serialized. Use the gate's
-host-wide lock rather than starting competing suites, and do not treat a queued
-gate as a passed gate.
-
-#### Exact-head invalidation
-
-| Event | Evidence invalidated | Required next action |
-| --- | --- | --- |
-| Push, force-push, rebase, merge into the branch, or any other PR head change | Supervisor verdict, hosted checks, full gate, and mergeability | Record the new full SHA, request exact-head Supervisor review, rerun required checks and the full gate, then refresh mergeability. |
-| Target `main` advances after evidence was recorded | Supervisor verdict, hosted checks, full gate, and mergeability | Reconcile the branch with current `main` according to the task's branch policy, record the resulting head, and collect all evidence again. |
-| Review or gate evidence names a different or abbreviated-only SHA | That evidence | Treat it as missing; resolve the live full SHA and obtain exact-head evidence. |
-| GitHub reports unknown, dirty, blocked, unstable, or conflicting merge state | Mergeability | Refresh after checks settle; update the branch or resolve the blocker before merging. |
-
-Supervisor verdicts are signed review or comment bodies containing
-`<!-- supervisor:review:<PR>:<full SHA>:... -->` and a verdict heading such as
-`### APPROVE` or `### REQUEST_CHANGES`. The PR number and full SHA must match
-the live pull request. GitHub may label the review `COMMENTED`; that label,
-passing checks, and unsigned comments do not replace the signed verdict.
-
-#### Merge decision
-
-| Current live state | Merge eligible? | Next action |
-| --- | --- | --- |
-| Head or target `main` differs from the evidence record | No | Apply the exact-head invalidation table. |
-| Supervisor verdict is missing or requests changes | No | Steer the owner to address related findings together, validate and push, request exact-head review, and restart invalidated checks and gates. |
-| A repository-required hosted check is missing, pending, cancelled, or failing | No | Wait, rerun, or fix it on the current head. Record advisory checks too, but do not misrepresent them as required. |
-| `agentic-remote/full-gate` is not `success` on the current full SHA | No | Queue one serialized full gate for that SHA and investigate any failure. |
-| The PR is draft, conflicted, dirty, or not cleanly mergeable | No | Resolve the live blocker and refresh all invalidated evidence. |
-| Exact-head Supervisor verdict is `APPROVE`, every repository-required check and gate passes on that head, and the PR is clean and mergeable | Yes | Merge promptly under the user's standing authorization without asking for repeated approval. Record the merge SHA and continue post-merge cleanup. |
-
-Never merge on partial, stale, local-only, or journal-only evidence. Automatic
-merge authority does not authorize approving a review on the user's behalf.
-
-If an owner session becomes idle, errors, or is interrupted while work remains,
-first reconcile its branch, worktree, processes, and GitHub state. Resume or
-steer the existing owner when safe. Otherwise start one replacement that
-reuses the existing owned branch/worktree or claims it only after confirming
-no process is still writing there; never create duplicate worktrees for the
-same task. When one coordinator is overloaded, assign a second coordinator a
-disjoint set of PRs/tasks and transfer each evidence record and next action.
-Full gates remain host-wide serialized across coordinators.
-
-Report only merges, explicit blockers, or clearly stated decisions awaiting the
-user. Do not report work as done because a session is idle, a transcript says
-it finished, a journal records success, or validation passed only locally.
 
 ### Versioning releases
 
@@ -406,10 +350,11 @@ and must still change on every build.
    one writable mount, `/tmp` is a fresh tmpfs per phase, and nothing inside
    that mount is ever a mount source or followed by the gate. It posts the `agentic-remote/full-gate` commit status; success needs passed
    and zero failed Vitest counts from both runs. A new push needs a new gate.
-6. **Merge only when the merge decision table is satisfied for the current
-   exact head.** This includes Supervisor `APPROVE`, every repository-required
-   check, an `agentic-remote/full-gate` `success`, and clean mergeability. A
-   `main` ruleset requires the full-gate status, with an administrator bypass.
+6. **Merge only when the exact head is eligible** under Owned work
+   follow-through in `.github/copilot-instructions.md`: Supervisor `APPROVE`,
+   every required check, an `agentic-remote/full-gate` `success`, and clean
+   mergeability. A `main` ruleset requires the full-gate status, with an
+   administrator bypass.
    Follow the review loop below; delete the branch after graduation.
 7. **Deploy and verify on development**, then follow the promotion policy in
    `.github/copilot-instructions.md` (see Rolling out).
@@ -421,8 +366,8 @@ and must still change on every build.
 ### PR review loop
 
 - Prefer small, single-purpose PRs. Split unrelated fixes into separate PRs.
-- Apply the owned-work evidence, exact-head invalidation, and merge decision
-  rules above. Do not request GitHub Copilot as a reviewer.
+- Apply the owned-work contract in `.github/copilot-instructions.md`. Do not
+  request GitHub Copilot as a reviewer.
 - Keep fix comments minimal: one or two short sentences naming the actual fix
   and affected behavior. Do not paste long logs, review transcripts, or repeated
   status reports. For example: `Fixed startup queue recovery; pending messages

@@ -62,6 +62,60 @@ describe('Dreamer app integration', () => {
     expect(runtime.proactiveCoordinator?.isEnabled()).toBe(true)
   })
 
+  it('keeps Oracle progress current from the hub once Dreamer is enabled', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER', '')
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'off')
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.example.test')
+    const runtime = await buildApp({
+      dataDirectory: await dataDirectory(),
+      logger: false,
+      transcriptionService: {
+        initialize: async () => undefined,
+        stop: async () => undefined,
+        transcribe: vi.fn(),
+      },
+    })
+    runtimes.push(runtime)
+    const initial = await runtime.app.inject({ url: '/api/manager/dreamer', headers: trusted })
+    expect(initial.json().progress).toBeUndefined()
+    const sweep = vi.spyOn(runtime.proactiveCoordinator!, 'sweep')
+
+    await runtime.app.inject({
+      method: 'PUT',
+      url: '/api/manager/dreamer/settings',
+      headers: trusted,
+      payload: { revision: initial.json().revision, enabled: true, timeZone: 'UTC' },
+    })
+    await vi.waitFor(async () => {
+      const current = await runtime.app.inject({ url: '/api/manager/dreamer', headers: trusted })
+      expect(current.json().progress).toMatchObject({
+        refreshedAt: expect.any(String),
+        staleComputers: [],
+      })
+    })
+    await vi.waitFor(() => expect(sweep).toHaveBeenCalledWith(expect.any(Array)))
+
+    const local = runtime.manager!.listComputers()[0]!
+    runtime.manager!.emit('event', {
+      type: 'session.upserted',
+      session: {
+        id: 'session-from-event',
+        revision: 1,
+        computerId: local.id,
+        computerName: local.name,
+        cwd: '/tmp',
+        title: 'Reported by the hub',
+        status: 'running',
+        updatedAt: new Date().toISOString(),
+        isOpen: true,
+        messages: [],
+      },
+    })
+    expect(runtime.dreamerService?.progressView()?.entries).toContainEqual(
+      expect.objectContaining({ sessionId: 'session-from-event', status: 'running' }),
+    )
+  })
+
   it('keeps the hub available when Oracle/Dreamer storage is unavailable', async () => {
     vi.stubEnv('AGENTIC_REMOTE_MANAGER', 'off')
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.example.test')

@@ -327,7 +327,7 @@ export async function buildApp(
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   let forwardToProactive: ((event: HubEvent) => void) | undefined
-  let forwardHubToDreamer: (() => void) | undefined
+  let forwardHubToDreamer: ((event: HubEvent) => void) | undefined
   let forwardManagerToDreamer: (() => void) | undefined
   if (role === 'hub') {
     manager =
@@ -457,6 +457,12 @@ export async function buildApp(
           setProactiveEnabled: async (enabled) => {
             await proactiveCoordinator?.setEnabled(enabled)
           },
+          progressSource: dreamerManager,
+          sweepLifecycle: async (sessions) => {
+            await proactiveCoordinator?.sweep(sessions).catch((error: unknown) => {
+              app.log.warn({ err: error }, 'Dreamer lifecycle sweep failed')
+            })
+          },
         },
       )
       try {
@@ -475,12 +481,17 @@ export async function buildApp(
         )
         forwardToProactive = (event) => proactiveCoordinator?.handle(event)
         manager.on('event', forwardToProactive)
-        forwardHubToDreamer = () => {
+        forwardHubToDreamer = (event) => {
+          dreamerService?.handleHubEvent(event)
           void dreamerService?.reconcileTasks().catch((error: unknown) => {
             app.log.warn({ err: error }, 'Dreamer task reconciliation failed')
           })
         }
-        forwardManagerToDreamer = forwardHubToDreamer
+        forwardManagerToDreamer = () => {
+          void dreamerService?.reconcileTasks().catch((error: unknown) => {
+            app.log.warn({ err: error }, 'Dreamer task reconciliation failed')
+          })
+        }
         manager.on('event', forwardHubToDreamer)
         dreamerAgent.on('event', forwardManagerToDreamer)
       } catch (error) {

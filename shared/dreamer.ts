@@ -75,11 +75,21 @@ export interface DreamerSettings {
   timeZone: string
 }
 
+/** How current Dreamer's view of session progress is; present while enabled. */
+export interface DreamerProgressStatus {
+  refreshedAt?: string
+  nextRefreshAt?: string
+  /** Names of computers whose sessions could not be listed in the last refresh. */
+  staleComputers: string[]
+  error?: string
+}
+
 export interface DreamerSnapshot {
   available: boolean
   revision: number
   settings: DreamerSettings
   plan?: DreamerPlan
   tasks?: OracleTaskView[]
+  progress?: DreamerProgressStatus
   lastError?: string
 }

@@ -7,8 +7,6 @@ import type {
 } from '../shared/contracts.js'
 import { mapWithConcurrency } from './computer-manager.js'
 
-export const DREAMER_PROGRESS_REFRESH_MS = 5 * 60_000
-
 export interface DreamerProgressLimits {
   excerptLength: number
   openEntries: number

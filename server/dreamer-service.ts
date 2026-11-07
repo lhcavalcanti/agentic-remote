@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  DREAMER_PROGRESS_REFRESH_MS,
   hasDreamerSessionIdentity,
   isDreamerSessionItem,
   type DreamerCompletionCandidate,
@@ -57,7 +58,6 @@ import {
   validateDreamerTimeZone,
 } from './dreamer-schedule.js'
 import {
-  DREAMER_PROGRESS_REFRESH_MS,
   DreamerProgress,
   type DreamerProgressLimits,
   type DreamerProgressRefresh,

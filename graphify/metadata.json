@@ -408,9 +408,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 216,
+  "communities": 209,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19447,
+  "edges": 19450,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -487,7 +487,7 @@
     "docs/superpowers/specs/2026-10-24-copilot-sdk-restart-recovery-design.md": "d8276731a6918d7649af65848f4317f72c9473168e89fae55f0fec657b7e28be",
     "docs/superpowers/specs/2026-11-04-oracle-periodic-checks-design.md": "495bcca2260293a1749247fb624b98d8dfa91c70fb3c5f5ccfdd79b1feac09a5",
     "docs/superpowers/specs/2026-11-06-oracle-actionable-morning-plan-design.md": "4cb88c3f4d0b9e551439829549ba65f11a56661d866f95993bb935d469341bb2",
-    "docs/superpowers/specs/2026-11-07-dreamer-periodic-refresh-design.md": "632cc7f428661eaad2ba7ef8207362fe472c881b9dd728e54b22aa4e3bbca162",
+    "docs/superpowers/specs/2026-11-07-dreamer-periodic-refresh-design.md": "26efcb190545c2dd901159a7bf81df0703ce2ade82c5a2f3105d4c4a388fbb7d",
     "e2e/capture-workbench-review.ts": "0c19d55997cf62800b731c21431051645e46d487214e646a85d9cf01f649e705",
     "e2e/capture-workspace.ts": "9e4822a55a435bfdc8cc739dfa30fe550ac5a9d421a8cbd51bbb1a6187cc2dcc",
     "e2e/check-workspace-review-regressions.ts": "4af0c558cd0ef02f001e3d627739da338faa88590a96e38a79edd57c46a17f56",
@@ -578,8 +578,8 @@
     "server/dreamer-app.test.ts": "0049bfac6fd83a10b334708dbbb22febf5d5dc175b54fd688ef270bcadffd633",
     "server/dreamer-planner.test.ts": "9707276aa6a0f558f2972d0072cb86801e0f7b3c257594648afb5727373c1d2e",
     "server/dreamer-planner.ts": "9762d1a329379168c411adfdeead351660531141c8caa493c423c0e738ff98a6",
-    "server/dreamer-progress.test.ts": "7a330feb2669242fc0caf2588c67e48297f11d10a53d9ffcf0d783e8de544941",
-    "server/dreamer-progress.ts": "a88107b0fd2d82e99f5fa2bd60cbaad2a0dc4fb848c9c2c2eca124954ea37d54",
+    "server/dreamer-progress.test.ts": "affa687dea75c135f0c6ffc78ddcc6483fa79a96385e0db673a94fe7566d5a74",
+    "server/dreamer-progress.ts": "6dbd96ac8177ef102e62b6f78ead952207f3a86914eb08cb5083dea9e5009e9d",
     "server/dreamer-routes.test.ts": "0553402ee0df67f7c1c34e32a30fb3401161fa4df28978d75183f70f69c44636",
     "server/dreamer-routes.ts": "c75e2ea5815d8abb93ea6c3ad1df42c90845be8ff0a4b71e578f1a5a48ea5058",
     "server/dreamer-schedule.test.ts": "04ac650b774ee0489777e41d9c2c3701d779df7c86db197c31d6725aabf66a91",
@@ -601,8 +601,8 @@
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
     "server/manager-agent.test.ts": "07f97fbbb6281b5478f9cf5faef2f4d67a55548730b2a9d1cb09e35a97d10947",
     "server/manager-agent.ts": "aa05ed401617433e15008138a39289d5f9e2c07e870e062655ade04e9792d666",
-    "server/manager-context.test.ts": "a65d5d4fe4d66f2139ad0d5743b987a4c485dd61289983067793cfda24e27f40",
-    "server/manager-context.ts": "70663717dd84ad6a003d39f622a8de3fbb0cb26a5955c704c93cef42a0b0da15",
+    "server/manager-context.test.ts": "8e32011632a8fd8915201e70facdef8b47c72893c799fddff6effff8af66165c",
+    "server/manager-context.ts": "3af7a497cadb41caf2664c0b34229aafe0bcc81b516c75952360f11a3173a6ed",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
     "server/manager-journal.ts": "ef6202bcd697a0288ba6fe5979330b89c0b8a3f5eb484b73b33fb161ef4afd65",
     "server/manager-memory.test.ts": "9eb272be7cc7e235318778e136e9a9be3ad298aa956e4418652a2b76d7a0f489",
@@ -918,7 +918,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 7017,
+  "nodes": 7018,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1017,18 +1017,19 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "20aec998a6acc5930c9a471867b9c4b1762c89a9276ffff9fc607f353c03bb14",
-    "communities.json": "06e083bd0103711135e136f47e17bf53f8d3b33a23141892da1ed6147fc50205",
-    "graph.html": "c9d67f2d5252e1ffdf7abc33a920890491d6da8ce37da0197581e3ce0f0d8cc3",
-    "graph.json": "b95c1363b2507bee737751e6d72a5feb19a810803ef7d1bee82845b4e836b905"
+    "GRAPH_REPORT.md": "d41e485ce2e920ddf8c72b29040eec1ce4038c1197d82bb57799b8bc7f2b18ff",
+    "communities.json": "01cc5df5d8c3af8499390070564cee6a5a1edbc678dca2b8bf3b7b34e0189f17",
+    "graph.html": "c8e23794721a6540b735fc937314b205fa119385e4dc82fcf48113e6d104b854",
+    "graph.json": "cb8d08ceed6667518e3a3e313f28dbc45f804a40b19243cd68af4691d694a6a3"
   },
   "schema_version": 1,
-  "source_commit": "d0b8127127ea978e9bd4898423c49840743bf3f9",
-  "source_fingerprint": "0d031ab623c540a7a327a951405c3f9b3d168584c36c2761573a6361b01591fe",
+  "source_commit": "69962abf2cadc882236e2281282f55259f62bdeb",
+  "source_fingerprint": "603f3b87aaa9030394d6d8144f1fa78440ed12501be324b973bbb412f9ec05ed",
   "working_tree_changes": [
-    "docs/app-spec.md",
     "docs/superpowers/specs/2026-11-07-dreamer-periodic-refresh-design.md",
     "server/dreamer-progress.test.ts",
-    "server/dreamer-progress.ts"
+    "server/dreamer-progress.ts",
+    "server/manager-context.test.ts",
+    "server/manager-context.ts"
   ]
 }

@@ -124,7 +124,7 @@ describe('transcriptProgress', () => {
     })
   })
 
-  it('reports a pending question before a permission and ignores stale ones', () => {
+  it('reports the request answer_session would answer: a live permission, then a live question', () => {
     const question = {
       requestId: 'q',
       question: 'Which branch?',
@@ -135,6 +135,10 @@ describe('transcriptProgress', () => {
     expect(transcriptProgress(session({
       pendingUserInput: question,
       pendingPermission: permission,
+    }), 300).request).toEqual({ kind: 'permission', excerpt: 'Run rm -rf build' })
+    expect(transcriptProgress(session({
+      pendingUserInput: question,
+      pendingPermission: { ...permission, stale: true },
     }), 300).request).toEqual({ kind: 'question', excerpt: 'Which branch?' })
     expect(transcriptProgress(session({
       pendingUserInput: { ...question, stale: true },

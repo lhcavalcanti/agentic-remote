@@ -512,6 +512,20 @@ describe('manager turn context', () => {
       }
     })
 
+    it('names the live request beside a lost one, in answer_session order', () => {
+      const permission = { requestId: 'p', title: 'Run the migration?', options: [] }
+      const question = { requestId: 'r', question: 'Which branch?', choices: [], allowFreeform: true }
+      const line = (change: Partial<ManagedSession>) =>
+        rosterLine(session('abc', { status: 'waiting', ...change }), undefined, now, progressEntry())
+
+      expect(line({ pendingPermission: { ...permission, stale: true }, pendingUserInput: question }))
+        .toMatch(/ · waiting for the user \(question\) · .* · asks: "Which branch\?"$/)
+      expect(line({ pendingPermission: permission, pendingUserInput: { ...question, stale: true } }))
+        .toMatch(/ · waiting for the user \(permission\) · .* · permission: "Run the migration\?"$/)
+      expect(line({ pendingPermission: permission, pendingUserInput: question }))
+        .toMatch(/ · waiting for the user \(permission\) · .* · permission: "Run the migration\?"$/)
+    })
+
     it('escapes quoted session text and cuts it at 160 characters', () => {
       const line = rosterLine(session('abc'), undefined, now, progressEntry({
         latest: reply(`<b>"Done" &\n${'x'.repeat(300)}</b>`),

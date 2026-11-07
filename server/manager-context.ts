@@ -135,7 +135,20 @@ function originLabel(entry: RegistryEntry | undefined): string {
   return 'existing'
 }
 
+/** What a session can answer now, in answer_session's order. */
+function liveRequest(session: ManagedSession): DreamerProgressEntry['request'] {
+  if (session.pendingPermission && !session.pendingPermission.stale) {
+    return { kind: 'permission', excerpt: session.pendingPermission.title }
+  }
+  if (session.pendingUserInput && !session.pendingUserInput.stale) {
+    return { kind: 'question', excerpt: session.pendingUserInput.question }
+  }
+  return undefined
+}
+
 function waitingFor(session: ManagedSession): string | undefined {
+  const live = liveRequest(session)
+  if (live) return live.kind
   if (session.pendingPermission) return 'permission'
   if (session.pendingUserInput) return 'question'
   return session.status === 'waiting' ? 'input' : undefined
@@ -150,16 +163,7 @@ function pendingRequest(
   session: ManagedSession,
   progress: DreamerProgressEntry,
 ): DreamerProgressEntry['request'] {
-  if (session.pendingPermission) {
-    return session.pendingPermission.stale
-      ? undefined
-      : { kind: 'permission', excerpt: session.pendingPermission.title }
-  }
-  if (session.pendingUserInput) {
-    return session.pendingUserInput.stale
-      ? undefined
-      : { kind: 'question', excerpt: session.pendingUserInput.question }
-  }
+  if (session.pendingPermission || session.pendingUserInput) return liveRequest(session)
   return progress.request
 }
 

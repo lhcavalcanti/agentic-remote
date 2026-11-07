@@ -36,7 +36,8 @@ The cache lives only in memory, for the hub process, while Dreamer is enabled.
   - revision and `updatedAt`;
   - the latest assistant reply (a 300-character excerpt, its time, and whether
     it carried a trusted `task_complete`);
-  - the pending question or permission (excerpt);
+  - the request `answer_session` would answer: a live permission, else a live
+    question (excerpt);
   - the revision the excerpts were read from.
 - **Event sources.**
   - `session.upserted` events carry transcripts and update entries directly.

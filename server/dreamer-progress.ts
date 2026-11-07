@@ -120,15 +120,16 @@ export function transcriptProgress(session: SessionDetail, limit: number): Trans
     }
     break
   }
-  if (session.pendingUserInput && !session.pendingUserInput.stale) {
-    progress.request = {
-      kind: 'question',
-      excerpt: progressExcerpt(session.pendingUserInput.question, limit),
-    }
-  } else if (session.pendingPermission && !session.pendingPermission.stale) {
+  // answer_session answers a live permission before a live question.
+  if (session.pendingPermission && !session.pendingPermission.stale) {
     progress.request = {
       kind: 'permission',
       excerpt: progressExcerpt(session.pendingPermission.title, limit),
+    }
+  } else if (session.pendingUserInput && !session.pendingUserInput.stale) {
+    progress.request = {
+      kind: 'question',
+      excerpt: progressExcerpt(session.pendingUserInput.question, limit),
     }
   }
   return progress

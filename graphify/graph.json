@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "0e8546faf62b63ad996f210fcf5c8e483e5c5a54",
+  "built_at_commit": "5a87b14ab48c721742aac38aae4277f5e0526081",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -238022,7 +238022,7 @@
       "source_file": "shell/src-tauri/Cargo.toml",
       "source_location": "L1",
       "type": "package",
-      "version": "1.44.0"
+      "version": "1.45.0"
     },
     {
       "_origin": "ast",

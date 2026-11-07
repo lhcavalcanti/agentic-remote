@@ -205,11 +205,31 @@ export class KnowledgeStore {
     // bookmarks loads, and the obsolete key is not carried forward.
     const catalog = catalogText === undefined
       ? {}
-      : JSON.parse(catalogText) as { roots?: KnowledgeRoot[] }
+      : JSON.parse(catalogText) as PersistedKnowledgeState
     const confined = confinedText === undefined
       ? {}
       : JSON.parse(confinedText) as PersistedKnowledgeState
-    const metadata = parseMetadata(confined)
+    // An earlier build of this feature kept the metadata in the catalog file.
+    // Merging it keeps those confinements, and the startup write below moves
+    // their roots out of the file earlier releases serve.
+    const legacy = parseMetadata(catalog)
+    const current = parseMetadata(confined)
+    const legacyCatalog = (
+      ['provisionalRootIds', 'rootConfinements', 'provisionalRootConfinements']
+    ).some((key) => key in catalog)
+    const metadata = {
+      provisionalRootIds: [
+        ...new Set([...current.provisionalRootIds, ...legacy.provisionalRootIds]),
+      ],
+      rootConfinements: {
+        ...legacy.rootConfinements,
+        ...current.rootConfinements,
+      },
+      provisionalRootConfinements: {
+        ...legacy.provisionalRootConfinements,
+        ...current.provisionalRootConfinements,
+      },
+    }
     // An interrupted move can leave a root in both files; its confined copy
     // wins. A root the confined file lists without a confinement is dropped.
     const hidden = (confined.roots ?? []).filter(
@@ -237,7 +257,7 @@ export class KnowledgeStore {
     }
     this.persistedText = { catalog: catalogText, confined: confinedText }
     this.rootReservations.clear()
-    if (catalogText === undefined) await this.persist()
+    if (catalogText === undefined || legacyCatalog) await this.persist()
   }
 
   listRoots(): KnowledgeRoot[] {

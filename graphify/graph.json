@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "eaeb0056d3460009bb031c90675b2059e299a9e2",
+  "built_at_commit": "9906e26e3ca2e684214b8186b53b852f23c47c40",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -73598,7 +73598,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L354",
+      "source_location": "L374",
       "target": "server_knowledge_store_knowledgestore_addroot",
       "weight": 1.0
     },
@@ -73620,7 +73620,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L777",
+      "source_location": "L797",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -73631,7 +73631,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L256",
+      "source_location": "L276",
       "target": "server_knowledge_store_knowledgestore_finalizecommittedbinding",
       "weight": 1.0
     },
@@ -73642,7 +73642,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L633",
+      "source_location": "L653",
       "target": "server_knowledge_store_knowledgestore_finalizereservation",
       "weight": 1.0
     },
@@ -73653,7 +73653,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L247",
+      "source_location": "L267",
       "target": "server_knowledge_store_knowledgestore_getroot",
       "weight": 1.0
     },
@@ -73664,7 +73664,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L252",
+      "source_location": "L272",
       "target": "server_knowledge_store_knowledgestore_getrootconfinement",
       "weight": 1.0
     },
@@ -73686,7 +73686,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L243",
+      "source_location": "L263",
       "target": "server_knowledge_store_knowledgestore_listroots",
       "weight": 1.0
     },
@@ -73697,7 +73697,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L599",
+      "source_location": "L619",
       "target": "server_knowledge_store_knowledgestore_persist",
       "weight": 1.0
     },
@@ -73708,7 +73708,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L291",
+      "source_location": "L311",
       "target": "server_knowledge_store_knowledgestore_recoverprovisionalroots",
       "weight": 1.0
     },
@@ -73719,7 +73719,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L532",
+      "source_location": "L552",
       "target": "server_knowledge_store_knowledgestore_removeroot",
       "weight": 1.0
     },
@@ -73730,7 +73730,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L565",
+      "source_location": "L585",
       "target": "server_knowledge_store_knowledgestore_removerootsforcomputer",
       "weight": 1.0
     },
@@ -73741,7 +73741,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L837",
+      "source_location": "L857",
       "target": "server_knowledge_store_knowledgestore_replace",
       "weight": 1.0
     },
@@ -73752,7 +73752,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L603",
+      "source_location": "L623",
       "target": "server_knowledge_store_knowledgestore_reservation",
       "weight": 1.0
     },
@@ -73763,7 +73763,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L362",
+      "source_location": "L382",
       "target": "server_knowledge_store_knowledgestore_reserveroot",
       "weight": 1.0
     },
@@ -73774,7 +73774,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L696",
+      "source_location": "L716",
       "target": "server_knowledge_store_knowledgestore_rollbackreservation",
       "weight": 1.0
     },
@@ -73785,7 +73785,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L700",
+      "source_location": "L720",
       "target": "server_knowledge_store_knowledgestore_rollbackreservationnow",
       "weight": 1.0
     },
@@ -73796,7 +73796,7 @@
       "relation": "method",
       "source": "server_knowledge_store_knowledgestore",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L785",
+      "source_location": "L805",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -73808,7 +73808,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_addroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L357",
+      "source_location": "L377",
       "target": "server_knowledge_store_knowledgestore_reserveroot",
       "weight": 1.0
     },
@@ -73820,7 +73820,7 @@
       "relation": "references",
       "source": "server_knowledge_store_knowledgestore_addroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L354",
+      "source_location": "L374",
       "target": "shared_contracts_knowledgeroot",
       "weight": 1.0
     },
@@ -73832,7 +73832,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_finalizecommittedbinding",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L258",
+      "source_location": "L278",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -73844,7 +73844,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_finalizecommittedbinding",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L284",
+      "source_location": "L304",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -73856,7 +73856,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_finalizereservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L638",
+      "source_location": "L658",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -73868,7 +73868,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_finalizereservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L640",
+      "source_location": "L660",
       "target": "server_knowledge_store_knowledgestore_rollbackreservationnow",
       "weight": 1.0
     },
@@ -73880,7 +73880,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_finalizereservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L659",
+      "source_location": "L679",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -73892,7 +73892,7 @@
       "relation": "references",
       "source": "server_knowledge_store_knowledgestore_getroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L247",
+      "source_location": "L267",
       "target": "shared_contracts_knowledgeroot",
       "weight": 1.0
     },
@@ -73904,7 +73904,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_initialize",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L240",
+      "source_location": "L260",
       "target": "server_knowledge_store_knowledgestore_persist",
       "weight": 1.0
     },
@@ -73916,7 +73916,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_initialize",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L212",
+      "source_location": "L215",
       "target": "server_knowledge_store_parsemetadata",
       "weight": 1.0
     },
@@ -73940,7 +73940,7 @@
       "relation": "references",
       "source": "server_knowledge_store_knowledgestore_listroots",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L243",
+      "source_location": "L263",
       "target": "shared_contracts_knowledgeroot",
       "weight": 1.0
     },
@@ -73952,7 +73952,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_persist",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L600",
+      "source_location": "L620",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -73964,7 +73964,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_persist",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L600",
+      "source_location": "L620",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -73976,7 +73976,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_recoverprovisionalroots",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L304",
+      "source_location": "L324",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -73988,7 +73988,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_recoverprovisionalroots",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L347",
+      "source_location": "L367",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -74000,7 +74000,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_removeroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L533",
+      "source_location": "L553",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -74012,7 +74012,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_removeroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L552",
+      "source_location": "L572",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -74024,7 +74024,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_removerootsforcomputer",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L566",
+      "source_location": "L586",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -74036,7 +74036,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_removerootsforcomputer",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L592",
+      "source_location": "L612",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -74048,7 +74048,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_reservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L618",
+      "source_location": "L638",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -74060,7 +74060,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_reservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L617",
+      "source_location": "L637",
       "target": "server_knowledge_store_knowledgestore_finalizereservation",
       "weight": 1.0
     },
@@ -74072,7 +74072,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_reservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L625",
+      "source_location": "L645",
       "target": "server_knowledge_store_knowledgestore_rollbackreservation",
       "weight": 1.0
     },
@@ -74084,7 +74084,7 @@
       "relation": "references",
       "source": "server_knowledge_store_knowledgestore_reservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L603",
+      "source_location": "L623",
       "target": "shared_contracts_knowledgeroot",
       "weight": 1.0
     },
@@ -74096,7 +74096,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_reserveroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L408",
+      "source_location": "L428",
       "target": "server_knowledge_store_committedrevision",
       "weight": 1.0
     },
@@ -74108,7 +74108,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_reserveroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L380",
+      "source_location": "L400",
       "target": "server_knowledge_store_knowledgerootconfinementconflicterror",
       "weight": 1.0
     },
@@ -74120,7 +74120,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_reserveroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L366",
+      "source_location": "L386",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -74132,7 +74132,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_reserveroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L431",
+      "source_location": "L451",
       "target": "server_knowledge_store_knowledgestore_reservation",
       "weight": 1.0
     },
@@ -74144,7 +74144,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_reserveroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L424",
+      "source_location": "L444",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -74156,7 +74156,7 @@
       "relation": "references",
       "source": "server_knowledge_store_knowledgestore_reserveroot",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L362",
+      "source_location": "L382",
       "target": "shared_contracts_knowledgeroot",
       "weight": 1.0
     },
@@ -74168,7 +74168,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_rollbackreservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L697",
+      "source_location": "L717",
       "target": "server_knowledge_store_knowledgestore_enqueue",
       "weight": 1.0
     },
@@ -74180,7 +74180,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_rollbackreservation",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L697",
+      "source_location": "L717",
       "target": "server_knowledge_store_knowledgestore_rollbackreservationnow",
       "weight": 1.0
     },
@@ -74192,7 +74192,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_rollbackreservationnow",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L741",
+      "source_location": "L761",
       "target": "server_knowledge_store_knowledgestore_write",
       "weight": 1.0
     },
@@ -74204,7 +74204,7 @@
       "relation": "calls",
       "source": "server_knowledge_store_knowledgestore_write",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L823",
+      "source_location": "L843",
       "target": "server_knowledge_store_knowledgestore_replace",
       "weight": 1.0
     },
@@ -251563,7 +251563,7 @@
       "label": ".addRoot()",
       "norm_label": ".addroot()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L354"
+      "source_location": "L374"
     },
     {
       "_callable": true,
@@ -251587,7 +251587,7 @@
       "label": ".enqueue()",
       "norm_label": ".enqueue()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L777"
+      "source_location": "L797"
     },
     {
       "_callable": true,
@@ -251599,7 +251599,7 @@
       "label": ".finalizeCommittedBinding()",
       "norm_label": ".finalizecommittedbinding()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L256"
+      "source_location": "L276"
     },
     {
       "_callable": true,
@@ -251611,7 +251611,7 @@
       "label": ".finalizeReservation()",
       "norm_label": ".finalizereservation()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L633"
+      "source_location": "L653"
     },
     {
       "_callable": true,
@@ -251623,7 +251623,7 @@
       "label": ".getRoot()",
       "norm_label": ".getroot()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L247"
+      "source_location": "L267"
     },
     {
       "_callable": true,
@@ -251635,7 +251635,7 @@
       "label": ".getRootConfinement()",
       "norm_label": ".getrootconfinement()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L252"
+      "source_location": "L272"
     },
     {
       "_callable": true,
@@ -251659,7 +251659,7 @@
       "label": ".listRoots()",
       "norm_label": ".listroots()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L243"
+      "source_location": "L263"
     },
     {
       "_callable": true,
@@ -251671,7 +251671,7 @@
       "label": ".persist()",
       "norm_label": ".persist()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L599"
+      "source_location": "L619"
     },
     {
       "_callable": true,
@@ -251683,7 +251683,7 @@
       "label": ".recoverProvisionalRoots()",
       "norm_label": ".recoverprovisionalroots()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L291"
+      "source_location": "L311"
     },
     {
       "_callable": true,
@@ -251695,7 +251695,7 @@
       "label": ".removeRoot()",
       "norm_label": ".removeroot()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L532"
+      "source_location": "L552"
     },
     {
       "_callable": true,
@@ -251707,7 +251707,7 @@
       "label": ".removeRootsForComputer()",
       "norm_label": ".removerootsforcomputer()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L565"
+      "source_location": "L585"
     },
     {
       "_callable": true,
@@ -251719,7 +251719,7 @@
       "label": ".replace()",
       "norm_label": ".replace()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L837"
+      "source_location": "L857"
     },
     {
       "_callable": true,
@@ -251731,7 +251731,7 @@
       "label": ".reservation()",
       "norm_label": ".reservation()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L603"
+      "source_location": "L623"
     },
     {
       "_callable": true,
@@ -251743,7 +251743,7 @@
       "label": ".reserveRoot()",
       "norm_label": ".reserveroot()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L362"
+      "source_location": "L382"
     },
     {
       "_callable": true,
@@ -251755,7 +251755,7 @@
       "label": ".rollbackReservation()",
       "norm_label": ".rollbackreservation()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L696"
+      "source_location": "L716"
     },
     {
       "_callable": true,
@@ -251767,7 +251767,7 @@
       "label": ".rollbackReservationNow()",
       "norm_label": ".rollbackreservationnow()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L700"
+      "source_location": "L720"
     },
     {
       "_callable": true,
@@ -251779,7 +251779,7 @@
       "label": ".write()",
       "norm_label": ".write()",
       "source_file": "server/knowledge-store.ts",
-      "source_location": "L785"
+      "source_location": "L805"
     },
     {
       "_callable": true,

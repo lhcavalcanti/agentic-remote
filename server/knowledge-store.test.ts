@@ -575,6 +575,57 @@ describe('KnowledgeStore', () => {
     expect(await legacyRoots()).toEqual([root, notes])
   })
 
+  it('moves confinements an earlier build kept in the catalog file', async () => {
+    const directory = await temporaryDirectory()
+    const catalogPath = path.join(directory, 'knowledge.json')
+    const root = (id: string, folder: string) => ({
+      id,
+      computerId: 'computer',
+      computerName: 'development',
+      path: `/home/user/${folder}`,
+      name: path.basename(folder),
+      createdAt: '2026-11-06T00:00:00.000Z',
+    })
+    const pending = root('pending', 'draft/knowledge')
+    const confined = root('confined', 'project/knowledge')
+    const notes = root('notes', 'notes')
+    await writeFile(catalogPath, JSON.stringify({
+      roots: [pending, confined, notes],
+      provisionalRootIds: [pending.id],
+      rootConfinements: {
+        [pending.id]: '/home/user/draft',
+        [confined.id]: '/home/user/project',
+      },
+      provisionalRootConfinements: {
+        [pending.id]: {
+          path: '/home/user/draft',
+          claims: [{
+            token: 'claim',
+            computerId: 'computer',
+            sessionId: 'session',
+            committedRevision: 1,
+            rootPath: '.',
+          }],
+        },
+      },
+    }))
+
+    const store = new KnowledgeStore(directory)
+    await store.initialize()
+
+    expect(store.listRoots()).toEqual([pending, confined, notes])
+    expect(store.getRootConfinement(confined.id)).toBe('/home/user/project')
+    // Startup moves them before any rollback can serve them unconfined.
+    expect(JSON.parse(await readFile(catalogPath, 'utf8'))).toEqual({
+      roots: [notes],
+    })
+    await expect(store.recoverProvisionalRoots([])).resolves.toBe(1)
+    const restarted = new KnowledgeStore(directory)
+    await restarted.initialize()
+    expect(restarted.listRoots()).toEqual([confined, notes])
+    expect(restarted.getRootConfinement(confined.id)).toBe('/home/user/project')
+  })
+
   it('loads a state file written before roots replaced bookmarks', async () => {
     const directory = await temporaryDirectory()
     const root = {

@@ -236,6 +236,8 @@ Confined roots and their confinement metadata persist in a new hub file,
 hides a confined root instead of serving it unconfined. `knowledge.json` keeps
 only unconfined roots in the format those releases read;
 `session-knowledge.json` and `session-knowledge-paths.json` are unchanged.
+Startup migrates confinement metadata that pre-release builds of this API kept
+in `knowledge.json`, moving those roots into the confined file.
 
 ## Lifecycle
 

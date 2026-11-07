@@ -487,7 +487,7 @@
     "docs/superpowers/specs/2026-10-20-copilot-sdk-cli-parity-design.md": "0a6ef302d12467d20947c5bc24f61ad2ea18a04417dd0a5f8fef866bfc7571eb",
     "docs/superpowers/specs/2026-10-24-copilot-sdk-restart-recovery-design.md": "d8276731a6918d7649af65848f4317f72c9473168e89fae55f0fec657b7e28be",
     "docs/superpowers/specs/2026-11-04-oracle-periodic-checks-design.md": "176252bd771508ffbb9702adc11ebc195d2dca6c5d786f8717f696b036ef2950",
-    "docs/superpowers/specs/2026-11-05-session-knowledge-api-design.md": "5ea244484a9e11eb466de1a6a7a6610f05bd7060c30a6cbe62981ec3cf6aebb2",
+    "docs/superpowers/specs/2026-11-05-session-knowledge-api-design.md": "5c227345d0162c5a3f82c1a1ce4426612cc7cb8fa4a87613ed901d2bc524a400",
     "docs/superpowers/specs/2026-11-06-oracle-actionable-morning-plan-design.md": "4cb88c3f4d0b9e551439829549ba65f11a56661d866f95993bb935d469341bb2",
     "e2e/capture-workbench-review.ts": "0c19d55997cf62800b731c21431051645e46d487214e646a85d9cf01f649e705",
     "e2e/capture-workspace.ts": "9e4822a55a435bfdc8cc739dfa30fe550ac5a9d421a8cbd51bbb1a6187cc2dcc",
@@ -596,8 +596,8 @@
     "server/hub-routes.test.ts": "34e7345239d24539d6b3700c32f78c712e2397e7c6ae98526cbf98085cb97c79",
     "server/hub-routes.ts": "b34228247975314e056b0fcfac9ee28a56450f4a4ea530725042a6d59f755d9f",
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
-    "server/knowledge-store.test.ts": "bb5809a56bc9992185a8e4d75a2e15728bc2f8313ab0eafc378014df50e860ed",
-    "server/knowledge-store.ts": "e4a035ccefbb3e35346a50b35bf7f6cb3c1552f868cc490fcf80444aafd9dce5",
+    "server/knowledge-store.test.ts": "f9ee699c3e51c98ccb043ccc23323ed3ac4718a713dfcc924c390c7e96d8439c",
+    "server/knowledge-store.ts": "a4ec94cabb119e24fa92b474eaed1386021a4673c7cd0f10fe4c219b1753b45c",
     "server/manager-agent.test.ts": "d4115454836f3ac87bccebb20a220af60cbca6a7b42e32c78d4c9087b921bbbc",
     "server/manager-agent.ts": "6a177e09d64c48f4175a8477a28cfe51103930704b173b4431a11e5df5bab4d8",
     "server/manager-context.test.ts": "b593521b63ba784669b2b6634ab5d12a6e381e6c6f9062a8fbc459a8ccc62341",
@@ -1019,35 +1019,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "dc4dc1b122ecd60db2d443b30ff3ed10b9ab8c8a85ce087203515145985531e6",
+    "GRAPH_REPORT.md": "937271abe7af4bc9ad48ab380eca1132b445718a2cd3d108ef917790023eb912",
     "communities.json": "eeb3f78089db01ed1da59090b2af7b4cfb742cba91cca57a32fdf942ad04211a",
-    "graph.html": "5a353ec59541d4231bb205efaaeec504a9965a566802e4f4b8be795ae184b578",
-    "graph.json": "9d2723710fc643053798ceaef238c8bbf4f78c2c1c6db3446fad80253a8b23df"
+    "graph.html": "ab315cb640eedb3ecfe07bb3701c24b7028fcd95dce45f163d45d4a54bead5f9",
+    "graph.json": "2c3f99e54d2386695259003e1db9daf2cefa4cb1ff433d5c5a143fd58d8abb87"
   },
   "schema_version": 1,
-  "source_commit": "eaeb0056d3460009bb031c90675b2059e299a9e2",
-  "source_fingerprint": "ffbecf86e7c6ba2a2ee0785c554363fbd10c3f12cf935fbe614cff5c320ea0b2",
+  "source_commit": "9906e26e3ca2e684214b8186b53b852f23c47c40",
+  "source_fingerprint": "59af8da1264042af3e59ba88efe9b0932e6105145c3fd962437b69b605328f30",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    "README.md",
-    "docs/app-spec.md",
-    "docs/design/oracle-conversation-mode.md",
-    "docs/design/session-manager.md",
-    "package.json",
-    "server/app.ts",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-context.test.ts",
-    "server/manager-context.ts",
-    "server/manager-tools.test.ts",
-    "server/manager-tools.ts",
-    "server/oracle-voice-integration.test.ts",
-    "shared/manager.ts",
-    "shared/settings-profile.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.tsx"
+    "docs/superpowers/specs/2026-11-05-session-knowledge-api-design.md",
+    "server/knowledge-store.test.ts",
+    "server/knowledge-store.ts"
   ]
 }

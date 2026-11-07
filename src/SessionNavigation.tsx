@@ -11,6 +11,7 @@ import type {
   ComputerSummary,
   ManagedSession,
 } from '../shared/contracts'
+import { hasActiveBackgroundTasks } from '../shared/background-tasks'
 import {
   computerTone,
   executionModeName,
@@ -155,10 +156,14 @@ function SortableSessionItem({
   const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
   const closeUnavailable = !online || deleting
+  // The owning computer refuses on any of these, so offering the button only
+  // led to an error. Queued work counts although runningCount leaves it out.
+  const retained = Boolean(session.interruption || session.archivedAt)
+  const busy = session.status !== 'idle' ||
+    Boolean(session.pendingUserInput || session.pendingPermission)
+  const ownsTasks = runningBackgroundTasks > 0 || hasActiveBackgroundTasks(backgroundTasks)
   const suspendUnavailable =
-    !online || suspending || (!session.suspended && (
-      session.status !== 'idle' || Boolean(session.pendingUserInput || session.pendingPermission)
-    ))
+    !online || suspending || (!session.suspended && (retained || busy || ownsTasks))
   return (
     <div
       className={`session-item session-item--tone-${computerTone(
@@ -279,11 +284,17 @@ function SortableSessionItem({
           title={
             !online
               ? `Reconnect ${computerName} to manage this session`
+              : suspending
+              ? 'Wait for the current suspend or resume to finish'
               : session.suspended
               ? 'Start this session up again'
-              : suspendUnavailable
-                ? 'Wait for the session to finish before suspending it'
-                : 'Keep this session but stop what is running for it'
+              : retained
+              ? 'Reopen this session before suspending it'
+              : busy
+              ? 'Wait for the session to finish before suspending it'
+              : ownsTasks
+              ? 'Wait for its background tasks to finish before suspending it'
+              : 'Keep this session but stop what is running for it'
           }
           type="button"
         >

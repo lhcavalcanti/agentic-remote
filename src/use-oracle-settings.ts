@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { RuntimeReasoningEffort } from '../shared/contracts'
-import type {
-  ManagerProactiveSettings,
-  ManagerSessionBackend,
-  ManagerSettingsSnapshot,
-} from '../shared/manager'
+import type { ManagerSessionBackend, ManagerSettingsSnapshot } from '../shared/manager'
 import { getManager, updateManagerSettings } from './api'
 
 /** Which part of App settings a change came from, so its result shows there. */
-export type OracleSettingsPart = 'model' | 'folders' | 'backend' | 'proactive'
+export type OracleSettingsPart = 'model' | 'folders' | 'backend'
 
 export interface OracleSettingsState {
   settings?: ManagerSettingsSnapshot
@@ -21,7 +17,6 @@ export interface OracleSettingsState {
   saveModel(model: string, reasoningEffort?: RuntimeReasoningEffort): Promise<void>
   saveFolder(computerId: string, path?: string): Promise<void>
   saveBackend(backend: ManagerSessionBackend): Promise<void>
-  saveProactive(settings: ManagerProactiveSettings): Promise<void>
 }
 
 /**
@@ -115,22 +110,5 @@ export function useOracleSettings(active = true): OracleSettingsState {
     (next) => next.sessionBackend === backend ? undefined : 'This hub did not keep that choice; update it to choose how Oracle opens sessions.',
   ), [update])
 
-  const saveProactive = useCallback((settings: ManagerProactiveSettings) => update(
-    { proactive: settings },
-    'proactive',
-    settings.enabled ? 'Periodic checks saved.' : 'Periodic checks paused.',
-  ), [update])
-
-  return {
-    settings,
-    unavailable,
-    loading,
-    saving,
-    saved,
-    error,
-    saveModel,
-    saveFolder,
-    saveBackend,
-    saveProactive,
-  }
+  return { settings, unavailable, loading, saving, saved, error, saveModel, saveFolder, saveBackend }
 }

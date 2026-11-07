@@ -306,6 +306,6 @@ export class DreamerProgress {
   - Add the API field.
   - Narrow follow-up 2 to history collection.
 - [x] Add a "Superseded by #511" line to the Periodic checks spec and plan.
-- [ ] Bump the version to 1.40.0, then run the version-policy test.
-- [ ] Update graphify, then run `pnpm check` and `NODE_ENV=production pnpm check`.
-- [ ] Commit: `docs: describe Dreamer periodic refresh` and `chore: release 1.40.0`.
+- [x] Bump the version to 1.40.0, then run the version-policy test.
+- [x] Update graphify, then run `pnpm check` and `NODE_ENV=production pnpm check`.
+- [x] Commit: `docs: describe Dreamer periodic refresh` and `chore: release 1.40.0`.

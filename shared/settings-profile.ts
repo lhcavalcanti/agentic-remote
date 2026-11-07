@@ -55,6 +55,11 @@ export interface NewSessionRuntime {
   mode: 'plan' | 'autopilot' | ''
 }
 export type NewSessionRuntimesSetting = Partial<Record<AgentProvider, NewSessionRuntime>>
+/**
+ * The provider a new session uses unless one is chosen: Copilot, which hosts
+ * Claude, GPT, and other model families. The New session dialog and Oracle share it.
+ */
+export const DEFAULT_SESSION_PROVIDER: AgentProvider = 'copilot'
 /** Computer ID to the folder new sessions start in there. */
 export type NewSessionFoldersSetting = Record<string, string>
 

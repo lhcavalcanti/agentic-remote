@@ -429,9 +429,9 @@ export async function buildApp(
           return proactiveCoordinator.recordProactiveOutcomes(input)
         },
         // Unreadable tasks throw, so Oracle asks before closing anything.
-        unfinishedTaskSessions: () => {
+        unfinishedTaskSessions: (messages) => {
           if (!oracleTaskStore) throw new Error('Oracle tasks are unavailable.')
-          return unfinishedOracleTaskSessions(oracleTaskStore.snapshot().tasks)
+          return unfinishedOracleTaskSessions(oracleTaskStore.snapshot().tasks, messages)
         },
       })
       // Before the session service starts, so its first discovery already

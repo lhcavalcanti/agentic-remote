@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -54,11 +55,13 @@ import type {
   ManagerStructuredMemoryStatus,
 } from '../shared/manager-structured-memory.js'
 import {
+  AUTONOMOUS_CLOSE_LIMIT,
   createManagerTools,
   type ManagerSkillSummary,
   type ManagerTool,
   type ManagerToolActivity,
   type ManagerToolHost,
+  type ManagerTurn,
 } from './manager-tools.js'
 import {
   deferManagerCheckUntilAllowed,
@@ -179,11 +182,12 @@ export interface ManagerAgentOptions {
     outcomes: ManagerProactiveOutcome[]
   }) => Promise<string>
   /**
-   * Sessions an Oracle task that is not completed or dismissed still uses.
-   * Throws when the tasks cannot be read. Without it, Oracle always asks
-   * before closing a session.
+   * Sessions an Oracle task that is not completed or dismissed still uses,
+   * including the ones its turns in `messages`, the conversation, used
+   * before the task recorded them. Throws when the tasks cannot be read.
+   * Without it, Oracle always asks before closing a session.
    */
-  unfinishedTaskSessions?: () => Array<{ computerId: string; sessionId: string }>
+  unfinishedTaskSessions?: (messages: readonly ManagerMessage[]) => Array<{ computerId: string; sessionId: string }>
 }
 
 class TurnError extends Error {
@@ -345,7 +349,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private session?: ManagerSdkSession
   private status: ManagerStatus = 'idle'
   private lastError?: string
-  private running?: { messageId: string; cancel: () => void }
+  private running?: { turn: ManagerTurn; cancel: () => void }
+  /** The turn each tool call started in, for as long as the call runs. */
+  private readonly toolTurns = new AsyncLocalStorage<ManagerTurn | undefined>()
   /** Bumped by Start over; work for an earlier conversation stores nothing. */
   private epoch = 0
   private pumping = false
@@ -371,7 +377,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private currentMessageSource: ManagerMessageSource = 'typed'
   /** Sessions closed without asking while answering the current message. */
   private autonomousCloses = 0
-  private readonly unfinishedTaskSessions?: () => Array<{ computerId: string; sessionId: string }>
+  private readonly unfinishedTaskSessions?: ManagerAgentOptions['unfinishedTaskSessions']
   private proactiveMessagesEnabled = true
   private pendingAcknowledgement?: { journalSeq: number; memoryHash?: string; notesShown: number }
   /** The turn being answered, settled once its outcome is stored. */
@@ -408,7 +414,13 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.structuredMemory = options.structuredMemory
     this.recordProactiveOutcomes = options.recordProactiveOutcomes
     this.unfinishedTaskSessions = options.unfinishedTaskSessions
+    // A call keeps the turn it started in, so one that outlives a stopped
+    // turn is filed under that turn and cannot act for the next one.
     this.tools = createManagerTools(this.toolHost(), (activity) => this.recordActivity(activity))
+      .map((tool) => ({
+        ...tool,
+        handler: (args, invocation) => this.toolTurns.run(this.running?.turn, () => tool.handler(args, invocation)),
+      }))
   }
 
   structuredMemoryStatus(): ManagerStructuredMemoryStatus {
@@ -1229,7 +1241,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   }
 
   private async requestCloseConfirmation(session: ManagedSession, reason?: string, why?: string): Promise<void> {
-    this.attemptActivities.push(`Asked to close "${session.title}"`)
+    const replyTo = this.toolTurns.getStore()?.messageId ?? this.currentReplyTo
+    if (replyTo === this.currentReplyTo) this.attemptActivities.push(`Asked to close "${session.title}"`)
     this.flushDelta()
     const question = reason?.trim()
       ? `Close "${session.title}"? ${reason.trim()}`
@@ -1240,7 +1253,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       content: why ? `${question} Asked because ${why}.` : question,
       createdAt: this.now().toISOString(),
       tool: 'close_session',
-      ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
+      ...(replyTo ? { replyTo } : {}),
       sessionRefs: [{ computerId: session.computerId, sessionId: session.id, title: session.title }],
       confirmation: {
         kind: 'close-session',
@@ -1258,6 +1271,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
    * restart finishes it rather than claiming it happened.
    */
   private async closeWithoutAsking(session: ManagedSession, reason?: string): Promise<ManagerConfirmation> {
+    const turn = this.toolTurns.getStore()
+    if (!turn?.live() || this.autonomousCloses >= AUTONOMOUS_CLOSE_LIMIT) {
+      throw new Error('Oracle can only close a session without asking while it answers the message that asked for it.')
+    }
     // Counted before anything is awaited, so a close running alongside sees it.
     this.autonomousCloses += 1
     this.flushDelta()
@@ -1269,7 +1286,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         : `Close "${session.title}", an idle session Oracle started.`,
       createdAt: this.now().toISOString(),
       tool: 'close_session',
-      ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
+      replyTo: turn.messageId,
       sessionRefs: [{ computerId: session.computerId, sessionId: session.id, title: session.title }],
       confirmation: {
         kind: 'close-session',
@@ -1282,11 +1299,13 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     }
     await this.updateMessage(closing)
     const { confirmation } = await this.finishClosing(closing, { announce: false })
-    this.attemptActivities.push(
-      confirmation?.state === 'confirmed'
-        ? `Closed "${session.title}" without asking`
-        : `Tried to close "${session.title}" without asking, which failed`,
-    )
+    if (this.currentReplyTo === turn.messageId) {
+      this.attemptActivities.push(
+        confirmation?.state === 'confirmed'
+          ? `Closed "${session.title}" without asking`
+          : `Tried to close "${session.title}" without asking, which failed`,
+      )
+    }
     return confirmation!
   }
 
@@ -1314,9 +1333,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       sessionClosePolicy: () => this.sessionClosePolicy(),
       unfinishedTaskSessions: () => {
         if (!this.unfinishedTaskSessions) throw new Error('Oracle tasks are not available here.')
-        return this.unfinishedTaskSessions()
+        // The whole conversation, not the bounded snapshot: a task's turn
+        // may be older than the newest messages.
+        return this.unfinishedTaskSessions(this.store.messages())
       },
       autonomousClosesThisTurn: () => this.autonomousCloses,
+      callTurn: () => this.toolTurns.getStore(),
       backgroundTasks: async (computerId, sessionId) => {
         if (!hub.listBackgroundTasks) throw new Error('This hub cannot list background tasks.')
         return hub.listBackgroundTasks(computerId, sessionId)
@@ -1447,12 +1469,17 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   }
 
   private recordActivity(activity: ManagerToolActivity): void {
-    this.attemptActivities.push(activity.content)
-    if (this.currentMessageSource === 'task' && activity.sessionRefs?.length) {
-      this.currentTaskSessionRefs = uniqueManagerSessionRefs([
-        ...this.currentTaskSessionRefs,
-        ...activity.sessionRefs,
-      ])
+    const turn = this.toolTurns.getStore()
+    const replyTo = turn?.messageId ?? this.currentReplyTo
+    const source = turn?.source ?? this.currentMessageSource
+    if (replyTo === this.currentReplyTo) {
+      this.attemptActivities.push(activity.content)
+      if (source === 'task' && activity.sessionRefs?.length) {
+        this.currentTaskSessionRefs = uniqueManagerSessionRefs([
+          ...this.currentTaskSessionRefs,
+          ...activity.sessionRefs,
+        ])
+      }
     }
     this.flushDelta()
     const timestamp = this.now().toISOString()
@@ -1462,8 +1489,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       content: activity.content,
       createdAt: timestamp,
       tool: activity.tool,
-      ...(this.currentMessageSource === 'typed' ? {} : { source: this.currentMessageSource }),
-      ...(this.currentReplyTo ? { replyTo: this.currentReplyTo } : {}),
+      ...(source === 'typed' ? {} : { source }),
+      ...(replyTo ? { replyTo } : {}),
       ...(activity.sessionRefs?.length ? { sessionRefs: activity.sessionRefs } : {}),
     }).catch((error: unknown) => console.warn('Could not record manager activity:', error))
   }
@@ -1885,6 +1912,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     const session = this.session
     const client = this.client
     if (!session) throw new TurnError('The manager runtime is not ready', 'runtime')
+    const epoch = this.epoch
+    const messageId = this.currentReplyTo ?? ''
+    const source = this.currentMessageSource
     const segments = new Map<string, string>()
     const order: string[] = []
     const text = () => order.map((id) => segments.get(id) ?? '').filter((part) => part.trim()).join('\n\n')
@@ -1913,7 +1943,12 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         idleSeen = resolveIdle
       })
       this.running = {
-        messageId: this.currentReplyTo ?? '',
+        turn: {
+          messageId,
+          source,
+          live: () => !settled && !stopping && !this.stopped && this.epoch === epoch
+            && this.cancelledMessageId !== messageId,
+        },
         cancel: () => {
           if (settled || stopping) return
           stopping = true

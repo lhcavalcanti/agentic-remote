@@ -783,13 +783,17 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   close idle sessions Oracle started, a close Oracle requests deletes the
   session at once only when all of these hold; otherwise it asks as above,
   and the card says why:
-  - the request answers a message you typed;
+  - the request answers a message you typed, and Oracle is still answering
+    it when the close would happen: a request that outlives a stopped or
+    finished turn asks, under the message that made it;
   - it names the session by its full id;
   - Oracle started the session, by the registry's origin;
   - the session, read live, is idle, with nothing waiting, queued, failed to
     send, pinned, or recovering;
   - its background tasks can be read and none is running or queued;
-  - Oracle's tasks can be read and no unfinished one uses the session;
+  - Oracle's tasks can be read and no unfinished one uses the session,
+    including a session one of its turns used that the task has not yet
+    recorded;
   - Oracle has closed fewer than 5 sessions without asking for this message.
 
   Such a close MUST be recorded as closing before the deletion, so a restart

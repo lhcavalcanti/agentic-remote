@@ -79,9 +79,17 @@ export interface ManagerToolHost {
   /** Background work still running in a session; absent counts as unreadable. */
   backgroundTasks?(computerId: string, sessionId: string): Promise<BackgroundTaskSnapshot>
   /**
+   * The turn the tool call being handled started in, which stays its turn
+   * however long the call takes. Absent or undefined: no turn is being
+   * answered, so nothing may be closed without asking.
+   */
+  callTurn?(): ManagerTurn | undefined
+  /**
    * Closes a session without asking, recorded in Oracle's transcript before
    * anything is deleted. Counts toward `autonomousClosesThisTurn` before it
-   * awaits anything. Gives back how it ended: `confirmed` or `failed`.
+   * awaits anything, and refuses, before counting or recording anything,
+   * unless the call's turn is still live and under the cap. Gives back how
+   * it ended: `confirmed` or `failed`.
    */
   closeWithoutAsking?(session: ManagedSession, reason?: string): Promise<ManagerConfirmation>
   discoverSkills(projectPaths: string[]): Promise<ManagerSkillSummary[]>
@@ -120,6 +128,15 @@ export interface ManagerToolActivity {
   tool: string
   content: string
   sessionRefs?: ManagerSessionRef[]
+}
+
+/** One turn of Oracle answering a message, as its tool calls see it. */
+export interface ManagerTurn {
+  /** The message being answered. */
+  readonly messageId: string
+  readonly source: ManagerMessageSource
+  /** False once the turn has ended or been stopped, even while a call it made still runs. */
+  live(): boolean
 }
 
 export interface ManagerToolInvocation {
@@ -215,7 +232,9 @@ function failure(message: string): ManagerToolResult {
 }
 
 /** At most this many sessions close without asking while Oracle answers one message. */
-const AUTONOMOUS_CLOSE_LIMIT = 5
+export const AUTONOMOUS_CLOSE_LIMIT = 5
+
+const TURN_ENDED = 'Oracle is no longer answering the message that asked for it'
 
 const BUSY_STATUS: Record<Exclude<SessionStatus, 'idle'>, string> = {
   running: 'it is still running',
@@ -466,8 +485,9 @@ export function createManagerTools(
    * their setting lets Oracle close it now. Each check fails closed: what
    * cannot be read is a reason to ask.
    */
-  async function whyCloseMustAsk(session: ManagedSession, named: string): Promise<string | undefined> {
-    if (host.messageSource() !== 'typed') return 'only a typed message lets Oracle close sessions without asking'
+  async function whyCloseMustAsk(session: ManagedSession, named: string, turn: ManagerTurn | undefined): Promise<string | undefined> {
+    if (!turn) return TURN_ENDED
+    if (turn.source !== 'typed') return 'only a typed message lets Oracle close sessions without asking'
     if (named !== session.id) return 'it was named by a shortened id'
     const entry = host.registry()[registryKey(session.computerId, session.id)]
     if (entry?.origin !== 'manager' || entry.removedAt || entry.replacedBy) return 'it was not started by Oracle'
@@ -1237,6 +1257,7 @@ export function createManagerTools(
         reason: z.string().trim().max(300).optional().describe('One short line on why, shown to the user beside the request or the close.'),
       }),
       async ({ sessionId, computer, reason }) => {
+        const turn = host.callTurn?.()
         const session = await resolveSession(sessionId, computer)
         const policy = host.closeWithoutAsking && host.autonomousClosesThisTurn
           ? host.sessionClosePolicy?.()
@@ -1245,9 +1266,12 @@ export function createManagerTools(
           await host.requestCloseConfirmation(session, reason)
           return `Asked the user to confirm closing ${link(session)} in the app. It stays open until they confirm; the outcome appears in your next turn.`
         }
-        // The cap is checked last, with nothing awaited before the close
-        // counts, so closes running side by side cannot all slip under it.
-        const why = (await whyCloseMustAsk(session, sessionId)) ?? closeCapReached()
+        // Whether the turn is still live, and the cap, are checked last, with
+        // nothing awaited before the close counts: a call that outlived its
+        // turn cannot close for the next one, and closes running side by side
+        // cannot all slip under the cap.
+        const why = (await whyCloseMustAsk(session, sessionId, turn))
+          ?? (turn?.live() ? closeCapReached() : TURN_ENDED)
         if (why) {
           await host.requestCloseConfirmation(session, reason, why)
           return `Asked the user to confirm closing ${link(session)} in the app, because ${why}. It stays open until they confirm; the outcome appears in your next turn.`

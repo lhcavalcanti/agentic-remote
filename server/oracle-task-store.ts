@@ -9,7 +9,7 @@ import {
   rm,
 } from 'node:fs/promises'
 import path from 'node:path'
-import type { ManagerSessionRef } from '../shared/manager.js'
+import type { ManagerMessage, ManagerSessionRef } from '../shared/manager.js'
 import { ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH } from '../shared/oracle-task.js'
 import type {
   OracleTask,
@@ -121,21 +121,32 @@ export class OracleTaskUnavailableError extends Error {
 /**
  * Every session a task that is not completed or dismissed still uses: where
  * it came from and what its attempts ran in. They hold the task's evidence,
- * so Oracle never closes one without asking.
+ * so Oracle never closes one without asking. Attempts record their sessions
+ * only when reconciled, so the ones the attempts' turns in `messages` (the
+ * conversation) already used count too.
  */
 export function unfinishedOracleTaskSessions(
   tasks: readonly OracleTask[],
+  messages: readonly ManagerMessage[],
 ): Array<{ computerId: string; sessionId: string }> {
   const sessions = new Map<string, { computerId: string; sessionId: string }>()
-  const add = (computerId: string, sessionId: string) => {
-    sessions.set(`${computerId}:${sessionId}`, { computerId, sessionId })
+  const add = (references: ReadonlyArray<{ computerId: string; sessionId: string }> = []) => {
+    for (const { computerId, sessionId } of references) {
+      sessions.set(`${computerId}:${sessionId}`, { computerId, sessionId })
+    }
   }
+  const turns = new Set<string>()
   for (const task of tasks) {
     if (task.status === 'completed' || task.status === 'dismissed') continue
-    if (task.sourceSession) add(task.sourceSession.computerId, task.sourceSession.sessionId)
+    if (task.sourceSession) add([task.sourceSession])
     for (const attempt of task.attempts) {
-      for (const reference of attempt.sessionRefs) add(reference.computerId, reference.sessionId)
+      add(attempt.sessionRefs)
+      turns.add(attempt.managerMessageId)
     }
+  }
+  for (const message of messages) {
+    if (turns.has(message.id)) add([...message.sessionRefs ?? [], ...message.automatic?.sessionRefs ?? []])
+    if (message.replyTo && turns.has(message.replyTo)) add(message.sessionRefs)
   }
   return [...sessions.values()]
 }

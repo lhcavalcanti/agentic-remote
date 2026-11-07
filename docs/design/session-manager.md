@@ -232,16 +232,21 @@ reason to ask.
 | Origin | The registry entry is not `origin: 'manager'`, or is removed or replaced |
 | Live state | `readSession` fails, or the session is not idle, or has a pending permission or question, queued or dispatching messages, a failed prompt, a pin, or restart recovery |
 | Background work | The list cannot be read or is unsupported, or a task is running or queued, as for suspending |
-| Oracle tasks | Tasks cannot be read, or a task that is not completed or dismissed lists the session as its source or in an attempt |
-| Cap | 5 sessions were already closed without asking for this message. Checked last, and counted before anything is awaited, so parallel calls cannot exceed it. Retries and a restart count the transcript's records |
+| Oracle tasks | Tasks cannot be read, or a task that is not completed or dismissed lists the session as its source or in an attempt, or, before reconciliation records it there, an attempt's turn used it: on the turn's message or a reply to it, in the whole conversation |
+| Turn | The turn the call started in has ended, been stopped, or belongs to an earlier conversation. Each tool call keeps that turn (`AsyncLocalStorage` at the tool boundary), so a late call cannot close under the next message's source or cap |
+| Cap | 5 sessions were already closed without asking for this message. The turn and the cap are checked last, and the close is counted before anything is awaited, so parallel calls cannot exceed it. Retries and a restart count the transcript's records |
 
 A close that passes is recorded as `{ state: 'closing', decidedBy: 'oracle' }`
 before `deleteSession`, then confirmed or failed like a close you confirmed.
+Whatever a call records, a close, a request, or other activity, is filed under
+the message whose turn made the call, even after Stop.
 The tool result reports it, so no note is added; a restart that finishes it adds
 one. **Residual risk:** with the policy on, an instruction injected through a
 transcript during a typed turn can close up to 5 idle sessions Oracle started.
 A session that becomes busy between the live read and the deletion is still
-deleted, as with a close you confirm.
+deleted, as with a close you confirm. After **Start over**, a session an
+earlier conversation's task turn used counts only once reconciliation has
+recorded it on the attempt.
 
 ## Runtime and recovery
 

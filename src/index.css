@@ -7767,6 +7767,23 @@ button {
   font-size: 11px;
 }
 
+.manager-message__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.manager-message__meta:empty {
+  display: none;
+}
+
+.manager-message__time {
+  display: block;
+  margin-top: 6px;
+}
+
 .manager-message__error {
   margin: 0;
   color: var(--danger);
@@ -7867,11 +7884,23 @@ button {
   border-color: var(--danger);
 }
 
+.manager-confirmation__header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .manager-confirmation__question,
 .manager-confirmation__outcome {
   margin: 0;
   font-size: 13.5px;
   line-height: 1.45;
+}
+
+.manager-confirmation__question {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
 }
 
 .manager-confirmation__outcome {

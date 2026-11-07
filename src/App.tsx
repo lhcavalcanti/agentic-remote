@@ -359,6 +359,7 @@ import {
   type SessionNotificationState,
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
+import { MessageTime } from './MessageTime'
 import { SessionPatchReceiver } from './session-patches'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import {
@@ -401,19 +402,6 @@ function recordingDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
 }
-
-const messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: 'numeric',
-  minute: '2-digit',
-})
-
-const messageDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-})
 
 function slashShortcut(value: string): string {
   const parts = value.split(/[-_]/)
@@ -4868,13 +4856,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
               ? 'Command'
               : 'Agent'}
         </span>
-        <time
-          className="message__timestamp"
-          dateTime={message.createdAt}
-          title={messageDateTimeFormatter.format(new Date(message.createdAt))}
-        >
-          {messageTimeFormatter.format(new Date(message.createdAt))}
-        </time>
+        <MessageTime value={message.createdAt} />
       </div>
       <div className="message__content">
         {message.content ? (

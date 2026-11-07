@@ -408,9 +408,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 228,
+  "communities": 224,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19401,
+  "edges": 19410,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -449,7 +449,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "b98a8aec5b89e94c945a2869adab3dc8514266e4c38f05463be52c218651887a",
+    "docs/app-spec.md": "c6a189c23681f8d96b4e58fdd7abdacedd7c491fda940b27ec4150fa4ae81baf",
     "docs/architecture.md": "5cf48ead513dfe86e5f217f7ce041af55d0eb4cfea7afe6cd73cf4ee270036ea",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -461,7 +461,7 @@
     "docs/design/oracle-dreamer.md": "75a86b1bde747a4d27f9a37633c19a33faa593003946674136f451e1cbb75307",
     "docs/design/oracle-durable-ux.md": "c26ae138274606865c3d580e652b71aa506a1fb8ddce4e428e31f2dc6b39fc38",
     "docs/design/oracle-proactive-inbox.md": "2a19e1bba6feb8b251e294666ecf7273528f03db459bfc9933e1febb6403994e",
-    "docs/design/session-manager.md": "7b9aeb5c8f3691c3eafe6f91c73aa8bdd4b9e8d0dd350ad503802c35dca6ddf1",
+    "docs/design/session-manager.md": "96342f2c26abe83bf625e0c6a03d51b79da976cb20f1746c680d16db221dfd8b",
     "docs/design/settings-profile.md": "a58ef0f51a272acdd4fada36a496f53b06cb2b52ee5c799a699314bd69073105",
     "docs/licenses/onnxruntime-1.24.2-third-party-notices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
     "docs/licenses/oracle-voice-browser.txt": "5c95620c5edfa4f80c62ad4c638444f7953bbc02e885f6834f173500633acd7b",
@@ -595,8 +595,8 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "9655916beb7b3dc5d29f8d74f6fb65a4f9e43b4cea460e7e2e224a7b6a55d120",
     "server/knowledge-store.ts": "07f82c5de5bcb9a97f046d043808003ae2e85b45d5fabe0ccff87e83fe2d589b",
-    "server/manager-agent.test.ts": "4d0f3456143a763b7e92aa52892d69a2eb4b6b772a5cb69f18e47856b26c0c02",
-    "server/manager-agent.ts": "505526c12bdc978b3ad99a62e66fb547bc5f14d4160489f43d34c557de0b1229",
+    "server/manager-agent.test.ts": "3d6e11a2792a67c1ba01b9f073ec0c8cf2dc2fef975e06e56b03ded17e5289b2",
+    "server/manager-agent.ts": "008ab2675f801ae19a0a6c718b45f516ad2ecc10f18da95a87ccf85202db020f",
     "server/manager-context.test.ts": "e4bcddf5fd8a7395199178595facfef05ac6fb7a353c32edf678fd7d3331bfbb",
     "server/manager-context.ts": "597367b38eadfb88092d9d9e6cb17811692771005564c35629d6b04178f847f5",
     "server/manager-journal.test.ts": "14d3b1fa6e3cd026e9d06e9084599e02a3744496c4049a3068902e553a4165d0",
@@ -625,8 +625,8 @@
     "server/manager-structured-memory-store.ts": "c1d7f675b68c6e879578084827bbee4307f678aefc4dc124ff1c8ffa5fc3adee",
     "server/manager-structured-memory-validation.test.ts": "7a4618851ada3517d5c23f55860097fa1146b8112b1bc887a0e88659475c4588",
     "server/manager-structured-memory-validation.ts": "baf36801defb0b887793cfa04f9dbfac7206a588cd480cdb72b4c04ed3466120",
-    "server/manager-tools.test.ts": "7fd7d519d10992394dbadfcc60465d99e76794ff8d340dd041626630f153f5d6",
-    "server/manager-tools.ts": "fa801f8977b0528aeb8ac48da4095ffc9f655aa2dffad992882d4d1c9cb65069",
+    "server/manager-tools.test.ts": "a3b7f2a6d83c60c4c7e94a297ba3ece4d6f7de27f334b8b60faff56cf6d9ccbf",
+    "server/manager-tools.ts": "a36eccce2356df107c4288fe1c432e69cf34fbea2cab24d0c5d5a63f7fb5b571",
     "server/multi-node.test.ts": "9a11448dc6d347e36ba54ae0198a99b61fb697e10d0a75386ce686c236db13be",
     "server/node-identity.test.ts": "83b029e63c5eef064c506261f2d73d7addcf5d2b02b4b3d709bb9c3896e4cf09",
     "server/node-identity.ts": "b866a8d8eae96412f6bfed413605cfe6e16322dbd6d5c94e6b5e89041919bf2c",
@@ -916,7 +916,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 6989,
+  "nodes": 6991,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1013,23 +1013,20 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "c3dafba1aa21420331082d6606ab6752f9ddcc83dffcb016f7a44a76e0c1663c",
-    "communities.json": "fe442bcf73b605d2922766ff5cebe4c62ed33d20041978dfaac0326721947fb2",
-    "graph.html": "e5bcbcdd2b0361ceb9141637a4bfd991a8c1b891d50c7a8f27b937569ca6d15a",
-    "graph.json": "47a07ba8df22ac8f88d8b676a1c029367a7ee44b03e7fefce51c1e196457a56e"
+    "GRAPH_REPORT.md": "51d9cb45adc12a41c0dc279514516c642b25f5fdbd46d369c316bd9a3358294c",
+    "communities.json": "b092f3d00f50f12b7bc7f51339f92a5e9ffa308e29ff5bcbed9f8d90873b7b43",
+    "graph.html": "bc3aa8bf80aa78ea8fb15b9572d7c9521a650a635d0ba0f4eba04f3f8060451d",
+    "graph.json": "044b1146d5c4b9a12ad475fbbbf35c27e0a3df2762c55717118a8b5149bcaf2f"
   },
   "schema_version": 1,
-  "source_commit": "387e2d1c11f9b7dc060587fc5b6a75bcce32299c",
-  "source_fingerprint": "5ac316b30742495946e9b85c913112e6982ced92a18107bb52fb4c62df8834df",
+  "source_commit": "899e19a3d4b3db15e17162ad7d9421d945f9058e",
+  "source_fingerprint": "415429132160f26df4fbfb3bac894b976708fea43936d65b36704270d7ea89f4",
   "working_tree_changes": [
     "docs/app-spec.md",
     "docs/design/session-manager.md",
-    "server/app.ts",
     "server/manager-agent.test.ts",
     "server/manager-agent.ts",
     "server/manager-tools.test.ts",
-    "server/manager-tools.ts",
-    "server/oracle-task-store.test.ts",
-    "server/oracle-task-store.ts"
+    "server/manager-tools.ts"
   ]
 }

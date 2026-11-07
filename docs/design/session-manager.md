@@ -232,7 +232,8 @@ reason to ask.
 | Origin | The registry entry is not `origin: 'manager'`, or is removed or replaced |
 | Live state | `readSession` fails, or the session is not idle, or has a pending permission or question, queued or dispatching messages, a failed prompt, a pin, or restart recovery |
 | Background work | The list cannot be read or is unsupported, or a task is running or queued, as for suspending |
-| Oracle tasks | Tasks cannot be read, or a task that is not completed or dismissed lists the session as its source or in an attempt, or, before reconciliation records it there, an attempt's turn used it: on the turn's message or a reply to it, in the whole conversation |
+| Earlier work | A tool call from another turn, such as a stopped task's, is still running: what it starts or uses is recorded only when it ends. Calls are counted by turn at the tool boundary |
+| Oracle tasks | Tasks cannot be read, or a task that is not completed or dismissed lists the session as its source or in an attempt, or, before reconciliation records it there, an attempt's turn used it: on the turn's message or a reply to it, in the whole conversation, counting activity recorded but not yet written |
 | Turn | The turn the call started in has ended, been stopped, or belongs to an earlier conversation. Each tool call keeps that turn (`AsyncLocalStorage` at the tool boundary), so a late call cannot close under the next message's source or cap |
 | Cap | 5 sessions were already closed without asking for this message. The turn and the cap are checked last, and the close is counted before anything is awaited, so parallel calls cannot exceed it. Retries and a restart count the transcript's records |
 
@@ -246,7 +247,9 @@ transcript during a typed turn can close up to 5 idle sessions Oracle started.
 A session that becomes busy between the live read and the deletion is still
 deleted, as with a close you confirm. After **Start over**, a session an
 earlier conversation's task turn used counts only once reconciliation has
-recorded it on the attempt.
+recorded it on the attempt; so does one a task turn was starting when the hub
+restarted. The SDK does not say which turn a call belongs to, so a call the
+runtime makes after Stop has drained it belongs to the next turn.
 
 ## Runtime and recovery
 

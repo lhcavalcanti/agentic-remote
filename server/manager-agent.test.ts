@@ -2008,6 +2008,12 @@ describe('ManagerAgent', () => {
   })
 
   describe('closing the sessions it started without asking', () => {
+    const runningTask: OracleTask = {
+      id: 'oracle-task-a', revision: 1, title: 'Fix', summary: '', nextAction: '', owner: 'oracle', status: 'running',
+      sourceEventIds: [], createdAt: 't', updatedAt: 't',
+      attempts: [{ id: 'attempt-a', requestId: 'r', managerMessageId: 'task-attempt-a', status: 'running', sessionRefs: [] }],
+    }
+
     async function startedByOracle(ids: string[]) {
       await store.updateRegistry((registry) => {
         for (const id of ids) {
@@ -2179,11 +2185,6 @@ describe('ManagerAgent', () => {
 
     it('asks before closing a session an unfinished task started, before the task records it', async () => {
       await startedByOracle([])
-      const task: OracleTask = {
-        id: 'oracle-task-a', revision: 1, title: 'Fix', summary: '', nextAction: '', owner: 'oracle', status: 'running',
-        sourceEventIds: [], createdAt: 't', updatedAt: 't',
-        attempts: [{ id: 'attempt-a', requestId: 'r', managerMessageId: 'task-attempt-a', status: 'running', sessionRefs: [] }],
-      }
       sdk.behaviors.push(async (fakeSession) => {
         await fakeSession.tool('create_session')({ title: 'Fix', prompt: 'Fix the bug' })
         reply('Started it.')(fakeSession, '')
@@ -2193,7 +2194,7 @@ describe('ManagerAgent', () => {
         result = await fakeSession.tool('close_session')({ sessionId: 'worker-1' })
         reply('Asked.')(fakeSession, '')
       })
-      await start({ unfinishedTaskSessions: (messages) => unfinishedOracleTaskSessions([task], messages) })
+      await start({ unfinishedTaskSessions: (messages) => unfinishedOracleTaskSessions([runningTask], messages) })
       await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
       await agent!.enqueueInternal({
         id: 'task-attempt-a', content: 'Fix the bug.', source: 'task', answerOnly: false,
@@ -2203,6 +2204,77 @@ describe('ManagerAgent', () => {
       expect(store.registry()[registryKey('hub', 'worker-1')]).toMatchObject({ origin: 'manager' })
       await agent!.send('close worker-1, the task is done')
       await settled()
+
+      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(String(result)).toContain('because an unfinished Oracle task uses it')
+    })
+
+    /**
+     * Stops a task turn while its create_session is still delivering the
+     * worker's task: the worker is already Oracle's, but nothing records yet
+     * that the task started it.
+     */
+    async function stopTaskWhileItStartsAWorker() {
+      await startedByOracle([])
+      let deliver!: () => void
+      const delivering = new Promise<void>((resolve) => { deliver = resolve })
+      vi.mocked(hub.sendMessage).mockImplementationOnce(async (_computerId, id) => {
+        await delivering
+        return session(id)
+      })
+      let late!: Promise<unknown>
+      sdk.behaviors.push(async (fakeSession) => {
+        late = fakeSession.tool('create_session')({ title: 'Fix', prompt: 'Fix the bug' })
+      })
+      await start({ unfinishedTaskSessions: (messages) => unfinishedOracleTaskSessions([runningTask], messages) })
+      await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
+      await agent!.enqueueInternal({
+        id: 'task-attempt-a', content: 'Fix the bug.', source: 'task', answerOnly: false,
+        automatic: { kind: 'task', taskId: 'oracle-task-a' },
+      })
+      await vi.waitFor(() => expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'worker-1', expect.anything()))
+      expect(store.registry()[registryKey('hub', 'worker-1')]).toMatchObject({ origin: 'manager' })
+      await agent!.cancel()
+      await vi.waitFor(() => expect(agent!.message('task-attempt-a')?.state).toBe('cancelled'))
+      return { deliver, late: () => late }
+    }
+
+    it('asks while a stopped task may still be starting a worker', async () => {
+      const { deliver, late } = await stopTaskWhileItStartsAWorker()
+      let result: unknown
+      sdk.behaviors.push(async (fakeSession) => {
+        result = await fakeSession.tool('close_session')({ sessionId: 'worker-1' })
+        reply('Asked.')(fakeSession, '')
+      })
+      await agent!.send('close worker-1')
+      await settled()
+      deliver()
+      await late()
+
+      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(String(result)).toContain('because Oracle may still be finishing work for an earlier message')
+    })
+
+    it('counts what a stopped task did once it is recorded, before it is written', async () => {
+      const { deliver, late } = await stopTaskWhileItStartsAWorker()
+      let write!: () => void
+      const writing = new Promise<void>((resolve) => { write = resolve })
+      const upsert = store.upsertMessage.bind(store)
+      vi.spyOn(store, 'upsertMessage').mockImplementation(async (message) => {
+        if (message.tool === 'create_session') await writing
+        return upsert(message)
+      })
+      let result: unknown
+      sdk.behaviors.push(async (fakeSession) => {
+        deliver()
+        await late()
+        result = await fakeSession.tool('close_session')({ sessionId: 'worker-1' })
+        reply('Asked.')(fakeSession, '')
+      })
+      await agent!.send('close worker-1')
+      await settled()
+      write()
+      await vi.waitFor(() => expect(store.messages().some((message) => message.tool === 'create_session')).toBe(true))
 
       expect(hub.deleteSession).not.toHaveBeenCalled()
       expect(String(result)).toContain('because an unfinished Oracle task uses it')

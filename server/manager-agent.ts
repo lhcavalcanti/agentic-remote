@@ -352,6 +352,13 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private running?: { turn: ManagerTurn; cancel: () => void }
   /** The turn each tool call started in, for as long as the call runs. */
   private readonly toolTurns = new AsyncLocalStorage<ManagerTurn | undefined>()
+  /** How many tool calls are still running, by the turn each started in. */
+  private readonly callsRunning = new Map<ManagerTurn | undefined, number>()
+  /**
+   * Activities recorded but not yet written, by id. One whose write failed
+   * stays: what it did still happened.
+   */
+  private readonly unwrittenActivities = new Map<string, ManagerMessage>()
   /** Bumped by Start over; work for an earlier conversation stores nothing. */
   private epoch = 0
   private pumping = false
@@ -419,7 +426,17 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.tools = createManagerTools(this.toolHost(), (activity) => this.recordActivity(activity))
       .map((tool) => ({
         ...tool,
-        handler: (args, invocation) => this.toolTurns.run(this.running?.turn, () => tool.handler(args, invocation)),
+        handler: async (args, invocation) => {
+          const turn = this.running?.turn
+          this.callsRunning.set(turn, (this.callsRunning.get(turn) ?? 0) + 1)
+          try {
+            return await this.toolTurns.run(turn, () => tool.handler(args, invocation))
+          } finally {
+            const left = (this.callsRunning.get(turn) ?? 1) - 1
+            if (left > 0) this.callsRunning.set(turn, left)
+            else this.callsRunning.delete(turn)
+          }
+        },
       }))
   }
 
@@ -1334,11 +1351,13 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       unfinishedTaskSessions: () => {
         if (!this.unfinishedTaskSessions) throw new Error('Oracle tasks are not available here.')
         // The whole conversation, not the bounded snapshot: a task's turn
-        // may be older than the newest messages.
-        return this.unfinishedTaskSessions(this.store.messages())
+        // may be older than the newest messages. An activity counts once
+        // recorded, before its write lands.
+        return this.unfinishedTaskSessions([...this.store.messages(), ...this.unwrittenActivities.values()])
       },
       autonomousClosesThisTurn: () => this.autonomousCloses,
       callTurn: () => this.toolTurns.getStore(),
+      earlierWorkRunning: (turn) => [...this.callsRunning.keys()].some((other) => other !== turn),
       backgroundTasks: async (computerId, sessionId) => {
         if (!hub.listBackgroundTasks) throw new Error('This hub cannot list background tasks.')
         return hub.listBackgroundTasks(computerId, sessionId)
@@ -1483,7 +1502,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     }
     this.flushDelta()
     const timestamp = this.now().toISOString()
-    void this.updateMessage({
+    const message: ManagerMessage = {
       id: randomUUID(),
       role: 'activity',
       content: activity.content,
@@ -1492,7 +1511,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       ...(source === 'typed' ? {} : { source }),
       ...(replyTo ? { replyTo } : {}),
       ...(activity.sessionRefs?.length ? { sessionRefs: activity.sessionRefs } : {}),
-    }).catch((error: unknown) => console.warn('Could not record manager activity:', error))
+    }
+    this.unwrittenActivities.set(message.id, message)
+    void this.updateMessage(message)
+      .then(() => this.unwrittenActivities.delete(message.id))
+      .catch((error: unknown) => console.warn('Could not record manager activity:', error))
   }
 
   private serializeQueue<T>(work: () => Promise<T>): Promise<T> {

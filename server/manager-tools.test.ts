@@ -718,12 +718,14 @@ describe('manager tools', () => {
     let closes: number
     let unfinished: () => Array<{ computerId: string; sessionId: string }>
     let live: boolean
+    let earlier: boolean
     const turn = () => ({ messageId: 'm1', source: 'typed' as const, live: () => live })
 
     beforeEach(() => {
       closes = 0
       unfinished = () => []
       live = true
+      earlier = false
       closeWithoutAsking = vi.fn(async (target: ManagedSession) => {
         closes += 1
         return { kind: 'close-session', computerId: target.computerId, sessionId: target.id, title: target.title, state: 'confirmed', decidedBy: 'oracle' }
@@ -736,6 +738,7 @@ describe('manager tools', () => {
         backgroundTasks: vi.fn(async () => ({ tasks: [], runningCount: 0, supported: true })),
         closeWithoutAsking,
         callTurn: turn,
+        earlierWorkRunning: () => earlier,
       })
     })
 
@@ -780,6 +783,8 @@ describe('manager tools', () => {
         ['background work it cannot see', () => vi.mocked(host.backgroundTasks!).mockResolvedValueOnce({ tasks: [], runningCount: 0, supported: false }), 'its background tasks could not be read'],
         ['task in progress', () => { unfinished = () => [{ computerId: 'hub', sessionId: 'abc12345-aaaa' }] }, 'an unfinished Oracle task uses it'],
         ['unreadable tasks', () => { unfinished = () => { throw new Error('not ready') } }, 'Oracle tasks could not be read'],
+        ['earlier work', () => { earlier = true }, 'Oracle may still be finishing work for an earlier message'],
+        ['earlier work unknown', () => Object.assign(host, { earlierWorkRunning: undefined }), 'Oracle may still be finishing work for an earlier message'],
         ['outside a turn', () => Object.assign(host, { callTurn: () => undefined }), 'Oracle is no longer answering the message that asked for it'],
         ['stopped while it checked', () => vi.mocked(host.backgroundTasks!).mockImplementationOnce(async () => {
           live = false
@@ -791,7 +796,8 @@ describe('manager tools', () => {
         closes = 0
         unfinished = () => []
         live = true
-        Object.assign(host, { registry: () => started, callTurn: turn })
+        earlier = false
+        Object.assign(host, { registry: () => started, callTurn: turn, earlierWorkRunning: () => earlier })
         arrange()
         const result = await call('close_session', { sessionId, reason: 'Done.' })
         expect(host.requestCloseConfirmation, name).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'Done.', why)

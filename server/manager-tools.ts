@@ -85,6 +85,12 @@ export interface ManagerToolHost {
    */
   callTurn?(): ManagerTurn | undefined
   /**
+   * Whether a tool call from a turn other than `turn` is still running, such
+   * as a stopped task's: what it starts or uses is recorded only when it
+   * ends. Absent counts as running.
+   */
+  earlierWorkRunning?(turn: ManagerTurn): boolean
+  /**
    * Closes a session without asking, recorded in Oracle's transcript before
    * anything is deleted. Counts toward `autonomousClosesThisTurn` before it
    * awaits anything, and refuses, before counting or recording anything,
@@ -235,6 +241,8 @@ function failure(message: string): ManagerToolResult {
 export const AUTONOMOUS_CLOSE_LIMIT = 5
 
 const TURN_ENDED = 'Oracle is no longer answering the message that asked for it'
+
+const EARLIER_WORK = 'Oracle may still be finishing work for an earlier message'
 
 const BUSY_STATUS: Record<Exclude<SessionStatus, 'idle'>, string> = {
   running: 'it is still running',
@@ -512,6 +520,9 @@ export function createManagerTools(
     if (!background.supported) return 'its background tasks could not be read'
     const active = background.tasks.filter((task) => task.status === 'running' || task.status === 'queued').length
     if (active > 0) return `it has ${active} background task${active === 1 ? '' : 's'} running or queued`
+    // No call from another turn can start while this one is live, so once
+    // none is running, the tasks below show all that one started or used.
+    if (host.earlierWorkRunning?.(turn) !== false) return EARLIER_WORK
     let unfinished: Array<{ computerId: string; sessionId: string }>
     try {
       if (!host.unfinishedTaskSessions) throw new Error('unavailable')

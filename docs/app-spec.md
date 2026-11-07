@@ -791,6 +791,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   - the session, read live, is idle, with nothing waiting, queued, failed to
     send, pinned, or recovering;
   - its background tasks can be read and none is running or queued;
+  - no tool call from an earlier message is still running, such as a stopped
+    task still starting a session;
   - Oracle's tasks can be read and no unfinished one uses the session,
     including a session one of its turns used that the task has not yet
     recorded;

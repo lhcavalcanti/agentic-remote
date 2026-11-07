@@ -22,11 +22,7 @@ import {
   oracleDockShortcutBinding,
   oracleShortcutBinding,
 } from './app-shortcuts'
-import {
-  OracleModelSettings,
-  OracleProactiveSettings,
-  OracleSettingsStatus,
-} from './OracleSettings'
+import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 import {
   coordinatedAuthoritativeRefresh,
@@ -360,6 +356,7 @@ import {
   type SessionNotificationState,
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
+import { MessageTime } from './MessageTime'
 import { SessionPatchReceiver } from './session-patches'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import {
@@ -402,19 +399,6 @@ function recordingDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
 }
-
-const messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: 'numeric',
-  minute: '2-digit',
-})
-
-const messageDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
-  year: 'numeric',
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-})
 
 function slashShortcut(value: string): string {
   const parts = value.split(/[-_]/)
@@ -3266,7 +3250,9 @@ function DefaultRuntimeControls({
                 onChange({
                   model: model.id,
                   reasoningEffort: model.reasoningEfforts[0] || '',
-                  contextTier: 'default',
+                  contextTier: model.contextTiers.includes(selection.contextTier)
+                    ? selection.contextTier
+                    : 'default',
                   mode: selection.mode,
                 })
               }}
@@ -4176,8 +4162,10 @@ function AppSettingsDialog({
               <SettingScope synced />
             </div>
             <p className="dialog-message">
-              New sessions use these provider settings. Existing sessions keep
-              their current model, effort, context, and agent mode.
+              New sessions, including those Oracle starts, use these provider
+              settings. Oracle keeps the context size for a model you name when
+              that model offers it. Existing sessions keep their current model,
+              effort, context, and agent mode.
             </p>
             {(['copilot', 'claude'] as const).map((provider) => (
               <DefaultRuntimeControls
@@ -4287,7 +4275,6 @@ function AppSettingsDialog({
             onRetryModels={retryHubCopilotModels}
             oracle={oracle}
           />
-          <OracleProactiveSettings oracle={oracle} />
           <DreamerSettings active={open} />
           {oracle.settings && !oracle.unavailable ? (
             <section className="app-settings-section" id="settings-oracle-style">
@@ -4869,13 +4856,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
               ? 'Command'
               : 'Agent'}
         </span>
-        <time
-          className="message__timestamp"
-          dateTime={message.createdAt}
-          title={messageDateTimeFormatter.format(new Date(message.createdAt))}
-        >
-          {messageTimeFormatter.format(new Date(message.createdAt))}
-        </time>
+        <MessageTime value={message.createdAt} />
       </div>
       <div className="message__content">
         {message.content ? (
@@ -4905,7 +4886,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
 function PendingEchoMessage({ content }: { content: string }) {
   return (
     <article
-      aria-label="Your message, pending in the terminal"
+      aria-label="Your message was sent to the terminal and is waiting for the agent"
       className="message message--user message--pending"
     >
       <div className="message__metadata">
@@ -4914,7 +4895,7 @@ function PendingEchoMessage({ content }: { content: string }) {
           className="message__pending"
           title="Sent to the terminal. Copilot takes it in when the current step finishes."
         >
-          Pending
+          Pending in terminal
         </span>
       </div>
       <div className="message__content message__content--plain">{content}</div>
@@ -5126,6 +5107,7 @@ function SortableQueuedPrompt({
   busy,
   suspended,
   retained,
+  steering,
   onEdit,
   onRemove,
 }: {
@@ -5135,6 +5117,7 @@ function SortableQueuedPrompt({
   busy: boolean
   suspended: boolean
   retained: boolean
+  steering: boolean
   onEdit: () => void
   onRemove: () => void
 }) {
@@ -5165,10 +5148,10 @@ function SortableQueuedPrompt({
         <GripVertical size={13} />
       </span>
       <span>
-        {prompt.steer && (
+        {steering && (
           <strong
             className="queued-prompt__steer"
-            title="Typed into the running turn as soon as the terminal is ready"
+            title="Waits for an empty terminal composer, then joins the running turn at the next safe input point"
           >
             Steer ·{' '}
           </strong>
@@ -8462,6 +8445,23 @@ function App() {
   // An interrupted or archived record is read-only until it is reopened; the
   // server refuses these actions too.
   const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
+  const selectedQueueHeadIsSteering = Boolean(
+    selected?.status === 'running' &&
+    selected.executionMode === 'tmux' &&
+    selectedComputerOnline &&
+    !selectedRetained &&
+    selected?.suspended !== true &&
+    !selected.pendingUserInput &&
+    !selected.pendingPermission &&
+    !selected.failedPrompt &&
+    !selected.queuedDispatch &&
+    !selected.terminalQueueDispatchPending &&
+    selected.queueState?.state !== 'error' &&
+    selected.recoverySeedState !== 'pending' &&
+    selected.recoverySeedState !== 'dispatching' &&
+    selected.queuedPrompts?.[0]?.steer === true &&
+    !selected.queuedPrompts[0].command,
+  )
   const selectedLifecycleBlocked = !selectedComputerOnline ||
     selectedRetained ||
     selected?.status !== 'idle' ||
@@ -15976,9 +15976,31 @@ function App() {
               </div>
             ) : null}
             {selected.queuedPrompts?.length ? (
-              <section aria-label="Queued prompts" className="queued-prompts">
+              <section
+                aria-description={
+                  selectedRetained
+                    ? 'Messages retained until this session is reopened'
+                    : selectedQueueHeadIsSteering
+                      ? 'The next message is waiting for a safe terminal composer to join the running turn'
+                      : 'Messages waiting for later delivery'
+                }
+                aria-label={
+                  selectedRetained
+                    ? 'Retained prompts'
+                    : selectedQueueHeadIsSteering
+                      ? 'Steering prompts'
+                      : 'Queued prompts'
+                }
+                className="queued-prompts"
+              >
                 <header>
-                  <strong>Queued</strong>
+                  <strong>
+                    {selectedRetained
+                      ? 'Retained until reopened'
+                      : selectedQueueHeadIsSteering
+                        ? 'Steering when ready'
+                        : 'Queued for later'}
+                  </strong>
                   <span>{selected.queuedPrompts.length}</span>
                 </header>
                 <DndContext
@@ -16007,6 +16029,7 @@ function App() {
                           suspended={selected.suspended === true}
                           retained={selectedRetained}
                           prompt={prompt}
+                          steering={index === 0 && selectedQueueHeadIsSteering}
                         />
                       ))}
                     </div>
@@ -16295,12 +16318,13 @@ function App() {
                   <span className="composer-actions__spacer" />
                   {selectedQueueAvailable ? (
                     <button
+                      aria-description="Queues this message for later delivery"
                       aria-label="Queue message"
                       className="send-button send-button--queue"
                       disabled={!composer.trim() || sending || Boolean(queueActionId) ||
                         Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
                       onClick={() => void submitMessage(true)}
-                      title="Queue behind the current response"
+                      title="Queue for later delivery"
                       type="button"
                     >
                       <ListPlus size={17} />
@@ -16454,7 +16478,7 @@ function App() {
                           ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
                             ? 'Enter saves it back · ↑ sends this queued edit now · Esc leaves it as it was'
                             : 'Enter saves it back · Shift+Enter newline · Esc leaves it as it was'
-                          : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue'}
+                          : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue for later'}
                       </span>
                       <span className="composer-hint__mobile">
                         {editingQueuedPromptId

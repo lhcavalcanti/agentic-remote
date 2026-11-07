@@ -1,4 +1,12 @@
-import { readFile, readdir, realpath, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import {
+  lstat,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  stat,
+} from 'node:fs/promises'
 import path from 'node:path'
 import type {
   WorkspaceEntry,
@@ -8,6 +16,7 @@ import type {
   WorkspaceSearchResponse,
   WorkspaceSearchResult,
 } from '../shared/contracts.js'
+import { validateKnowledgeRoot } from './session-directory.js'
 
 const MAX_DIRECTORY_ENTRIES = 2_000
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
@@ -56,8 +65,9 @@ export class WorkspaceBrowserError extends Error {
 export async function listWorkspace(
   rootPath: string,
   requestedPath = '.',
+  confinementPath?: string,
 ): Promise<WorkspaceListing> {
-  const root = await realpath(rootPath)
+  const root = await validateKnowledgeRoot(rootPath, confinementPath)
   const resolved = await resolveWorkspacePath(root, requestedPath)
   if (!(await stat(resolved)).isDirectory()) {
     throw new WorkspaceBrowserError('Workspace path must be a folder', 400)
@@ -114,8 +124,9 @@ export async function listWorkspace(
 export async function readWorkspaceFile(
   rootPath: string,
   requestedPath: string,
+  confinementPath?: string,
 ): Promise<WorkspaceFile> {
-  const root = await realpath(rootPath)
+  const root = await validateKnowledgeRoot(rootPath, confinementPath)
   const resolved = await resolveWorkspacePath(root, requestedPath)
   const metadata = await stat(resolved)
   if (!metadata.isFile()) {
@@ -138,7 +149,57 @@ export async function readWorkspaceFile(
   if (kind === 'file' && !searchableExtensions.has(extension)) {
     throw new WorkspaceBrowserError('This file type cannot be previewed', 415)
   }
-  const data = await readFile(resolved)
+  const linked = await lstat(resolved)
+  if (
+    !linked.isFile() ||
+    linked.dev !== metadata.dev ||
+    linked.ino !== metadata.ino
+  ) {
+    throw new WorkspaceBrowserError(
+      'Workspace file changed while opening',
+      403,
+    )
+  }
+  const handle = await open(
+    resolved,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  ).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
+      throw new WorkspaceBrowserError(
+        'Workspace file changed while opening',
+        403,
+      )
+    }
+    throw error
+  })
+  const openedFile = await (async () => {
+    try {
+      const opened = await handle.stat()
+      if (
+        !opened.isFile() ||
+        opened.dev !== linked.dev ||
+        opened.ino !== linked.ino
+      ) {
+        throw new WorkspaceBrowserError(
+          'Workspace file changed while opening',
+          403,
+        )
+      }
+      await assertOpenedFilePath(root, resolved, handle.fd)
+      if (opened.size > limit) {
+        throw new WorkspaceBrowserError(
+          `File is too large to preview (maximum ${Math.floor(limit / 1024 / 1024)} MiB)`,
+          413,
+        )
+      }
+      return {
+        data: await handle.readFile(),
+        size: opened.size,
+      }
+    } finally {
+      await handle.close()
+    }
+  })()
   const binary = kind === 'pdf' || kind === 'image'
   return {
     name: path.basename(resolved),
@@ -152,10 +213,10 @@ export async function readWorkspaceFile(
           : kind === 'html'
             ? 'text/html; charset=utf-8'
             : 'text/plain; charset=utf-8',
-    size: metadata.size,
+    size: openedFile.size,
     ...(binary
-      ? { base64: data.toString('base64') }
-      : { content: data.toString('utf8') }),
+      ? { base64: openedFile.data.toString('base64') }
+      : { content: openedFile.data.toString('utf8') }),
   }
 }
 
@@ -171,7 +232,7 @@ export async function searchWorkspace(
       400,
     )
   }
-  const root = await realpath(rootPath)
+  const root = await validateKnowledgeRoot(rootPath)
   const searchRoot = await resolveWorkspacePath(root, requestedPath)
   if (!(await stat(searchRoot)).isDirectory()) {
     throw new WorkspaceBrowserError('Search path must be a folder', 400)
@@ -290,6 +351,40 @@ async function resolveWorkspacePath(
     )
   }
   return resolved
+}
+
+async function assertOpenedFilePath(
+  root: string,
+  expectedPath: string,
+  fileDescriptor: number,
+): Promise<void> {
+  const descriptorPath =
+    process.platform === 'linux'
+      ? `/proc/self/fd/${fileDescriptor}`
+      : process.platform === 'darwin'
+        ? `/dev/fd/${fileDescriptor}`
+        : undefined
+  if (!descriptorPath) {
+    throw new WorkspaceBrowserError(
+      'Workspace file confinement cannot be verified on this platform',
+      503,
+    )
+  }
+  let openedPath: string
+  try {
+    openedPath = await realpath(descriptorPath)
+  } catch {
+    throw new WorkspaceBrowserError(
+      'Workspace file confinement could not be verified',
+      503,
+    )
+  }
+  if (openedPath !== expectedPath || !isWithin(root, openedPath)) {
+    throw new WorkspaceBrowserError(
+      'Workspace file changed while opening',
+      403,
+    )
+  }
 }
 
 function fileKind(filename: string): Exclude<WorkspaceEntryKind, 'directory'> {

@@ -6,9 +6,10 @@
 - Development counts as stable only when the release is active, the runtime
   answers `/health`, paired computers are still `online`, sessions survived the
   restart, and the behavior the change was made for has been exercised.
-- Once development is stable, roll the same commit out to production without
-  asking again.
-- Always ask first when development cannot actually prove the change:
+- Merging and successful development validation do not authorize a production
+  deployment or restart. Wait for explicit user authorization before every
+  production rollout, then roll out only the same commit that was validated.
+- Before requesting or acting on that authorization, state whether:
   - the behavior only exists on a node and was not exercised through the hub,
   - the change migrates, rewrites, or deletes stored state,
   - development verification was inconclusive, or
@@ -19,6 +20,41 @@
   answers `404` on `/`, so check it through the hub's computer list.
 - If production verification fails, roll production back and report rather than
   leaving the hosts diverged.
+
+## Owned work follow-through
+
+- Follow every PR or task you own, or that an agent you dispatched owns, to a
+  terminal state: merged; closed without merging; transferred to a named owner
+  with its evidence record and next action; explicitly blocked; or waiting on a
+  clearly stated user decision. An idle, failed, interrupted, or locally
+  complete session is not a terminal state.
+- Decide from live state: fetch, then read the PR head and `main` SHAs,
+  Supervisor verdicts, commit statuses and checks, mergeability, and worktree
+  ownership and local changes. Transcripts, journals, cached reviews, and
+  earlier reports are not evidence.
+- Evidence binds to the PR's exact full head SHA. A head change (push, rebase,
+  or merging `main` in) invalidates the Supervisor verdict, checks, full gate,
+  and mergeability; so does `main` advancing, after which the branch is
+  reconciled with `main` and the evidence collected again. Evidence naming
+  another or only an abbreviated SHA counts as missing.
+- A Supervisor verdict is a signed review or comment whose marker
+  `<!-- supervisor:review:<PR>:<full SHA>:... -->` matches the live PR and head,
+  with a heading such as `### APPROVE`. GitHub's review label, passing checks,
+  and unsigned comments do not replace it.
+- Merge promptly, without asking again, only when the exact head has a
+  Supervisor `APPROVE`, every required check and an `agentic-remote/full-gate`
+  `success` on that head, and GitHub reports it clean and mergeable. Never
+  approve a review on the user's behalf.
+- Full gates are serialized by the gate's host-wide lock; a queued gate is not a
+  passed one.
+- When an owner goes idle, fails, or is interrupted with work left, reconcile
+  its branch, worktree, processes, and GitHub state first. Resume or steer it
+  when safe; otherwise start one replacement that reuses its branch and
+  worktree once nothing still writes there. Never create a second worktree for
+  the same task. An overloaded coordinator transfers a disjoint set of items,
+  each with its evidence record, to another.
+- Report only merges, closures, transfers, explicit blockers, and decisions
+  awaiting the user. Merge authority does not authorize a production rollout.
 
 ## Deployment profiles and promotion
 

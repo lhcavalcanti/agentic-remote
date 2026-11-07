@@ -37,6 +37,164 @@ afterEach(async () => {
   }))
 })
 
+describe('session Knowledge base requests', () => {
+  it('encodes the session, authenticates the PUT, and returns the canonical path', async () => {
+    const requests: Array<{
+      path?: string
+      method?: string
+      authenticated: boolean
+      body: string
+    }> = []
+    const node = await listen((request, response) => {
+      let body = ''
+      request.setEncoding('utf8')
+      request.on('data', (chunk) => { body += chunk })
+      request.on('end', () => {
+        requests.push({
+          path: request.url,
+          method: request.method,
+          authenticated:
+            request.headers.authorization ===
+            ['Bearer', 'fixture-node-token'].join(' '),
+          body,
+        })
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({
+          path: '/srv/project/knowledge',
+          confinementPath: '/srv/project',
+        }))
+      })
+    })
+
+    await expect(
+      client(node).ensureSessionKnowledgeBase(
+        'session/id',
+        'docs/knowledge',
+        true,
+      ),
+    ).resolves.toEqual({
+      path: '/srv/project/knowledge',
+      confinementPath: '/srv/project',
+    })
+    expect(requests).toEqual([{
+      path: '/node-api/sessions/session%2Fid/knowledge-base',
+      method: 'PUT',
+      authenticated: true,
+      body: JSON.stringify({ path: 'docs/knowledge', create: true }),
+    }])
+  })
+
+  it('maps an unreachable paired owner to a retryable service error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      new TypeError('PRIVATE_TRANSPORT_DETAIL'),
+    )
+
+    const error = await client(
+      'http://fixture.invalid',
+    ).ensureSessionKnowledgeBase(
+      'session',
+      'knowledge',
+      true,
+    ).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({
+      statusCode: 503,
+      message: expect.not.stringContaining('PRIVATE_TRANSPORT_DETAIL'),
+    })
+    expect(error).not.toHaveProperty('uncertainDelivery')
+  })
+
+  it('maps an owner HTTP 503 to a non-submission service error', async () => {
+    const node = await listen((_request, response) => {
+      response.writeHead(503, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: 'PRIVATE_NODE_DETAIL' }))
+    })
+
+    const error = await client(node).ensureSessionKnowledgeBase(
+      'session',
+      'knowledge',
+      true,
+    ).catch((caught: unknown) => caught)
+
+    expect(error).toMatchObject({
+      statusCode: 503,
+      message: expect.not.stringContaining('PRIVATE_NODE_DETAIL'),
+    })
+    expect(error).not.toHaveProperty('uncertainDelivery')
+  })
+})
+
+describe('session Knowledge read confinement', () => {
+  it('sends the original session cwd with every paired-node read', async () => {
+    const paths: string[] = []
+    const node = await listen((request, response) => {
+      paths.push(request.url ?? '')
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(
+        request.url?.includes('/file?')
+          ? {
+              name: 'note.md',
+              path: 'note.md',
+              kind: 'markdown',
+              mimeType: 'text/plain; charset=utf-8',
+              size: 4,
+              content: 'note',
+              confinementApplied: true,
+            }
+          : { path: '.', entries: [], confinementApplied: true },
+      ))
+    })
+    const remote = client(node)
+
+    await remote.listKnowledge(
+      '/srv/project/knowledge',
+      '.',
+      '/srv/project',
+    )
+    await remote.readKnowledgeFile(
+      '/srv/project/knowledge',
+      'note.md',
+      '/srv/project',
+    )
+
+    expect(paths).toEqual([
+      '/node-api/knowledge/entries?root=%2Fsrv%2Fproject%2Fknowledge&path=.&confinement=%2Fsrv%2Fproject',
+      '/node-api/knowledge/file?root=%2Fsrv%2Fproject%2Fknowledge&path=note.md&confinement=%2Fsrv%2Fproject',
+    ])
+  })
+
+  it.each(['list', 'file'] as const)(
+    'rejects a confined %s response from a node that did not enforce it',
+    async (operation) => {
+      const node = await listen((request, response) => {
+        response.writeHead(200, { 'content-type': 'application/json' })
+        response.end(JSON.stringify(
+          request.url?.includes('/file?')
+            ? {
+                name: 'private.md',
+                path: 'private.md',
+                kind: 'markdown',
+                mimeType: 'text/plain; charset=utf-8',
+                size: 7,
+                content: 'private',
+              }
+            : { path: '.', entries: [] },
+        ))
+      })
+      const remote = client(node)
+
+      const reading = operation === 'list'
+        ? remote.listKnowledge('/srv/project/knowledge', '.', '/srv/project')
+        : remote.readKnowledgeFile(
+            '/srv/project/knowledge',
+            'private.md',
+            '/srv/project',
+          )
+
+      await expect(reading).rejects.toMatchObject({ statusCode: 409 })
+    },
+  )
+})
+
 describe('read-only remote resource requests', () => {
   it.each([true, false])('requests archived snapshot metadata only from retention-capable nodes (%s)', async (retention) => {
     const paths: string[] = []
@@ -45,6 +203,7 @@ describe('read-only remote resource requests', () => {
       response.writeHead(200, { 'content-type': 'application/json' })
       response.end(JSON.stringify({ sessions: [] }))
     })
+
     const remote = client(node)
     vi.spyOn(remote, 'providers', 'get').mockReturnValue([{
       id: 'copilot', name: 'Copilot', available: true, terminalBacked: true,

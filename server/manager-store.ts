@@ -6,7 +6,6 @@ import type {
   ManagerClientDefaults,
   ManagerMessage,
   ManagerMessageSource,
-  ManagerProactiveSettings,
   ManagerSettings,
 } from '../shared/manager.js'
 import { ManagerMemory } from './manager-memory.js'
@@ -42,6 +41,8 @@ export interface ManagerState {
   sessionFolders?: Record<string, string>
   /** Set only to open Oracle's sessions in a terminal; unset opens them with the Copilot SDK. */
   sessionBackend?: 'terminal'
+  /** Set only when the user lets Oracle close idle sessions it started; unset asks every time. */
+  sessionClosePolicy?: 'oracle-started'
   /** A model and effort that could not start; Copilot's default answers until the choice changes. */
   unavailableRuntime?: ManagerSettings
   /** The newest journal entry a completed turn has shown the agent. */
@@ -52,11 +53,6 @@ export interface ManagerState {
   baselineAt?: string
   /** The browser defaults the last message carried. */
   defaults?: ManagerClientDefaults
-  /** Hub-owned periodic Oracle check policy and durable next eligible instant. */
-  proactive?: {
-    settings: ManagerProactiveSettings
-    nextCheckAt?: string
-  }
 }
 
 export type JournalKind = 'created' | 'status' | 'renamed' | 'replaced' | 'removed'
@@ -114,7 +110,6 @@ const emptyState = (): ManagerState => ({
 
 function messageSource(source: unknown): ManagerMessageSource {
   return source === 'voice' ||
-    source === 'scheduled' ||
     source === 'proactive' ||
     source === 'task'
     ? source
@@ -180,7 +175,9 @@ export class ManagerStore {
     await mkdir(path.join(this.directory, 'memory'), { recursive: true })
     await mkdir(path.join(this.directory, 'workspace'), { recursive: true })
     const state = await this.readJson<Partial<ManagerState>>('state.json')
-    this.current = { ...emptyState(), ...(state ?? {}) }
+    // Periodic checks were retired before any hub ran them; drop their state.
+    const { proactive: _retired, ...current } = (state ?? {}) as Partial<ManagerState> & { proactive?: unknown }
+    this.current = { ...emptyState(), ...current }
     if (!Array.isArray(this.current.knownSdkSessionIds)) this.current.knownSdkSessionIds = []
     this.sessions = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
 
@@ -244,22 +241,6 @@ export class ManagerStore {
       else await appendFile(path.join(this.directory, 'conversation.jsonl'), lines, 'utf8')
       this.conversation = conversation
       this.conversationLines = compact ? conversation.size : conversationLines
-    })
-  }
-
-  moveMessageToEnd(id: string): Promise<void> {
-    return this.serialized(async () => {
-      const message = this.conversation.get(id)
-      if (!message || [...this.conversation.keys()].at(-1) === id) return
-      const conversation = new Map(this.conversation)
-      conversation.delete(id)
-      conversation.set(id, message)
-      const lines = [...conversation.values()]
-        .map((entry) => JSON.stringify(entry))
-        .join('\n') + '\n'
-      await this.writeAtomic('conversation.jsonl', lines)
-      this.conversation = conversation
-      this.conversationLines = conversation.size
     })
   }
 

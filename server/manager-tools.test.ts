@@ -350,7 +350,7 @@ describe('manager tools', () => {
     expect(host.providerModels).toHaveBeenLastCalledWith('hub', 'copilot')
     expect(copilot).toContain("Models for copilot on development (hub); pass the exact id as create_session's model with provider copilot:")
     expect(copilot).toContain('- model-a — Model A · effort low/high · the configured default')
-    expect(copilot).toMatch(/^- model-b$/m)
+    expect(copilot).toMatch(/^- model-b · long context$/m)
 
     const claude = String(await call('list_models', { provider: 'claude' }))
     expect(host.providerModels).toHaveBeenLastCalledWith('hub', 'claude')
@@ -459,16 +459,71 @@ describe('manager tools', () => {
       model: 'model-b', contextTier: 'long_context',
     })
 
-    // A named model that is the configured default keeps its configured context;
-    // another named model starts with its own effort and context.
+    // A named model keeps the configured context size it offers, but not the
+    // configured effort, which belongs to the configured model.
     await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' })
     expect(host.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({ model: 'model-b', contextTier: 'long_context' }))
     runtimes.copilot = { model: 'model-a', reasoningEffort: 'high', contextTier: 'default', mode: '' }
     await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' })
     const input = vi.mocked(host.createSession).mock.lastCall![1]
-    expect(input).toMatchObject({ model: 'model-b' })
+    expect(input).toMatchObject({ model: 'model-b', contextTier: 'default' })
     expect(input).not.toHaveProperty('reasoningEffort')
-    expect(input).not.toHaveProperty('contextTier')
+  })
+
+  it('carries the configured context size to a model the user names, and says when it does not run', async () => {
+    runtimes.copilot = { model: 'model-a', reasoningEffort: 'high', contextTier: 'long_context', mode: '' }
+    const named = String(await call('create_session', { title: 'T', prompt: 'P', model: 'model-b' }))
+    const input = vi.mocked(host.createSession).mock.lastCall![1]
+    expect(input).toMatchObject({ model: 'model-b', contextTier: 'long_context' })
+    expect(input).not.toHaveProperty('reasoningEffort')
+    expect(named).toContain('Its task was sent. It runs with long context.')
+
+    runtimes.copilot = { model: 'model-b', reasoningEffort: '', contextTier: 'long_context', mode: '' }
+    const lacking = String(await call('create_session', { title: 'T', prompt: 'P', model: 'model-a' }))
+    expect(vi.mocked(host.createSession).mock.lastCall![1]).not.toHaveProperty('contextTier')
+    expect(lacking).toContain('Its task was sent. model-a does not offer the configured long context, so it runs with default context; tell the user.')
+
+    // What the session reports outranks what was sent.
+    vi.mocked(host.createSession).mockResolvedValueOnce(session('new2', { runtime: { model: 'model-b', contextTier: 'default' } }))
+    const reported = String(await call('create_session', { title: 'T', prompt: 'P' }))
+    expect(vi.mocked(host.createSession).mock.lastCall![1]).toMatchObject({ model: 'model-b', contextTier: 'long_context' })
+    expect(reported).toContain('Its task was sent. It reports default context, not the long context asked for; tell the user.')
+    expect(host.createSession).toHaveBeenCalledTimes(3)
+  })
+
+  it('honors a context size the user asks for, and starts nothing when it cannot run', async () => {
+    runtimes.copilot = { model: 'model-b', reasoningEffort: '', contextTier: 'long_context', mode: '' }
+    await call('create_session', { title: 'T', prompt: 'P', contextTier: 'default' })
+    expect(vi.mocked(host.createSession).mock.lastCall![1]).toMatchObject({ model: 'model-b', contextTier: 'default' })
+
+    runtimes.copilot = { model: 'model-a', reasoningEffort: '', contextTier: 'default', mode: '' }
+    const lacking = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', contextTier: 'long_context' }))
+    expect(lacking).toContain('No session was started: model-a from copilot on development does not offer long context.')
+    expect(lacking).toContain('Available copilot models with long context: model-b.')
+    expect(lacking).toContain('do not switch model or provider on your own')
+
+    // Copilot takes a context size only with a model, and none is configured,
+    runtimes = {}
+    const unset = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', contextTier: 'long_context' }))
+    expect(unset).toContain('No session was started: long context needs a model from copilot on development.')
+    expect(unset).toContain('Available copilot models with long context: model-b.')
+    // or the configured one is not offered.
+    runtimes.copilot = { model: 'model-z', reasoningEffort: '', contextTier: 'long_context', mode: '' }
+    const missing = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', contextTier: 'long_context' }))
+    expect(missing).toContain('No session was started: long context needs a model from copilot on development, and the configured default model-z is not available there.')
+
+    // A refusal from the provider itself goes back to the user too.
+    runtimes.copilot = { model: 'model-b', reasoningEffort: '', contextTier: 'default', mode: '' }
+    vi.mocked(host.providerModels).mockRejectedValueOnce(new Error('catalog offline'))
+    vi.mocked(host.createSession).mockRejectedValueOnce(new Error('Selected context tier is not supported by this model'))
+    const refused = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', contextTier: 'long_context' }))
+    expect(refused).toContain('No session was started: model-b from copilot on development does not offer long context (Selected context tier is not supported by this model).')
+    expect(refused).toContain('Available copilot models with long context: model-b.')
+
+    const claude = JSON.stringify(await call('create_session', { title: 'T', prompt: 'P', provider: 'claude', model: 'claude-agent-model', contextTier: 'long_context' }))
+    expect(claude).toContain('No session was started: claude-agent-model from claude on development does not offer long context. No claude model offers long context.')
+    expect(host.createSession).toHaveBeenCalledTimes(2)
+    expect(host.sendMessage).toHaveBeenCalledOnce()
   })
 
   it("starts on the provider's own default, and says so, when the configured model is not offered", async () => {
@@ -481,7 +536,7 @@ describe('manager tools', () => {
       cwd: '~/src/web', provider: 'copilot', terminalBacked: false, allowAllPermissions: true, mode: 'autopilot',
     })
     expect(result).toContain("copilot's own default model on development; the session has not reported which yet. Its task was sent.")
-    expect(result).toContain("The configured default model-z is not available from copilot on development, so the session uses copilot's own default; tell the user.")
+    expect(result).toContain("The configured default model-z is not available from copilot on development, so the session uses copilot's own default; tell the user. It runs with default context, since the configured long context needs a model.")
     expect(activities.at(-1)).toMatchObject({
       content: 'Started "T" on development with the default model; the configured default model-z is not available',
     })
@@ -530,7 +585,7 @@ describe('manager tools', () => {
     expect(inputs[2]).toMatchObject({ model: 'model-a' })
     expect(inputs[2]).not.toHaveProperty('reasoningEffort')
     expect(inputs[2]).not.toHaveProperty('contextTier')
-    expect(result).toContain('model model-a. Its task was sent.')
+    expect(result).toContain('model model-a. Its task was sent. model-a does not offer the configured long context, so it runs with default context; tell the user.')
     expect(result).not.toContain('not available')
   })
 
@@ -1029,6 +1084,132 @@ describe('manager tools', () => {
     expect(Object.keys(host)).not.toContain('deleteSession')
   })
 
+  describe('when the user lets Oracle close the sessions it started', () => {
+    const started = {
+      'hub:abc12345-aaaa': {
+        computerId: 'hub', sessionId: 'abc12345-aaaa', title: 'Session abc12345-aaaa',
+        origin: 'manager' as const, firstSeenAt: '2026-10-15T10:00:00.000Z',
+      },
+    }
+    let closeWithoutAsking: ReturnType<typeof vi.fn>
+    let closes: number
+    let unfinished: () => Array<{ computerId: string; sessionId: string }>
+    let live: boolean
+    let earlier: boolean
+    const turn = () => ({ messageId: 'm1', source: 'typed' as const, live: () => live })
+
+    beforeEach(() => {
+      closes = 0
+      unfinished = () => []
+      live = true
+      earlier = false
+      closeWithoutAsking = vi.fn(async (target: ManagedSession) => {
+        closes += 1
+        return { kind: 'close-session', computerId: target.computerId, sessionId: target.id, title: target.title, state: 'confirmed', decidedBy: 'oracle' }
+      })
+      Object.assign(host, {
+        sessionClosePolicy: () => 'oracle-started',
+        registry: () => started,
+        unfinishedTaskSessions: () => unfinished(),
+        autonomousClosesThisTurn: () => closes,
+        backgroundTasks: vi.fn(async () => ({ tasks: [], runningCount: 0, supported: true })),
+        closeWithoutAsking,
+        callTurn: turn,
+        earlierWorkRunning: () => earlier,
+      })
+    })
+
+    it('closes an idle session it started, named by its full id, without asking', async () => {
+      const result = await call('close_session', { sessionId: 'abc12345-aaaa', reason: 'Its PR merged.' })
+      expect(closeWithoutAsking).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'Its PR merged.')
+      expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
+      expect(host.readSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
+      expect(String(result)).toContain('Closed "Session abc12345-aaaa" (abc12345-aaaa) without asking')
+      expect(String(result)).toContain('permanently deleted')
+    })
+
+    it('asks instead, and says why, whenever a boundary is not met', async () => {
+      const busy = (change: Partial<ManagedSession>) => () =>
+        vi.mocked(host.readSession).mockResolvedValueOnce(session('abc12345-aaaa', change))
+      const cases: Array<[string, () => void, string, string?]> = [
+        ['shortened id', () => undefined, 'it was named by a shortened id', 'abc12345'],
+        ['started by the user', () => Object.assign(host, { registry: () => ({}) }), 'it was not started by Oracle'],
+        ['turn cap', () => { closes = 5 }, 'Oracle already closed 5 sessions without asking this turn'],
+        ['unreadable', () => vi.mocked(host.readSession).mockRejectedValueOnce(new Error('node offline')), 'its current state could not be read'],
+        ['running', busy({ status: 'running' }), 'it is still running'],
+        ['errored', busy({ status: 'error' }), 'it stopped with an error'],
+        ['queued', busy({ queuedCount: 1 }), 'it has queued messages'],
+        ['dispatching', busy({ queueState: { state: 'waiting', promptId: 'p', message: 'Waiting', updatedAt: 't' } }), 'it has queued messages'],
+        ['failed prompt', busy({ failedPrompt: { content: 'x', failedAt: 't' } }), 'it holds a message that failed to send'],
+        ['permission', busy({ status: 'waiting', pendingPermission: { requestId: 'p', title: 'Run', kind: 'shell', options: [] } }), 'it is waiting for an answer'],
+        ['question', busy({ pendingUserInput: { requestId: 'q', question: 'Which?', choices: [], allowFreeform: true } }), 'it is waiting for an answer'],
+        ['pinned', busy({ retention: { pinned: true } }), 'it is pinned'],
+        ['interrupted', busy({ interruption: { detectedAt: 't', previousStatus: 'running' } }), 'it is recovering from a restart'],
+        ['restart recovery', busy({ restartRecovery: { state: 'recovering', detectedAt: 't' } }), 'it is recovering from a restart'],
+        ['recovery brief', busy({ recoverySeedState: 'pending' }), 'it is recovering from a restart'],
+        ['background work', () => vi.mocked(host.backgroundTasks!).mockResolvedValueOnce({
+          tasks: [
+            { id: 'a', type: 'shell', description: 'Build', status: 'running', startedAt: 't', canCancel: true, executionMode: 'background' },
+            { id: 'b', type: 'agent', description: 'Review', status: 'queued', startedAt: 't', canCancel: true },
+            { id: 'c', type: 'shell', description: 'Lint', status: 'completed', startedAt: 't', canCancel: false },
+          ],
+          runningCount: 1,
+          supported: true,
+        }), 'it has 2 background tasks running or queued'],
+        ['unreadable background work', () => vi.mocked(host.backgroundTasks!).mockRejectedValueOnce(new Error('offline')), 'its background tasks could not be read'],
+        ['background work it cannot see', () => vi.mocked(host.backgroundTasks!).mockResolvedValueOnce({ tasks: [], runningCount: 0, supported: false }), 'its background tasks could not be read'],
+        ['task in progress', () => { unfinished = () => [{ computerId: 'hub', sessionId: 'abc12345-aaaa' }] }, 'an unfinished Oracle task uses it'],
+        ['unreadable tasks', () => { unfinished = () => { throw new Error('not ready') } }, 'Oracle tasks could not be read'],
+        ['earlier work', () => { earlier = true }, 'Oracle may still be finishing work for an earlier message'],
+        ['earlier work unknown', () => Object.assign(host, { earlierWorkRunning: undefined }), 'Oracle may still be finishing work for an earlier message'],
+        ['outside a turn', () => Object.assign(host, { callTurn: () => undefined }), 'Oracle is no longer answering the message that asked for it'],
+        ['stopped while it checked', () => vi.mocked(host.backgroundTasks!).mockImplementationOnce(async () => {
+          live = false
+          return { tasks: [], runningCount: 0, supported: true }
+        }), 'Oracle is no longer answering the message that asked for it'],
+      ]
+      for (const [name, arrange, why, sessionId = 'abc12345-aaaa'] of cases) {
+        vi.mocked(host.requestCloseConfirmation).mockClear()
+        closes = 0
+        unfinished = () => []
+        live = true
+        earlier = false
+        Object.assign(host, { registry: () => started, callTurn: turn, earlierWorkRunning: () => earlier })
+        arrange()
+        const result = await call('close_session', { sessionId, reason: 'Done.' })
+        expect(host.requestCloseConfirmation, name).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'Done.', why)
+        expect(String(result), name).toContain(`because ${why}`)
+        expect(String(result), name).toContain('stays open until they confirm')
+      }
+      expect(closeWithoutAsking).not.toHaveBeenCalled()
+    })
+
+    it('asks when it cannot tell which tasks are unfinished', async () => {
+      Object.assign(host, { unfinishedTaskSessions: undefined })
+      await call('close_session', { sessionId: 'abc12345-aaaa' })
+      expect(host.requestCloseConfirmation).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), undefined, 'Oracle tasks could not be read')
+      expect(closeWithoutAsking).not.toHaveBeenCalled()
+    })
+
+    it('reports a close that failed so Oracle can tell the user', async () => {
+      closeWithoutAsking.mockResolvedValueOnce({
+        kind: 'close-session', computerId: 'hub', sessionId: 'abc12345-aaaa', title: 'Session abc12345-aaaa', state: 'failed', error: 'node offline', decidedBy: 'oracle',
+      })
+      const result = await call('close_session', { sessionId: 'abc12345-aaaa' })
+      expect(result).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result)).toContain('Could not close')
+      expect(JSON.stringify(result)).toContain('node offline')
+    })
+
+    it('still asks with the ask policy, exactly as before', async () => {
+      Object.assign(host, { sessionClosePolicy: () => 'ask' })
+      const result = await call('close_session', { sessionId: 'abc12345-aaaa', reason: 'It finished.' })
+      expect(host.requestCloseConfirmation).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'It finished.')
+      expect(String(result)).not.toContain('because')
+      expect(closeWithoutAsking).not.toHaveBeenCalled()
+    })
+  })
+
   it('keeps notes in memory and reports a refused path as a failure', async () => {
     await call('memory_write', { path: 'MEMORY.md', content: '# Index' })
     await call('memory_append', { path: 'MEMORY.md', content: '- likes PRs' })
@@ -1414,24 +1595,6 @@ describe('manager tools', () => {
       expect(result, name).toMatchObject({ resultType: 'failure' })
       expect(JSON.stringify(result), name).toContain('task')
     }
-  })
-
-  it('fails closed at the handler for scheduled mutations but permits status reads', async () => {
-    source = 'scheduled'
-    answerOnly = true
-    for (const [name, args] of [
-      ['create_session', { title: 'X', prompt: 'Y' }],
-      ['set_session_folder', { folder: '~/src/scheduled' }],
-      ['send_to_session', { sessionId: 'abc12345', message: 'hi' }],
-      ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
-      ['memory_write', { path: 'MEMORY.md', content: '# Replaced' }],
-    ] as const) {
-      const result = await call(name, args)
-      expect(result, name).toMatchObject({ resultType: 'failure' })
-      expect(JSON.stringify(result), name).toContain('Scheduled Oracle checks are read-only')
-    }
-    expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
-    expect(String(await call('get_session', { sessionId: 'abc12345' }))).toContain('message 11')
   })
 
   it('classifies unknown future tools as mutations so voice fails closed', () => {

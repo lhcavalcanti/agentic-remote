@@ -8,7 +8,10 @@ import type {
   SessionKnowledgeBinding,
   UpdateSessionKnowledgeRootInput,
 } from '../shared/contracts.js'
-import { normalizeKnowledgeRelativePath } from '../shared/knowledge-path.js'
+import {
+  knowledgeAbsolutePath,
+  normalizeKnowledgeRelativePath,
+} from '../shared/knowledge-path.js'
 
 const rootSchema = z.object({
   id: z.string().min(1),
@@ -248,6 +251,7 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     sessionId: string,
     input: UpdateSessionKnowledgeRootInput,
     validate?: () => void,
+    options: { force?: boolean; root?: KnowledgeRoot } = {},
   ): Promise<SessionKnowledgeBinding> {
     const identity = { computerId, sessionId }
     return this.change((next) => {
@@ -276,9 +280,31 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
           400,
         )
       }
-      const root = input.rootId === null ? undefined : this.catalog.getRoot(input.rootId)
+      const catalogRoot =
+        input.rootId === null ? undefined : this.catalog.getRoot(input.rootId)
+      const root = options.root ?? catalogRoot
       if (input.rootId !== null && !root) {
         throw new SessionKnowledgeReferenceError('Knowledge root not found. Choose a saved folder again.')
+      }
+      if (root && root.id !== input.rootId) {
+        throw new SessionKnowledgeReferenceError(
+          'Knowledge root metadata does not match the selected root.',
+        )
+      }
+      const stored = next.bindings.find(
+        (binding) => bindingKey(binding) === bindingKey(identity),
+      )
+      if (
+        !options.force &&
+        stored &&
+        stored.rootId === input.rootId &&
+        stored.rootPath === rootPath &&
+        stored.root?.path === root?.path
+      ) {
+        return {
+          changed: false,
+          result: () => this.snapshot(identity),
+        }
       }
       const binding: StoredBinding = {
         ...identity,
@@ -387,12 +413,16 @@ export class SessionKnowledgeStore extends EventEmitter<SessionKnowledgeEvents> 
     const binding: SessionKnowledgeBinding = stored
       ? {
           ...structuredClone(stored),
+          knowledgeBasePath: stored.root
+            ? knowledgeAbsolutePath(stored.root.path, stored.rootPath)
+            : null,
           available: stored.rootId !== null && this.catalog.getRoot(stored.rootId) !== undefined,
         }
       : {
           ...identity,
           rootId: null,
           rootPath: '.',
+          knowledgeBasePath: null,
           revision: 0,
           available: false,
         }

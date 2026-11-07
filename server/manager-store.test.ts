@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ManagerMessage } from '../shared/manager.js'
-import { managerCheckDefaults } from './manager-schedule.js'
 import { ManagerStore } from './manager-store.js'
 
 describe('ManagerStore', () => {
@@ -81,20 +80,51 @@ describe('ManagerStore', () => {
     await mkdir(statePath)
 
     await expect(store.updateState((state) => {
-      state.proactive = {
-        settings: { ...managerCheckDefaults(), enabled: true },
-        nextCheckAt: '2026-11-04T14:00:00.000Z',
-      }
+      state.sdkSessionId = 'not-durable'
     })).rejects.toThrow()
 
-    expect(store.state().proactive).toBeUndefined()
+    expect(store.state().sdkSessionId).toBeUndefined()
     await rm(statePath, { recursive: true })
     await store.updateState((state) => {
       state.generation = 1
     })
     const reopened = await open()
     expect(reopened.state().generation).toBe(1)
-    expect(reopened.state().proactive).toBeUndefined()
+    expect(reopened.state().sdkSessionId).toBeUndefined()
+  })
+
+  it('drops retired periodic-check state and provenance on load', async () => {
+    const directory = path.join(root, 'manager')
+    await mkdir(directory, { recursive: true })
+    await writeFile(path.join(directory, 'state.json'), JSON.stringify({
+      generation: 2,
+      knownSdkSessionIds: [],
+      acknowledgedJournalSeq: 0,
+      proactive: {
+        settings: { enabled: true, cadenceMinutes: 60, timeZone: 'UTC', quietStartHour: 22, quietEndHour: 7 },
+        nextCheckAt: '2026-11-04T14:00:00.000Z',
+      },
+    }))
+    await writeFile(path.join(directory, 'conversation.jsonl'), `${JSON.stringify({
+      id: 'legacy-check',
+      role: 'user',
+      content: 'Review the current work.',
+      createdAt: '2026-11-04T13:00:00.000Z',
+      state: 'done',
+      source: 'scheduled',
+    })}\n`)
+
+    const store = await open()
+    expect(store.state()).not.toHaveProperty('proactive')
+    expect(store.state().generation).toBe(2)
+    expect(store.message('legacy-check')?.source).toBe('typed')
+
+    await store.updateState((state) => {
+      state.generation = 3
+    })
+    const saved = JSON.parse(await readFile(path.join(directory, 'state.json'), 'utf8')) as Record<string, unknown>
+    expect(saved).not.toHaveProperty('proactive')
+    expect(saved.generation).toBe(3)
   })
 
   it('keeps persisted voice provenance immutable across reloads and legacy updates', async () => {

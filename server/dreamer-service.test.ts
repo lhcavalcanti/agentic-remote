@@ -9,6 +9,7 @@ import {
 import type { DreamerMemoryMetadataRecord } from './dreamer-planner.js'
 import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { DreamerStore, dreamerRunKey } from './dreamer-store.js'
+import type { DreamerProgressSource } from './dreamer-progress.js'
 import type { ManagedSession } from '../shared/contracts.js'
 import type { ManagerInternalSubmission, ManagerMessage } from '../shared/manager.js'
 import { OracleTaskStore } from './oracle-task-store.js'
@@ -2477,4 +2478,470 @@ describe('DreamerService', () => {
       expect(metadataSnapshot).not.toHaveBeenCalled()
     },
   )
+})
+
+const progressNow = () => new Date('2026-10-29T04:00:00.000Z')
+const enabledSettings = (service: DreamerService, enabled = true) => ({
+  revision: service.snapshot().revision,
+  enabled,
+  timeZone: 'UTC',
+})
+
+function progressSession(overrides: Partial<ManagedSession> = {}): ManagedSession {
+  return {
+    id: 'session-progress',
+    revision: 3,
+    computerId: 'computer-a',
+    computerName: 'development',
+    cwd: '/home/tester/project',
+    title: 'Queue regression',
+    updatedAt: '2026-10-29T03:50:00.000Z',
+    status: 'idle',
+    isOpen: true,
+    messages: [],
+    ...overrides,
+  }
+}
+
+function progressSource(sessions: () => ManagedSession[] = () => [progressSession()]) {
+  return {
+    listSessionsWithAuthority: vi.fn(async () => ({
+      sessions: sessions(),
+      answeredComputerIds: ['computer-a'],
+    })),
+    listComputers: vi.fn(() => [{ id: 'computer-a', name: 'development' }]),
+    readSession: vi.fn(async (computerId: string, sessionId: string) => {
+      const session = sessions().find((candidate) =>
+        candidate.computerId === computerId && candidate.id === sessionId)
+      if (!session) throw new Error('The session is gone.')
+      return session
+    }),
+  } satisfies DreamerProgressSource
+}
+
+function fakeIntervals() {
+  const timers: Array<{ callback: () => void; ms: number; handle: object; cleared: boolean }> = []
+  return {
+    active: (ms: number) => timers.filter((timer) => timer.ms === ms && !timer.cleared),
+    setInterval: ((callback: () => void, ms: number) => {
+      const handle = { unref: () => undefined }
+      timers.push({ callback, ms, handle, cleared: false })
+      return handle
+    }) as unknown as typeof setInterval,
+    clearInterval: ((handle: object) => {
+      const timer = timers.find((candidate) => candidate.handle === handle)
+      if (timer) timer.cleared = true
+    }) as unknown as typeof clearInterval,
+  }
+}
+
+function gate() {
+  let release = () => undefined as void
+  const promise = new Promise<void>((resolve) => { release = resolve })
+  return { promise, release: () => release() }
+}
+
+describe('DreamerService session progress', () => {
+  it('refreshes at start and on its own interval while enabled', async () => {
+    const directory = await root()
+    const first = new DreamerService(directory, options(progressNow))
+    await first.initialize()
+    await first.updateSettings(enabledSettings(first))
+    await first.stop()
+
+    const source = progressSource()
+    const intervals = fakeIntervals()
+    const service = new DreamerService(directory, options(progressNow, {
+      progressSource: source,
+      progressRefreshMs: 60_000,
+      setInterval: intervals.setInterval,
+      clearInterval: intervals.clearInterval,
+    }))
+    await service.start()
+    expect(source.listSessionsWithAuthority).toHaveBeenCalledTimes(1)
+    expect(intervals.active(60_000)).toHaveLength(1)
+
+    await vi.waitFor(() => {
+      expect(service.snapshot().progress).toEqual({
+        refreshedAt: '2026-10-29T04:00:00.000Z',
+        nextRefreshAt: '2026-10-29T04:01:00.000Z',
+        staleComputers: [],
+      })
+    })
+    await service.refreshProgress()
+    const before = source.listSessionsWithAuthority.mock.calls.length
+    intervals.active(60_000)[0]!.callback()
+    await service.refreshProgress()
+    expect(source.listSessionsWithAuthority).toHaveBeenCalledTimes(before + 1)
+    await service.stop()
+    expect(intervals.active(60_000)).toEqual([])
+  })
+
+  it('stays idle while disabled and forgets progress when disabled', async () => {
+    const directory = await root()
+    const source = progressSource()
+    const intervals = fakeIntervals()
+    const service = new DreamerService(directory, options(progressNow, {
+      progressSource: source,
+      progressRefreshMs: 60_000,
+      setInterval: intervals.setInterval,
+      clearInterval: intervals.clearInterval,
+    }))
+    await service.start()
+    expect(source.listSessionsWithAuthority).not.toHaveBeenCalled()
+    expect(intervals.active(60_000)).toEqual([])
+    expect(service.snapshot().progress).toBeUndefined()
+    expect(service.progressView()).toBeUndefined()
+
+    await service.updateSettings(enabledSettings(service))
+    await vi.waitFor(() => {
+      expect(service.progressView()?.entries).toEqual([
+        expect.objectContaining({ sessionId: 'session-progress' }),
+      ])
+    })
+    expect(intervals.active(60_000)).toHaveLength(1)
+
+    await service.updateSettings(enabledSettings(service, false))
+    expect(intervals.active(60_000)).toEqual([])
+    expect(service.snapshot().progress).toBeUndefined()
+    expect(service.progressView()).toBeUndefined()
+
+    const listing = gate()
+    source.listSessionsWithAuthority.mockImplementationOnce(async () => {
+      await listing.promise
+      return { sessions: [], answeredComputerIds: ['computer-a'] }
+    })
+    await service.updateSettings(enabledSettings(service))
+    expect(service.progressView()?.entries).toEqual([])
+    listing.release()
+    await service.stop()
+  })
+
+  it('keeps no progress without a source', async () => {
+    const service = new DreamerService(await root(), options(progressNow))
+    await service.start()
+    await service.updateSettings(enabledSettings(service))
+    expect(service.snapshot().progress).toBeUndefined()
+    expect(service.progressView()).toBeUndefined()
+    await service.stop()
+  })
+
+  it.each(['disable', 'stop'] as const)(
+    'publishes nothing from a refresh still in flight after %s',
+    async (action) => {
+      const directory = await root()
+      const listing = gate()
+      const source = progressSource()
+      source.listSessionsWithAuthority.mockImplementationOnce(async () => {
+        await listing.promise
+        return { sessions: [progressSession()], answeredComputerIds: ['computer-a'] }
+      })
+      const sweepLifecycle = vi.fn(async () => undefined)
+      const service = new DreamerService(directory, options(progressNow, {
+        progressSource: source,
+        sweepLifecycle,
+      }))
+      await service.start()
+      await service.updateSettings(enabledSettings(service))
+      await vi.waitFor(() => expect(source.listSessionsWithAuthority).toHaveBeenCalledTimes(1))
+      const reconcile = vi.spyOn(service, 'reconcileTasks')
+
+      if (action === 'disable') {
+        await service.updateSettings(enabledSettings(service, false))
+      } else {
+        await service.stop()
+      }
+      listing.release()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(sweepLifecycle).not.toHaveBeenCalled()
+      expect(reconcile).not.toHaveBeenCalled()
+      expect(service.progressView()).toBeUndefined()
+      expect(service.snapshot().progress).toBeUndefined()
+      expect(source.readSession).not.toHaveBeenCalled()
+    },
+  )
+
+  it('reports a failed refresh without stopping Dreamer and clears it on the next tick', async () => {
+    const directory = await root()
+    const source = progressSource()
+    source.listSessionsWithAuthority.mockRejectedValueOnce(
+      new Error('/secret/node/path refused the listing'),
+    )
+    const intervals = fakeIntervals()
+    const service = new DreamerService(directory, options(progressNow, {
+      progressSource: source,
+      progressRefreshMs: 60_000,
+      setInterval: intervals.setInterval,
+      clearInterval: intervals.clearInterval,
+    }))
+    await service.start()
+    await service.updateSettings(enabledSettings(service))
+
+    await vi.waitFor(() => {
+      expect(service.snapshot().progress?.error).toBe('Dreamer could not refresh session progress.')
+    })
+    expect(service.snapshot().available).toBe(true)
+    expect(service.timerActive()).toBe(true)
+    expect(JSON.stringify(service.snapshot())).not.toContain('/secret/node/path')
+    expect(service.progressView()?.error).toBe('Dreamer could not refresh session progress.')
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    intervals.active(60_000)[0]!.callback()
+    await service.refreshProgress()
+    expect(service.snapshot().progress?.refreshedAt).toBe('2026-10-29T04:00:00.000Z')
+    expect(service.snapshot().progress?.error).toBeUndefined()
+    await service.stop()
+  })
+
+  it('reconciles tasks, then sweeps lifecycle with only the sessions computers answered for', async () => {
+    const directory = await root()
+    const answered = progressSession()
+    const cached = progressSession({
+      id: 'session-cached',
+      computerId: 'computer-b',
+      computerName: 'production',
+    })
+    const source = progressSource(() => [answered, cached])
+    source.listComputers.mockReturnValue([
+      { id: 'computer-a', name: 'development' },
+      { id: 'computer-b', name: 'production' },
+    ])
+    const order: string[] = []
+    const sweepLifecycle = vi.fn(async (_sessions: ManagedSession[]) => {
+      order.push('sweep')
+    })
+    const service = new DreamerService(directory, options(progressNow, {
+      progressSource: source,
+      sweepLifecycle,
+    }))
+    await service.start()
+    vi.spyOn(service, 'reconcileTasks').mockImplementation(async () => {
+      order.push('reconcile')
+    })
+    await service.updateSettings(enabledSettings(service))
+
+    await vi.waitFor(() => expect(sweepLifecycle).toHaveBeenCalledTimes(1))
+    expect(sweepLifecycle).toHaveBeenCalledWith([answered])
+    expect(order).toEqual(['reconcile', 'sweep'])
+    expect(service.snapshot().progress?.staleComputers).toEqual(['production'])
+    await service.stop()
+  })
+
+  it('still reconciles tasks, but sweeps nothing, when the listing fails', async () => {
+    const directory = await root()
+    const source = progressSource()
+    const sweepLifecycle = vi.fn(async () => undefined)
+    const service = new DreamerService(directory, options(progressNow, {
+      progressSource: source,
+      sweepLifecycle,
+    }))
+    await service.start()
+    await service.updateSettings(enabledSettings(service))
+    await service.refreshProgress()
+    const reconcile = vi.spyOn(service, 'reconcileTasks')
+    const sweeps = sweepLifecycle.mock.calls.length
+    source.listSessionsWithAuthority.mockRejectedValueOnce(new Error('the listing failed'))
+
+    await service.refreshProgress()
+
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(sweepLifecycle).toHaveBeenCalledTimes(sweeps)
+    expect(service.snapshot().progress?.error).toBe('Dreamer could not refresh session progress.')
+    await service.stop()
+  })
+
+  it('contains upkeep failures', async () => {
+    const directory = await root()
+    const sweepLifecycle = vi.fn(async () => {
+      throw new Error('the proactive inbox is full')
+    })
+    const service = new DreamerService(directory, options(progressNow, {
+      progressSource: progressSource(),
+      sweepLifecycle,
+    }))
+    await service.start()
+    vi.spyOn(service, 'reconcileTasks').mockRejectedValue(new Error('task storage failed'))
+    await service.updateSettings(enabledSettings(service))
+    await vi.waitFor(() => expect(sweepLifecycle).toHaveBeenCalledTimes(1))
+
+    await expect(service.refreshProgress()).resolves.toBeUndefined()
+    expect(service.snapshot().progress?.error).toBeUndefined()
+    await service.stop()
+  })
+
+  it('shares one refresh between concurrent callers', async () => {
+    const directory = await root()
+    const source = progressSource()
+    const sweepLifecycle = vi.fn(async () => undefined)
+    const service = new DreamerService(directory, options(progressNow, {
+      progressSource: source,
+      sweepLifecycle,
+    }))
+    await service.start()
+    await service.updateSettings(enabledSettings(service))
+    await service.refreshProgress()
+    const listings = source.listSessionsWithAuthority.mock.calls.length
+    const sweeps = sweepLifecycle.mock.calls.length
+
+    await Promise.all([service.refreshProgress(), service.refreshProgress()])
+
+    expect(source.listSessionsWithAuthority).toHaveBeenCalledTimes(listings + 1)
+    expect(sweepLifecycle).toHaveBeenCalledTimes(sweeps + 1)
+    await service.stop()
+  })
+
+  it('starts afresh when re-enabled and drops the cancelled refresh', async () => {
+    const directory = await root()
+    const listing = gate()
+    const source = progressSource()
+    source.listSessionsWithAuthority.mockImplementationOnce(async () => {
+      await listing.promise
+      throw new Error('the cancelled listing failed late')
+    })
+    const service = new DreamerService(directory, options(progressNow, { progressSource: source }))
+    await service.start()
+    await service.updateSettings(enabledSettings(service))
+    expect(source.listSessionsWithAuthority).toHaveBeenCalledTimes(1)
+
+    await service.updateSettings(enabledSettings(service, false))
+    await service.updateSettings(enabledSettings(service))
+    expect(source.listSessionsWithAuthority).toHaveBeenCalledTimes(2)
+    await service.refreshProgress()
+    listing.release()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(service.progressView()?.entries.map(({ sessionId }) => sessionId))
+      .toEqual(['session-progress'])
+    expect(service.snapshot().progress?.error).toBeUndefined()
+    await service.stop()
+  })
+
+  it('does not sweep once disabled while reconciling', async () => {
+    const directory = await root()
+    const sweepLifecycle = vi.fn(async () => undefined)
+    const service = new DreamerService(directory, options(progressNow, {
+      progressSource: progressSource(),
+      sweepLifecycle,
+    }))
+    await service.start()
+    const reconciling = gate()
+    const reconcile = vi.spyOn(service, 'reconcileTasks').mockReturnValue(reconciling.promise)
+    await service.updateSettings(enabledSettings(service))
+    await vi.waitFor(() => expect(reconcile).toHaveBeenCalledTimes(1))
+
+    await service.updateSettings(enabledSettings(service, false))
+    reconciling.release()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(sweepLifecycle).not.toHaveBeenCalled()
+    await service.stop()
+  })
+
+  it('stops refreshing progress when Dreamer storage fails', async () => {
+    const directory = await root()
+    let currentNow = new Date('2026-10-29T01:00:00.000Z')
+    let failWrites = false
+    const store = new DreamerStore(directory, {
+      now: () => currentNow,
+      writeFile: async (filePath, data, writeOptions) => {
+        if (failWrites) throw new Error('disk failed')
+        return writeFile(filePath, data, writeOptions)
+      },
+    })
+    const intervals = fakeIntervals()
+    const service = new DreamerService(directory, options(() => currentNow, {
+      store,
+      progressSource: progressSource(),
+      progressRefreshMs: 60_000,
+      setInterval: intervals.setInterval,
+      clearInterval: intervals.clearInterval,
+      planner: () => {
+        failWrites = true
+        throw new Error('planner failed')
+      },
+    }))
+    await service.initialize()
+    await service.updateSettings(enabledSettings(service))
+    await service.refreshProgress()
+    expect(service.progressView()).toBeDefined()
+
+    currentNow = new Date('2026-10-29T04:00:00.000Z')
+    expect((await service.runIfDue()).available).toBe(false)
+
+    expect(service.progressView()).toBeUndefined()
+    expect(intervals.active(60_000)).toEqual([])
+  })
+
+  it('offers open tasks as follow-ups, most recently changed first', async () => {
+    const directory = await root()
+    let taskNow = new Date('2026-10-29T03:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now: () => taskNow })
+    await taskStore.initialize()
+    const finding = (title: string) => taskStore.upsertFinding({
+      sourceEventIds: [createHash('sha256').update(title).digest('hex')],
+      title,
+      summary: `${title}.`,
+      nextAction: `Next: ${title}.`,
+      owner: 'user',
+    })
+    await finding('Review the queue fix')
+    const completed = await finding('Confirm the rollout')
+    const dismissed = await finding('Retry the flaky test')
+    taskNow = new Date('2026-10-29T03:30:00.000Z')
+    await finding('Answer the migration question')
+    await taskStore.resolveUserTask({ taskId: completed.id, revision: completed.revision, status: 'completed' })
+    await taskStore.resolveUserTask({ taskId: dismissed.id, revision: dismissed.revision, status: 'dismissed' })
+    const service = new DreamerService(directory, options(progressNow, {
+      taskStore,
+      progressSource: progressSource(),
+    }))
+    await service.start()
+    await service.updateSettings(enabledSettings(service))
+
+    expect(service.progressView()?.followUps).toEqual([
+      {
+        title: 'Answer the migration question',
+        owner: 'user',
+        status: 'ready',
+        nextAction: 'Next: Answer the migration question.',
+      },
+      {
+        title: 'Review the queue fix',
+        owner: 'user',
+        status: 'ready',
+        nextAction: 'Next: Review the queue fix.',
+      },
+    ])
+    await service.updateSettings(enabledSettings(service, false))
+    expect(service.progressView()).toBeUndefined()
+    await service.stop()
+  })
+
+  it('applies hub events only while enabled', async () => {
+    const directory = await root()
+    const listing = gate()
+    const source = progressSource(() => [])
+    source.listSessionsWithAuthority.mockImplementation(async () => {
+      await listing.promise
+      return { sessions: [], answeredComputerIds: ['computer-a'] }
+    })
+    const service = new DreamerService(directory, options(progressNow, { progressSource: source }))
+    await service.start()
+
+    service.handleHubEvent({
+      type: 'session.upserted',
+      session: progressSession({ id: 'while-disabled' }),
+    })
+    await service.updateSettings(enabledSettings(service))
+    service.handleHubEvent({
+      type: 'session.upserted',
+      session: progressSession({ id: 'while-enabled' }),
+    })
+
+    expect(service.progressView()?.entries.map(({ sessionId }) => sessionId))
+      .toEqual(['while-enabled'])
+    await service.stop()
+    listing.release()
+  })
 })

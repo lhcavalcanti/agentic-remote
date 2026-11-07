@@ -500,6 +500,17 @@ describe('manager routes', () => {
     expect(savedBackend.statusCode).toBe(200)
     expect(backend).toHaveBeenLastCalledWith({ sessionBackend: 'terminal' })
     backend.mockRestore()
+    const badClosePolicy = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionClosePolicy: 'always' },
+    })
+    expect(badClosePolicy.statusCode).toBe(400)
+    const closePolicy = vi.spyOn(managerAgent!, 'updateSettings').mockResolvedValueOnce({ sessionClosePolicy: 'oracle-started' })
+    const savedClosePolicy = await app.inject({
+      method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionClosePolicy: 'oracle-started' },
+    })
+    expect(savedClosePolicy.statusCode).toBe(200)
+    expect(closePolicy).toHaveBeenLastCalledWith({ sessionClosePolicy: 'oracle-started' })
+    closePolicy.mockRestore()
     const badFolders = await app.inject({
       method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { sessionFolders: { hub: 42 } },
     })
@@ -515,52 +526,6 @@ describe('manager routes', () => {
     expect(folders.statusCode).toBe(200)
     expect(update).toHaveBeenLastCalledWith({ sessionFolders: { hub: '~/src', node: null } })
     expect(folders.json().settings).toEqual({ sessionFolders: { hub: '/home/me/src' } })
-    const proactive = vi.spyOn(managerAgent!, 'updateSettings').mockResolvedValueOnce({
-      proactive: {
-        enabled: true,
-        cadenceMinutes: 120,
-        timeZone: 'UTC',
-        quietStartHour: 22,
-        quietEndHour: 7,
-      },
-    })
-    const savedProactive = await app.inject({
-      method: 'PUT',
-      url: '/api/manager/settings',
-      headers: trusted,
-      payload: {
-        proactive: {
-          enabled: true,
-          cadenceMinutes: 120,
-          timeZone: 'UTC',
-          quietStartHour: 22,
-          quietEndHour: 7,
-        },
-      },
-    })
-    expect(savedProactive.statusCode).toBe(200)
-    expect(proactive).toHaveBeenLastCalledWith({
-      proactive: {
-        enabled: true,
-        cadenceMinutes: 120,
-        timeZone: 'UTC',
-        quietStartHour: 22,
-        quietEndHour: 7,
-      },
-    })
-    proactive.mockRestore()
-    for (const proactiveSettings of [
-      { enabled: true, cadenceMinutes: 30, timeZone: 'UTC', quietStartHour: 22, quietEndHour: 7 },
-      { enabled: true, cadenceMinutes: 120, timeZone: '', quietStartHour: 22, quietEndHour: 7 },
-      { enabled: true, cadenceMinutes: 120, timeZone: 'UTC', quietStartHour: 24, quietEndHour: 7 },
-    ]) {
-      expect((await app.inject({
-        method: 'PUT',
-        url: '/api/manager/settings',
-        headers: trusted,
-        payload: { proactive: proactiveSettings },
-      })).statusCode).toBe(400)
-    }
     const reset = await app.inject({ method: 'PUT', url: '/api/manager/settings', headers: trusted, payload: { model: null } })
     expect(reset.json().settings.model).toBeUndefined()
 

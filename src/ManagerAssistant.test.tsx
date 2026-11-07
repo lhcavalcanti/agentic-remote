@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest'
 import { useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ManagerEvent, ManagerSnapshot } from '../shared/manager'
+import type { ManagerEvent, ManagerMessage, ManagerSnapshot } from '../shared/manager'
 import type { VoiceCapabilities } from '../shared/oracle-voice'
 import {
   cancelManager,
@@ -240,92 +240,6 @@ describe('ManagerAssistant', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove from the queue: first waiting' }))
     await waitFor(() => expect(removeQueuedManagerMessage).toHaveBeenCalledWith('q1'))
     await waitFor(() => expect(within(screen.getByRole('region', { name: 'Queued for Oracle' })).getAllByRole('listitem')).toHaveLength(1))
-  })
-
-  it('applies a durable queue reorder from the hub', async () => {
-    const scheduled: ManagerSnapshot['messages'][number] = {
-      id: 'scheduled',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T22:00:00.000Z',
-      state: 'queued',
-      answerOnly: true,
-      source: 'scheduled',
-    }
-    const typed: ManagerSnapshot['messages'][number] = {
-      id: 'typed',
-      role: 'user',
-      content: 'Answer this first.',
-      createdAt: '2026-11-04T22:01:00.000Z',
-      state: 'queued',
-      source: 'typed',
-    }
-    const { emit } = setup({
-      ...empty,
-      queued: 2,
-      messages: [scheduled, typed],
-    })
-    await openPanel()
-
-    const items = () => within(
-      screen.getByRole('region', { name: 'Queued for Oracle' }),
-    ).getAllByRole('listitem')
-    expect(items().map((item) => item.textContent)).toEqual([
-      expect.stringContaining('Scheduled check'),
-      expect.stringContaining('Answer this first.'),
-    ])
-
-    emit({ type: 'manager.reorder', messages: [typed, scheduled] })
-
-    expect(items().map((item) => item.textContent)).toEqual([
-      expect.stringContaining('Answer this first.'),
-      expect.stringContaining('Scheduled check'),
-    ])
-  })
-
-  it('labels scheduled checks and keeps queued ones read-only while failures stay retryable', async () => {
-    vi.mocked(retryManagerMessage).mockResolvedValue({
-      id: 'scheduled-failed',
-      role: 'user',
-      content: 'Review current work.',
-      createdAt: '2026-11-04T12:00:00.000Z',
-      state: 'queued',
-      answerOnly: true,
-      source: 'scheduled',
-    })
-    setup({
-      ...empty,
-      queued: 1,
-      messages: [
-        {
-          id: 'scheduled-failed',
-          role: 'user',
-          content: 'Review current work.',
-          createdAt: '2026-11-04T12:00:00.000Z',
-          state: 'failed',
-          error: 'Oracle could not answer.',
-          answerOnly: true,
-          source: 'scheduled',
-        },
-        {
-          id: 'scheduled-queued',
-          role: 'user',
-          content: 'Review current work.',
-          createdAt: '2026-11-04T14:00:00.000Z',
-          state: 'queued',
-          answerOnly: true,
-          source: 'scheduled',
-        },
-      ],
-    })
-    await openPanel()
-
-    expect(screen.getAllByText('Scheduled check')).toHaveLength(2)
-    const queue = screen.getByRole('region', { name: 'Queued for Oracle' })
-    expect(within(queue).queryByRole('button', { name: /Edit queued message/ })).toBeNull()
-    expect(within(queue).queryByRole('button', { name: /Remove from the queue/ })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    await waitFor(() => expect(retryManagerMessage).toHaveBeenCalledWith('scheduled-failed'))
   })
 
   it('switches between Ask and Delegate, remembers it, and sends with it', async () => {
@@ -1574,6 +1488,70 @@ describe('ManagerAssistant', () => {
     expect(onOpenSession).toHaveBeenLastCalledWith({ computerId: 'hub', sessionId: 's1' })
   })
 
+  it('stamps every stored prompt, answer, and action with its server time, but not a reply in progress', async () => {
+    const ref = { computerId: 'hub', sessionId: 's1', title: 'Docs' }
+    const stored = [
+      { id: 'u1', role: 'user', content: 'start docs', createdAt: '2026-11-07T09:00:00.000Z', state: 'done' },
+      { id: 'a1', role: 'activity', content: 'Started "Docs"', createdAt: '2026-11-07T09:00:05.000Z', tool: 'create_session', sessionRefs: [ref] },
+      {
+        id: 'c1', role: 'activity', content: 'Close "Docs"? It finished.', createdAt: '2026-11-07T09:00:06.000Z', tool: 'close_session', sessionRefs: [ref],
+        confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 's1', title: 'Docs', state: 'pending' },
+      },
+      { id: 'r1', role: 'assistant', content: 'Started Docs.', createdAt: '2026-11-07T09:00:09.000Z', replyTo: 'u1' },
+      { id: 'q1', role: 'user', content: 'which is busy?', createdAt: '2026-11-07T09:01:00.000Z', state: 'done', answerOnly: true },
+      { id: 'v1', role: 'user', content: 'spoken request', createdAt: '2026-11-07T09:01:30.000Z', state: 'done', source: 'voice' },
+      { id: 'k1', role: 'user', content: 'Durable task: Ship docs', createdAt: '2026-11-07T09:02:00.000Z', state: 'done', source: 'task' },
+      { id: 'p1', role: 'user', content: 'Docs finished', createdAt: '2026-11-07T09:03:00.000Z', state: 'done', source: 'proactive' },
+      { id: 's2', role: 'user', content: 'which is busy now?', createdAt: '2026-11-07T10:00:00.000Z', state: 'running', answerOnly: true },
+    ] satisfies ManagerMessage[]
+    const { emit } = setup({
+      ...empty,
+      status: 'working',
+      messages: [...stored, { id: 'u2', role: 'user', content: 'from an older hub', createdAt: 't', state: 'done' }],
+    })
+    const panel = await openPanel()
+    const rows = () => within(within(panel).getByRole('list', { name: 'Oracle conversation' })).getAllByRole('listitem')
+    const times = () => rows().map((row) => row.querySelector('time')?.getAttribute('datetime'))
+    const storedTimes = stored.map((message) => message.createdAt)
+
+    expect(times()).toEqual([...storedTimes, undefined, undefined])
+    expect(rows().at(-1)).toHaveTextContent('Thinking…')
+
+    emit({ type: 'manager.delta', messageId: 'r2', content: 'Looking' })
+    expect(times()).toEqual([...storedTimes, undefined, undefined])
+    expect(rows().at(-1)).toHaveAttribute('aria-busy', 'true')
+
+    emit({ type: 'manager.status', status: 'idle', queued: 0 })
+    emit({ type: 'manager.message', message: { id: 'r2', role: 'assistant', content: 'Docs is busy.', createdAt: '2026-11-07T10:00:04.000Z', replyTo: 's2' } })
+    expect(times()).toEqual([...storedTimes, undefined, '2026-11-07T10:00:04.000Z'])
+  })
+
+  it('keeps the stored time on every waiting prompt, including the one being edited', async () => {
+    const queued = [
+      { id: 'q1', role: 'user', content: 'typed while busy', createdAt: '2026-11-07T09:01:00.000Z', state: 'queued', source: 'typed' },
+      { id: 'q2', role: 'user', content: 'quick question', createdAt: '2026-11-07T09:02:00.000Z', state: 'queued', answerOnly: true },
+      { id: 'q3', role: 'user', content: 'spoken while busy', createdAt: '2026-11-07T09:03:00.000Z', state: 'queued', source: 'voice' },
+      { id: 'q4', role: 'user', content: 'Durable task: Ship docs', createdAt: '2026-11-07T09:04:00.000Z', state: 'queued', source: 'task' },
+      { id: 'q5', role: 'user', content: 'Docs finished', createdAt: '2026-11-07T09:05:00.000Z', state: 'queued', source: 'proactive' },
+    ] satisfies ManagerMessage[]
+    setup({
+      ...empty,
+      status: 'working',
+      queued: queued.length,
+      messages: [{ id: 'r0', role: 'user', content: 'being answered', createdAt: '2026-11-07T09:00:00.000Z', state: 'running' }, ...queued],
+    })
+    await openPanel()
+    const queue = screen.getByRole('region', { name: 'Queued for Oracle' })
+    const times = () => within(queue).getAllByRole('listitem').map((item) => item.querySelector('time')?.getAttribute('datetime'))
+    expect(times()).toEqual(queued.map((message) => message.createdAt))
+
+    fireEvent.click(within(queue).getByRole('button', { name: 'Edit queued message: typed while busy' }))
+    const editor = within(queue).getByRole('textbox', { name: 'Edit queued message 1' })
+    expect(times()).toEqual(queued.map((message) => message.createdAt))
+    // The time stays out of the editor's description.
+    expect(editor).toHaveAccessibleDescription(/^Keeps its place/)
+  })
+
   it('closes a session only when you confirm the request', async () => {
     const request = {
       id: 'c1', role: 'activity' as const, content: 'Close "Docs"? It finished.', createdAt: 't', updatedAt: '2026-10-15T00:00:01.000Z',
@@ -1590,6 +1568,22 @@ describe('ManagerAssistant', () => {
     await waitFor(() => expect(resolveManagerConfirmation).toHaveBeenCalledWith('c1', true))
     expect(await screen.findByText('Closed. It is permanently deleted.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Close session' })).not.toBeInTheDocument()
+  })
+
+  it('shows a session Oracle closed without asking as done, with nothing to answer', async () => {
+    setup({
+      ...empty,
+      messages: [{
+        id: 'c1', role: 'activity', content: 'Close "Docs": Its PR merged.', createdAt: 't', tool: 'close_session',
+        sessionRefs: [{ computerId: 'hub', sessionId: 's1', title: 'Docs' }],
+        confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 's1', title: 'Docs', state: 'confirmed', decidedBy: 'oracle' },
+      }],
+    })
+    await openPanel()
+    expect(screen.getByText('Close "Docs": Its PR merged.')).toBeInTheDocument()
+    expect(screen.getByText('Closed by Oracle without asking, as your setting allows. It is permanently deleted.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Close session' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Keep it' })).not.toBeInTheDocument()
   })
 
   it('stops the current reply', async () => {

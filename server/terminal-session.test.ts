@@ -862,7 +862,7 @@ process.stdin.on('data', () => undefined)
 
   // Steering a long-running turn after a hub restart used to wait out the whole
   // startup timeout under the send lock, then fail as a server error.
-  it('refuses a steer quickly when a settled working Copilot shows no composer', async () => {
+  it('releases a steer promptly when a settled working Copilot shows no composer', async () => {
     const { controller, sessionId, output } = await deliveryFixture(
       true, undefined, undefined, '', '', 'flat',
       undefined, undefined, undefined, undefined, 'unfamiliar', 'end',
@@ -876,7 +876,7 @@ process.stdin.on('data', () => undefined)
           uncertainDelivery: false,
           reasonCode: 'terminal-not-ready.steer',
         })
-      expect(performance.now() - started).toBeLessThan(7_000)
+      expect(performance.now() - started).toBeLessThan(1_500)
     }
     expect(await readFile(output, 'utf8')).toBe('')
   }, 30_000)

@@ -657,6 +657,42 @@ describe('Durable recovery resend ownership', () => {
     },
   )
 
+  it('keeps an immediate command behind an earlier recovery message before its claim starts', async () => {
+    const context = await fixture()
+    const held = gate()
+    context.service['terminalImmediateOperations'].set(sessionId, held.pending)
+
+    const first = context.send(context.service)
+    const second = context.service.executeCommand(sessionId, '/usage independent')
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(context.pastes).toEqual([])
+    held.release()
+    await Promise.all([first, second])
+    expect(context.pastes).toEqual([context.submitted, '/usage independent'])
+  })
+
+  it.each(['message', 'command'] as const)(
+    'keeps a queued %s behind an earlier recovery message before its claim starts',
+    async (kind) => {
+      const context = await fixture()
+      const held = gate()
+      context.service['terminalImmediateOperations'].set(sessionId, held.pending)
+      const queued = kind === 'message' ? 'Queued independent' : '/usage queued'
+
+      const first = context.send(context.service)
+      const second = kind === 'message'
+        ? context.service.sendMessage(sessionId, queued, true)
+        : context.service.executeCommand(sessionId, queued, true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(context.pastes).toEqual([])
+      held.release()
+      await Promise.all([first, second])
+      expect(context.pastes).toEqual([context.submitted, queued])
+    },
+  )
+
   it.each(['message', 'command'] as const)(
     'does not admit the replacement %s token while its dispatch is still in flight',
     async (kind) => {
@@ -1101,11 +1137,14 @@ describe('Recovery and admission integration', () => {
         : context.service.executeCommand(sessionId, firstContent)
       await held.started
       const admission = context.service['terminalAdmissionOperations'].get(sessionId)
+      const immediate = context.service['terminalImmediateOperations'].get(sessionId)
       const next = nextKind === 'message'
         ? context.service.sendMessage(sessionId, nextContent, enqueue)
         : context.service.executeCommand(sessionId, nextContent, enqueue)
       const results = Promise.allSettled([first, next])
-      await vi.waitFor(() => expect(context.service['terminalAdmissionOperations'].get(sessionId)).not.toBe(admission))
+      await vi.waitFor(() =>
+        expect(context.service['terminalImmediateOperations'].get(sessionId)).not.toBe(immediate))
+      expect(context.service['terminalAdmissionOperations'].get(sessionId)).toBe(admission)
       held.release()
       const [initial, follower] = await results
       expect(initial.status).toBe('fulfilled')
@@ -1856,11 +1895,14 @@ describe('Review 5125727881 runtime boundaries', () => {
         return disk.writeFile(...args)
       })
       const admission = context.service['terminalAdmissionOperations'].get(sessionId)
-      const follower = followerKind === 'message'
+      let followerSettled = false
+      const follower = (followerKind === 'message'
         ? context.service.sendMessage(sessionId, 'Independent following message')
-        : context.service.executeCommand(sessionId, '/usage following')
+        : context.service.executeCommand(sessionId, '/usage following'))
+        .finally(() => { followerSettled = true })
       const results = Promise.allSettled([first, follower])
-      await vi.waitFor(() => expect(context.service['terminalAdmissionOperations'].get(sessionId)).not.toBe(admission))
+      await vi.waitFor(() => expect(followerSettled).toBe(true))
+      expect(context.service['terminalAdmissionOperations'].get(sessionId)).toBe(admission)
       held.release()
       const [delivered, blocked] = await results
       expect(delivered).toMatchObject({
@@ -1933,11 +1975,14 @@ describe('Review 5125727881 runtime boundaries', () => {
         : context.service.executeCommand(sessionId, firstText, false, 'original')
       await held.started
       const firstAdmission = context.service['terminalAdmissionOperations'].get(sessionId)
-      const follower = followerKind === 'message'
+      let followerSettled = false
+      const follower = (followerKind === 'message'
         ? context.service.sendMessage(sessionId, 'Independent follower')
-        : context.service.executeCommand(sessionId, '/usage independent follower')
+        : context.service.executeCommand(sessionId, '/usage independent follower'))
+        .finally(() => { followerSettled = true })
       const results = Promise.allSettled([first, follower])
-      await vi.waitFor(() => expect(context.service['terminalAdmissionOperations'].get(sessionId)).not.toBe(firstAdmission))
+      await vi.waitFor(() => expect(followerSettled).toBe(true))
+      expect(context.service['terminalAdmissionOperations'].get(sessionId)).toBe(firstAdmission)
       held.release()
       const [initial, following] = await results
       if (refuseFirst) {

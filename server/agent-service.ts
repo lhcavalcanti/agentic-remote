@@ -379,6 +379,44 @@ function suspendedRuntimeConflict(): Error {
   )
 }
 
+/**
+ * A lifecycle change refused because of what the session is doing. Left
+ * without a status, the refusal reached the reader -- through the hub too --
+ * as "Unexpected server error", which says nothing about what to do next.
+ */
+function lifecycleRefusal(
+  message: string,
+  reasonCode: string,
+  statusCode = 409,
+  cause?: unknown,
+): Error {
+  return Object.assign(
+    new Error(message, cause === undefined ? undefined : { cause }),
+    { statusCode, reasonCode },
+  )
+}
+
+const SUSPEND_REFUSALS = {
+  'suspend.in-progress': 'Session is already being suspended',
+  'suspend.not-idle': 'Session can only be suspended while idle',
+  'suspend.delivery-in-flight':
+    'Session can only be suspended while idle; a message is still being delivered to it',
+  'suspend.background-tasks':
+    'Session can only be suspended once its background tasks finish',
+  'suspend.background-tasks-unreadable':
+    'Session cannot be suspended until its background tasks can be read',
+  'suspend.transcript-unreadable':
+    'Session cannot be suspended until its transcript can be read',
+  'suspend.terminal-not-closed': 'The terminal window could not be closed',
+} as const
+
+function suspendRefused(
+  reasonCode: keyof typeof SUSPEND_REFUSALS,
+  cause?: unknown,
+): Error {
+  return lifecycleRefusal(SUSPEND_REFUSALS[reasonCode], reasonCode, 409, cause)
+}
+
 /** Terminal input refused before typing anything for want of a composer. */
 function isTerminalNotReadyRefusal(error: unknown): boolean {
   const reason = error && typeof error === 'object'
@@ -3828,12 +3866,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return stored
     }
     if (this.suspendingSessions.has(id)) {
-      throw Object.assign(new Error('Session is already being suspended'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
+      throw suspendRefused('suspend.in-progress')
     }
     const queueWasDraining = this.drainingSessions.has(id)
     const startupQueueWasPending = this.startupTerminalQueues.has(id)
@@ -3882,19 +3915,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.assertTerminalQueueSettled(id)
     this.queuedDispatches.assertAvailable(id)
     this.assertNotRetained(id, 'suspending it')
+    if (stored.status === 'running' || stored.status === 'waiting') {
+      throw suspendRefused('suspend.not-idle')
+    }
+    // The row still reads idle while one of these is under way, so the
+    // refusal names what is in the way rather than contradicting it.
     if (
-      stored.status === 'running' ||
-      stored.status === 'waiting' ||
       this.drainingSessions.has(id) ||
       this.dispatchingSessions.has(id) ||
       this.store.recoverySeed(id)?.state === 'dispatching'
     ) {
-      throw Object.assign(new Error('Session can only be suspended while idle'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
+      throw suspendRefused('suspend.delivery-in-flight')
     }
     // A detached shell keeps running without holding the foreground, so an
     // idle session can still own live work. Suspending ends the owner, which
@@ -3920,18 +3951,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // is a log that could not be read. Carrying on would suspend on the
       // strength of a status the poll may not have refreshed, and take a live
       // turn down with it.
-      const events = await this.sessionEventReader(id).catch(() => {
-        throw new Error(
-          'Session cannot be suspended until its transcript can be read',
-        )
+      const events = await this.sessionEventReader(id).catch((cause: unknown) => {
+        throw suspendRefused('suspend.transcript-unreadable', cause)
       })
       if (statusFromEvents(events) !== 'idle') {
-        throw Object.assign(new Error('Session can only be suspended while idle'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
+        throw suspendRefused('suspend.not-idle')
       }
     }
     // The stored backend as well as the discovery set. Discovery can miss a
@@ -3940,7 +3964,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // still running. The controller proves absence, or does the teardown.
     if (this.externalSessionIds.has(id) || this.store.backend(id) === 'terminal') {
       if (!this.terminalController.stop) {
-        throw new Error('Terminal session suspend is not available')
+        throw lifecycleRefusal(
+          'Terminal session suspend is not available',
+          'suspend.terminal-unsupported',
+          501,
+        )
       }
       // Checked again in there, immediately before the pane is killed.
       // Finding the owner is awaited, and somebody working in tmux can start
@@ -3958,18 +3986,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // left a gap: a detached task started during the second read holds no
         // turn, the status still said idle, and the pane went down underneath
         // live work.
-        const live = await this.sessionEventReader(id).catch(() => {
-          throw new Error(
-            'Session cannot be suspended until its transcript can be read',
-          )
+        const live = await this.sessionEventReader(id).catch((cause: unknown) => {
+          throw suspendRefused('suspend.transcript-unreadable', cause)
         })
         if (statusFromEvents(live) !== 'idle') {
-          throw Object.assign(new Error('Session can only be suspended while idle'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
+          throw suspendRefused('suspend.not-idle')
         }
         const running = backgroundTasksFromEvents(live, {
           assumeBackground: true,
@@ -3977,20 +3998,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           (task) => task.status === 'running' || task.status === 'queued',
         )
         if (running.length) {
-          throw new Error(
-            'Session can only be suspended once its background tasks finish',
-          )
+          throw suspendRefused('suspend.background-tasks')
         }
         this.assertStillIdle(id)
       })
       this.discoveryGeneration += 1
       if (!closed) {
-        throw Object.assign(new Error('The terminal window could not be closed'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
+        throw suspendRefused('suspend.terminal-not-closed')
       }
       this.externalSessionIds.delete(id)
     } else {
@@ -4023,13 +4037,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   /**
-   * Refuses unless the session is still doing nothing.
-   *
-   * Suspending awaits twice over, and the session is only reserved against
-   * other suspensions. Idleness is the whole precondition, so it is checked
-   * again after each wait rather than once at the start.
-   */
-  /**
    * Refuses unless the session owns no live background work.
    *
    * Reading this is awaited, and a detached task can be started inside that
@@ -4043,39 +4050,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * rather than assumes.
    */
   private async assertNoLiveBackgroundTasks(id: string): Promise<void> {
-    const tasks = await this.listBackgroundTasks(id).catch(() => {
-      throw new Error(
-        'Session cannot be suspended until its background tasks can be read',
-      )
+    const tasks = await this.listBackgroundTasks(id).catch((cause: unknown) => {
+      throw suspendRefused('suspend.background-tasks-unreadable', cause)
     })
     if (!tasks.supported) {
       // An empty list because the runtime could not be asked is not the same
       // as an empty list because nothing is running, and suspending on the
       // strength of it disconnects a session that still owns live work.
-      throw new Error(
-        'Session cannot be suspended until its background tasks can be read',
-      )
+      throw suspendRefused('suspend.background-tasks-unreadable')
     }
-    if (
-      tasks.tasks.some(
-        (task) => task.status === 'running' || task.status === 'queued',
-      )
-    ) {
-      throw new Error(
-        'Session can only be suspended once its background tasks finish',
-      )
+    if (hasActiveBackgroundTasks(tasks)) {
+      throw suspendRefused('suspend.background-tasks')
     }
   }
 
+  /**
+   * Refuses unless the session is still doing nothing.
+   *
+   * Suspending awaits twice over, and the session is only reserved against
+   * other suspensions. Idleness is the whole precondition, so it is checked
+   * again after each wait rather than once at the start.
+   */
   private assertStillIdle(id: string, queueWasDraining = false): void {
     this.assertTerminalQueueSettled(id)
     if (queueWasDraining || this.drainingSessions.has(id)) {
-      throw Object.assign(new Error('Session can only be suspended while idle'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
+      throw suspendRefused('suspend.delivery-in-flight')
     }
     this.assertNoActiveTurn(id)
   }
@@ -4086,15 +4085,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !current ||
       current.status === 'running' ||
       current.status === 'waiting' ||
-      this.activePrompts.has(id) ||
-      // A prompt already on its way to the runtime. The store still says idle
-      // until the turn is recorded, so without this the teardown lands on a
-      // turn that has already started.
-      this.dispatchingSessions.has(id)
+      this.activePrompts.has(id)
     ) {
-      throw Object.assign(new Error('Session can only be suspended while idle'), {
-        statusCode: 409,
-      })
+      throw suspendRefused('suspend.not-idle')
+    }
+    // A prompt already on its way to the runtime. The store still says idle
+    // until the turn is recorded, so without this the teardown lands on a
+    // turn that has already started.
+    if (this.dispatchingSessions.has(id)) {
+      throw suspendRefused('suspend.delivery-in-flight')
     }
   }
 
@@ -4231,7 +4230,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.dispatchingSessions.has(id) ||
       this.store.recoverySeed(id)?.state === 'dispatching'
     ) {
-      throw new Error('Session can only restart while idle')
+      throw lifecycleRefusal('Session can only restart while idle', 'restart.not-idle')
     }
     let terminalRestarted = false
     if (this.externalSessionIds.has(id)) {

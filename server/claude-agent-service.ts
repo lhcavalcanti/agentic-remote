@@ -2635,13 +2635,14 @@ export class ClaudeAgentService
         statusCode: 409,
       })
     }
-    if (session.status !== 'idle') {
-      throw new Error('Session must be idle')
-    }
-    if (this.dispatchingSessions.has(id)) {
+    if (
+      session.status !== 'idle' ||
       // A prompt is already on its way. The status only turns to running once
       // the turn is recorded, so without this a second one starts beside it.
-      throw new Error('Session must be idle')
+      this.dispatchingSessions.has(id)
+    ) {
+      // A conflict with what the session is doing, not a server fault.
+      throw Object.assign(new Error('Session must be idle'), { statusCode: 409 })
     }
     return session
   }

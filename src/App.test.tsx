@@ -3515,8 +3515,9 @@ describe('App', () => {
     render(<App />)
     const composer = await screen.findByRole('textbox', { name: 'Message' })
     fireEvent.change(composer, { target: { value: 'Keep my session draft' } })
-    expect(screen.getByRole('status', { name: 'Session draft status' }))
-      .toHaveTextContent('Saved on this device')
+    expect(screen.queryByText('Saved on this device')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status', { name: 'Session draft status' }))
+      .not.toBeInTheDocument()
     composer.focus()
     const listingsBefore = vi.mocked(listSessionListing).mock.calls.length
     const managerBefore = vi.mocked(getManager).mock.calls.length

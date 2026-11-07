@@ -25,11 +25,50 @@ const planSchema = z.object({
     messageId: z.string().trim().min(1).max(200),
     resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict().optional(),
+  investigate: z.object({
+    itemId: z.string().trim().min(1).max(200),
+    requestId: z.string().uuid(),
+  }).strict().optional(),
+  taskCompletion: z.object({
+    taskId: z.string().trim().min(1).max(200),
+    taskRevision: z.number().int().nonnegative(),
+    attemptId: z.string().trim().min(1).max(200),
+    computerId: z.string().trim().min(1).max(200),
+    sessionId: z.string().trim().min(1).max(200),
+    sessionRevision: z.number().int().nonnegative(),
+    messageId: z.string().trim().min(1).max(200),
+    resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict().optional(),
 }).strict().refine(
-  ({ order, item, completion }) =>
-    [order, item, completion].filter((operation) => operation !== undefined).length === 1,
+  ({ order, item, completion, investigate, taskCompletion }) =>
+    [order, item, completion, investigate, taskCompletion]
+      .filter((operation) => operation !== undefined).length === 1,
   'Dreamer plan edit must contain exactly one operation.',
 )
+
+const taskParamsSchema = z.object({
+  taskId: z.string().trim().min(1).max(200),
+}).strict()
+
+const dispatchSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  requestId: z.string().uuid(),
+}).strict()
+
+const taskCompletionSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  attemptId: z.string().trim().min(1).max(200),
+  computerId: z.string().trim().min(1).max(200),
+  sessionId: z.string().trim().min(1).max(200),
+  sessionRevision: z.number().int().nonnegative(),
+  messageId: z.string().trim().min(1).max(200),
+  resultDigest: z.string().regex(/^[a-f0-9]{64}$/),
+}).strict()
+
+const taskDispositionSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  status: z.enum(['completed', 'dismissed']),
+}).strict()
 
 function parse<T>(
   schema: z.ZodType<T>,
@@ -71,5 +110,32 @@ export async function registerDreamerRoutes(
     reply.header('cache-control', 'no-store')
     const input = parse(planSchema, request.body ?? {})
     return requireService().editPlan(input)
+  })
+
+  app.post('/api/manager/dreamer/tasks/:taskId/dispatch', async (request, reply) => {
+    reply.header('cache-control', 'no-store')
+    const params = parse(taskParamsSchema, request.params ?? {})
+    const input = parse(dispatchSchema, request.body ?? {})
+    return requireService().dispatchTask({ ...input, taskId: params.taskId })
+  })
+
+  app.post('/api/manager/dreamer/tasks/:taskId/complete', async (request, reply) => {
+    reply.header('cache-control', 'no-store')
+    const params = parse(taskParamsSchema, request.params ?? {})
+    const input = parse(taskCompletionSchema, request.body ?? {})
+    return requireService().confirmTaskCompletion({
+      ...input,
+      taskId: params.taskId,
+    })
+  })
+
+  app.post('/api/manager/dreamer/tasks/:taskId/disposition', async (request, reply) => {
+    reply.header('cache-control', 'no-store')
+    const params = parse(taskParamsSchema, request.params ?? {})
+    const input = parse(taskDispositionSchema, request.body ?? {})
+    return requireService().resolveUserTask({
+      ...input,
+      taskId: params.taskId,
+    })
   })
 }

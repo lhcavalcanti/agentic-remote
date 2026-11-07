@@ -3,10 +3,21 @@ import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DreamerMorningPlan, DreamerSettings } from './OracleDreamer'
-import { DreamerApiError, getDreamer, saveDreamerSettings, updateDreamerPlan } from './dreamer-api'
+import {
+  completeDreamerTask,
+  dispatchDreamerTask,
+  DreamerApiError,
+  getDreamer,
+  resolveDreamerTask,
+  saveDreamerSettings,
+  updateDreamerPlan,
+} from './dreamer-api'
 
 vi.mock('./dreamer-api', () => ({
   getDreamer: vi.fn(),
+  resolveDreamerTask: vi.fn(),
+  completeDreamerTask: vi.fn(),
+  dispatchDreamerTask: vi.fn(),
   saveDreamerSettings: vi.fn(),
   updateDreamerPlan: vi.fn(),
   DreamerApiError: class extends Error {
@@ -56,8 +67,181 @@ async function openMorningPlan() {
 describe('Dreamer settings and morning review', () => {
   beforeEach(() => {
     vi.mocked(getDreamer).mockReset().mockResolvedValue(initial)
+    vi.mocked(resolveDreamerTask).mockReset()
+    vi.mocked(completeDreamerTask).mockReset()
+    vi.mocked(dispatchDreamerTask).mockReset()
     vi.mocked(saveDreamerSettings).mockReset()
     vi.mocked(updateDreamerPlan).mockReset()
+  })
+
+  it('distinguishes journal suggestions from durable follow-up work', async () => {
+    const journalPlan = {
+      ...plan,
+      items: [{
+        ...plan.items[0],
+        computerId: 'computer-a',
+        sessionId: 'session-a',
+      }],
+    }
+    const investigated = {
+      ...ready,
+      revision: 4,
+      plan: {
+        ...journalPlan,
+        items: [{ ...journalPlan.items[0], status: 'skipped' as const }],
+      },
+      tasks: [{
+        id: 'oracle-task-a',
+        revision: 1,
+        title: 'Review failed session',
+        summary: 'Last observed status was error.',
+        nextAction: 'Oracle will reproduce the failure.',
+        owner: 'oracle' as const,
+        status: 'queued' as const,
+        sourceEventIds: ['a'.repeat(64)],
+        attempts: [{
+          id: 'attempt-a',
+          requestId: 'request-a',
+          managerMessageId: 'manager-a',
+          status: 'queued' as const,
+          sessionRefs: [],
+        }],
+        createdAt: '2026-10-29T04:00:00.000Z',
+        updatedAt: '2026-10-29T04:00:00.000Z',
+      }],
+    }
+    vi.mocked(getDreamer).mockResolvedValue({ ...ready, plan: journalPlan })
+    vi.mocked(updateDreamerPlan).mockResolvedValue(investigated)
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    expect(screen.getByText('Oracle has not investigated or assigned this work.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Oracle to investigate' }))
+    await screen.findByText('Follow-up work')
+    expect(updateDreamerPlan).toHaveBeenCalledWith({
+      revision: 3,
+      planId: 'daily-plan',
+      investigate: {
+        itemId: 'a',
+        requestId: expect.any(String),
+      },
+    })
+    expect(screen.getByText('queued · Oracle')).toBeInTheDocument()
+    expect(screen.queryByText('Plan saved.')).toBeInTheDocument()
+  })
+
+  it('shows blocked evidence and retries a durable task without claiming completion', async () => {
+    const blockedTask = {
+      id: 'oracle-task-a',
+      revision: 4,
+      title: 'Run the focused queue test',
+      summary: 'The queue regression needs execution.',
+      nextAction: 'Reconnect the execution session, then retry.',
+      owner: 'oracle' as const,
+      status: 'blocked' as const,
+      blockedReason: 'Execution stopped without verified completion.',
+      sourceEventIds: ['a'.repeat(64)],
+      attempts: [{
+        id: 'attempt-old',
+        requestId: 'request-old',
+        managerMessageId: 'manager-old',
+        status: 'failed' as const,
+        sessionRefs: [],
+        error: 'Execution backend unavailable.',
+      }, {
+        id: 'attempt-a',
+        requestId: 'request-a',
+        managerMessageId: 'manager-a',
+        status: 'blocked' as const,
+        sessionRefs: [{ computerId: 'computer-a', sessionId: 'execution-a' }],
+        error: 'Execution stopped without verified completion.',
+      }],
+      evidence: [{
+        id: 'evidence-a',
+        kind: 'test' as const,
+        label: 'pnpm vitest run queue',
+        status: 'failed' as const,
+        result: '1 test failed',
+      }],
+      createdAt: '2026-10-29T04:00:00.000Z',
+      updatedAt: '2026-10-29T04:10:00.000Z',
+    }
+    vi.mocked(getDreamer).mockResolvedValue({ ...ready, tasks: [blockedTask] })
+    vi.mocked(dispatchDreamerTask).mockResolvedValue({
+      ...ready,
+      tasks: [{ ...blockedTask, revision: 5, status: 'queued' as const }],
+    })
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    expect(screen.getByText(blockedTask.blockedReason)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Execution evidence (1)'))
+    expect(screen.getByText('1 test failed')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Attempt history (2)'))
+    expect(screen.getByText(/Attempt 1: failed/)).toHaveTextContent('Execution backend unavailable.')
+    expect(screen.getByRole('link', { name: 'Open session' })).toHaveAttribute(
+      'href',
+      '/?computer=computer-a&session=execution-a',
+    )
+    expect(screen.queryByRole('button', { name: 'Confirm completed' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(dispatchDreamerTask).toHaveBeenCalledWith(
+      'oracle-task-a',
+      { revision: 4, requestId: expect.any(String) },
+    ))
+    expect(await screen.findByText('queued · Oracle')).toBeInTheDocument()
+  })
+
+  it('reviews and confirms only trusted task completion evidence', async () => {
+    const task = {
+      id: 'oracle-task-a',
+      revision: 6,
+      title: 'Run the focused queue test',
+      summary: 'The queue regression needs execution.',
+      nextAction: 'Review the verified result.',
+      owner: 'oracle' as const,
+      status: 'review' as const,
+      sourceEventIds: ['a'.repeat(64)],
+      attempts: [{
+        id: 'attempt-a',
+        requestId: 'request-a',
+        managerMessageId: 'manager-a',
+        status: 'review' as const,
+        sessionRefs: [{ computerId: 'computer-a', sessionId: 'execution-a' }],
+      }],
+      completionCandidate: {
+        ...completionCandidate,
+        attemptId: 'attempt-a',
+        sessionId: 'execution-a',
+      },
+      createdAt: '2026-10-29T04:00:00.000Z',
+      updatedAt: '2026-10-29T04:10:00.000Z',
+    }
+    vi.mocked(getDreamer).mockResolvedValue({ ...initial, tasks: [task] })
+    vi.mocked(completeDreamerTask).mockResolvedValue({
+      ...ready,
+      tasks: [{ ...task, revision: 7, status: 'completed' as const }],
+    })
+    render(<DreamerMorningPlan />)
+    fireEvent.click(await screen.findByText('Morning plan'))
+    await screen.findByText('Follow-up work')
+    expect(screen.getByText('No morning suggestions yet.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review result' }))
+    expect(screen.getByText('Verified execution result')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm completed' }))
+    await waitFor(() => expect(completeDreamerTask).toHaveBeenCalledWith(
+      'oracle-task-a',
+      {
+        revision: 6,
+        attemptId: 'attempt-a',
+        computerId: 'computer-a',
+        sessionId: 'execution-a',
+        sessionRevision: 7,
+        messageId: 'completion-message',
+        resultDigest: 'a'.repeat(64),
+      },
+    ))
   })
   afterEach(() => {
     cleanup()
@@ -77,6 +261,65 @@ describe('Dreamer settings and morning review', () => {
       revision: 3, enabled: true, timeZone: 'Asia/Kathmandu',
     })
     expect(screen.getByText(/02:00/)).toBeInTheDocument()
+  })
+
+  it('discloses that enabling Dreamer opts into Oracle model analysis', async () => {
+    render(<DreamerSettings />)
+
+    expect(await screen.findByText(/Oracle may use the selected model/i))
+      .toBeInTheDocument()
+    expect(screen.queryByText(/No model calls/i)).not.toBeInTheDocument()
+  })
+
+  it('lets the user complete or dismiss user-owned follow-up work', async () => {
+    const userTask = {
+      id: 'oracle-task-user',
+      revision: 2,
+      title: 'Choose the production window',
+      summary: 'Oracle needs an explicit decision.',
+      nextAction: 'Choose the rollout window.',
+      owner: 'user' as const,
+      status: 'ready' as const,
+      sourceEventIds: ['d'.repeat(64)],
+      attempts: [],
+      createdAt: '2026-10-29T04:00:00.000Z',
+      updatedAt: '2026-10-29T04:00:00.000Z',
+    }
+    vi.mocked(getDreamer).mockResolvedValue({
+      ...ready,
+      tasks: [userTask],
+    })
+    vi.mocked(resolveDreamerTask)
+      .mockResolvedValueOnce({
+        ...ready,
+        tasks: [{ ...userTask, revision: 3, status: 'completed' as const }],
+      })
+      .mockResolvedValueOnce({
+        ...ready,
+        tasks: [{ ...userTask, revision: 3, status: 'dismissed' as const }],
+      })
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Mark complete' }))
+    await waitFor(() => expect(resolveDreamerTask).toHaveBeenCalledWith(
+      userTask.id,
+      { revision: userTask.revision, status: 'completed' },
+    ))
+    expect(await screen.findByText('completed · Needs you')).toBeInTheDocument()
+
+    vi.mocked(getDreamer).mockResolvedValue({
+      ...ready,
+      tasks: [userTask],
+    })
+    await act(async () => {
+      window.dispatchEvent(new Event('agentic-remote:authoritative-refresh'))
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(resolveDreamerTask).toHaveBeenLastCalledWith(
+      userTask.id,
+      { revision: userTask.revision, status: 'dismissed' },
+    ))
   })
 
   it('retains the input and shows a save failure instead of claiming success', async () => {
@@ -152,7 +395,7 @@ describe('Dreamer settings and morning review', () => {
     expect(screen.getByText(/2026-10-29/)).toBeInTheDocument()
     expect(screen.getByText('Durable todos unavailable.')).toBeInTheDocument()
     expect(screen.getByText(/2 additional candidates/)).toBeInTheDocument()
-    expect(screen.getByText(/Review actions update this plan only/)).toBeInTheDocument()
+    expect(screen.getByText(/Suggestions are observations, not proof that work ran/)).toBeInTheDocument()
     const items = within(screen.getByRole('list', { name: 'Dreamer priorities' })).getAllByRole('listitem')
     expect(items[0]).toHaveTextContent('Review failed session')
     expect(items[1]).toHaveTextContent('Review remembered decision')
@@ -394,6 +637,58 @@ describe('Dreamer settings and morning review', () => {
     fireEvent.click(screen.getByRole('button', { name: `Restore ${target.label}` }))
     await waitFor(() => expect(updateDreamerPlan).toHaveBeenLastCalledWith({
       revision: 4, planId: 'daily-plan', item: { id: target.id, status: 'pending' },
+    }))
+  })
+
+  it('can investigate a restored session suggestion with a fresh task identity', async () => {
+    const investigatedItem = {
+      ...plan.items[0],
+      status: 'skipped' as const,
+      computerId: 'computer-a',
+      sessionId: 'session-a',
+      taskId: 'oracle-task-old',
+    }
+    const investigated = {
+      ...ready,
+      revision: 4,
+      plan: { ...plan, items: [investigatedItem, plan.items[1]] },
+    }
+    const restored = {
+      ...investigated,
+      revision: 5,
+      plan: {
+        ...investigated.plan,
+        items: [{ ...investigatedItem, status: 'pending' as const, taskId: undefined }, plan.items[1]],
+      },
+    }
+    vi.mocked(getDreamer).mockResolvedValue(investigated)
+    vi.mocked(updateDreamerPlan)
+      .mockResolvedValueOnce(restored)
+      .mockResolvedValueOnce({
+        ...restored,
+        revision: 6,
+        plan: {
+          ...restored.plan,
+          items: [{
+            ...investigatedItem,
+            taskId: 'oracle-task-new',
+          }, plan.items[1]],
+        },
+      })
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore Review failed session' }))
+    const investigate = await screen.findByRole('button', { name: 'Ask Oracle to investigate' })
+    fireEvent.click(investigate)
+
+    await waitFor(() => expect(updateDreamerPlan).toHaveBeenLastCalledWith({
+      revision: 5,
+      planId: 'daily-plan',
+      investigate: {
+        itemId: 'a',
+        requestId: expect.any(String),
+      },
     }))
   })
 

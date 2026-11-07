@@ -455,6 +455,8 @@ badges **Oracle**.
 - **App settings → Models** chooses its model, and **Folders** the folder it
   starts sessions in on each computer. Both are kept on the hub; ask Oracle to start sessions
   somewhere else and it updates its folder.
+- Sessions Oracle starts run the default model configured for their provider,
+  else the provider's own default, unless you name one.
 - On a desktop, drag the panel's left edge to resize it.
 - Its notes are in `~/.agentic-remote/manager/memory/`.
 - Optional structured memory is stored beside those notes in

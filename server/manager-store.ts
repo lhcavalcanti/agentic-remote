@@ -6,6 +6,7 @@ import type {
   ManagerClientDefaults,
   ManagerMessage,
   ManagerMessageSource,
+  ManagerProactiveSettings,
   ManagerSettings,
 } from '../shared/manager.js'
 import { ManagerMemory } from './manager-memory.js'
@@ -51,6 +52,11 @@ export interface ManagerState {
   baselineAt?: string
   /** The browser defaults the last message carried. */
   defaults?: ManagerClientDefaults
+  /** Hub-owned periodic Oracle check policy and durable next eligible instant. */
+  proactive?: {
+    settings: ManagerProactiveSettings
+    nextCheckAt?: string
+  }
 }
 
 export type JournalKind = 'created' | 'status' | 'renamed' | 'replaced' | 'removed'
@@ -107,7 +113,12 @@ const emptyState = (): ManagerState => ({
 })
 
 function messageSource(source: unknown): ManagerMessageSource {
-  return source === 'voice' ? 'voice' : 'typed'
+  return source === 'voice' ||
+    source === 'scheduled' ||
+    source === 'proactive' ||
+    source === 'task'
+    ? source
+    : 'typed'
 }
 
 function storedMessage(
@@ -121,6 +132,11 @@ function storedMessage(
     source: previous?.role === 'user'
       ? messageSource(previous.source)
       : messageSource(stored.source),
+    ...(previous?.role === 'user'
+      ? (previous.automatic
+          ? { automatic: structuredClone(previous.automatic) }
+          : { automatic: undefined })
+      : {}),
   }
 }
 
@@ -191,11 +207,14 @@ export class ManagerStore {
   }
 
   updateState(change: (state: ManagerState) => void): Promise<ManagerState> {
-    const next = structuredClone(this.current)
-    change(next)
-    this.current = next
-    const snapshot = structuredClone(next)
-    return this.serialized(() => this.writeJson('state.json', snapshot)).then(() => structuredClone(snapshot))
+    return this.serialized(async () => {
+      const next = structuredClone(this.current)
+      change(next)
+      const snapshot = structuredClone(next)
+      await this.writeJson('state.json', snapshot)
+      this.current = next
+      return structuredClone(snapshot)
+    })
   }
 
   messages(): ManagerMessage[] {
@@ -208,26 +227,44 @@ export class ManagerStore {
   }
 
   upsertMessage(message: ManagerMessage): Promise<void> {
-    const stored = storedMessage(message, this.conversation.get(message.id))
-    this.conversation.set(stored.id, stored)
-    this.trimConversation()
-    this.conversationLines += 1
-    const compact = this.conversationLines > this.conversationKeep * 4
-    if (compact) this.conversationLines = this.conversation.size
-    const lines = compact
-      ? [...this.conversation.values()].map((entry) => JSON.stringify(entry)).join('\n') + '\n'
-      : `${JSON.stringify(stored)}\n`
-    return this.serialized(() =>
-      compact
-        ? this.writeAtomic('conversation.jsonl', lines)
-        : appendFile(path.join(this.directory, 'conversation.jsonl'), lines, 'utf8'),
-    )
+    return this.serialized(async () => {
+      const conversation = new Map(this.conversation)
+      const stored = storedMessage(message, conversation.get(message.id))
+      conversation.set(stored.id, stored)
+      const excess = conversation.size - this.conversationKeep
+      if (excess > 0) {
+        for (const key of [...conversation.keys()].slice(0, excess)) conversation.delete(key)
+      }
+      const conversationLines = this.conversationLines + 1
+      const compact = conversationLines > this.conversationKeep * 4
+      const lines = compact
+        ? [...conversation.values()].map((entry) => JSON.stringify(entry)).join('\n') + '\n'
+        : `${JSON.stringify(stored)}\n`
+      if (compact) await this.writeAtomic('conversation.jsonl', lines)
+      else await appendFile(path.join(this.directory, 'conversation.jsonl'), lines, 'utf8')
+      this.conversation = conversation
+      this.conversationLines = compact ? conversation.size : conversationLines
+    })
+  }
+
+  moveMessageToEnd(id: string): Promise<void> {
+    return this.serialized(async () => {
+      const message = this.conversation.get(id)
+      if (!message || [...this.conversation.keys()].at(-1) === id) return
+      const conversation = new Map(this.conversation)
+      conversation.delete(id)
+      conversation.set(id, message)
+      const lines = [...conversation.values()]
+        .map((entry) => JSON.stringify(entry))
+        .join('\n') + '\n'
+      await this.writeAtomic('conversation.jsonl', lines)
+      this.conversation = conversation
+      this.conversationLines = conversation.size
+    })
   }
 
   /** Starts an empty conversation, keeping the old log beside it. */
   resetConversation(): Promise<void> {
-    this.conversation = new Map()
-    this.conversationLines = 0
     const archive = `conversation-${this.now().toISOString().replaceAll(':', '-')}.jsonl`
     return this.serialized(async () => {
       await rename(
@@ -236,6 +273,8 @@ export class ManagerStore {
       ).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error
       })
+      this.conversation = new Map()
+      this.conversationLines = 0
     })
   }
 

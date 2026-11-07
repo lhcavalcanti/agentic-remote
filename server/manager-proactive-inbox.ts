@@ -27,7 +27,7 @@ const STATE_FILE_NAME = 'manager-proactive-inbox.json'
 const STAGING_FILE_PATTERN =
   /^manager-proactive-inbox\.json\.[A-Za-z0-9-]+\.(?:pending|rollback\.pending)$/
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~+=:@-]{0,127}$/
-const EVENT_KINDS = ['failed', 'finished'] as const
+const EVENT_KINDS = ['failed', 'blocked', 'finished'] as const
 const DISPOSITIONS = [
   'handled',
   'irrelevant',
@@ -271,7 +271,7 @@ function isOrigin(value: unknown): value is SessionOrigin {
 }
 
 function isEventKind(value: unknown): value is ManagerProactiveInboxEventKind {
-  return value === 'failed' || value === 'finished'
+  return value === 'failed' || value === 'blocked' || value === 'finished'
 }
 
 function isDisposition(
@@ -1171,6 +1171,14 @@ export class ManagerProactiveInbox {
         !observation.recovering &&
         !observation.hasPendingRequest &&
         observation.queuedCount === 0
+      const blocked =
+        observation.isOpen &&
+        !observation.suspended &&
+        !observation.recovering &&
+        (
+          observation.status === 'waiting' ||
+          observation.hasPendingRequest
+        )
       if (
         active &&
         observation.status === 'error' &&
@@ -1181,6 +1189,15 @@ export class ManagerProactiveInbox {
           observation,
           taskGeneration,
           'failed',
+          observedAt,
+        )
+        active = false
+      } else if (active && blocked) {
+        admitted = this.createEvent(
+          candidate,
+          observation,
+          taskGeneration,
+          'blocked',
           observedAt,
         )
         active = false
@@ -1238,7 +1255,7 @@ export class ManagerProactiveInbox {
       .filter((event) => event.lifecycle === 'pending')
       .sort((left, right) => {
         const priority = (event: PersistedEvent): number =>
-          event.kind === 'failed' ? 0 : 1
+          event.kind === 'failed' ? 0 : event.kind === 'blocked' ? 1 : 2
         return priority(left) - priority(right) ||
           left.createdAt.localeCompare(right.createdAt) ||
           left.sequence - right.sequence

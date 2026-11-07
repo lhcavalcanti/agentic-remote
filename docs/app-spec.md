@@ -786,8 +786,17 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   unavailable. **Start over** begins a new conversation and keeps both memory
   forms.
 - Session links in replies use `?computer=<id>&session=<id>` and open that
-  session. Your default folder, mode, and model for new sessions are sent with
-  each message and apply to the sessions Oracle starts.
+  session. Each message carries your default computer and folders. Oracle
+  MUST NOT choose a model itself; a session it starts uses, in order:
+  1. a model you name (below);
+  2. the provider's runtime in App settings → Models (model, effort, context,
+     mode), read from the hub's settings profile as the session starts;
+  3. no model, so the provider's own default on that computer applies. For
+     Copilot that is its `model` setting (`/config model`) or `COPILOT_MODEL`.
+- Copilot is the default provider. A configured default the provider lacks,
+  or refuses before creating anything, gives way to the provider's own default
+  once, and Oracle tells you; configured effort or context the model lacks is
+  dropped.
 - When you name a model, Oracle MUST start a Copilot session with that model's
   exact ID from discovery, because Copilot hosts Claude and other model
   families; it uses the Claude Agent provider only when you ask for that

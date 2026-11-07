@@ -13,7 +13,7 @@ import type {
   SendMessageInput,
   UserInputReplyInput,
 } from '../shared/contracts.js'
-import type { OracleResponseStyle } from '../shared/settings-profile.js'
+import type { NewSessionRuntimesSetting, OracleResponseStyle } from '../shared/settings-profile.js'
 import {
   MANAGER_MESSAGE_MAX_LENGTH,
   MANAGER_SNAPSHOT_MESSAGES,
@@ -172,6 +172,8 @@ export interface ManagerAgentOptions {
   now?: () => Date
   /** The user's response style, read as each turn's prompt is built. */
   responseStyle?: () => OracleResponseStyle | undefined
+  /** The New-session runtimes from App settings, read as each session starts. */
+  newSessionRuntimes?: () => NewSessionRuntimesSetting | undefined
   structuredMemory?: ManagerStructuredMemoryRuntime
   recordProactiveOutcomes?: (input: {
     message: ManagerMessage
@@ -323,6 +325,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly model?: string
   private readonly reasoningEffort?: RuntimeReasoningEffort
   private readonly responseStyle: () => OracleResponseStyle | undefined
+  private readonly newSessionRuntimes: () => NewSessionRuntimesSetting | undefined
   private readonly turnTimeoutMs: number
   private readonly retryDelaysMs: number[]
   private readonly idleStopMs: number
@@ -387,6 +390,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.model = options.model
     this.reasoningEffort = options.reasoningEffort
     this.responseStyle = options.responseStyle ?? (() => undefined)
+    this.newSessionRuntimes = options.newSessionRuntimes ?? (() => undefined)
     this.turnTimeoutMs = options.turnTimeoutMs ?? 15 * 60 * 1000
     this.retryDelaysMs = options.retryDelaysMs ?? [1000, 4000]
     this.idleStopMs = options.idleStopMs ?? 10 * 60 * 1000
@@ -1316,6 +1320,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           }
         : {}),
       defaults: () => this.store.state().defaults ?? {},
+      configuredRuntime: (provider) => this.newSessionRuntimes()?.[provider],
       now: () => this.now(),
     }
   }

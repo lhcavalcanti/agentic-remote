@@ -126,6 +126,16 @@ describe('manager turn context', () => {
     expect(MANAGER_SYSTEM_PROMPT).toContain('provider/mode · model')
   })
 
+  it('leaves the model to configuration unless the user asks for one', () => {
+    const rule = MANAGER_SYSTEM_PROMPT.split('\n').find((line) => line.includes('Never choose a model yourself'))
+    expect(rule).toBeDefined()
+    expect(rule).toMatch(/unset unless the user asks/)
+    // Precedence: the configured default, then Copilot's own default.
+    expect(rule).toMatch(/configured in App settings → Models, else Copilot's own default/)
+    expect(rule).toMatch(/not available[^\n]*tell the user/)
+    expect(MANAGER_SYSTEM_PROMPT).not.toMatch(/mode, and model default to the user's own settings/)
+  })
+
   it('tells Oracle how to change how its sessions open', () => {
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/set_session_backend/)
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/Ask mode[^\n]*set_session_backend/)

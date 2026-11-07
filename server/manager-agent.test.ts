@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession, ProviderRuntimeOptions } from '../shared/contracts.js'
+import type { NewSessionRuntimesSetting } from '../shared/settings-profile.js'
 import {
   MANAGER_MESSAGE_MAX_LENGTH,
   MANAGER_SNAPSHOT_MESSAGES,
@@ -1904,6 +1905,37 @@ describe('ManagerAgent', () => {
       sessionRefs: [{ computerId: 'hub', sessionId: 'worker-1', title: 'Docs' }],
     })
     expect(agent!.snapshot().managedSessions).toEqual(['hub:worker-1'])
+  })
+
+  it("starts sessions with the hub's configured New-session runtime, not what a browser last sent", async () => {
+    let runtimes: NewSessionRuntimesSetting = {
+      copilot: { model: 'model-a', reasoningEffort: '', contextTier: 'default', mode: 'autopilot' },
+    }
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('create_session')({ title: 'Docs', prompt: 'Write the docs' })
+      reply('Started it.')(fakeSession, '')
+    })
+    await start({ newSessionRuntimes: () => runtimes })
+    await agent!.send('start docs work', {
+      computerId: 'hub', mode: 'interactive', provider: 'claude', model: 'stale-model', reasoningEffort: 'max',
+    })
+    await settled()
+    expect(hub.createSession).toHaveBeenLastCalledWith('hub', expect.objectContaining({
+      provider: 'copilot', model: 'model-a', mode: 'autopilot', contextTier: 'default',
+    }))
+    expect(vi.mocked(hub.createSession).mock.lastCall![1]).not.toHaveProperty('reasoningEffort')
+
+    runtimes = {}
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('create_session')({ title: 'More', prompt: 'More docs' })
+      reply('Started it.')(fakeSession, '')
+    })
+    await agent!.send('more docs work')
+    await settled()
+    const input = vi.mocked(hub.createSession).mock.lastCall![1]
+    expect(input).toMatchObject({ provider: 'copilot' })
+    expect(input).not.toHaveProperty('model')
+    expect(input).not.toHaveProperty('mode')
   })
 
   it('reads models from the hub catalog of the computer and provider asked about', async () => {

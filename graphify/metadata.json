@@ -449,7 +449,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "0c08d3bed65dc8723ddaeddf0f0361a1872cec9b521f800b43112ec4ffbbc3a5",
+    "docs/app-spec.md": "e6ec071270fa2d8e98669dc4a2c14bfee323074433c258efcc44d5cbcef2d7e8",
     "docs/architecture.md": "5cf48ead513dfe86e5f217f7ce041af55d0eb4cfea7afe6cd73cf4ee270036ea",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -680,9 +680,9 @@
     "server/recovery-resend-durability.test.ts": "2d764c61cf75df06dbe6327555a1de5cad8ae06208b00e403dd61b4d24fe0108",
     "server/recovery-seed-guards.test.ts": "160e953bd4df95e34fceef919508b17ba88f5687d978cf2aa8adf4d5cb44a3b2",
     "server/recovery-seed-legacy-fixture.ts": "9826186c940ebbb4c420fc209d23815ccbb43b1468cd9f676c554cde6730952f",
-    "server/refusal-metrics-routes.test.ts": "4fd485e8ea02da3badb1519f966f72e660e96c1bfc3c3ad0dba5c3cefd38de57",
-    "server/refusal-metrics.test.ts": "b9e7ec068ff0328c1c95f9c04cb763042f3c91453e6e2ef5d485119968904567",
-    "server/refusal-metrics.ts": "1970d72bef2ec8fefa2277ed6796f9edabe4de60c324699878d3394ff7729a0f",
+    "server/refusal-metrics-routes.test.ts": "7c4806a50bc7e9b3e9760bf087e963068184495e72a33af2bc02b9d56e5fd60d",
+    "server/refusal-metrics.test.ts": "4d9a0e2fde3d031e593a84b599f799eb3faf1bd653f0d5e955f1c92cb2c9e8fe",
+    "server/refusal-metrics.ts": "b89728ec3ba5d2f0a487c9e9d42a50cb2f1e817bee29e984eb7ce03e249ce11d",
     "server/release-publication.test.ts": "50777f86c4889c312bb6310ba4cbc07da19a4fc261db8a94f003e146993a13f7",
     "server/remote-node-client.test.ts": "221bdc1ca70639fb5a28598401aeb531e33ad23ca8c5221b653969e5711b9c4a",
     "server/remote-node-client.ts": "704f85a8c74de8e9ff27ff5ec2f06a15df100d310ca9d5434b189ef69407a840",
@@ -1013,27 +1013,18 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "923b4d0e149d53cddce76d1f0ee2e4c374719af35ee29e4b2ad342965686771c",
+    "GRAPH_REPORT.md": "1f58be216428de7f91fe08efaa00ffbc21b4fd1b9832e617dacf63b096868e56",
     "communities.json": "a53e832faf495c9c54ec3a01467b321eafe7e49e2a220f2c0a412d37036d8edf",
-    "graph.html": "6b5034d5359869d636ee3062a840e69f0b4094f13731a8db8e30aef4ea6d0e91",
-    "graph.json": "7ab270c4be87b04263a9ee562485e37c73ba58e66a882ee242a49279c3cbb998"
+    "graph.html": "efa10b135d14cf6800f0d0f8f2113ff77438b2e0dfdf5e7873f8f4e149bbe169",
+    "graph.json": "b34526a963b294775fbaea39c6bc18a43c07fee7ebb404257159c0a5acac18fb"
   },
   "schema_version": 1,
-  "source_commit": "714f07d9e6352a8de8b5f979435d261c422ed0c1",
-  "source_fingerprint": "1fb958d86d802b60d188c3e2b5535c1360b04fd23e526c67be33d970249fb6ef",
+  "source_commit": "f9e4981d7dde7c22aa239ed4cad0037ee772a158",
+  "source_fingerprint": "ca739b3a799ecd72e573c5ffbebbdb72b619e552dc745002c59b3a5b501d8027",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "package.json",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/claude-agent-service.test.ts",
-    "server/claude-agent-service.ts",
-    "server/multi-node.test.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/SessionNavigation.test.tsx",
-    "src/SessionNavigation.tsx"
+    "server/refusal-metrics-routes.test.ts",
+    "server/refusal-metrics.test.ts",
+    "server/refusal-metrics.ts"
   ]
 }

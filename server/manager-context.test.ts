@@ -133,6 +133,9 @@ describe('manager turn context', () => {
     // Precedence: the configured default, then Copilot's own default.
     expect(rule).toMatch(/configured in App settings → Models, else Copilot's own default/)
     expect(rule).toMatch(/not available[^\n]*tell the user/)
+    // The configured context size carries to whichever model runs, a named one included.
+    expect(rule).toMatch(/model, reasoningEffort, and contextTier unset unless the user asks/)
+    expect(rule).toMatch(/context size configured there whenever the model that runs offers it, a model the user names included/)
     expect(MANAGER_SYSTEM_PROMPT).not.toMatch(/mode, and model default to the user's own settings/)
   })
 

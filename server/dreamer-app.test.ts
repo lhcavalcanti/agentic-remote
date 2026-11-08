@@ -95,7 +95,8 @@ describe('Dreamer app integration', () => {
         staleComputers: [],
       })
     })
-    await vi.waitFor(() => expect(sweep).toHaveBeenCalledWith(expect.any(Array)))
+    await vi.waitFor(() =>
+      expect(sweep).toHaveBeenCalledWith(expect.any(Array), expect.any(Map)))
 
     const local = runtime.manager!.listComputers()[0]!
     runtime.manager!.emit('event', {

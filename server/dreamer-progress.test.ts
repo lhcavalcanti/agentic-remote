@@ -39,7 +39,7 @@ function reply(content: string, overrides: Partial<ChatMessage> = {}): ChatMessa
 type Detail = ManagedSession | Error | 'hang'
 
 class FakeSource implements DreamerProgressSource {
-  computers = [
+  computers: Array<{ id: string; name: string; lifecycleGeneration?: string }> = [
     { id: 'c1', name: 'development' },
     { id: 'c2', name: 'production' },
   ]
@@ -332,7 +332,7 @@ describe('DreamerProgress refresh', () => {
 
     const result = await progress.refresh()
 
-    expect(result).toEqual({ authoritative: [] })
+    expect(result).toEqual({ authoritative: [], computerGenerations: new Map() })
     expect(entry('s1', 'c2')?.isOpen).toBe(true)
     expect(entry('s1', 'gone')).toBeUndefined()
     expect(progress.snapshot()).toMatchObject({
@@ -370,6 +370,18 @@ describe('DreamerProgress refresh', () => {
     await progress.refresh()
 
     expect(entry()).toMatchObject({ isOpen: true, status: 'running' })
+  })
+
+  it('reports the computer generations read before its listing', async () => {
+    const { source, progress } = setup()
+    source.computers[0]!.lifecycleGeneration = 'pairing-a'
+    source.beforeListing = () => {
+      source.computers = [{ id: 'c1', name: 'development', lifecycleGeneration: 'pairing-b' }]
+    }
+
+    const result = await progress.refresh()
+
+    expect(result?.computerGenerations).toEqual(new Map([['c1', 'pairing-a']]))
   })
 
   it('keeps a session closed when it was removed while a listing was in flight', async () => {

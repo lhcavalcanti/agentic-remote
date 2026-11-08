@@ -412,15 +412,15 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 216,
+  "communities": 222,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19967,
+  "edges": 19992,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
     ".github/copilot-instructions.md": "03d9664de9489495b64bdda845ea7419e677bfa6b14145e03cd9fcc6cca79a30",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "59350485de5330006c8b8e8c97c0061b2fe59969639b3bbcf6fbdb622f6c6469",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "f3f60da8362b1b3e7d72f67b2d2185d837ba2b772018f0d59888e8fc22d8244d",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -760,9 +760,9 @@
     "server/tmux-errors.integration.test.ts": "228b5cc54bc110aeae4a14c8d348f68f3a30d218ee6335b9c12aaa8d7102f2e3",
     "server/tmux-errors.test.ts": "fac979a54a290670fcaca1827a221fbb1d2361d957b5fa56b44c01ee1b823bfe",
     "server/tmux-errors.ts": "c81388a0558de865caf123ae67302e6581c978dec3f2f6e2ea5a215ec6637d2b",
-    "server/tmux-test-helpers.integration.test.ts": "669b16170b941ba15265b03b23f525c9432b9b7202b59d84b895dd7561182c79",
-    "server/tmux-test-helpers.test.ts": "4eed7d5a1801cf207549b5022f22da28df6d934d01a10662f19e18bc7dac772b",
-    "server/tmux-test-helpers.ts": "d8bf6dd35d6f317ff08ca4a3455724780802a61a4ef4b8b979a46bb1cd9bd760",
+    "server/tmux-test-helpers.integration.test.ts": "62a513c8cb2956c1dde3201023a6c3200cd0158af0f25b86acb8040a5c07fa8b",
+    "server/tmux-test-helpers.test.ts": "e90c9f64a00893ff954bb213f48963fb80efef0c7d13a0912f3f158d911b3c77",
+    "server/tmux-test-helpers.ts": "65f406da6ac4976b13804df3677e8a11985141c13c7180ac4cf20879a92ed096",
     "server/transcription-media-digests.test.ts": "dc7e6f6658dc2bdab766874a8e850c8fe837fb25252e82c8e6f255c0254ddd8d",
     "server/transcription-routes.test.ts": "60c7b050221db2d94015c288f29d422fb2aab628ce6e7e43a60f4f8073d16b09",
     "server/transcription-routes.ts": "ec42a48a512934c3dd4c613ea112886a1bf59d07aa277661ec3fddd40de29a56",
@@ -929,7 +929,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 7179,
+  "nodes": 7190,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1031,14 +1031,14 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "54c26ec303e402c51dd26732d1246c5a69c955341c7314169a20d8d6ea27d357",
-    "communities.json": "8361db9c6731b06845e4cf0d35bf189f715d36d1228aa3c939cc0c3445c99bd4",
-    "graph.html": "8f1a19ce8bb6747992d6d64360ff2f2ed7618d8acc68dc3ad2f474141227ab24",
-    "graph.json": "04c717c0aac15fb40dca92a54cd5519b74991acbcce628a216410af719cd00dd"
+    "GRAPH_REPORT.md": "634a351f673a30fef45ea59f819bf648b96a431b4cb0f4d8d5de79d67b6deafe",
+    "communities.json": "b37a7966453078ab062ad44e3e78575a8ee93ddfc480188fc450c8cfae46b53d",
+    "graph.html": "f048f8101308fba3e07d075dd5996542f90c173dbd9772b5f6cc37f584a869a1",
+    "graph.json": "48e9d3e6c69fd443051843571fbe276baeb8f41f7a4f10bcdd08e27d48f1c725"
   },
   "schema_version": 1,
-  "source_commit": "788f595f67f52120f35ab1f5d4a65c908ed06f06",
-  "source_fingerprint": "f511f10578048f8916ed1794e17b3919bc0a8e85483fd591a5c7cc452c04ccdd",
+  "source_commit": "63f3381290cda45aee7889859606dfd94840727d",
+  "source_fingerprint": "8333bae9aa628e6f46636cefeacaa46261ff943d6c46f23f78fe490b0d108a3c",
   "working_tree_changes": [
     ".github/skills/agentic-remote-navigation/SKILL.md",
     "server/tmux-test-helpers.integration.test.ts",

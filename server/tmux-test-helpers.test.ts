@@ -1,8 +1,13 @@
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { Writable } from 'node:stream'
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from 'vitest'
 import { noTmuxServer } from './tmux-errors.js'
-import { createIsolatedTmuxRoot, stopIsolatedTmuxServer } from './tmux-test-helpers.js'
+import {
+  createIsolatedTmuxRoot,
+  retireAbandonedTmuxRoot,
+  stopIsolatedTmuxServer,
+} from './tmux-test-helpers.js'
 
 const { execute, watchdog } = vi.hoisted(() => ({ execute: vi.fn(), watchdog: vi.fn() }))
 
@@ -13,9 +18,11 @@ vi.mock('node:child_process', () => ({
   spawn: watchdog,
 }))
 vi.mock('node:fs/promises', () => ({
+  access: vi.fn(),
   mkdtemp: vi.fn(),
   readFile: vi.fn(),
   rm: vi.fn(),
+  writeFile: vi.fn(),
 }))
 vi.mock('./tmux-errors.js', () => ({ noTmuxServer: vi.fn() }))
 
@@ -30,15 +37,31 @@ let killed: boolean
 let state: string
 let start: string
 let fixtures = 0
+let lifelines: Array<{ stdin: Writable, written: string[] }>
 
-function processStat(processId = pid, processState = state, started = start): string {
+function processStat(processId = pid, processState = state, started = start, parent = 0, group = 0): string {
   return `${processId} (tmux: server) ${[
-    processState, ...Array<string>(18).fill('0'), started, '0',
+    processState, parent, group, ...Array<string>(16).fill('0'), started, '0',
   ].join(' ')}\n`
 }
 
 function commands(name: string) {
   return execute.mock.calls.filter(([, args]) => args[0] === name)
+}
+
+/** A spawned watchdog whose stdin records each line the fixture reports. */
+function fakeWatchdog({ spawnError, writeError }: { spawnError?: Error, writeError?: Error } = {}) {
+  const written: string[] = []
+  const stdin = new Writable({
+    write(chunk, _encoding, callback) {
+      if (!writeError) written.push(String(chunk))
+      callback(writeError)
+    },
+  })
+  lifelines.push({ stdin, written })
+  const child = Object.assign(new EventEmitter(), { stdin, unref: vi.fn() })
+  queueMicrotask(() => (spawnError ? child.emit('error', spawnError) : child.emit('spawn')))
+  return child
 }
 
 beforeEach(() => {
@@ -61,13 +84,12 @@ beforeEach(() => {
     return processStat()
   })
   vi.mocked(rm).mockResolvedValue()
+  vi.mocked(access).mockResolvedValue()
+  vi.mocked(writeFile).mockResolvedValue()
   vi.mocked(mkdtemp).mockImplementation(async () => `/owned/initialized-${++fixtures}`)
   vi.mocked(noTmuxServer).mockResolvedValue(false)
-  watchdog.mockImplementation(() => {
-    const child = Object.assign(new EventEmitter(), { unref: vi.fn() })
-    queueMicrotask(() => child.emit('spawn'))
-    return child
-  })
+  lifelines = []
+  watchdog.mockImplementation(() => fakeWatchdog())
 })
 
 afterEach(() => {
@@ -368,23 +390,159 @@ describe('initialized tmux fixture', () => {
     expect(rm).toHaveBeenCalledOnce()
   })
 
-  it('retires its server and rejects when the abandonment watchdog cannot start', async () => {
-    watchdog.mockImplementation(() => {
-      const child = Object.assign(new EventEmitter(), { unref: vi.fn() })
-      queueMicrotask(() => child.emit('error', errno('EAGAIN')))
-      return child
-    })
-    vi.mocked(readFile).mockImplementation(async () => processStat(pid, killed ? 'Z' : 'S'))
-    await expect(createIsolatedTmuxRoot()).rejects.toThrow('EAGAIN')
-    expect(commands('kill-server')).toHaveLength(1)
-    expect(rm).toHaveBeenCalledOnce()
-  })
-
   it.each(['3.4', '3.6', 'next-3.7', '3.10', '4.0'])('accepts tmux %s', async (version) => {
     execute.mockImplementation(async (_command, args: string[]) => {
       if (args.includes('start-server')) return { stdout: `${pid} ${version}\noff\n`, stderr: '' }
       throw new Error(`Unexpected tmux command: ${args.join(' ')}`)
     })
     await expect(createIsolatedTmuxRoot()).resolves.toMatch(/^\/owned\/initialized-/)
+  })
+})
+
+describe('abandonment watchdog', () => {
+  it('is armed before the server starts and told which server it started', async () => {
+    const created = await createIsolatedTmuxRoot()
+
+    const [[command, args, options]] = watchdog.mock.calls
+    expect(command).toBe(process.execPath)
+    expect(args.slice(-2)).toEqual([expect.stringMatching(/tmux-fixture-watchdog\.ts$/), created])
+    expect(options).toMatchObject({
+      detached: true,
+      env: { TMUX: '', TMUX_TMPDIR: created },
+      stdio: ['pipe', 'ignore', 'ignore'],
+    })
+    expect(watchdog.mock.invocationCallOrder[0]).toBeLessThan(execute.mock.invocationCallOrder[0])
+    expect(lifelines[0].written.map((line) => JSON.parse(line))).toEqual([{ pid, state: 'S', startTicks: '100' }])
+    expect(lifelines[0].stdin.destroyed).toBe(false)
+  })
+
+  it('stops watching only once teardown has removed the root', async () => {
+    const created = await createIsolatedTmuxRoot()
+    const [{ stdin }] = lifelines
+    let watchingAtRemoval: boolean | undefined
+    vi.mocked(rm).mockImplementation(async () => {
+      watchingAtRemoval = !stdin.destroyed
+    })
+    vi.mocked(readFile).mockImplementation(async () => processStat(pid, killed ? 'Z' : 'S'))
+    await stopIsolatedTmuxServer(created)
+
+    expect(watchingAtRemoval).toBe(true)
+    expect(stdin.destroyed).toBe(true)
+  })
+
+  it('keeps watching when teardown fails', async () => {
+    const created = await createIsolatedTmuxRoot()
+    state = 'Z'
+    await expect(stopIsolatedTmuxServer(created)).rejects.toThrow(/exited before teardown/)
+    expect(lifelines[0].stdin.destroyed).toBe(false)
+  })
+
+  it('removes the untouched root and rejects when it cannot start', async () => {
+    watchdog.mockImplementation(() => fakeWatchdog({ spawnError: errno('EAGAIN') }))
+    await expect(createIsolatedTmuxRoot()).rejects.toThrow('EAGAIN')
+    expect(execute).not.toHaveBeenCalled()
+    expect(rm).toHaveBeenCalledExactlyOnceWith('/owned/initialized-' + fixtures, { recursive: true, force: true })
+  })
+
+  it('retires the new server and rejects when it cannot be told which server it is', async () => {
+    watchdog.mockImplementation(() => fakeWatchdog({ writeError: errno('EPIPE') }))
+    vi.mocked(readFile).mockImplementation(async () => processStat(pid, killed ? 'Z' : 'S'))
+    await expect(createIsolatedTmuxRoot()).rejects.toThrow('EPIPE')
+    expect(commands('kill-server')).toHaveLength(1)
+    expect(rm).toHaveBeenCalledOnce()
+  })
+})
+
+describe('abandoned tmux fixture retirement', () => {
+  const reported = JSON.stringify({ pid, state: 'S', startTicks: '100' })
+  let kill: MockInstance<typeof process.kill>
+
+  /** Serves these panes, each [pid, parent, process group, state], from the server. */
+  function withPanes(...panes: Array<[number, number, number, string?]>) {
+    const serve = execute.getMockImplementation()!
+    execute.mockImplementation(async (...call) => call[1][0] === 'list-panes'
+      ? { stdout: `${panes.map(([pane]) => pane).join('\n')}\n\n`, stderr: '' }
+      : serve(...call))
+    vi.mocked(readFile).mockImplementation(async (file) => {
+      const pane = panes.find(([id]) => file === `/proc/${id}/stat`)
+      return pane
+        ? processStat(pane[0], pane[3] ?? 'S', '200', pane[1], pane[2])
+        : processStat(pid, killed ? 'Z' : 'S')
+    })
+  }
+
+  beforeEach(() => {
+    kill = vi.spyOn(process, 'kill').mockReturnValue(true)
+    withPanes()
+  })
+
+  it('leaves a released fixture alone', async () => {
+    vi.mocked(access).mockRejectedValue(errno('ENOENT'))
+    await retireAbandonedTmuxRoot(root, reported)
+    expect(execute).not.toHaveBeenCalled()
+    expect(rm).not.toHaveBeenCalled()
+  })
+
+  it('stops only the live panes of the reported server, then retires it and removes the root', async () => {
+    withPanes([401, pid, 401], [402, pid + 1, 402], [403, pid, 1], [404, pid, 404, 'Z'])
+    await retireAbandonedTmuxRoot(root, reported)
+
+    expect(kill).toHaveBeenCalledExactlyOnceWith(-401, 'SIGTERM')
+    const shutdown = execute.mock.calls.findIndex(([, args]) => args[0] === 'kill-server')
+    expect(kill.mock.invocationCallOrder[0]).toBeLessThan(execute.mock.invocationCallOrder[shutdown])
+    expect(rm).toHaveBeenCalledExactlyOnceWith(root, { recursive: true, force: true })
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
+  it('finds no panes on a server without sessions', async () => {
+    const serve = execute.getMockImplementation()!
+    execute.mockImplementation(async (...call) => {
+      if (call[1][0] === 'list-panes') throw Object.assign(new Error('no current target'), { code: 1 })
+      if (call[1][0] === 'list-sessions') return { stdout: '', stderr: '' }
+      return serve(...call)
+    })
+    await retireAbandonedTmuxRoot(root, reported)
+    expect(kill).not.toHaveBeenCalled()
+    expect(commands('kill-server')).toHaveLength(1)
+    expect(rm).toHaveBeenCalledOnce()
+  })
+
+  it('lets a start in flight finish before retiring a server that was never reported', async () => {
+    const retiring = retireAbandonedTmuxRoot(root, undefined)
+    await vi.advanceTimersByTimeAsync(1_900)
+    expect(execute).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(100)
+    await retiring
+    expect(commands('kill-server')).toHaveLength(1)
+    expect(rm).toHaveBeenCalledExactlyOnceWith(root, { recursive: true, force: true })
+  })
+
+  it.each([
+    ['its socket now names a different server', reported, () => {
+      const serve = execute.getMockImplementation()!
+      execute.mockImplementation(async (...call) => call[1][0] === 'display-message'
+        ? { stdout: `${pid + 1}\n`, stderr: '' }
+        : serve(...call))
+    }],
+    ['the reported server already exited', reported, () => {
+      vi.mocked(readFile).mockResolvedValue(processStat(pid, 'Z'))
+    }],
+    ['the report is malformed', JSON.stringify({ pid: String(pid), state: 'S', startTicks: '100' }), () => {}],
+    ['its panes cannot be listed while it has sessions', reported, () => {
+      const serve = execute.getMockImplementation()!
+      execute.mockImplementation(async (...call) => {
+        if (call[1][0] === 'list-panes') throw Object.assign(new Error('lost server'), { code: 1 })
+        if (call[1][0] === 'list-sessions') return { stdout: 'abandoned: 1 windows\n', stderr: '' }
+        return serve(...call)
+      })
+    }],
+  ])('kills nothing and keeps the root with the reason when %s', async (_case, report, arrange) => {
+    arrange()
+    await expect(retireAbandonedTmuxRoot(root, report)).rejects.toThrow()
+    expect(commands('kill-server')).toHaveLength(0)
+    expect(kill).not.toHaveBeenCalled()
+    expect(rm).not.toHaveBeenCalled()
+    expect(writeFile).toHaveBeenCalledExactlyOnceWith(`${root}/abandoned-retirement-failed`, expect.any(String))
   })
 })

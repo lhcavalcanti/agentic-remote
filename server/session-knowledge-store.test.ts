@@ -68,7 +68,7 @@ describe('SessionKnowledgeStore', () => {
     const { store, directory } = await fixture()
     expect(store.get('computer', 'session')).toEqual({
       computerId: 'computer', sessionId: 'session', rootId: null,
-      rootPath: '.', revision: 0, available: false,
+      rootPath: '.', knowledgeBasePath: null, revision: 0, available: false,
     })
     expect(store.listBindings()).toEqual([])
     await expect(access(directory)).rejects.toMatchObject({ code: 'ENOENT' })
@@ -140,6 +140,63 @@ describe('SessionKnowledgeStore', () => {
     expect(reloaded.get('computer', 'session')).toEqual(binding)
   })
 
+  it('projects the canonical Knowledge base path without persisting it', async () => {
+    const { store, roots, statePath } = await fixture()
+    roots.get('one')!.path = '/read-only/notes'
+
+    await expect(store.update('computer', 'session', {
+      rootId: 'one',
+      rootPath: 'projects/agentic-remote',
+      expectedRevision: 0,
+    })).resolves.toMatchObject({
+      knowledgeBasePath: '/read-only/notes/projects/agentic-remote',
+    })
+
+    expect(JSON.parse(await readFile(statePath, 'utf8')).bindings[0])
+      .not.toHaveProperty('knowledgeBasePath')
+  })
+
+  it('replaces an alias snapshot with the canonical root path', async () => {
+    const { store, roots } = await fixture()
+    roots.get('one')!.path = '~/notes'
+    expect((await store.update('computer', 'session', {
+      rootId: 'one',
+      expectedRevision: 0,
+    })).revision).toBe(1)
+
+    const canonical = {
+      ...roots.get('one')!,
+      path: '/home/user/notes',
+    }
+    const updated = await store.update(
+      'computer',
+      'session',
+      { rootId: 'one', expectedRevision: 1 },
+      undefined,
+      { root: canonical },
+    )
+
+    expect(updated).toMatchObject({
+      revision: 2,
+      knowledgeBasePath: '/home/user/notes',
+      root: { path: '/home/user/notes' },
+    })
+  })
+
+  it('keeps an unavailable root snapshot path visible', async () => {
+    const { store, roots } = await fixture()
+    await store.update('computer', 'session', {
+      rootId: 'one',
+      expectedRevision: 0,
+    })
+    roots.delete('one')
+
+    expect(store.get('computer', 'session')).toMatchObject({
+      available: false,
+      knowledgeBasePath: '/read-only/notes',
+    })
+  })
+
   it('ignores a stale nested-path sidecar after an older rollback changes the v1 binding', async () => {
     const { store, catalog, directory, statePath } = await fixture()
     await store.update('computer', 'session', {
@@ -173,7 +230,7 @@ describe('SessionKnowledgeStore', () => {
     const unlinked = await store.update('computer', 'session', { rootId: null, expectedRevision: 1 })
     expect(unlinked).toEqual({
       computerId: 'computer', sessionId: 'session', rootId: null,
-      rootPath: '.', revision: 2, available: false,
+      rootPath: '.', knowledgeBasePath: null, revision: 2, available: false,
     })
     const reloaded = new SessionKnowledgeStore(directory, catalog)
     await reloaded.initialize()
@@ -188,6 +245,27 @@ describe('SessionKnowledgeStore', () => {
       .resolves.toMatchObject({ rootId: null, revision: 1, available: false })
     await expect(store.update('computer', 'session', { rootId: 'one', expectedRevision: 0 }))
       .rejects.toBeInstanceOf(SessionKnowledgeConflictError)
+  })
+
+  it('returns an existing current binding without writing or advancing it', async () => {
+    const { store } = await fixture()
+    const first = await store.update('computer', 'session', {
+      rootId: 'one',
+      rootPath: 'projects',
+      expectedRevision: 0,
+    })
+    const events: SessionKnowledgeBinding[] = []
+    store.on('updated', (binding) => events.push(binding))
+    vi.mocked(writeFile).mockClear()
+
+    await expect(store.update('computer', 'session', {
+      rootId: 'one',
+      rootPath: 'projects',
+      expectedRevision: 1,
+    })).resolves.toEqual(first)
+    expect(writeFile).not.toHaveBeenCalled()
+    expect(events).toEqual([])
+    expect(store.get('computer', 'session').revision).toBe(1)
   })
 
   it('rejects a nested path outside a linked root or on an unlink', async () => {
@@ -482,7 +560,7 @@ describe('SessionKnowledgeStore', () => {
     await store.replaceSession('computer', 'current', ['oldest', 'previous'])
     expect(store.listBindings()).toEqual([{
       computerId: 'computer', sessionId: 'current', rootId: null,
-      rootPath: '.', revision: 1, available: false,
+      rootPath: '.', knowledgeBasePath: null, revision: 1, available: false,
     }])
   })
 

@@ -1588,8 +1588,48 @@ clear replacement IDs without losing, duplicating, or reordering content.
   Several sessions MAY link the same root while keeping separate reading
   positions. Linking MUST NOT copy files, mount a remote folder, activate an
   agent, or send a prompt.
+- The session Knowledge API MAY create or select a dedicated folder by a
+  relative path under the session's unchanged cwd. Path mode MUST resolve and
+  create the folder on the session's owning computer, MUST NOT accept an
+  absolute path or another computer, and MUST reject traversal, hidden or
+  sensitive segments, symbolic links, and resolved escapes. Creation MUST use
+  verified no-follow directory handles so a concurrent cwd or ancestor
+  replacement cannot redirect a new segment outside confinement. The response
+  MUST expose the canonical absolute Knowledge base path and persist the
+  canonical owner-returned session cwd as its confinement. Every later read
+  through a path-created root MUST atomically resolve and verify that the root
+  remains a non-symlinked descendant of that cwd before resolving the requested
+  entry.
+  File reads MUST open the resolved entry without following a replacement
+  symbolic link and verify the opened file identity before reading content.
+  Paired nodes MUST acknowledge that they applied this confinement; the hub
+  MUST reject a confined response from an older or rolled-back node that omits
+  that acknowledgment. Confined roots and their confinement metadata MUST
+  persist outside the catalog file earlier hub releases read, so a rolled-back
+  hub hides them instead of serving them unconfined, and upgrading again
+  restores them. A confinement added to an existing catalog root MUST be
+  recoverable across restart: retain it only when a path-mode binding for the
+  claimed root ID and root path exists at the exact committed revision,
+  otherwise roll it back. Finalization MUST promote only the claim token
+  associated with that binding commit. Before a later update advances the
+  binding revision, any pending claim proven by the current durable binding
+  MUST be finalized. Session replacement and deletion MUST also finalize a
+  matching committed claim before moving or removing its binding. Creation
+  rollback MUST NOT remove a pathname after only a prior identity check; when
+  identity-bound directory removal is unavailable, it MUST retain a randomized
+  quarantine rather than risk deleting a replacement.
+- Path-first updates MUST use the same persisted revision and replacement
+  lineage as catalog-root updates. Saving the same current folder MUST be a
+  no-op. Active, suspended, and historical sessions MUST be handled passively;
+  changing Knowledge MUST NOT open or resume them. Persisted reads MAY succeed
+  while the owner is offline, but path validation or creation MUST fail
+  explicitly until the owner is reachable. If catalog finalization fails after
+  the binding commit, the API MUST return `503` with the committed binding so
+  callers continue from its revision instead of retrying stale input.
 - A session MAY root its Knowledge tree at a nested folder inside a shared
   root. The nested path MUST persist with the hub-side session association and
+  MUST use the canonical path returned by the owning computer's listing, not a
+  caller-supplied symbolic-link alias. The nested path MUST
   become the true top of that session's tree: parent folders above it MUST NOT
   appear in scoped list, file, breadcrumb, or relative-link responses.
 - Choosing a shared root or the session folder MUST open a recursive subfolder
@@ -1607,9 +1647,15 @@ clear replacement IDs without losing, duplicating, or reordering content.
   from a session that has never had an association.
 - Choosing a root MUST allow any folder on the owning computer that the user can
   read, not only the home directory. Session working directories remain
-  confined; a root is read-only.
+  confined; a root is read-only. Legacy unconfined roots MUST still pass
+  through readable-directory validation so missing or unreadable roots return
+  mapped client errors. An older paired node that lacks the standalone
+  validation endpoint MAY use its legacy unconfined listing path; confined
+  roots MUST continue to fail closed without capability acknowledgment.
 - A root MUST be validated on its owning computer, and every path browsed under
-  it MUST stay inside it.
+  it MUST stay inside it. Catalog and session root snapshots MUST persist the
+  canonical path returned by the owning computer rather than an alias or
+  symbolic-link spelling supplied by the caller.
 - Validation and pending Knowledge responses MUST belong to the same pairing
   lifetime that requested them. Re-pairing the same computer ID MUST NOT revive
   old responses or make a stale validation create a root.

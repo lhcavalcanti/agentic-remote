@@ -411,9 +411,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 219,
+  "communities": 222,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19752,
+  "edges": 19766,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -452,7 +452,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "35f2913a3fba9bc7a762c50f82d95086a0476474d7e945a27707f327d7ea1674",
+    "docs/app-spec.md": "bcbde13f09f3e855dfb4750953532f0df93d7453b2e6a2675feb8430f7c7cf95",
     "docs/architecture.md": "5cf48ead513dfe86e5f217f7ce041af55d0eb4cfea7afe6cd73cf4ee270036ea",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -824,8 +824,8 @@
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
     "src/MermaidDiagram.test.tsx": "db09c107f11b4c5f22c69cc6f8d50ae6bcc25944ec5601a535986122f5dc1281",
     "src/MermaidDiagram.tsx": "98849de396761797dad407e96ea609fe233756b156462b349150fbb6f69f16a2",
-    "src/MessageTime.test.tsx": "fce0ccf86acee00988bfe91c4439070183c9f2e07770668157cdedcae9829008",
-    "src/MessageTime.tsx": "be8b8f4b43794a2818916d7252ff2fb9d5471bf9bbfe88bb616ff602d4debf2b",
+    "src/MessageTime.test.tsx": "1213cf06d48e39a9d71952d971e2d74f214085b0db40271024114ef829efefd7",
+    "src/MessageTime.tsx": "f01bd1e9c20588c003f064e1c372f36d61994847b21f0a40293d98362eb46692",
     "src/OracleDreamer.test.tsx": "90f0dce9435d85fc3868d9eaadd7067e6337ba00b25ef18ee3ccfba6a6fa29c3",
     "src/OracleDreamer.tsx": "ccf47d2af2261730f9f380e9922da05f1da0f96555b8ac5faf873252e1197ac0",
     "src/OracleSettings.test.tsx": "fd5875a1aba7542f20b8c9f6f2e51c04c541f231b651a3d97a0d252db5f852ca",
@@ -874,7 +874,7 @@
     "src/manager-links.ts": "61b6fe1aa0ce6417e58460bce50633134c2f2dd285dc12bf9c6e8da4420de8ba",
     "src/markdown-navigation.test.ts": "ef1b269f0ae605971bdfb90f40f30794293aed8db1c5ac576974427ab59cea66",
     "src/markdown-navigation.ts": "a4d36d43d890adfec78fa97a6326c0401d38ea8d65402351ea8bf455b769c2ee",
-    "src/message-time.ts": "2f7915c3a3f4174ea2897598ff5a4932a40931546f9e7e094db9975213279553",
+    "src/message-time.ts": "942fce8834ac38214a7a468ed0b73d17a453af33203628ace943213855aa238d",
     "src/oracle-command.test.ts": "064e4384a800166225d877d1ac00c200fe6f1756015a4d391c3f057922568d42",
     "src/oracle-command.ts": "64d6ce265f041f55d03272b4e70855d6e541b58f978c19c315457f9591b3011a",
     "src/oracle-voice/bounded-queue.test.ts": "005d8b182dfe83dfdb7e0e9272fa6dfc668c494e2cbdd054821c77f5ae5ed053",
@@ -927,7 +927,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 7114,
+  "nodes": 7120,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1029,17 +1029,18 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7848208514f7e2a6d0ec770364dea8f1d886d31dcab0a317f82575ff8fcbb7be",
-    "communities.json": "b634cbcc2ae5f8d05dd7fed238754fbf667baf5efac4154556c3bfbfe7681cea",
-    "graph.html": "d4bc81be24e90758875616aeb856bf5e50d1db253f6d0091387154fb49617d57",
-    "graph.json": "6b9f139ddf6f4fc2ba8b66130aa90982ece9210751d95f0bbf06e95e6ec8e1c8"
+    "GRAPH_REPORT.md": "a9581665d3d9726e2e5091fa0dcc42d79bbed975359863d345d08ae76e1f405b",
+    "communities.json": "324bf36ac4b54a6aedd64d295baf572f4731622f167cdd515154eb11195f7582",
+    "graph.html": "0950eeb8e12de1d9fe3576873d4900719c449ebf278fafa9c3c1b99e17a36203",
+    "graph.json": "28e1cc1b21fb07ec9847600ad1ccdc239cf669621aa9692a690e84f3129f7211"
   },
   "schema_version": 1,
-  "source_commit": "85504bb61616571b65bacd44a4be774bf9717b0d",
-  "source_fingerprint": "d11514c3f8e79cbfe663a8e675004c3bb121050496674cc19c91061a13149bbc",
+  "source_commit": "1c2b2911ba28812dc9528ba9357e79073fc6d4c2",
+  "source_fingerprint": "f7696cd26c295d89c121b23c19f4f624afc507101b36e0c97f6ad0a1a2cc3268",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "src/OracleSettings.test.tsx",
-    "src/use-oracle-settings.ts"
+    "src/MessageTime.test.tsx",
+    "src/MessageTime.tsx",
+    "src/message-time.ts"
   ]
 }

@@ -580,4 +580,76 @@ describe('ManagerProactiveCoordinator', () => {
       { kind: 'finished', revision: 3 },
     ])
   })
+
+  it('does not observe a lifecycle whose pairing is replaced while binding it', async () => {
+    const { coordinator, inbox, agent, setGeneration } = await fixture(await directory())
+    await coordinator.setEnabled(true)
+    const bind = inbox.bindComputer.bind(inbox)
+    vi.spyOn(inbox, 'bindComputer').mockImplementationOnce(async (...args) => {
+      const result = await bind(...args)
+      setGeneration('pairing-b')
+      return result
+    })
+    const observe = vi.spyOn(inbox, 'observe')
+
+    coordinator.handle(event(managed('error', 2)))
+    await coordinator.drain()
+
+    expect(observe).not.toHaveBeenCalled()
+    expect(inbox.pending(20)).toEqual([])
+    expect(agent.enqueueInternal).not.toHaveBeenCalled()
+  })
+
+  it('withholds evidence whose pairing is replaced while it is admitted', async () => {
+    const { coordinator, inbox, agent, setGeneration } = await fixture(await directory())
+    await coordinator.setEnabled(true)
+    const admit = inbox.observe.bind(inbox)
+    const observe = vi.spyOn(inbox, 'observe').mockImplementationOnce(async (value) => {
+      const result = await admit(value)
+      setGeneration('pairing-b')
+      return result
+    })
+
+    coordinator.handle(event(managed('error', 2)))
+    coordinator.handle(event(managed('running', 3)))
+    await coordinator.drain()
+
+    expect(observe).toHaveBeenCalledTimes(1)
+    expect(inbox.pending(20)).toEqual([])
+    expect(agent.enqueueInternal).not.toHaveBeenCalled()
+
+    coordinator.handle(event(managed('running', 1)))
+    coordinator.handle(event(managed('idle', 2)))
+    await coordinator.drain()
+
+    expect(inbox.pending(20)).toMatchObject([
+      { kind: 'finished', computerGeneration: 'pairing-b', revision: 2 },
+    ])
+  })
+
+  it('refuses outcomes for a batch whose pairing is replaced during the turn', async () => {
+    const { coordinator, inbox, agent, taskStore, setGeneration } =
+      await fixture(await directory())
+    await coordinator.setEnabled(true)
+    coordinator.handle(event(managed('error', 2)))
+    await coordinator.drain()
+    const message = agent.messages[0]!
+    setGeneration('pairing-b')
+
+    await expect(coordinator.recordProactiveOutcomes({
+      message,
+      outcomes: [{
+        kind: 'task',
+        eventIds: message.automatic!.eventIds!,
+        title: 'Run the focused queue test',
+        summary: 'The queue regression needs execution.',
+        nextAction: 'Start a session and run the focused queue test.',
+        owner: 'oracle',
+        executionPrompt: 'Reproduce the queue regression and run its focused test.',
+      }],
+    })).rejects.toMatchObject({ statusCode: 409 })
+
+    expect(taskStore.snapshot().tasks).toEqual([])
+    expect(inbox.pending(20)).toEqual([])
+  })
 })

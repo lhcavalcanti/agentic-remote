@@ -266,7 +266,7 @@ export class ManagerProactiveCoordinator {
         )
       }
       const pendingById = new Map(
-        this.inbox.pending(20).map((event) => [event.id, event]),
+        (await this.livePendingEvents()).map((event) => [event.id, event]),
       )
       if (eventIds.some((id) => !pendingById.has(id))) {
         throw Object.assign(
@@ -383,6 +383,37 @@ export class ManagerProactiveCoordinator {
     )
   }
 
+  private isLivePairing(
+    scope: { computerId: string; computerGeneration: string },
+  ): boolean {
+    return this.generations().get(scope.computerId) === scope.computerGeneration
+  }
+
+  /**
+   * Pending evidence Oracle may receive or record. Evidence admitted before
+   * its pairing was replaced would scope Oracle to the replacement, so binding
+   * the live pairing first supersedes it; anything replaced again meanwhile is
+   * withheld until the next read. Each computer is rebound at most once.
+   */
+  private async livePendingEvents(): Promise<ManagerProactiveInboxEvent[]> {
+    const rebound = new Set<string>()
+    for (;;) {
+      const generations = this.generations()
+      const events = this.inbox.pending(20)
+      const replaced = events.filter((event) => {
+        const live = generations.get(event.computerId)
+        return live !== undefined && live !== event.computerGeneration
+      })
+      const next = replaced.find(({ computerId }) => !rebound.has(computerId))
+      if (!next) return events.filter((event) => !replaced.includes(event))
+      rebound.add(next.computerId)
+      await this.inbox.bindComputer(
+        next.computerId,
+        generations.get(next.computerId)!,
+      )
+    }
+  }
+
   private async reconcileCurrentSessions(): Promise<void> {
     if (!this.listSessions) return
     const generations = this.generations()
@@ -397,13 +428,13 @@ export class ManagerProactiveCoordinator {
     pending: readonly SessionLifecycle[],
   ): Promise<void> {
     if (pending.length === 0) return
-    const generations = this.generations()
     const registry = this.registry()
     for (const lifecycle of pending) {
       const { computerGeneration } = lifecycle
       // A session read under a since-replaced pairing must not set the new
       // pairing's revision cursor, and the inbox refuses a retired binding.
-      if (generations.get(lifecycle.computerId) !== computerGeneration) continue
+      // A pairing can be replaced during any await, so each one rechecks it.
+      if (!this.isLivePairing(lifecycle)) continue
       const origin = registry[lifecycle.key]?.origin ?? 'discovered'
       const seen = this.observed.get(lifecycle.key)
       const current = seen?.computerGeneration === computerGeneration
@@ -418,6 +449,7 @@ export class ManagerProactiveCoordinator {
         continue
       }
       await this.inbox.bindComputer(lifecycle.computerId, computerGeneration)
+      if (!this.isLivePairing(lifecycle)) continue
       const { key, signature, ...state } = lifecycle
       const result = await this.inbox.observe({
         ...state,
@@ -442,7 +474,7 @@ export class ManagerProactiveCoordinator {
       (message.state === 'queued' || message.state === 'running')
     )
     if (active) return
-    const events = this.inbox.pending(20)
+    const events = await this.livePendingEvents()
     if (events.length === 0) return
     const message = await this.agent.enqueueInternal({
       id: batchMessageId(events),

@@ -18,7 +18,8 @@ future integration must explicitly supply:
   is read rather than when it is observed;
 - an owner-issued monotonic session revision;
 - a real adapter that owns observation cadence and calls `bindComputer` when a
-  pairing generation changes.
+  pairing generation changes, at the latest before pending evidence is
+  delivered or its outcomes are recorded.
 
 Without those authorities the inbox must remain unused.
 

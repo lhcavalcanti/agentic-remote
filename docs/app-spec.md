@@ -910,7 +910,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   controls MUST reject internal task messages so task identity cannot diverge.
 - Proactive Oracle turns MUST limit session listing, transcript reads and side
   questions to the exact computer/session identities admitted in their current
-  durable event batch. Terminal manager-message reconciliation MUST use exact
+  durable event batch. Evidence whose pairing was replaced after admission
+  MUST be superseded before Oracle receives a batch or records its outcomes.
+  Terminal manager-message reconciliation MUST use exact
   durable lookup rather than depending on the bounded public Oracle snapshot.
 - Every successful Dreamer or task mutation MUST return the reconciled
   authoritative plan, task, evidence and available action projection in that
@@ -936,7 +938,7 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
     sweep the proactive lifecycle inbox with it so a missed transition is
     admitted once. A lifecycle MUST carry the computer generation read before
     its listing or with its event, and MUST be skipped once that pairing is
-    replaced.
+    replaced, rechecked before each inbox write.
   - A failed refresh MUST show a safe error, retry at the next interval and
     leave the morning plan alone. Disable, stop and storage failure MUST stop
     the refresh, fence any in-flight one and clear the cache.

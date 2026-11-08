@@ -7811,6 +7811,10 @@ function App() {
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const attachmentQueueRef = useRef<Promise<void> | undefined>(undefined)
+  // Attachment work with no composer row yet: a file being fingerprinted or
+  // waiting its turn, or audio being transcribed. A queued edit's baseline is
+  // the rows, so whatever this work adds during a rewrite is discarded with it.
+  const pendingAttachmentIntakeRef = useRef(0)
   const composerAttachmentsRef = useRef<
     Record<string, ComposerAttachment[]>
   >(composerAttachments)
@@ -14162,7 +14166,9 @@ function App() {
         const file = new File(chunks, `recording.${extension}`, {
           type: mimeType,
         })
+        const releaseIntake = holdAttachmentIntake()
         void queueAttachmentWork(() => transcribeFile(file, targetSession))
+          .then(releaseIntake, releaseIntake)
       })
       recorder.addEventListener('error', () => {
         releaseRecording()
@@ -14271,6 +14277,7 @@ function App() {
       File,
       { message: string; retryable: boolean }
     >(),
+    releaseIntake?: () => void,
   ) {
     const targetKey = sessionKey(targetSession)
     const liveKey = followReplacementsRef.current(targetKey)
@@ -14333,6 +14340,10 @@ function App() {
         [ownerKey]: [...(current[ownerKey] || []), ...attachments],
       }))
     }
+    // Every file now has its row. Audio has none and holds until transcribed.
+    if (!work.some((item) => item.audio)) {
+      releaseIntake?.()
+    }
     for (const item of work) {
       if (item.audio) {
         try {
@@ -14376,6 +14387,17 @@ function App() {
     return tracked
   }
 
+  function holdAttachmentIntake(): () => void {
+    pendingAttachmentIntakeRef.current += 1
+    let held = true
+    return () => {
+      if (held) {
+        held = false
+        pendingAttachmentIntakeRef.current -= 1
+      }
+    }
+  }
+
   function attachedFiles(
     files: File[],
     targetSession: ManagedSession | undefined = selected,
@@ -14391,7 +14413,8 @@ function App() {
     if (deduplicateClipboard) {
       const ownerKey = followReplacementsRef.current(sessionKey(targetSession))
       const now = Date.now()
-      return queueAttachmentWork(async () => {
+      const releaseIntake = holdAttachmentIntake()
+      const work = queueAttachmentWork(async () => {
         setUploadingFile(true)
         try {
           const preflightErrors = new Map<
@@ -14455,16 +14478,25 @@ function App() {
               queuedFiles,
               targetSession,
               preflightErrors,
+              releaseIntake,
             )
           }
         } finally {
           setUploadingFile(false)
         }
       })
+      void work.then(releaseIntake, releaseIntake)
+      return work
     }
-    return files.length > 0
-      ? queueAttachmentWork(() => processAttachedFiles(files, targetSession))
-      : Promise.resolve()
+    if (files.length === 0) {
+      return Promise.resolve()
+    }
+    const releaseIntake = holdAttachmentIntake()
+    const work = queueAttachmentWork(() =>
+      processAttachedFiles(files, targetSession, undefined, releaseIntake),
+    )
+    void work.then(releaseIntake, releaseIntake)
+    return work
   }
 
   function retryAttachment(attachment: ComposerAttachment): Promise<void> {
@@ -14591,6 +14623,18 @@ function App() {
     // Already rewriting this one. Starting again would put the queued text
     // back over whatever has been typed since.
     if (editingQueuedPromptId === prompt.id) {
+      return
+    }
+    // Work begun before the rewrite would otherwise land inside it with no
+    // row in its baseline, so canceling would discard it.
+    if (recording) {
+      setError('Stop recording before editing a queued message.')
+      return
+    }
+    if (pendingAttachmentIntakeRef.current > 0) {
+      setError(
+        'Wait for the attachment or transcription to finish before editing a queued message.',
+      )
       return
     }
     // Rewriting a different one, with changes that have not been saved.

@@ -412,9 +412,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 224,
+  "communities": 226,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19932,
+  "edges": 19935,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -453,7 +453,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "51a09c9b4e0a98b52efa180dfcc910cfeb2d4f8d882363a43439d531af14d499",
+    "docs/app-spec.md": "6588cb717c10655d453f766fa90d749c587501166c998466b22c73ce0a97fad3",
     "docs/architecture.md": "5cf48ead513dfe86e5f217f7ce041af55d0eb4cfea7afe6cd73cf4ee270036ea",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -809,8 +809,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "b26d2b62724706f7605b7e58f2d53df346da8cfc486e6e0f379343d4e1a8735b",
-    "src/App.tsx": "84baf48da5061538eb4093988752577981083b024a699fc29d2558d15145f1c7",
+    "src/App.test.tsx": "20ce2be58d507b54d02324443420735845017d0ee889661e3e014760399da5f0",
+    "src/App.tsx": "dbacfd9028482a1fab28f2bddf8d7576e7c5d14dce8a36342dbf5bd14b9d4ea2",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -929,7 +929,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 7164,
+  "nodes": 7165,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1031,17 +1031,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "bc56397a6b850cb1a9e6e1d84955a7e12abd1039e67196fb39b79b67b82164b8",
-    "communities.json": "59f10ee14eae3cfaad0f28288d9ac6198493e4e14f10174aa8846febb8e1e96d",
-    "graph.html": "28b51faeecbe0bef01143bcefc5b3906f99f2d70b1ff292bca7252835da245c6",
-    "graph.json": "daacb687d43ab10b86c2721c9218cb02f2c00923d3590ab78b9e8488fa9dd94d"
+    "GRAPH_REPORT.md": "47e1e57a1e50702f35d592c8c1abbfdb81e7a4ac946c651ec93056bbce06f1a2",
+    "communities.json": "4e06c0954bb958babcb9c4c320ea3b5d51dd4d567ffbd8ffadfd892f452fd8b3",
+    "graph.html": "5318de5f77e6c01bbdd39d81cf593a2bfaf920880e56eec695c8cfce4edc257d",
+    "graph.json": "9f9303671dd648fade8d1e6188054801d237844bfe9bd6f4ce6c4af51973a4b2"
   },
   "schema_version": 1,
-  "source_commit": "a3b7f43e0b34b83af62aff2a75ecf6cd00637368",
-  "source_fingerprint": "de9f2e3414a5fc3040d1362f41729bd6f8164ab13e531a8c4772b65527c65653",
+  "source_commit": "7bb3b5ee6762a4b3325c2752b5d4648dee9cdbc6",
+  "source_fingerprint": "3e2654247e40302bbc4d98e02b09d0c881a1f0134af6277bbc178338c788ea28",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "src/session-response-order.test.ts",
-    "src/session-response-order.ts"
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

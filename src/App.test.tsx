@@ -13756,6 +13756,137 @@ describe('App', () => {
     })).toHaveTextContent('Attached')
   })
 
+  const unsettledAttachmentError =
+    'Wait for the attachment or transcription to finish before editing a queued message.'
+
+  it('waits for a pasted file to be prepared before rewriting a queued message', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'preparing.pdf',
+      path: '/private/uploads/preparing.pdf',
+      size: 9,
+    })
+    await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    let finishHashing: (() => void) | undefined
+    const file = new File(['preparing'], 'preparing.pdf', {
+      type: 'application/pdf',
+      lastModified: 71,
+    })
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: () => new Promise<ArrayBuffer>((resolve) => {
+        finishHashing = () => resolve(new ArrayBuffer(9))
+      }),
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(finishHashing).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+
+    expect(await screen.findAllByText(unsettledAttachmentError)).not.toHaveLength(0)
+    expect(textarea).toHaveValue('')
+    await act(async () => finishHashing?.())
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/preparing.pdf`'),
+    )
+    expect(screen.getByRole('listitem', { name: 'preparing.pdf attachment' }))
+      .toHaveTextContent('Attached')
+  })
+
+  it('waits for pasted audio to be transcribed before rewriting a queued message', async () => {
+    let finishTranscription:
+      | ((value: { transcript: string; durationSeconds: number }) => void)
+      | undefined
+    vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+      finishTranscription = resolve
+    }))
+    await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['audio'], 'pre-edit.m4a', { type: 'audio/x-m4a', lastModified: 72 })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledWith(file))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+
+    expect(await screen.findAllByText(unsettledAttachmentError)).not.toHaveLength(0)
+    expect(textarea).toHaveValue('')
+    await act(async () => finishTranscription?.({
+      transcript: 'Spoken before the rewrite',
+      durationSeconds: 3,
+    }))
+    await waitFor(() => expect(textarea).toHaveValue('Spoken before the rewrite'))
+    fireEvent.change(textarea, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    expect(textarea).toHaveValue('second original')
+  })
+
+  it('waits for a recording and its transcript before rewriting a queued message', async () => {
+    class MockMediaRecorder extends EventTarget {
+      static isTypeSupported = () => true
+      state: RecordingState = 'inactive'
+      mimeType = 'audio/mp4'
+
+      start() {
+        this.state = 'recording'
+      }
+
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(new BlobEvent('dataavailable', {
+          data: new Blob(['voice'], { type: this.mimeType }),
+        }))
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+    const originalMediaDevices = navigator.mediaDevices
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [] })) },
+    })
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder)
+    try {
+      await renderTargetedQueueSession()
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Start microphone recording' }))
+      await waitFor(() =>
+        expect(document.querySelector('.recording-panel')).toBeInTheDocument(),
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+
+      expect(await screen.findAllByText('Stop recording before editing a queued message.'))
+        .not.toHaveLength(0)
+      expect(textarea).toHaveValue('')
+      let finishTranscription:
+        | ((value: { transcript: string; durationSeconds: number }) => void)
+        | undefined
+      vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+        finishTranscription = resolve
+      }))
+      fireEvent.click(screen.getByRole('button', { name: /Stop & transcribe/ }))
+      await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+
+      expect(await screen.findAllByText(unsettledAttachmentError)).not.toHaveLength(0)
+      expect(textarea).toHaveValue('')
+      await act(async () => finishTranscription?.({
+        transcript: 'Recorded before the rewrite',
+        durationSeconds: 4,
+      }))
+      await waitFor(() => expect(textarea).toHaveValue('Recorded before the rewrite'))
+    } finally {
+      vi.unstubAllGlobals()
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: originalMediaDevices,
+      })
+    }
+  })
+
   it('keeps a pre-edit upload path when a restored queued edit is canceled', async () => {
     let finishUpload:
       | ((value: { name: string; path: string; size: number }) => void)

@@ -1419,8 +1419,11 @@ If provider lookup fails before a query is registered, its unstarted queued
 admission MUST be restored before completion cleanup can erase it. Refused
 restoration MUST retain durable recovery, and cleanup MUST preserve newer owners.
 Editing a queued prompt MUST leave the original in place until a save or
-dispatch is accepted. Desktop Enter and Save to queue update that exact item
-without moving it. When the owning provider advertises targeted dispatch,
+dispatch is accepted. Edit MUST be refused with a reason while recording, or
+while a file or audio added before it has no attachment row or transcript yet,
+so canceling the rewrite cannot discard that work. Desktop Enter and Save to
+queue update that exact item without moving it. When the owning provider
+advertises targeted dispatch,
 the explicit Send action MUST send the named item and its rewritten contents,
 not the queue head or a newly appended copy. Without that capability the UI
 MUST offer an explicitly labelled save, not pretend to send immediately.

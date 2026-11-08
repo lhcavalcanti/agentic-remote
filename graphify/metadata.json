@@ -453,7 +453,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "3c0b0a9ec1122915b61364be0f7f43674737a01d7ed0989611a855874a0205a9",
+    "docs/app-spec.md": "49f8628436ac412fd73043b75d4d1734896ce5823b0fe2b0877fb0a18e7a4eff",
     "docs/architecture.md": "5cf48ead513dfe86e5f217f7ce041af55d0eb4cfea7afe6cd73cf4ee270036ea",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -553,7 +553,7 @@
     "server/agent-service-recovery.test.ts": "283c05844eede60df88dbefd2a7ce87824f69c8f10cd872796e54edfe898686d",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "28da4ef3334dca8621b7c2eb2e4f2105d192e1c77c68bf3c4b43c4a2e4a47473",
-    "server/agent-service.ts": "972cfbc98fec8cae67c9d470f81c57e1a14b473a3bfaf8a959a821dea032d842",
+    "server/agent-service.ts": "7ed133d8b1e1c1de6cebccc8e8bef040039e0f78cb698007fc7563fe42294776",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -686,7 +686,7 @@
     "server/recovery-context.test.ts": "a74af6cd288e8c848f78c2a7fc655a91f2af7a46aca03913ed6f4561b0e91bdd",
     "server/recovery-context.ts": "5893a9bf0e183e7ce5e6fcbf4526ec2077bfe6292e3e6f06ed45b03fc8e80725",
     "server/recovery-question-styles.test.ts": "a2b2670531022fefdad6728c3d1e0738c07d251f9d7e7207d599b01ddb11d0e8",
-    "server/recovery-resend-durability.test.ts": "74fb9ef9ff2a08fd2ecab8589e2af3df9fcf980fc7b70114ef40180ca333e60e",
+    "server/recovery-resend-durability.test.ts": "524ef9ef25ef2ba8d078366f595953a49f7193c56a32b58b9341e1322d73159b",
     "server/recovery-seed-guards.test.ts": "160e953bd4df95e34fceef919508b17ba88f5687d978cf2aa8adf4d5cb44a3b2",
     "server/recovery-seed-legacy-fixture.ts": "9826186c940ebbb4c420fc209d23815ccbb43b1468cd9f676c554cde6730952f",
     "server/refusal-metrics-routes.test.ts": "afcae904aa0fb761b78f86cae031982d391068c84b5fdbe404adc953e89a4ce0",
@@ -774,7 +774,7 @@
     "shared/app-version.ts": "5ba68ef40e41824d0f07d2fb249c10b03c1d43eb725eb72013905915040426c4",
     "shared/background-tasks.test.ts": "3131431dcbef01792829a34b05f91ac4b35b300985ce2c6b50ed07fa792f6952",
     "shared/background-tasks.ts": "036fa83d6a98b57821ec71950eb9b12dbf27691101f2f73ae15b3d434cac9bc9",
-    "shared/contracts.ts": "0a2445eb7f27e781f4dbc6bdd441aa1e8283d4d7d408e8a514d412bfab88ae3d",
+    "shared/contracts.ts": "ae7a39e6b7518a95e4c0e5305d09203127d6749773f71f990eaca1d473a84a6f",
     "shared/dreamer.ts": "8a1095260e58e1cbecaa1b4ae6b8710de6bb511d6a091868bc98af9c6df9653c",
     "shared/knowledge-path.test.ts": "15098028846e142e15c4e55b2d468a3f3f4c91aa977997bc1649f3811ebaa0b0",
     "shared/knowledge-path.ts": "2e4446b91bb6038d742452916d3f360b3af6e878859f0188c74a6e67ab900b45",
@@ -809,8 +809,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "a2c1a097d24e2e4e6dc97b093e6ad68371d8fe9624a43772ce342ecb6ce0ac1d",
-    "src/App.tsx": "0f005dfde925f7cd2c84a960a4c1e81030a7a83c88403d5272247373b0082184",
+    "src/App.test.tsx": "b26d2b62724706f7605b7e58f2d53df346da8cfc486e6e0f379343d4e1a8735b",
+    "src/App.tsx": "84baf48da5061538eb4093988752577981083b024a699fc29d2558d15145f1c7",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -1031,18 +1031,20 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "649ef51baf0996f7c8d1ac988d71365abd6bc80c5da957aeefeb351134912f84",
+    "GRAPH_REPORT.md": "35a80286129659e7922c28373169eaeb0e57b115690861a11bef86d8fc151084",
     "communities.json": "59f10ee14eae3cfaad0f28288d9ac6198493e4e14f10174aa8846febb8e1e96d",
-    "graph.html": "be13fecf6b1588500790975a7cb0f7c48a5da90f23a93813a7cf28d05b8f8d13",
-    "graph.json": "36f874087cd59ed006cadad64b9bbd6a76e8213a1dc46f564e5bccf7aa3b5dd9"
+    "graph.html": "b9302bf009e67c9d890f06152359c24d29856deb5d675a29d11e2b40bb6478b0",
+    "graph.json": "2454b480fb2ce4d302e99aa78467a568cf22d386c1affcba25b1143b619e71bb"
   },
   "schema_version": 1,
-  "source_commit": "f73f0f5082894b02b827aaac160af7360b45c1b9",
-  "source_fingerprint": "69fed7d47aff63de37244dc96a8f44d79db52290204d1484a15d31a354332e2b",
+  "source_commit": "e8b3a7a70ad0a402c3e4564b6cf70e71df94834a",
+  "source_fingerprint": "a293c1b1a486d7b6a965657bec2788e636c4325acae77bd3130fc1b5a33201fc",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "src/MessageTime.test.tsx",
-    "src/MessageTime.tsx",
-    "src/message-time.ts"
+    "server/agent-service.ts",
+    "server/recovery-resend-durability.test.ts",
+    "shared/contracts.ts",
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

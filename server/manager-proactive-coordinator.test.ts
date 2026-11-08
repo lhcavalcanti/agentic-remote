@@ -11,7 +11,10 @@ import type {
   ManagerSnapshot,
 } from '../shared/manager.js'
 import { ManagerProactiveCoordinator } from './manager-proactive-coordinator.js'
-import { ManagerProactiveInbox } from './manager-proactive-inbox.js'
+import {
+  ManagerProactiveInbox,
+  type ManagerProactiveInboxOptions,
+} from './manager-proactive-inbox.js'
 import { registryKey, type ManagerRegistry } from './manager-store.js'
 import { OracleTaskStore } from './oracle-task-store.js'
 
@@ -112,15 +115,24 @@ class FakeAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   }
 }
 
-async function fixture(root: string, agent = new FakeAgent()) {
+async function fixture(
+  root: string,
+  agent = new FakeAgent(),
+  inboxOptions: Pick<
+    ManagerProactiveInboxOptions,
+    'now' | 'terminalEventRetentionMs'
+  > = {},
+) {
   const inbox = new ManagerProactiveInbox(path.join(root, 'inbox'), {
     enabled: true,
     hubId: 'hub-a',
+    ...inboxOptions,
   })
   const taskStore = new OracleTaskStore(path.join(root, 'tasks'), {
     hubId: 'hub-a',
   })
   let current = managed('running', 1)
+  let generation = 'pairing-a'
   const registry: ManagerRegistry = {
     [registryKey('computer-a', 'session-a')]: {
       computerId: 'computer-a',
@@ -140,7 +152,7 @@ async function fixture(root: string, agent = new FakeAgent()) {
       name: 'development',
       isLocal: true,
       online: true,
-      lifecycleGeneration: 'pairing-a',
+      lifecycleGeneration: generation,
     }],
     registry: () => registry,
     listSessions: async () => [current],
@@ -154,6 +166,9 @@ async function fixture(root: string, agent = new FakeAgent()) {
     agent,
     setCurrent(session: ManagedSession) {
       current = session
+    },
+    setGeneration(value: string) {
+      generation = value
     },
   }
 }
@@ -440,5 +455,98 @@ describe('ManagerProactiveCoordinator', () => {
 
     expect(harness.coordinator.isEnabled()).toBe(false)
     expect(harness.agent.proactiveEnabled.at(-1)).toBe(false)
+  })
+
+  it('records only lifecycle changes, not every streamed revision', async () => {
+    const { coordinator, inbox } = await fixture(await directory())
+    await coordinator.setEnabled(true)
+    const observe = vi.spyOn(inbox, 'observe')
+    const transcript = Array.from({ length: 50 }, (_, index) => ({
+      id: `m-${index}`,
+      role: 'assistant' as const,
+      content: 'streamed '.repeat(100),
+      createdAt: '2026-11-06T03:00:00.000Z',
+    }))
+    for (let revision = 2; revision <= 200; revision += 1) {
+      coordinator.handle(event({ ...managed('running', revision), messages: transcript }))
+    }
+    const finished = managed('idle', 201)
+    coordinator.handle(event(finished))
+    // The event is observed as it was delivered, not as later mutated.
+    finished.status = 'running'
+
+    await coordinator.drain()
+
+    expect(observe).toHaveBeenCalledTimes(1)
+    expect(inbox.pending(20)).toEqual([
+      expect.objectContaining({ kind: 'finished', revision: 201 }),
+    ])
+  })
+
+  it('prunes acknowledged evidence past retention after recording outcomes', async () => {
+    let clock = Date.parse('2026-11-06T03:00:00.000Z')
+    const { coordinator, inbox, agent } = await fixture(
+      await directory(),
+      new FakeAgent(),
+      { now: () => new Date(clock), terminalEventRetentionMs: 1_000 },
+    )
+    await coordinator.setEnabled(true)
+    const answer = async () => {
+      await coordinator.drain()
+      const message = agent.messages.at(-1)!
+      await coordinator.recordProactiveOutcomes({
+        message,
+        outcomes: [{
+          kind: 'no-action',
+          eventIds: message.automatic!.eventIds!,
+          reason: 'Expected failure.',
+        }],
+      })
+      message.state = 'done'
+    }
+    coordinator.handle(event(managed('error', 2)))
+    await answer()
+    clock += 1_001
+    coordinator.handle(event(managed('running', 3)))
+    coordinator.handle(event(managed('error', 4)))
+    await answer()
+
+    await expect(inbox.prune()).resolves.toEqual({ pruned: 0 })
+  })
+
+  it('observes a change between two identical lifecycles', async () => {
+    const { coordinator, inbox } = await fixture(await directory())
+    await coordinator.setEnabled(true)
+    const waiting = (revision: number, requestId: string): ManagedSession => ({
+      ...managed('waiting', revision),
+      pendingPermission: { requestId, title: 'Run tests?', options: [] },
+    })
+
+    coordinator.handle(event(waiting(2, 'request-1')))
+    coordinator.handle(event(managed('running', 3)))
+    coordinator.handle(event(waiting(4, 'request-2')))
+    coordinator.handle(event(waiting(5, 'request-2')))
+    await coordinator.drain()
+
+    expect(inbox.pending(20)).toMatchObject([
+      { kind: 'blocked', taskGeneration: 1, revision: 2 },
+      { kind: 'blocked', taskGeneration: 2, revision: 4 },
+    ])
+  })
+
+  it('observes a re-paired computer afresh at a lower revision', async () => {
+    const { coordinator, inbox, setGeneration } = await fixture(await directory())
+    await coordinator.setEnabled(true)
+    coordinator.handle(event(managed('running', 50)))
+    await coordinator.drain()
+
+    setGeneration('pairing-b')
+    coordinator.handle(event(managed('running', 2)))
+    coordinator.handle(event(managed('idle', 3)))
+    await coordinator.drain()
+
+    expect(inbox.pending(20)).toMatchObject([
+      { kind: 'finished', revision: 3 },
+    ])
   })
 })

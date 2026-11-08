@@ -1091,6 +1091,88 @@ describe('DreamerService', () => {
     expect(service.snapshot().tasks![0]).toMatchObject({ status: 'queued' })
   })
 
+  it.each([
+    {
+      state: 'done' as const,
+      before: 'blocked',
+      after: {
+        status: 'blocked',
+        error: 'Oracle did not attach an execution session with verified results.',
+      },
+    },
+    {
+      state: 'running' as const,
+      before: 'running',
+      after: {
+        status: 'failed',
+        error: expect.stringContaining('left the Oracle conversation'),
+      },
+    },
+  ])(
+    'never re-dispatches a $before attempt whose dispatch left the conversation',
+    async ({ state, before, after }) => {
+      const directory = await root()
+      const now = () => new Date('2026-10-29T04:00:00.000Z')
+      const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+      await taskStore.initialize()
+      const task = await taskStore.upsertFinding({
+        sourceEventIds: ['d'.repeat(64)],
+        title: 'Investigate the stalled queue',
+        summary: 'Oracle dispatched this before Start over.',
+        nextAction: 'Run the focused queue test.',
+        owner: 'oracle',
+        executionPrompt: 'Run the focused queue test.',
+      })
+      await taskStore.beginAttempt({
+        revision: task.revision,
+        taskId: task.id,
+        requestId: '2f0b8f8e-8b8f-4f0e-9c55-3f4a8f8e8b8f',
+        managerMessageId: 'task-attempt-start-over',
+      })
+      const managerMessages: ManagerMessage[] = [{
+        id: 'task-attempt-start-over',
+        role: 'user',
+        content: 'Run the focused queue test.',
+        createdAt: now().toISOString(),
+        state,
+      }]
+      const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      })
+      const service = new DreamerService(directory, options(now, {
+        taskStore,
+        enqueueManagerTask,
+        managerMessages: () => managerMessages,
+      }))
+      await service.initialize()
+      await service.reconcileTasks()
+      expect(service.snapshot().tasks![0]!.attempts[0]).toMatchObject({ status: before })
+
+      // Start over, or trimming the conversation, removes the dispatch.
+      managerMessages.length = 0
+      await service.reconcileTasks()
+      await service.reconcileTasks()
+
+      expect(enqueueManagerTask).not.toHaveBeenCalled()
+      const settled = service.snapshot().tasks![0]!
+      expect(settled).toMatchObject({ status: after.status, attempts: [after] })
+
+      await service.dispatchTask({
+        revision: settled.revision,
+        taskId: task.id,
+        requestId: '6c1d2f4e-2a7b-4c3d-8e9f-0a1b2c3d4e5f',
+      })
+      expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    },
+  )
+
   it('links carried suggestions to one durable task and replays investigation idempotently', async () => {
     const directory = await root()
     const now = () => new Date('2026-10-29T04:00:00.000Z')

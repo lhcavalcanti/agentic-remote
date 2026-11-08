@@ -1330,27 +1330,9 @@ export class ManagerProactiveInbox {
     this.requireInitialized()
     if (!this.enabled) return Promise.resolve({ pruned: 0 })
     return this.commit<ManagerProactiveInboxPruneResult>((candidate) => {
-      const cutoff = this.now().valueOf() - this.limits.terminalEventRetentionMs
-      if (!Number.isFinite(cutoff)) {
-        throw new ManagerProactiveInboxPersistenceError(
-          'The proactive inbox clock returned an invalid time.',
-        )
-      }
-      const retained = candidate.events.filter(
-        (event) =>
-          event.lifecycle === 'pending' ||
-          new Date(event.acknowledgedAt as string).valueOf() >= cutoff,
-      )
-      const pruned = candidate.events.length - retained.length
-      if (pruned === 0) {
-        return {
-          changed: false,
-          value: { pruned: 0 },
-        }
-      }
-      candidate.events = retained
+      const pruned = this.dropExpiredEvents(candidate)
       return {
-        changed: true,
+        changed: pruned > 0,
         value: { pruned },
       }
     })
@@ -1358,6 +1340,24 @@ export class ManagerProactiveInbox {
 
   failureReason(): string | undefined {
     return this.failure?.message
+  }
+
+  /** Drops terminal events acknowledged before the retention window. */
+  private dropExpiredEvents(candidate: PersistedState): number {
+    const cutoff = this.now().valueOf() - this.limits.terminalEventRetentionMs
+    if (!Number.isFinite(cutoff)) {
+      throw new ManagerProactiveInboxPersistenceError(
+        'The proactive inbox clock returned an invalid time.',
+      )
+    }
+    const retained = candidate.events.filter(
+      (event) =>
+        event.lifecycle === 'pending' ||
+        new Date(event.acknowledgedAt as string).valueOf() >= cutoff,
+    )
+    const dropped = candidate.events.length - retained.length
+    candidate.events = retained
+    return dropped
   }
 
   private createEvent(
@@ -1384,6 +1384,10 @@ export class ManagerProactiveInbox {
       throw new ManagerProactiveInboxCapacityError(
         'The proactive inbox pending event capacity was reached.',
       )
+    }
+    if (candidate.events.length >= this.limits.maxEventRecords) {
+      // Room comes only from evidence past retention, never retained evidence.
+      this.dropExpiredEvents(candidate)
     }
     if (candidate.events.length >= this.limits.maxEventRecords) {
       throw new ManagerProactiveInboxCapacityError(

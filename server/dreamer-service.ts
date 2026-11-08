@@ -1414,6 +1414,17 @@ export class DreamerService {
       } else if (managerMessage?.state === 'done') {
         status = 'blocked'
         error = 'Oracle did not attach an execution session with verified results.'
+      } else if (!managerMessage && attempt.status === 'running') {
+        // Start over, or trimming the conversation, removed the dispatch.
+        // Only a queued attempt is re-enqueued; anything else waits for Retry.
+        status = 'failed'
+        error = 'The dispatch left the Oracle conversation before it finished; retry to run it again.'
+      } else if (
+        !managerMessage &&
+        (attempt.status === 'blocked' || attempt.status === 'review')
+      ) {
+        status = attempt.status
+        error = attempt.error
       }
       const latest = this.taskStore.snapshot().tasks.find(({ id }) => id === task.id)
       if (!latest) continue

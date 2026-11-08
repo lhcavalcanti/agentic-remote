@@ -98,8 +98,10 @@ refuses a full fence capacity instead of evicting history. Retained cursors
 fence duplicate revisions within the current generation, and strict load
 validation rejects impossible event/cursor relationships, including pending
 events from retired generations and multiple outcomes for one task generation.
-Terminal records are retained until explicit pruning, while retired fences and
-cursors remain available to prevent replay.
+Terminal records are kept for 7 days after acknowledgment. The hub prunes older
+ones after recording proactive outcomes, and an admission at the 10,000-record
+bound first drops them rather than refusing; retained evidence is never
+evicted. Retired fences and cursors remain available to prevent replay.
 
 Disabled instances perform no filesystem I/O or timer work. This module has
 no timer and no runtime application path in this increment.

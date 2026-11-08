@@ -881,7 +881,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   inbox acknowledgement or execution dispatch, use idempotent request IDs, and
   retain attempt history, linked execution sessions, bounded tool/test evidence
   and explicit failure or blocked reasons. A queued or running attempt MUST NOT
-  be duplicated by another dispatch. Refresh, startup, manager updates and
+  be duplicated by another dispatch. If an attempt's dispatch message leaves
+  the Oracle conversation (Start over, or the 1,000-message bound), only a
+  still-queued attempt MAY be dispatched again with the same identity; a
+  running one fails until **Retry**, and a blocked or in-review one keeps its
+  state. Refresh, startup, manager updates and
   session updates MUST reconcile task state without polling or a second wake
   endpoint. A failed Oracle manager turn MUST NOT make a task retryable while
   an authoritatively linked execution session is still running.

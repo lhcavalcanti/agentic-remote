@@ -2012,6 +2012,10 @@ describe('Review 5125727881 runtime boundaries', () => {
     expect(context.service['recoveryClaims'].get(token)?.accepted).toBe(true)
     expect((await context.persisted()).sessions[sessionId].recoveryResend.accepted).toBe(true)
     expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+    expect(context.service.getSession(sessionId)?.recoveryAcknowledgementPending).toBe(true)
+    context.refuseAcknowledgements(false)
+    await vi.waitFor(() => expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined())
+    expect(context.service.getSession(sessionId)?.recoveryAcknowledgementPending).toBeUndefined()
   })
 
   it('marks the linked claim even if a caller forwards a separate delivery-boundary object', async () => {
@@ -2088,6 +2092,7 @@ describe('Review 5125727881 runtime boundaries', () => {
     expect(context.service['recoveryClaims'].size).toBe(0)
     expect(context.service.store.recoveryResend(sessionId)?.accepted).toBe(true)
     expect(context.service.getSession(sessionId)?.failedPrompt).toBeUndefined()
+    expect(context.service.getSession(sessionId)?.recoveryAcknowledgementPending).toBe(true)
   })
 
   it('does not re-advertise an obsolete accepted snapshot or hide a newer recovery', async () => {
@@ -2099,9 +2104,11 @@ describe('Review 5125727881 runtime boundaries', () => {
     context.refuseAcknowledgements(false)
     await vi.waitFor(() => expect(context.service.store.get(sessionId)?.failedPrompt).toBeUndefined())
     expect.soft(context.service['publicSession'](snapshot).failedPrompt).toBeUndefined()
+    expect(context.service['publicSession'](snapshot).recoveryAcknowledgementPending).toBeUndefined()
     const newer = { content: 'Newer unaccepted work', failedAt: 'newer-token', uncertain: true }
     await context.service.store.update(sessionId, (session) => { session.failedPrompt = newer })
     expect(context.service.getSession(sessionId)?.failedPrompt).toEqual(newer)
+    expect(context.service.getSession(sessionId)?.recoveryAcknowledgementPending).toBeUndefined()
     expect(context.service['publicSession'](snapshot).failedPrompt).toBeUndefined()
     expect(context.service.store.get(sessionId)?.failedPrompt).toEqual(newer)
   })

@@ -8454,6 +8454,7 @@ function App() {
     !selected.pendingUserInput &&
     !selected.pendingPermission &&
     !selected.failedPrompt &&
+    !selected.recoveryAcknowledgementPending &&
     !selected.queuedDispatch &&
     !selected.terminalQueueDispatchPending &&
     selected.queueState?.state !== 'error' &&

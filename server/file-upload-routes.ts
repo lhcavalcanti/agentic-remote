@@ -1,31 +1,14 @@
-import path from 'node:path'
 import type { FastifyInstance } from 'fastify'
+import {
+  MAX_SESSION_FILE_BYTES,
+  supportsSessionFile,
+} from '../shared/session-files.js'
 import { ComputerManager } from './computer-manager.js'
 
-export const MAX_SESSION_FILE_BYTES = 25 * 1024 * 1024
-
-const supportedExtensions = new Set([
-  '.csv',
-  '.doc',
-  '.docx',
-  '.gif',
-  '.jpeg',
-  '.jpg',
-  '.json',
-  '.kql',
-  '.md',
-  '.ofx',
-  '.pdf',
-  '.png',
-  '.qfx',
-  '.tsv',
-  '.txt',
-  '.webp',
-  '.xls',
-  '.xlsx',
-  '.yaml',
-  '.yml',
-])
+export {
+  MAX_SESSION_FILE_BYTES,
+  supportsSessionFile,
+} from '../shared/session-files.js'
 
 interface SessionParams {
   computerId: string
@@ -40,10 +23,6 @@ export class FileUploadError extends Error {
     super(message)
     this.name = 'FileUploadError'
   }
-}
-
-export function supportsSessionFile(filename: string): boolean {
-  return supportedExtensions.has(path.extname(filename).toLowerCase())
 }
 
 export async function registerFileUploadRoutes(

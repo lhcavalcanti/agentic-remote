@@ -1419,8 +1419,11 @@ If provider lookup fails before a query is registered, its unstarted queued
 admission MUST be restored before completion cleanup can erase it. Refused
 restoration MUST retain durable recovery, and cleanup MUST preserve newer owners.
 Editing a queued prompt MUST leave the original in place until a save or
-dispatch is accepted. Desktop Enter and Save to queue update that exact item
-without moving it. When the owning provider advertises targeted dispatch,
+dispatch is accepted. Edit MUST be refused with a reason while recording, or
+while a file or audio added before it has no attachment row or transcript yet,
+so canceling the rewrite cannot discard that work. Desktop Enter and Save to
+queue update that exact item without moving it. When the owning provider
+advertises targeted dispatch,
 the explicit Send action MUST send the named item and its rewritten contents,
 not the queue head or a newly appended copy. Without that capability the UI
 MUST offer an explicitly labelled save, not pretend to send immediately.
@@ -1530,7 +1533,19 @@ clear replacement IDs without losing, duplicating, or reordering content.
 
 ### 7.1 Documents
 
-- Multiple selected or dropped files MUST process in selection order.
+- Multiple selected, dropped, or pasted files MUST process in source order.
+- When a clipboard event exposes one or more `File` objects, paste MUST attach
+  those files and MUST NOT insert clipboard fallback text into the composer.
+  Text-only clipboard content MUST retain the normal short- and long-paste
+  behavior.
+- Each attachment MUST show its filename, size, and upload state. A failed
+  upload MUST remain available for retry; removing a completed attachment MUST
+  remove its exact draft reference. The stored upload remains session-owned and
+  is removed by the existing clear or delete cleanup.
+- Pasted files are available only when the browser exposes them through
+  `ClipboardEvent`/`DataTransfer`. The app cannot read arbitrary filesystem
+  paths or files copied by browsers that provide text only, so the file picker
+  MUST remain available as the fallback.
 - Supported documents include PDF, CSV/TSV, Kusto Query Language (`.kql`),
   Excel, Word, Markdown, text, JSON/YAML, OFX/QFX, and common images.
 - Maximum file size is 25 MiB.

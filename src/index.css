@@ -4796,6 +4796,84 @@ button {
   display: none;
 }
 
+.composer-attachments {
+  display: grid;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  gap: 6px;
+  list-style: none;
+}
+
+.composer-attachment {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--panel-raised);
+}
+
+.composer-attachment--failed {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border-strong));
+}
+
+.composer-attachment__details {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.composer-attachment__details strong,
+.composer-attachment__details small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-attachment__details strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.composer-attachment__details small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.composer-attachment--failed .composer-attachment__details small {
+  color: var(--danger);
+}
+
+.composer-attachment__action {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  place-items: center;
+  color: var(--muted);
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.composer-attachment__action:hover:not(:disabled),
+.composer-attachment__action:focus-visible {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.composer-attachment__action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /*
  * A pointer can hit a small target, so the actions sit inside the text panel
  * rather than occupying a second full-width bar of their own. Touch keeps the
@@ -4829,6 +4907,11 @@ button {
     border-radius: 0;
     background: transparent;
     box-shadow: none;
+  }
+
+  .composer > .composer-attachments {
+    flex: 1 0 100%;
+    padding: 7px 8px 0;
   }
 
   .composer > .composer-text-panel {

@@ -20,6 +20,7 @@ import type {
   ComputerSummary,
   KnowledgeRoot,
   ManagedSession,
+  QueuedPrompt,
   SessionKnowledgeBinding,
   ManagedSessionMcpServersSnapshot,
   ManagedSessionSkillsSnapshot,
@@ -6789,6 +6790,46 @@ describe('App', () => {
     },
   )
 
+  it('retires an attachment consumed by a local restart command', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'restart-note.pdf',
+      path: '/private/uploads/restart-note.pdf',
+      size: 4,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: '/restart' } })
+    const file = new File(['note'], 'restart-note.pdf', {
+      type: 'application/pdf',
+      lastModified: 68,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        '/restart\n\nAttached file: `/private/uploads/restart-note.pdf`',
+      ),
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'restart-note.pdf attachment',
+    })).toHaveTextContent('Attached')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(restartSession).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+      ),
+    )
+    expect(screen.queryByRole('listitem', {
+      name: 'restart-note.pdf attachment',
+    })).not.toBeInTheDocument()
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it('does not overwrite unreadable saved drafts while keeping new text editable', async () => {
     const original = JSON.stringify({
       'computer-1:session-1': { text: 'Original saved draft', pastes: [] },
@@ -8743,6 +8784,91 @@ describe('App', () => {
     })
   })
 
+  it('queues pasted audio behind a stopped recording transcription', async () => {
+    class MockMediaRecorder extends EventTarget {
+      static isTypeSupported = vi.fn(() => true)
+      state: RecordingState = 'inactive'
+      mimeType = 'audio/mp4'
+
+      start() {
+        this.state = 'recording'
+      }
+
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(
+          new BlobEvent('dataavailable', {
+            data: new Blob(['voice'], { type: this.mimeType }),
+          }),
+        )
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+    let finishRecording:
+      | ((value: { transcript: string; durationSeconds: number }) => void)
+      | undefined
+    let finishPaste:
+      | ((value: { transcript: string; durationSeconds: number }) => void)
+      | undefined
+    vi.mocked(transcribeAudio)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishRecording = resolve
+      }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishPaste = resolve
+      }))
+    const originalMediaDevices = navigator.mediaDevices
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(async () => ({ getTracks: () => [] })),
+      },
+    })
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder)
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Start microphone recording',
+    }))
+    await waitFor(() =>
+      expect(document.querySelector('.recording-panel')).toHaveTextContent(
+        'Recording 0:00',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Stop & transcribe/ }))
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    const textarea = screen.getByLabelText('Message')
+    const pasted = new File(['paste'], 'while-transcribing.wav', {
+      type: 'audio/wav',
+      lastModified: 46,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [pasted], items: [], getData: () => '' },
+    })
+
+    expect(transcribeAudio).toHaveBeenCalledOnce()
+    finishRecording?.({
+      transcript: 'Recorded first',
+      durationSeconds: 1,
+    })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('button', {
+      name: 'Transcribing audio',
+    })).toBeDisabled()
+    finishPaste?.({
+      transcript: 'Pasted second',
+      durationSeconds: 1,
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Recorded first\n\nPasted second'),
+    )
+
+    vi.unstubAllGlobals()
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: originalMediaDevices,
+    })
+  })
+
   it('cancels microphone audio without transcribing it', async () => {
     class MockMediaRecorder extends EventTarget {
       static isTypeSupported = () => true
@@ -8784,6 +8910,60 @@ describe('App', () => {
       expect(screen.queryByText(/Recording 0:00/)).not.toBeInTheDocument(),
     )
     expect(transcribeAudio).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: originalMediaDevices,
+    })
+  })
+
+  it('shows an error instead of dropping pasted files while recording', async () => {
+    class MockMediaRecorder extends EventTarget {
+      static isTypeSupported = () => true
+      state: RecordingState = 'inactive'
+      mimeType = 'audio/webm'
+
+      start() {
+        this.state = 'recording'
+      }
+
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+    const originalMediaDevices = navigator.mediaDevices
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi.fn(async () => ({ getTracks: () => [] })),
+      },
+    })
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder)
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', {
+      name: 'Start microphone recording',
+    }))
+    await waitFor(() =>
+      expect(document.querySelector('.recording-panel')).toHaveTextContent(
+        'Recording 0:00',
+      ),
+    )
+    const textarea = screen.getByLabelText('Message')
+    const file = new File(['report'], 'report.pdf', {
+      type: 'application/pdf',
+      lastModified: 27,
+    })
+
+    expect(fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })).toBe(false)
+
+    expect(await screen.findAllByText('Stop recording before attaching files.'))
+      .not.toHaveLength(0)
+    expect(uploadSessionFile).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('')
 
     vi.unstubAllGlobals()
     Object.defineProperty(navigator, 'mediaDevices', {
@@ -8860,6 +9040,1856 @@ describe('App', () => {
       ),
     )
     expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('attaches a pasted clipboard image without inserting clipboard text', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'clipboard.png',
+      path: '/private/uploads/clipboard.png',
+      size: 12,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const image = new File(['image bytes'], '', {
+      type: 'image/png',
+      lastModified: 1,
+    })
+
+    expect(fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [image],
+        items: [],
+        getData: () => '[clipboard image]',
+      },
+    })).toBe(false)
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/clipboard.png`',
+      ),
+    )
+    expect(vi.mocked(uploadSessionFile).mock.calls[0]?.[2].name)
+      .toBe('clipboard-image.png')
+    expect(textarea).not.toHaveValue(expect.stringContaining('[clipboard image]'))
+    expect(
+      screen.getByRole('listitem', { name: 'clipboard-image.png attachment' }),
+    ).toHaveTextContent('Attached')
+  })
+
+  it('attaches a browser-exposed clipboard file item', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'notes.md',
+      path: '/private/uploads/notes.md',
+      size: 7,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['# Notes'], 'notes.md', {
+      type: 'text/markdown',
+      lastModified: 2,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [],
+        items: [{ kind: 'file', getAsFile: () => file }],
+        getData: () => '',
+      },
+    })
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/notes.md`',
+      ),
+    )
+    expect(
+      screen.getByRole('listitem', { name: 'notes.md attachment' }),
+    ).toHaveTextContent('Attached')
+  })
+
+  it('preserves ordinary text paste when the clipboard has no files', async () => {
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+
+    expect(fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [],
+        items: [{ kind: 'string' }],
+        getData: () => 'ordinary clipboard text',
+      },
+    })).toBe(true)
+    fireEvent.input(textarea, {
+      target: { value: 'ordinary clipboard text' },
+      inputType: 'insertFromPaste',
+    })
+
+    expect(textarea).toHaveValue('ordinary clipboard text')
+    expect(uploadSessionFile).not.toHaveBeenCalled()
+    expect(screen.queryByRole('list', { name: 'Attachments' })).not.toBeInTheDocument()
+  })
+
+  it('pastes multiple supported files in order', async () => {
+    vi.mocked(uploadSessionFile).mockImplementation(
+      async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }),
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const image = new File(['image'], 'diagram.png', {
+      type: 'image/png',
+      lastModified: 3,
+    })
+    const document = new File(['document'], 'brief.pdf', {
+      type: 'application/pdf',
+      lastModified: 4,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [image, document],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls.map((call) => call[2])).toEqual(
+      [image, document],
+    )
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/diagram.png`\n\n' +
+          'Attached file: `/private/uploads/brief.pdf`',
+      ),
+    )
+  })
+
+  it('finishes an upload against the recovered replacement that owns its preview', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['recovery'], 'recovery.pdf', {
+      type: 'application/pdf',
+      lastModified: 28,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await screen.findByRole('listitem', { name: 'recovery.pdf attachment' })
+    const replacement = {
+      ...session,
+      id: 'recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-11-06T00:00:00.000Z',
+        archivedMessageCount: 0,
+        contextMessageCount: 0,
+        contextTruncated: false,
+        reason: 'manual' as const,
+      },
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishUpload?.({
+      name: 'recovery.pdf',
+      path: '/private/uploads/recovery.pdf',
+      size: file.size,
+    })
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/recovery.pdf`',
+      ),
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'recovery.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  it('uploads later files in a pasted batch to the recovered replacement', async () => {
+    let finishFirst:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishFirst = resolve
+      }))
+      .mockImplementationOnce(async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const first = new File(['first'], 'first.pdf', {
+      type: 'application/pdf',
+      lastModified: 31,
+    })
+    const second = new File(['second'], 'second.pdf', {
+      type: 'application/pdf',
+      lastModified: 32,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [first, second], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'batch-recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-11-06T00:00:00.000Z',
+        archivedMessageCount: 0,
+        contextMessageCount: 0,
+        contextTruncated: false,
+        reason: 'manual' as const,
+      },
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishFirst?.({
+      name: first.name,
+      path: `/private/uploads/${first.name}`,
+      size: first.size,
+    })
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls[1]?.slice(0, 2)).toEqual([
+      replacement.computerId,
+      replacement.id,
+    ])
+  })
+
+  it('transcribes later audio in a pasted batch after clear replaces the session', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    vi.mocked(transcribeAudio).mockResolvedValueOnce({
+      transcript: 'Audio that followed the clear',
+      durationSeconds: 2,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const document = new File(['document'], 'before-clear.pdf', {
+      type: 'application/pdf',
+      lastModified: 35,
+    })
+    const audio = new File(['audio'], 'after-clear.wav', {
+      type: 'audio/wav',
+      lastModified: 36,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [document, audio],
+        items: [],
+        getData: () => '',
+      },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'cleared-session',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishUpload?.({
+      name: document.name,
+      path: `/private/uploads/${document.name}`,
+      size: document.size,
+    })
+
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledWith(audio))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Audio that followed the clear'),
+    )
+  })
+
+  it('transcribes an audio paste queued before Clear after the replacement arrives', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    vi.mocked(transcribeAudio).mockResolvedValueOnce({
+      transcript: 'Queued audio followed the clear',
+      durationSeconds: 2,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const document = new File(['document'], 'blocking-upload.pdf', {
+      type: 'application/pdf',
+      lastModified: 38,
+    })
+    const audio = new File(['audio'], 'queued-after-clear.wav', {
+      type: 'audio/wav',
+      lastModified: 39,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [document], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [audio], items: [], getData: () => '' },
+    })
+    const replacement = {
+      ...session,
+      id: 'queued-audio-cleared-session',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishUpload?.({
+      name: document.name,
+      path: `/private/uploads/${document.name}`,
+      size: document.size,
+    })
+
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledWith(audio))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Queued audio followed the clear'),
+    )
+  })
+
+  it('defers a queued document paste until a recovery replacement arrives', async () => {
+    let finishFirst:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishFirst = resolve
+      }))
+      .mockImplementationOnce(async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const first = new File(['first'], 'first-gap.pdf', {
+      type: 'application/pdf',
+      lastModified: 50,
+    })
+    const second = new File(['second'], 'second-gap.pdf', {
+      type: 'application/pdf',
+      lastModified: 51,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [first], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(screen.getByLabelText('Message'), {
+      clipboardData: { files: [second], items: [], getData: () => '' },
+    })
+    const replacement = {
+      ...session,
+      id: 'gap-recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-11-06T00:00:00.000Z',
+        archivedMessageCount: 0,
+        contextMessageCount: 0,
+        contextTruncated: false,
+        reason: 'manual' as const,
+      },
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+    })
+    finishFirst?.({
+      name: first.name,
+      path: `/private/uploads/${first.name}`,
+      size: first.size,
+    })
+    await act(() => Promise.resolve())
+    expect(uploadSessionFile).toHaveBeenCalledOnce()
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls[1]?.slice(0, 2)).toEqual([
+      replacement.computerId,
+      replacement.id,
+    ])
+  })
+
+  it('cancels a queued pre-Clear document when the ordinary replacement arrives', async () => {
+    let finishFirst:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishFirst = resolve
+      }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const first = new File(['first'], 'first-clear.pdf', {
+      type: 'application/pdf',
+      lastModified: 57,
+    })
+    const second = new File(['second'], 'must-not-upload.pdf', {
+      type: 'application/pdf',
+      lastModified: 58,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [first], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(screen.getByLabelText('Message'), {
+      clipboardData: { files: [second], items: [], getData: () => '' },
+    })
+    const replacement = {
+      ...session,
+      id: 'ordinary-clear-session',
+      replacedSessionIds: [session.id],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+    })
+    finishFirst?.({
+      name: first.name,
+      path: `/private/uploads/${first.name}`,
+      size: first.size,
+    })
+    await act(() => Promise.resolve())
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    await act(() => Promise.resolve())
+
+    expect(uploadSessionFile).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('listitem', {
+      name: 'must-not-upload.pdf attachment',
+    })).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', {
+        name: /^Project chat,/,
+      }).some((button) => button.getAttribute('aria-current') === 'page'))
+        .toBe(true),
+    )
+
+    fireEvent.paste(screen.getByLabelText('Message'), {
+      clipboardData: { files: [second], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls[1]?.slice(0, 2)).toEqual([
+      replacement.computerId,
+      replacement.id,
+    ])
+  })
+
+  it('settles queued attachment work when a pending replacement vanishes', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    let finishFirst:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishFirst = resolve
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const first = new File(['first'], 'first-vanish.pdf', {
+      type: 'application/pdf',
+      lastModified: 63,
+    })
+    const waiting = new File(['waiting'], 'waiting-vanish.pdf', {
+      type: 'application/pdf',
+      lastModified: 64,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [first], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [waiting], items: [], getData: () => '' },
+    })
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: 'missing-replacement',
+        }),
+      } as MessageEvent)
+    })
+    finishFirst?.({
+      name: first.name,
+      path: `/private/uploads/${first.name}`,
+      size: first.size,
+    })
+    await act(() => Promise.resolve())
+    vi.mocked(listSessionListing).mockResolvedValue({
+      sessions: [secondSession],
+      answeredComputerIds: [computer.id],
+    })
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', {
+        name: /^Second chat,/,
+      })).toHaveAttribute('aria-current', 'page'),
+    )
+
+    const later = new File(['later'], 'after-vanish.pdf', {
+      type: 'application/pdf',
+      lastModified: 65,
+    })
+    fireEvent.paste(screen.getByLabelText('Message'), {
+      clipboardData: { files: [later], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls[1]?.slice(0, 2)).toEqual([
+      secondSession.computerId,
+      secondSession.id,
+    ])
+  })
+
+  it('removes an accepted attachment preview after its send follows a replacement', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'accepted.pdf',
+      path: '/private/uploads/accepted.pdf',
+      size: 8,
+    })
+    let finishSend: ((value: ManagedSession) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => {
+      finishSend = resolve
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['accepted'], 'accepted.pdf', {
+      type: 'application/pdf',
+      lastModified: 33,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/accepted.pdf`'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'accepted-recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-11-06T00:00:00.000Z',
+        archivedMessageCount: 0,
+        contextMessageCount: 0,
+        contextTruncated: false,
+        reason: 'manual' as const,
+      },
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    finishSend?.(replacement)
+
+    await waitFor(() =>
+      expect(screen.queryByRole('listitem', {
+        name: 'accepted.pdf attachment',
+      })).not.toBeInTheDocument(),
+    )
+  })
+
+  it('restores a rejected attachment send after replacement and reload', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'rejected.pdf',
+      path: '/private/uploads/rejected.pdf',
+      size: 8,
+    })
+    let rejectSend: ((reason: unknown) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectSend = reject
+    }))
+    const first = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['rejected'], 'rejected.pdf', {
+      type: 'application/pdf',
+      lastModified: 34,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/rejected.pdf`'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'rejected-recovered-session',
+      replacedSessionIds: [session.id],
+      recovery: {
+        recoveredAt: '2026-11-06T00:00:00.000Z',
+        archivedMessageCount: 0,
+        contextMessageCount: 0,
+        contextTruncated: false,
+        reason: 'manual' as const,
+      },
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    await act(async () => rejectSend?.(new Error('send failed')))
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/rejected.pdf`'),
+    )
+    first.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+
+    expect(await screen.findByRole('listitem', {
+      name: 'rejected.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  it('keeps attachment metadata when Remove is attempted during a rejected send', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'pending-send.pdf',
+      path: '/private/uploads/pending-send.pdf',
+      size: 7,
+    })
+    let rejectSend: ((reason: unknown) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectSend = reject
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['pending'], 'pending-send.pdf', {
+      type: 'application/pdf',
+      lastModified: 40,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    const attachment = await screen.findByRole('listitem', {
+      name: 'pending-send.pdf attachment',
+    })
+    await waitFor(() => expect(attachment).toHaveTextContent('Attached'))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+
+    fireEvent.click(within(attachment).getByRole('button', {
+      name: 'Remove pending-send.pdf',
+    }))
+    await act(async () => rejectSend?.(new Error('send failed')))
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/pending-send.pdf`',
+      ),
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'pending-send.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  it('removes a deleted upload path when Clear wins before a send rejects', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'cleared-send.pdf',
+      path: '/private/uploads/cleared-send.pdf',
+      size: 7,
+    })
+    let rejectSend: ((reason: unknown) => void) | undefined
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((_resolve, reject) => {
+      rejectSend = reject
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this text' } })
+    const file = new File(['cleared'], 'cleared-send.pdf', {
+      type: 'application/pdf',
+      lastModified: 47,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Keep this text\n\nAttached file: `/private/uploads/cleared-send.pdf`',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    const replacement = {
+      ...session,
+      id: 'cleared-during-send',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+
+    await act(async () => rejectSend?.(new Error('send failed')))
+
+    await waitFor(() => expect(textarea).toHaveValue('Keep this text'))
+    expect(screen.queryByRole('listitem', {
+      name: 'cleared-send.pdf attachment',
+    })).not.toBeInTheDocument()
+  })
+
+  it('rejects unsupported and oversized pasted files without uploading them', async () => {
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const unsupported = new File(['echo unsafe'], 'payload.sh', {
+      type: 'text/x-shellscript',
+      lastModified: 5,
+    })
+    const oversized = new File(['image'], 'oversized.png', {
+      type: 'image/png',
+      lastModified: 6,
+    })
+    Object.defineProperty(oversized, 'size', {
+      configurable: true,
+      value: 25 * 1024 * 1024 + 1,
+    })
+    const readUnsupported = vi.fn().mockRejectedValue(
+      new Error('Unsupported file must not be read'),
+    )
+    const readOversized = vi.fn().mockRejectedValue(
+      new Error('Oversized file must not be read'),
+    )
+    Object.defineProperty(unsupported, 'arrayBuffer', {
+      value: readUnsupported,
+    })
+    Object.defineProperty(oversized, 'arrayBuffer', {
+      value: readOversized,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [unsupported, oversized],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    expect(uploadSessionFile).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('')
+    expect(
+      await screen.findByRole('listitem', { name: 'payload.sh attachment' }),
+    ).toHaveTextContent('This file type is not supported')
+    expect(
+      screen.getByRole('listitem', { name: 'oversized.png attachment' }),
+    ).toHaveTextContent('The file exceeds the 25 MiB limit')
+    expect(readUnsupported).not.toHaveBeenCalled()
+    expect(readOversized).not.toHaveBeenCalled()
+  })
+
+  it('retains a failed pasted upload for retry', async () => {
+    vi.mocked(uploadSessionFile)
+      .mockRejectedValueOnce(new Error('Upload connection lost'))
+      .mockResolvedValueOnce({
+        name: 'report.pdf',
+        path: '/private/uploads/report.pdf',
+        size: 6,
+      })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['report'], 'report.pdf', {
+      type: 'application/pdf',
+      lastModified: 7,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [file],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    const preview = await screen.findByRole('listitem', {
+      name: 'report.pdf attachment',
+    })
+    expect(preview).toHaveTextContent('Upload connection lost')
+    fireEvent.click(within(preview).getByRole('button', { name: 'Retry report.pdf' }))
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/report.pdf`',
+      ),
+    )
+    expect(preview).toHaveTextContent('Attached')
+  })
+
+  it('keeps sending blocked when a retry finishes before the next pasted upload', async () => {
+    let finishRetry:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    let finishSecond:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile)
+      .mockRejectedValueOnce(new Error('Upload connection lost'))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishRetry = resolve
+      }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishSecond = resolve
+      }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Review both files' } })
+    const first = new File(['first'], 'first.pdf', {
+      type: 'application/pdf',
+      lastModified: 20,
+    })
+    const second = new File(['second'], 'second.pdf', {
+      type: 'application/pdf',
+      lastModified: 21,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [first], items: [], getData: () => '' },
+    })
+    const firstPreview = await screen.findByRole('listitem', {
+      name: 'first.pdf attachment',
+    })
+    fireEvent.click(within(firstPreview).getByRole('button', {
+      name: 'Retry first.pdf',
+    }))
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [second], items: [], getData: () => '' },
+    })
+
+    finishRetry?.({
+      name: 'first.pdf',
+      path: '/private/uploads/first.pdf',
+      size: first.size,
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(3))
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+
+    finishSecond?.({
+      name: 'second.pdf',
+      path: '/private/uploads/second.pdf',
+      size: second.size,
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled(),
+    )
+  })
+
+  it('removes an attached preview and its durable draft reference', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'diagram.png',
+      path: '/private/uploads/diagram.png',
+      size: 5,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['image'], 'diagram.png', {
+      type: 'image/png',
+      lastModified: 8,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [file],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    const preview = await screen.findByRole('listitem', {
+      name: 'diagram.png attachment',
+    })
+    await waitFor(() => expect(preview).toHaveTextContent('Attached'))
+    fireEvent.click(within(preview).getByRole('button', { name: 'Remove diagram.png' }))
+
+    expect(screen.queryByRole('listitem', {
+      name: 'diagram.png attachment',
+    })).not.toBeInTheDocument()
+    expect(textarea).toHaveValue('')
+    expect(
+      JSON.parse(
+        localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+      )['computer-1:session-1']?.text,
+    ).toBeUndefined()
+  })
+
+  it('removes cleared upload references while preserving other draft text', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'clear-me.pdf',
+      path: '/private/uploads/clear-me.pdf',
+      size: 5,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Keep this note' } })
+    const file = new File(['clear'], 'clear-me.pdf', {
+      type: 'application/pdf',
+      lastModified: 22,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Keep this note\n\nAttached file: `/private/uploads/clear-me.pdf`',
+      ),
+    )
+
+    fireEvent.click(sessionAction('Clear conversation'))
+
+    await waitFor(() =>
+      expect(clearConversation).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+    expect(textarea).toHaveValue('Keep this note')
+    expect(screen.queryByRole('list', { name: 'Attachments' }))
+      .not.toBeInTheDocument()
+  })
+
+  it('cleans an externally cleared attachment once without removing later uploads', async () => {
+    vi.mocked(uploadSessionFile)
+      .mockResolvedValueOnce({
+        name: 'old.pdf',
+        path: '/private/uploads/old.pdf',
+        size: 3,
+      })
+      .mockResolvedValueOnce({
+        name: 'new.pdf',
+        path: '/private/uploads/new.pdf',
+        size: 3,
+      })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const oldFile = new File(['old'], 'old.pdf', {
+      type: 'application/pdf',
+      lastModified: 25,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [oldFile], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/old.pdf`'),
+    )
+    const replacement = {
+      ...session,
+      id: 'external-clear',
+      replacedSessionIds: [session.id],
+    }
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    await waitFor(() => expect(textarea).toHaveValue(''))
+
+    const newFile = new File(['new'], 'new.pdf', {
+      type: 'application/pdf',
+      lastModified: 26,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [newFile], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/new.pdf`'),
+    )
+
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    expect(textarea).toHaveValue('Attached file: `/private/uploads/new.pdf`')
+    expect(screen.getByRole('listitem', { name: 'new.pdf attachment' }))
+      .toHaveTextContent('Attached')
+  })
+
+  it('sends a pasted attachment through the existing durable message content', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'wireframe.png',
+      path: '/private/uploads/wireframe.png',
+      size: 9,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['wireframe'], 'wireframe.png', {
+      type: 'image/png',
+      lastModified: 9,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [file],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/wireframe.png`',
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() =>
+      expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        {
+          content: 'Attached file: `/private/uploads/wireframe.png`',
+          enqueue: false,
+        },
+      ),
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('listitem', {
+        name: 'wireframe.png attachment',
+      })).not.toBeInTheDocument(),
+    )
+  })
+
+  it('does not send the draft before a pasted attachment finishes uploading', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Include this image' } })
+    const file = new File(['image'], 'pending.png', {
+      type: 'image/png',
+      lastModified: 11,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [file],
+        items: [],
+        getData: () => '',
+      },
+    })
+    await screen.findByRole('listitem', { name: 'pending.png attachment' })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('Include this image')
+
+    finishUpload?.({
+      name: 'pending.png',
+      path: '/private/uploads/pending.png',
+      size: 5,
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Include this image\n\nAttached file: `/private/uploads/pending.png`',
+      ),
+    )
+  })
+
+  it('does not send the draft while a pasted file fingerprint is pending', async () => {
+    let finishFingerprint: ((value: ArrayBuffer) => void) | undefined
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'hashing.pdf',
+      path: '/private/uploads/hashing.pdf',
+      size: 7,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Include the pending file' } })
+    const file = new File(['hashing'], 'hashing.pdf', {
+      type: 'application/pdf',
+      lastModified: 59,
+    })
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: () => new Promise<ArrayBuffer>((resolve) => {
+        finishFingerprint = resolve
+      }),
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    try {
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      expect(uploadSessionFile).not.toHaveBeenCalled()
+    } finally {
+      finishFingerprint?.(new TextEncoder().encode('hashing').buffer)
+    }
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+  })
+
+  it('reads pasted file fingerprints sequentially', async () => {
+    vi.mocked(uploadSessionFile).mockImplementation(
+      async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }),
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    let activeReads = 0
+    let maxActiveReads = 0
+    const finishReads: Array<() => void> = []
+    const nearLimitFile = (name: string, lastModified: number) => {
+      const file = new File(['sample'], name, {
+        type: 'application/pdf',
+        lastModified,
+      })
+      Object.defineProperty(file, 'size', {
+        configurable: true,
+        value: 25 * 1024 * 1024,
+      })
+      Object.defineProperty(file, 'arrayBuffer', {
+        value: () => {
+          activeReads += 1
+          maxActiveReads = Math.max(maxActiveReads, activeReads)
+          return new Promise<ArrayBuffer>((resolve) => {
+            finishReads.push(() => {
+              activeReads -= 1
+              resolve(new TextEncoder().encode(name).buffer)
+            })
+          })
+        },
+      })
+      return file
+    }
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [
+          nearLimitFile('near-limit-1.pdf', 66),
+          nearLimitFile('near-limit-2.pdf', 67),
+        ],
+        items: [],
+        getData: () => '',
+      },
+    })
+    try {
+      await waitFor(() => expect(finishReads).toHaveLength(1))
+      expect(maxActiveReads).toBe(1)
+      finishReads.shift()?.()
+      await waitFor(() => expect(finishReads).toHaveLength(1))
+      expect(maxActiveReads).toBe(1)
+    } finally {
+      for (const finish of finishReads.splice(0)) {
+        finish()
+      }
+    }
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not attach the same clipboard file twice while its preview remains', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValue({
+      name: 'duplicate.png',
+      path: '/private/uploads/duplicate.png',
+      size: 5,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['image'], 'duplicate.png', {
+      type: 'image/png',
+      lastModified: 10,
+    })
+    const clipboardData = {
+      files: [file],
+      items: [],
+      getData: () => '',
+    }
+
+    fireEvent.paste(textarea, { clipboardData })
+    await screen.findByRole('listitem', { name: 'duplicate.png attachment' })
+    fireEvent.paste(textarea, { clipboardData })
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    expect(textarea).toHaveValue(
+      'Attached file: `/private/uploads/duplicate.png`',
+    )
+  })
+
+  it('does not transcribe the same clipboard audio file twice', async () => {
+    vi.mocked(transcribeAudio).mockResolvedValue({
+      transcript: 'Clipboard voice note',
+      durationSeconds: 2,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['audio'], 'voice.wav', {
+      type: 'audio/wav',
+      lastModified: 23,
+    })
+    const clipboardData = {
+      files: [file],
+      items: [],
+      getData: () => '',
+    }
+
+    fireEvent.paste(textarea, { clipboardData })
+    await waitFor(() => expect(textarea).toHaveValue('Clipboard voice note'))
+    fireEvent.paste(textarea, { clipboardData })
+
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    expect(textarea).toHaveValue('Clipboard voice note')
+  })
+
+  it('releases completed picker audio so it can be intentionally selected again', async () => {
+    vi.mocked(transcribeAudio)
+      .mockResolvedValueOnce({
+        transcript: 'First picker transcription',
+        durationSeconds: 2,
+      })
+      .mockResolvedValueOnce({
+        transcript: 'Second picker transcription',
+        durationSeconds: 2,
+      })
+    render(<App />)
+    await screen.findByLabelText('Message')
+    const file = new File(['audio'], 'repeat-picker.wav', {
+      type: 'audio/wav',
+      lastModified: 42,
+    })
+    const picker = screen.getByLabelText('File attachment')
+
+    fireEvent.change(picker, { target: { files: [file] } })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    fireEvent.change(picker, { target: { files: [file] } })
+
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledTimes(2))
+  })
+
+  it('deduplicates repeated clipboard files exposed as fresh wrappers', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValue({
+      name: 'fresh-wrapper.pdf',
+      path: '/private/uploads/fresh-wrapper.pdf',
+      size: 7,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const clipboardFile = () => new File(['wrapper'], 'fresh-wrapper.pdf', {
+      type: 'application/pdf',
+      lastModified: 43,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [clipboardFile()],
+        items: [],
+        getData: () => '',
+      },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [clipboardFile()],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    await waitFor(() => expect(screen.getAllByRole('listitem', {
+      name: 'fresh-wrapper.pdf attachment',
+    })).toHaveLength(1))
+    expect(uploadSessionFile).toHaveBeenCalledOnce()
+  })
+
+  it('keeps distinct clipboard files that share metadata', async () => {
+    vi.mocked(uploadSessionFile).mockImplementation(
+      async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${vi.mocked(uploadSessionFile).mock.calls.length}.pdf`,
+        size: file.size,
+      }),
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const clipboardFile = (content: string) =>
+      new File([content], 'same-metadata.pdf', {
+        type: 'application/pdf',
+        lastModified: 52,
+      })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [clipboardFile('aaaa')],
+        items: [],
+        getData: () => '',
+      },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [clipboardFile('bbbb')],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+  })
+
+  it('recovers clipboard work after a fingerprint read fails', async () => {
+    vi.mocked(uploadSessionFile).mockImplementation(
+      async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }),
+    )
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const unreadable = new File(['broken'], 'unreadable.pdf', {
+      type: 'application/pdf',
+      lastModified: 60,
+    })
+    Object.defineProperty(unreadable, 'arrayBuffer', {
+      value: vi.fn().mockRejectedValue(new Error('Clipboard file could not be read')),
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [unreadable], items: [], getData: () => '' },
+    })
+
+    const failed = await screen.findByRole('listitem', {
+      name: 'unreadable.pdf attachment',
+    })
+    expect(failed).toHaveTextContent('Clipboard file could not be read')
+    expect(within(failed).getByRole('button', {
+      name: 'Retry unreadable.pdf',
+    })).toBeEnabled()
+
+    const later = new File(['later'], 'later.pdf', {
+      type: 'application/pdf',
+      lastModified: 61,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [later], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    expect(screen.getByRole('listitem', {
+      name: 'later.pdf attachment',
+    })).toHaveTextContent('Attached')
+
+    fireEvent.click(within(failed).getByRole('button', {
+      name: 'Retry unreadable.pdf',
+    }))
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+  })
+
+  it.each(['remove', 'send'] as const)(
+    'allows an immediate intentional repaste after attachment %s',
+    async (action) => {
+      vi.mocked(uploadSessionFile).mockImplementation(
+        async (_computerId, _sessionId, file) => ({
+          name: file.name,
+          path: `/private/uploads/${file.name}`,
+          size: file.size,
+        }),
+      )
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      const clipboardFile = () => new File(['repaste'], 'repaste.pdf', {
+        type: 'application/pdf',
+        lastModified: 45,
+      })
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          files: [clipboardFile()],
+          items: [],
+          getData: () => '',
+        },
+      })
+      const attachment = await screen.findByRole('listitem', {
+        name: 'repaste.pdf attachment',
+      })
+      await waitFor(() => expect(attachment).toHaveTextContent('Attached'))
+      if (action === 'remove') {
+        fireEvent.click(within(attachment).getByRole('button', {
+          name: 'Remove repaste.pdf',
+        }))
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      }
+      await waitFor(() =>
+        expect(screen.queryByRole('listitem', {
+          name: 'repaste.pdf attachment',
+        })).not.toBeInTheDocument(),
+      )
+
+      fireEvent.paste(textarea, {
+        clipboardData: {
+          files: [clipboardFile()],
+          items: [],
+          getData: () => '',
+        },
+      })
+
+      await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+      expect(await screen.findByRole('listitem', {
+        name: 'repaste.pdf attachment',
+      })).toHaveTextContent('Attached')
+    },
+  )
+
+  it('attaches distinct files that share clipboard metadata', async () => {
+    vi.mocked(uploadSessionFile)
+      .mockResolvedValueOnce({
+        name: 'same.png',
+        path: '/private/uploads/first-same.png',
+        size: 2,
+      })
+      .mockResolvedValueOnce({
+        name: 'same.png',
+        path: '/private/uploads/second-same.png',
+        size: 2,
+      })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const first = new File(['aa'], 'same.png', {
+      type: 'image/png',
+      lastModified: 1,
+    })
+    const second = new File(['bb'], 'same.png', {
+      type: 'image/png',
+      lastModified: 1,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: {
+        files: [first, second],
+        items: [],
+        getData: () => '',
+      },
+    })
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls.map((call) => call[2])).toEqual(
+      [first, second],
+    )
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/first-same.png`\n\n' +
+          'Attached file: `/private/uploads/second-same.png`',
+      ),
+    )
+  })
+
+  it('retains the attachment preview when sending its draft fails', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'keep.pdf',
+      path: '/private/uploads/keep.pdf',
+      size: 4,
+    })
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error('Send failed'))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['keep'], 'keep.pdf', {
+      type: 'application/pdf',
+      lastModified: 14,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    const preview = await screen.findByRole('listitem', {
+      name: 'keep.pdf attachment',
+    })
+    await waitFor(() => expect(preview).toHaveTextContent('Attached'))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    expect(preview).toBeInTheDocument()
+    expect(textarea).toHaveValue('Attached file: `/private/uploads/keep.pdf`')
+  })
+
+  it('restores a completed attachment preview and remove action after reload', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'reload.pdf',
+      path: '/private/uploads/reload.pdf',
+      size: 6,
+    })
+    const first = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['reload'], 'reload.pdf', {
+      type: 'application/pdf',
+      lastModified: 29,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/reload.pdf`'),
+    )
+    first.unmount()
+
+    render(<App />)
+    const restored = await screen.findByRole('listitem', {
+      name: 'reload.pdf attachment',
+    })
+    expect(restored).toHaveTextContent('Attached')
+    fireEvent.click(within(restored).getByRole('button', {
+      name: 'Remove reload.pdf',
+    }))
+
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+    expect(screen.queryByRole('listitem', {
+      name: 'reload.pdf attachment',
+    })).not.toBeInTheDocument()
+  })
+
+  it('persists a completed attachment while viewing composer history', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    const first = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Hidden attachment draft' } })
+    const file = new File(['history'], 'history-preview.pdf', {
+      type: 'application/pdf',
+      lastModified: 53,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await screen.findByRole('listitem', {
+      name: 'history-preview.pdf attachment',
+    })
+    const sidebarButton = screen.getAllByRole('button', {
+      name: 'New session',
+    })[0]!
+    sidebarButton.focus()
+    fireEvent.keyDown(sidebarButton, { key: 'ArrowUp' })
+    expect(textarea).not.toHaveValue('Hidden attachment draft')
+    finishUpload?.({
+      name: file.name,
+      path: '/private/uploads/history-preview.pdf',
+      size: file.size,
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('listitem', {
+        name: 'history-preview.pdf attachment',
+      })).toHaveTextContent('Attached'),
+    )
+    first.unmount()
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('Message')).toHaveValue(
+      'Hidden attachment draft\n\n' +
+        'Attached file: `/private/uploads/history-preview.pdf`',
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'history-preview.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  it('removes a stale attachment row when its draft path is edited away', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'edited-away.pdf',
+      path: '/private/uploads/edited-away.pdf',
+      size: 6,
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['edited'], 'edited-away.pdf', {
+      type: 'application/pdf',
+      lastModified: 54,
+    })
+    fireEvent.change(textarea, { target: { value: 'Keep this text' } })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Keep this text\n\nAttached file: `/private/uploads/edited-away.pdf`',
+      ),
+    )
+
+    fireEvent.change(textarea, { target: { value: 'Keep this text' } })
+
+    expect(screen.queryByRole('listitem', {
+      name: 'edited-away.pdf attachment',
+    })).not.toBeInTheDocument()
+  })
+
+  it('restores an attachment added after Clear when the replacement reloads', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'after-clear.pdf',
+      path: '/private/uploads/after-clear.pdf',
+      size: 11,
+    })
+    const first = render(<App />)
+    await screen.findByLabelText('Message')
+    const replacement = {
+      ...session,
+      id: 'cleared-then-reloaded-session',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: replacement }),
+      } as MessageEvent)
+    })
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['after clear'], 'after-clear.pdf', {
+      type: 'application/pdf',
+      lastModified: 37,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/after-clear.pdf`',
+      ),
+    )
+    first.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('Message')).toHaveValue(
+      'Attached file: `/private/uploads/after-clear.pdf`',
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'after-clear.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  it('discards a pre-Clear attachment after reload between removal and replacement upsert', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'before-clear.pdf',
+      path: '/private/uploads/before-clear.pdf',
+      size: 12,
+    })
+    const first = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['before clear'], 'before-clear.pdf', {
+      type: 'application/pdf',
+      lastModified: 41,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/before-clear.pdf`',
+      ),
+    )
+    const replacement = {
+      ...session,
+      id: 'reload-clear-gap-session',
+      replacedSessionIds: [session.id],
+      messages: [],
+    }
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: session.computerId,
+          sessionId: session.id,
+          replacedBy: replacement.id,
+        }),
+      } as MessageEvent)
+    })
+    first.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    vi.mocked(getSession).mockResolvedValue(replacement)
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('Message')).toHaveValue('')
+    expect(screen.queryByRole('listitem', {
+      name: 'before-clear.pdf attachment',
+    })).not.toBeInTheDocument()
+  })
+
+  it('queues a second pasted file while the first upload is pending', async () => {
+    let finishFirst:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile)
+      .mockReturnValueOnce(new Promise((resolve) => {
+        finishFirst = resolve
+      }))
+      .mockImplementationOnce(async (_computerId, _sessionId, file) => ({
+        name: file.name,
+        path: `/private/uploads/${file.name}`,
+        size: file.size,
+      }))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const first = new File(['first'], 'first.png', {
+      type: 'image/png',
+      lastModified: 12,
+    })
+    const second = new File(['second'], 'second.pdf', {
+      type: 'application/pdf',
+      lastModified: 13,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [first], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [second], items: [], getData: () => '' },
+    })
+
+    finishFirst?.({
+      name: 'first.png',
+      path: '/private/uploads/first.png',
+      size: first.size,
+    })
+
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(uploadSessionFile).mock.calls.map((call) => call[2])).toEqual(
+      [first, second],
+    )
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'Attached file: `/private/uploads/first.png`\n\n' +
+          'Attached file: `/private/uploads/second.pdf`',
+      ),
+    )
   })
 
   it('preserves a transcript when an in-flight message send fails', async () => {
@@ -11547,7 +13577,7 @@ describe('App', () => {
     )
   })
 
-  async function openTargetedQueueEditor() {
+  async function renderTargetedQueueSession() {
     const prompts = ['first original', 'second original', 'third original'].map((content, index) => ({
       id: `q${index + 1}`, content, createdAt: '2026-09-05T00:00:00.000Z',
     }))
@@ -11563,11 +13593,449 @@ describe('App', () => {
     vi.mocked(listSessions).mockResolvedValue([queuedSession])
     vi.mocked(getSession).mockResolvedValue(queuedSession)
     const rendered = render(<App />)
+    await screen.findByRole('button', { name: 'Edit queued prompt 2' })
+    return { rendered, queuedSession, prompts, key: 'computer-1:session-1' }
+  }
+
+  async function openTargetedQueueEditor() {
+    const result = await renderTargetedQueueSession()
     fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 2' }))
     const textarea = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Message' })
     expect(textarea).toHaveValue('second original')
-    return { rendered, textarea, queuedSession, prompts, key: 'computer-1:session-1' }
+    return { ...result, textarea }
   }
+
+  it('does not save a queued edit before its pasted attachment finishes uploading', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    const { textarea, queuedSession, prompts } = await openTargetedQueueEditor()
+    const file = new File(['queue'], 'queued.pdf', {
+      type: 'application/pdf',
+      lastModified: 24,
+    })
+
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await screen.findByRole('listitem', { name: 'queued.pdf attachment' })
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeDisabled()
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(updateQueuedPrompt).not.toHaveBeenCalled()
+
+    finishUpload?.({
+      name: 'queued.pdf',
+      path: '/private/uploads/queued.pdf',
+      size: file.size,
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'second original\n\nAttached file: `/private/uploads/queued.pdf`',
+      ),
+    )
+    vi.mocked(updateQueuedPrompt).mockResolvedValue({
+      session: queuedSession,
+      prompt: prompts[1],
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+    await waitFor(() =>
+      expect(updateQueuedPrompt).toHaveBeenCalledWith(
+        'computer-1',
+        'session-1',
+        'q2',
+        'second original\n\nAttached file: `/private/uploads/queued.pdf`',
+      ),
+    )
+  })
+
+  it('removes an attached preview when canceling its queued rewrite', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'cancel.pdf',
+      path: '/private/uploads/cancel.pdf',
+      size: 6,
+    })
+    const { textarea } = await openTargetedQueueEditor()
+    const file = new File(['cancel'], 'cancel.pdf', {
+      type: 'application/pdf',
+      lastModified: 30,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'second original\n\nAttached file: `/private/uploads/cancel.pdf`',
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Stop editing this queued message',
+    }))
+
+    expect(textarea).toHaveValue('')
+    expect(screen.queryByRole('listitem', {
+      name: 'cancel.pdf attachment',
+    })).not.toBeInTheDocument()
+  })
+
+  it('keeps a failed pre-edit attachment when canceling a queued rewrite', async () => {
+    vi.mocked(uploadSessionFile).mockRejectedValueOnce(new Error('upload failed'))
+    await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['failed'], 'pre-edit-failed.pdf', {
+      type: 'application/pdf',
+      lastModified: 48,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    const attachment = await screen.findByRole('listitem', {
+      name: 'pre-edit-failed.pdf attachment',
+    })
+    await waitFor(() => expect(attachment).toHaveTextContent('upload failed'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    expect(textarea).toHaveValue('second original')
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Stop editing this queued message',
+    }))
+
+    expect(textarea).toHaveValue('')
+    expect(screen.getByRole('listitem', {
+      name: 'pre-edit-failed.pdf attachment',
+    })).toHaveTextContent('upload failed')
+    expect(screen.getByRole('button', {
+      name: 'Retry pre-edit-failed.pdf',
+    })).toBeEnabled()
+  })
+
+  it('keeps a pre-edit upload path when canceling after it completes', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['uploading'], 'pre-edit-upload.pdf', {
+      type: 'application/pdf',
+      lastModified: 49,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await screen.findByRole('listitem', {
+      name: 'pre-edit-upload.pdf attachment',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    expect(textarea).toHaveValue('second original')
+    finishUpload?.({
+      name: file.name,
+      path: '/private/uploads/pre-edit-upload.pdf',
+      size: file.size,
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'second original\n\nAttached file: `/private/uploads/pre-edit-upload.pdf`',
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Stop editing this queued message',
+    }))
+
+    expect(textarea).toHaveValue(
+      'Attached file: `/private/uploads/pre-edit-upload.pdf`',
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'pre-edit-upload.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  const unsettledAttachmentError =
+    'Wait for the attachment or transcription to finish before editing a queued message.'
+
+  it('waits for a pasted file to be prepared before rewriting a queued message', async () => {
+    vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+      name: 'preparing.pdf',
+      path: '/private/uploads/preparing.pdf',
+      size: 9,
+    })
+    await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    let finishHashing: (() => void) | undefined
+    const file = new File(['preparing'], 'preparing.pdf', {
+      type: 'application/pdf',
+      lastModified: 71,
+    })
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: () => new Promise<ArrayBuffer>((resolve) => {
+        finishHashing = () => resolve(new ArrayBuffer(9))
+      }),
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(finishHashing).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+
+    expect(await screen.findAllByText(unsettledAttachmentError)).not.toHaveLength(0)
+    expect(textarea).toHaveValue('')
+    await act(async () => finishHashing?.())
+    await waitFor(() =>
+      expect(textarea).toHaveValue('Attached file: `/private/uploads/preparing.pdf`'),
+    )
+    expect(screen.getByRole('listitem', { name: 'preparing.pdf attachment' }))
+      .toHaveTextContent('Attached')
+  })
+
+  it('waits for pasted audio to be transcribed before rewriting a queued message', async () => {
+    let finishTranscription:
+      | ((value: { transcript: string; durationSeconds: number }) => void)
+      | undefined
+    vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+      finishTranscription = resolve
+    }))
+    await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['audio'], 'pre-edit.m4a', { type: 'audio/x-m4a', lastModified: 72 })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledWith(file))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+
+    expect(await screen.findAllByText(unsettledAttachmentError)).not.toHaveLength(0)
+    expect(textarea).toHaveValue('')
+    await act(async () => finishTranscription?.({
+      transcript: 'Spoken before the rewrite',
+      durationSeconds: 3,
+    }))
+    await waitFor(() => expect(textarea).toHaveValue('Spoken before the rewrite'))
+    fireEvent.change(textarea, { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    expect(textarea).toHaveValue('second original')
+  })
+
+  it('waits for a recording and its transcript before rewriting a queued message', async () => {
+    class MockMediaRecorder extends EventTarget {
+      static isTypeSupported = () => true
+      state: RecordingState = 'inactive'
+      mimeType = 'audio/mp4'
+
+      start() {
+        this.state = 'recording'
+      }
+
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(new BlobEvent('dataavailable', {
+          data: new Blob(['voice'], { type: this.mimeType }),
+        }))
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+    const originalMediaDevices = navigator.mediaDevices
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [] })) },
+    })
+    vi.stubGlobal('MediaRecorder', MockMediaRecorder)
+    try {
+      await renderTargetedQueueSession()
+      const textarea = await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Start microphone recording' }))
+      await waitFor(() =>
+        expect(document.querySelector('.recording-panel')).toBeInTheDocument(),
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+
+      expect(await screen.findAllByText('Stop recording before editing a queued message.'))
+        .not.toHaveLength(0)
+      expect(textarea).toHaveValue('')
+      let finishTranscription:
+        | ((value: { transcript: string; durationSeconds: number }) => void)
+        | undefined
+      vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+        finishTranscription = resolve
+      }))
+      fireEvent.click(screen.getByRole('button', { name: /Stop & transcribe/ }))
+      await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+
+      fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+
+      expect(await screen.findAllByText(unsettledAttachmentError)).not.toHaveLength(0)
+      expect(textarea).toHaveValue('')
+      await act(async () => finishTranscription?.({
+        transcript: 'Recorded before the rewrite',
+        durationSeconds: 4,
+      }))
+      await waitFor(() => expect(textarea).toHaveValue('Recorded before the rewrite'))
+    } finally {
+      vi.unstubAllGlobals()
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: originalMediaDevices,
+      })
+    }
+  })
+
+  it('keeps a pre-edit upload path when a restored queued edit is canceled', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    const { rendered, queuedSession } = await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['reload'], 'pre-edit-reload.pdf', {
+      type: 'application/pdf',
+      lastModified: 55,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await screen.findByRole('listitem', {
+      name: 'pre-edit-reload.pdf attachment',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    finishUpload?.({
+      name: file.name,
+      path: '/private/uploads/pre-edit-reload.pdf',
+      size: file.size,
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'second original\n\nAttached file: `/private/uploads/pre-edit-reload.pdf`',
+      ),
+    )
+    rendered.unmount()
+    vi.mocked(listSessions).mockResolvedValue([queuedSession])
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+
+    render(<App />)
+    const restored = await screen.findByLabelText('Message')
+    expect(restored).toHaveValue(
+      'second original\n\nAttached file: `/private/uploads/pre-edit-reload.pdf`',
+    )
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Stop editing this queued message',
+    }))
+
+    expect(restored).toHaveValue(
+      'Attached file: `/private/uploads/pre-edit-reload.pdf`',
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'pre-edit-reload.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  it('keeps a pre-edit upload path when reloading during queued dispatch', async () => {
+    let finishUpload:
+      | ((value: { name: string; path: string; size: number }) => void)
+      | undefined
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = resolve
+    }))
+    const { rendered, queuedSession } = await renderTargetedQueueSession()
+    const textarea = await screen.findByLabelText('Message')
+    const file = new File(['dispatch'], 'pre-dispatch-reload.pdf', {
+      type: 'application/pdf',
+      lastModified: 62,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await screen.findByRole('listitem', {
+      name: 'pre-dispatch-reload.pdf attachment',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    finishUpload?.({
+      name: file.name,
+      path: '/private/uploads/pre-dispatch-reload.pdf',
+      size: file.size,
+    })
+    await waitFor(() =>
+      expect(textarea).toHaveValue(
+        'second original\n\nAttached file: `/private/uploads/pre-dispatch-reload.pdf`',
+      ),
+    )
+    vi.mocked(dispatchQueuedPrompt).mockReturnValueOnce(new Promise(() => {}))
+    fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+    await waitFor(() => expect(dispatchQueuedPrompt).toHaveBeenCalledOnce())
+    rendered.unmount()
+    vi.mocked(listSessions).mockResolvedValue([queuedSession])
+    vi.mocked(getSession).mockResolvedValue(queuedSession)
+
+    render(<App />)
+    const restored = await screen.findByLabelText('Message')
+    expect(restored).toHaveValue(
+      'second original\n\nAttached file: `/private/uploads/pre-dispatch-reload.pdf`',
+    )
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    try {
+      fireEvent.click(screen.getByRole('button', {
+        name: 'Stop editing this queued message',
+      }))
+    } finally {
+      confirm.mockRestore()
+    }
+
+    expect(restored).toHaveValue(
+      'Attached file: `/private/uploads/pre-dispatch-reload.pdf`',
+    )
+    expect(screen.getByRole('listitem', {
+      name: 'pre-dispatch-reload.pdf attachment',
+    })).toHaveTextContent('Attached')
+  })
+
+  it('keeps the queued-edit attachment baseline when Save leaves newer text open', async () => {
+    vi.mocked(uploadSessionFile).mockRejectedValueOnce(new Error('upload failed'))
+    let finishSave:
+      | ((value: { session: ManagedSession; prompt: QueuedPrompt }) => void)
+      | undefined
+    const { textarea, queuedSession, prompts } = await openTargetedQueueEditor()
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Stop editing this queued message',
+    }))
+    const file = new File(['failed'], 'save-baseline.pdf', {
+      type: 'application/pdf',
+      lastModified: 56,
+    })
+    fireEvent.paste(textarea, {
+      clipboardData: { files: [file], items: [], getData: () => '' },
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('listitem', {
+        name: 'save-baseline.pdf attachment',
+      })).toHaveTextContent('upload failed'),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued prompt 2' }))
+    vi.mocked(updateQueuedPrompt).mockReturnValueOnce(new Promise((resolve) => {
+      finishSave = resolve
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save to queue' }))
+    await waitFor(() => expect(updateQueuedPrompt).toHaveBeenCalledOnce())
+    fireEvent.change(textarea, { target: { value: 'newer queued text' } })
+    finishSave?.({ session: queuedSession, prompt: prompts[1] })
+    await waitFor(() => expect(textarea).toHaveValue('newer queued text'))
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Stop editing this queued message',
+    }))
+
+    expect(screen.getByRole('listitem', {
+      name: 'save-baseline.pdf attachment',
+    })).toHaveTextContent('upload failed')
+  })
 
   it.each(['save', 'send'])('expands pasted queued rewrites without trimming them on %s', async (action) => {
     const { textarea, queuedSession, prompts } = await openTargetedQueueEditor()
@@ -13713,6 +16181,39 @@ describe('App', () => {
       expect(screen.getByLabelText('Side question')).toHaveValue('Typed while waiting')
       fireEvent.click(within(thread()!).getByRole('button', { name: 'Back to message' }))
       expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft')
+    })
+
+    it('hides session attachment controls while asking aside', async () => {
+      vi.mocked(listComputers).mockResolvedValue([sideComputer])
+      vi.mocked(uploadSessionFile).mockResolvedValueOnce({
+        name: 'aside-hidden.pdf',
+        path: '/private/uploads/aside-hidden.pdf',
+        size: 6,
+      })
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      const file = new File(['aside'], 'aside-hidden.pdf', {
+        type: 'application/pdf',
+        lastModified: 44,
+      })
+      fireEvent.paste(textarea, {
+        clipboardData: { files: [file], items: [], getData: () => '' },
+      })
+      expect(await screen.findByRole('listitem', {
+        name: 'aside-hidden.pdf attachment',
+      })).toBeInTheDocument()
+
+      fireEvent.click(await screen.findByRole('button', {
+        name: 'Ask a side question',
+      }))
+
+      expect(screen.queryByRole('listitem', {
+        name: 'aside-hidden.pdf attachment',
+      })).not.toBeInTheDocument()
+      fireEvent.keyDown(screen.getByLabelText('Side question'), { key: 'Escape' })
+      expect(screen.getByRole('listitem', {
+        name: 'aside-hidden.pdf attachment',
+      })).toBeInTheDocument()
     })
 
     it('keeps history recall and dropped files away from the draft it is holding', async () => {

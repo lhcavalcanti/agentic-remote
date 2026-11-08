@@ -247,6 +247,8 @@ matrix.
 - **Shortcuts**: `Alt+↓`/`Alt+↑` move between sessions, `Alt+K` opens or closes
   the knowledge panel, and `Alt+Shift+K` expands or minimizes it.
 - **Paperclip / microphone**: upload supported files or transcribe audio.
+  Clipboard images and files paste into the same attachment flow when the
+  browser exposes them as files; the picker remains available when it does not.
 
 Copilot sessions can be tmux-backed:
 

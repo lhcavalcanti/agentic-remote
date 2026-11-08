@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
-import { render } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { act, cleanup, render } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { messageTimeParts } from './message-time'
 import { MessageTime } from './MessageTime'
 
@@ -16,6 +16,11 @@ const full = new Intl.DateTimeFormat(undefined, {
 describe('message time', () => {
   const sent = new Date(2026, 10, 7, 9, 5)
   const stamp = sent.toISOString()
+
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+  })
 
   it('shows the time today, adds the day on other days, and the year in other years', () => {
     expect(messageTimeParts(stamp, new Date(2026, 10, 7, 23, 59))).toEqual({
@@ -65,5 +70,23 @@ describe('message time', () => {
     const element = container.querySelector('time')
     expect(element).toHaveAttribute('datetime', stamp)
     expect(element).toHaveAttribute('title', full.format(sent))
+  })
+
+  // Nothing re-renders these times, as with memoized transcript rows.
+  it('adds the day once midnight passes, without a re-render', () => {
+    vi.useFakeTimers({ now: new Date(2026, 10, 7, 23, 59, 30) })
+    const { container } = render(<MessageTime value={stamp} />)
+    expect(container.querySelector('time')).toHaveTextContent(time.format(sent))
+    act(() => { vi.advanceTimersByTime(60_000) })
+    expect(container.querySelector('time')).toHaveTextContent(dayTime.format(sent))
+  })
+
+  it('adds the day when the app is shown again after sleeping past midnight', () => {
+    vi.useFakeTimers({ now: new Date(2026, 10, 7, 23, 59, 30) })
+    const { container } = render(<MessageTime value={stamp} />)
+    // Asleep, no timer ran while the clock moved on.
+    vi.setSystemTime(new Date(2026, 10, 8, 7, 0))
+    act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    expect(container.querySelector('time')).toHaveTextContent(dayTime.format(sent))
   })
 })

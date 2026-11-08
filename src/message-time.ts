@@ -17,6 +17,9 @@ const calendarKey = (date: Date, fields: Set<string>) => full.formatToParts(date
   .map((part) => part.value)
   .join(' ')
 
+/** The viewer's calendar day, which changes at their local midnight. */
+export const calendarDay = (now = new Date()) => calendarKey(now, dayFields)
+
 /**
  * How a stored message's time reads: just the time today, the day too on
  * other days, and the year as well in other years. The title always carries
@@ -29,7 +32,7 @@ export function messageTimeParts(
   if (!value) return undefined
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) return undefined
-  const label = calendarKey(date, dayFields) === calendarKey(now, dayFields)
+  const label = calendarDay(date) === calendarDay(now)
     ? time.format(date)
     : calendarKey(date, yearFields) === calendarKey(now, yearFields)
       ? dayTime.format(date)

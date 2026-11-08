@@ -1407,7 +1407,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
 
 const REMOTE_RETENTION_PROBE_CONCURRENCY = 6
 
-async function mapWithConcurrency<T>(
+export async function mapWithConcurrency<T>(
   items: readonly T[],
   limit: number,
   run: (item: T) => Promise<void>,

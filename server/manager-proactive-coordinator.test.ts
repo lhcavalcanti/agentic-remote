@@ -188,6 +188,64 @@ describe('ManagerProactiveCoordinator', () => {
     })
   })
 
+  it('admits a transition only a refresh listing saw, once', async () => {
+    const root = await directory()
+    const { coordinator, inbox, agent } = await fixture(root)
+    await coordinator.setEnabled(true)
+
+    await coordinator.sweep([managed('idle', 2)])
+    await coordinator.sweep([managed('idle', 2)])
+
+    expect(agent.enqueueInternal).toHaveBeenCalledTimes(1)
+    expect(agent.submissions[0]!.content).toContain('kind=finished')
+    expect(inbox.pending(20)).toEqual([
+      expect.objectContaining({ kind: 'finished', revision: 2 }),
+    ])
+  })
+
+  it('observes a refresh listing before events that arrived after it', async () => {
+    const root = await directory()
+    const { coordinator, inbox } = await fixture(root)
+    await coordinator.setEnabled(true)
+
+    coordinator.handle(event(managed('running', 3)))
+    await coordinator.sweep([managed('idle', 2)])
+
+    expect(inbox.pending(20)).toEqual([
+      expect.objectContaining({ kind: 'finished', revision: 2 }),
+    ])
+  })
+
+  it('ignores a refresh listing while disabled or stopped', async () => {
+    const root = await directory()
+    const { coordinator, inbox, agent } = await fixture(root)
+    await coordinator.setEnabled(true)
+    await coordinator.setEnabled(false)
+
+    await coordinator.sweep([managed('idle', 2)])
+    await coordinator.stop()
+    await coordinator.sweep([managed('idle', 3)])
+
+    expect(inbox.pending(20)).toEqual([])
+    expect(agent.enqueueInternal).not.toHaveBeenCalled()
+  })
+
+  it.each(['disable', 'stop'] as const)(
+    'drops a refresh listing still queued at %s',
+    async (action) => {
+      const root = await directory()
+      const { coordinator, inbox, agent } = await fixture(root)
+      await coordinator.setEnabled(true)
+
+      const sweeping = coordinator.sweep([managed('idle', 2)])
+      await (action === 'disable' ? coordinator.setEnabled(false) : coordinator.stop())
+      await sweeping
+
+      expect(inbox.pending(20)).toEqual([])
+      expect(agent.enqueueInternal).not.toHaveBeenCalled()
+    },
+  )
+
   it('retries an unacknowledged proactive batch once without an automatic loop', async () => {
     const root = await directory()
     const { coordinator, inbox, agent, setCurrent } = await fixture(root)

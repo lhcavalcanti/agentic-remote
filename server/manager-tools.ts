@@ -663,9 +663,6 @@ export function createManagerTools(
         ) {
           return failure('This task turn may execute its durable task, but unrelated session settings, naming, closure, proactive outcomes, and memory mutations are not allowed.')
         }
-        if (host.messageSource() === 'scheduled' && managerToolMutability(name) !== 'read') {
-          return failure('Scheduled Oracle checks are read-only. They cannot change sessions, permissions, confirmations, Oracle settings, or memory.')
-        }
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
         if (options.actsOnSessions && host.answerOnly()) {

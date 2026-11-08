@@ -327,7 +327,7 @@ export async function buildApp(
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   let forwardToProactive: ((event: HubEvent) => void) | undefined
-  let forwardHubToDreamer: (() => void) | undefined
+  let forwardHubToDreamer: ((event: HubEvent) => void) | undefined
   let forwardManagerToDreamer: (() => void) | undefined
   if (role === 'hub') {
     manager =
@@ -421,6 +421,8 @@ export async function buildApp(
         reasoningEffort: managerSettings.reasoningEffort,
         // The synced settings profile on this same hub, read per turn.
         responseStyle: () => settingsProfileStore?.snapshot().values.oracleResponseStyle,
+        // Unset until Dreamer starts, and while it is off.
+        progressContext: () => dreamerService?.progressView(),
         // App settings → Models, read as each Oracle session starts.
         newSessionRuntimes: () => settingsProfileStore?.snapshot().values.newSessionRuntimes,
         structuredMemory: managerStructuredMemory,
@@ -467,6 +469,12 @@ export async function buildApp(
           setProactiveEnabled: async (enabled) => {
             await proactiveCoordinator?.setEnabled(enabled)
           },
+          progressSource: dreamerManager,
+          sweepLifecycle: async (sessions) => {
+            await proactiveCoordinator?.sweep(sessions).catch((error: unknown) => {
+              app.log.warn({ err: error }, 'Dreamer lifecycle sweep failed')
+            })
+          },
         },
       )
       try {
@@ -485,12 +493,17 @@ export async function buildApp(
         )
         forwardToProactive = (event) => proactiveCoordinator?.handle(event)
         manager.on('event', forwardToProactive)
-        forwardHubToDreamer = () => {
+        forwardHubToDreamer = (event) => {
+          dreamerService?.handleHubEvent(event)
           void dreamerService?.reconcileTasks().catch((error: unknown) => {
             app.log.warn({ err: error }, 'Dreamer task reconciliation failed')
           })
         }
-        forwardManagerToDreamer = forwardHubToDreamer
+        forwardManagerToDreamer = () => {
+          void dreamerService?.reconcileTasks().catch((error: unknown) => {
+            app.log.warn({ err: error }, 'Dreamer task reconciliation failed')
+          })
+        }
         manager.on('event', forwardHubToDreamer)
         dreamerAgent.on('event', forwardManagerToDreamer)
       } catch (error) {

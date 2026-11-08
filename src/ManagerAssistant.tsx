@@ -165,8 +165,6 @@ function applyEvent(snapshot: ManagerSnapshot, event: ManagerEvent): ManagerSnap
       const streaming = snapshot.streaming?.messageId === event.message.id ? undefined : snapshot.streaming
       return { ...snapshot, messages, streaming }
     }
-    case 'manager.reorder':
-      return { ...snapshot, messages: event.messages }
     case 'manager.delta':
       return { ...snapshot, streaming: { messageId: event.messageId, content: event.content } }
     case 'manager.sessions':
@@ -304,11 +302,7 @@ function UserMessage({
       ) : null}
       <div className="manager-message__meta">
         <MessageTime value={message.createdAt} />
-        {message.source === 'scheduled' ? (
-          <span className="manager-message__state">Scheduled check</span>
-        ) : message.answerOnly ? (
-          <span className="manager-message__state">Ask</span>
-        ) : null}
+        {message.answerOnly ? <span className="manager-message__state">Ask</span> : null}
         {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
       </div>
       {message.state === 'failed' && message.error ? (
@@ -1332,37 +1326,31 @@ export function ManagerAssistant({
                         {message.content}
                       </p>
                       <MessageTime value={message.createdAt} />
-                      {message.source === 'scheduled' ? (
-                        <span className="oracle-queue__tag">Scheduled check</span>
-                      ) : (
-                        <>
-                          {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
-                          <button
-                            aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
-                            className="icon-button oracle-queue__edit"
-                            disabled={Boolean(editing) || busyMessage === message.id}
-                            onClick={() => startEdit(message)}
-                            ref={(element) => {
-                              if (element) editButtons.current.set(message.id, element)
-                              else editButtons.current.delete(message.id)
-                            }}
-                            title="Edit; it keeps its place in the queue"
-                            type="button"
-                          >
-                            <Pencil aria-hidden="true" size={14} />
-                          </button>
-                          <button
-                            aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
-                            className="icon-button oracle-queue__remove"
-                            disabled={busyMessage === message.id}
-                            onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
-                            title="Remove from the queue"
-                            type="button"
-                          >
-                            <X aria-hidden="true" size={15} />
-                          </button>
-                        </>
-                      )}
+                      {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
+                      <button
+                        aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
+                        className="icon-button oracle-queue__edit"
+                        disabled={Boolean(editing) || busyMessage === message.id}
+                        onClick={() => startEdit(message)}
+                        ref={(element) => {
+                          if (element) editButtons.current.set(message.id, element)
+                          else editButtons.current.delete(message.id)
+                        }}
+                        title="Edit; it keeps its place in the queue"
+                        type="button"
+                      >
+                        <Pencil aria-hidden="true" size={14} />
+                      </button>
+                      <button
+                        aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
+                        className="icon-button oracle-queue__remove"
+                        disabled={busyMessage === message.id}
+                        onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
+                        title="Remove from the queue"
+                        type="button"
+                      >
+                        <X aria-hidden="true" size={15} />
+                      </button>
                     </>
                   )}
                 </li>

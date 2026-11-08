@@ -22,11 +22,7 @@ import {
   oracleDockShortcutBinding,
   oracleShortcutBinding,
 } from './app-shortcuts'
-import {
-  OracleModelSettings,
-  OracleProactiveSettings,
-  OracleSettingsStatus,
-} from './OracleSettings'
+import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 import {
   coordinatedAuthoritativeRefresh,
@@ -4279,7 +4275,6 @@ function AppSettingsDialog({
             onRetryModels={retryHubCopilotModels}
             oracle={oracle}
           />
-          <OracleProactiveSettings oracle={oracle} />
           <DreamerSettings active={open} />
           {oracle.settings && !oracle.unavailable ? (
             <section className="app-settings-section" id="settings-oracle-style">

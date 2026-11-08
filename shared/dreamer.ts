@@ -75,11 +75,24 @@ export interface DreamerSettings {
   timeZone: string
 }
 
+/** How often Dreamer refreshes session progress while enabled. */
+export const DREAMER_PROGRESS_REFRESH_MS = 5 * 60_000
+
+/** How current Dreamer's view of session progress is; present while enabled. */
+export interface DreamerProgressStatus {
+  refreshedAt?: string
+  nextRefreshAt?: string
+  /** Names of computers whose sessions could not be listed in the last refresh. */
+  staleComputers: string[]
+  error?: string
+}
+
 export interface DreamerSnapshot {
   available: boolean
   revision: number
   settings: DreamerSettings
   plan?: DreamerPlan
   tasks?: OracleTaskView[]
+  progress?: DreamerProgressStatus
   lastError?: string
 }

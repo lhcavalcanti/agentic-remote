@@ -79,19 +79,19 @@ describe('OracleNotifier', () => {
     expect(oracle.next(failed)).toBeDefined()
   })
 
-  it('suppresses a scheduled result completed during its quiet hours', () => {
+  it('suppresses a finished proactive observation', () => {
     const oracle = new OracleNotifier()
     oracle.next(event({
       id: 'a1',
       role: 'assistant',
-      replyTo: 'scheduled-1',
-      content: 'Nothing needs attention.',
+      replyTo: 'proactive-1',
+      content: 'Recorded the outcome.',
     }))
     expect(oracle.next(event({
-      id: 'scheduled-1',
+      id: 'proactive-1',
       role: 'user',
       state: 'done',
-      source: 'scheduled',
+      source: 'proactive',
       suppressNotification: true,
     }))).toBeUndefined()
   })

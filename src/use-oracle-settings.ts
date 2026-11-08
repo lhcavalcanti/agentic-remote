@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { RuntimeReasoningEffort } from '../shared/contracts'
 import type {
-  ManagerProactiveSettings,
   ManagerSessionBackend,
   ManagerSessionClosePolicy,
   ManagerSettingsSnapshot,
@@ -9,7 +8,7 @@ import type {
 import { getManager, updateManagerSettings } from './api'
 
 /** Which part of App settings a change came from, so its result shows there. */
-export type OracleSettingsPart = 'model' | 'folders' | 'backend' | 'close' | 'proactive'
+export type OracleSettingsPart = 'model' | 'folders' | 'backend' | 'close'
 
 export interface OracleSettingsState {
   settings?: ManagerSettingsSnapshot
@@ -23,7 +22,6 @@ export interface OracleSettingsState {
   saveFolder(computerId: string, path?: string): Promise<void>
   saveBackend(backend: ManagerSessionBackend): Promise<void>
   saveClosePolicy(policy: ManagerSessionClosePolicy): Promise<void>
-  saveProactive(settings: ManagerProactiveSettings): Promise<void>
 }
 
 /**
@@ -132,12 +130,6 @@ export function useOracleSettings(active = true): OracleSettingsState {
         : 'This hub did not keep that choice; update it to let Oracle close sessions without asking.',
   ), [update])
 
-  const saveProactive = useCallback((settings: ManagerProactiveSettings) => update(
-    { proactive: settings },
-    'proactive',
-    settings.enabled ? 'Periodic checks saved.' : 'Periodic checks paused.',
-  ), [update])
-
   return {
     settings,
     unavailable,
@@ -149,6 +141,5 @@ export function useOracleSettings(active = true): OracleSettingsState {
     saveFolder,
     saveBackend,
     saveClosePolicy,
-    saveProactive,
   }
 }

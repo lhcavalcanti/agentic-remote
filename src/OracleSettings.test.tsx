@@ -4,11 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getManager, updateManagerSettings } from './api'
 import type { RuntimeModelOption } from '../shared/contracts'
-import {
-  OracleModelSettings,
-  OracleProactiveSettings,
-  OracleSettingsStatus,
-} from './OracleSettings'
+import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
 
 type HarnessProps = Omit<Parameters<typeof OracleModelSettings>[0], 'oracle'> & {
@@ -21,7 +17,6 @@ function OracleSettings({ computers = [], ...props }: HarnessProps) {
   return (
     <>
       <OracleModelSettings oracle={oracle} {...props} />
-      <OracleProactiveSettings oracle={oracle} />
       {computers.length && oracle.settings ? (
         <section aria-label="Folders">
           {computers.map((computer) => (
@@ -174,86 +169,6 @@ describe('OracleSettings', () => {
     await waitFor(() => expect(updateManagerSettings).toHaveBeenLastCalledWith({ sessionBackend: 'sdk' }))
     expect(await screen.findByText('Saved. Oracle opens its next sessions with the Copilot SDK.')).toBeInTheDocument()
     expect(backend).toHaveValue('sdk')
-  })
-
-  it('configures and pauses read-only periodic checks on the hub', async () => {
-    vi.mocked(getManager).mockResolvedValue({
-      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
-      settings: {
-        proactive: {
-          enabled: false,
-          cadenceMinutes: 120,
-          timeZone: 'UTC',
-          quietStartHour: 22,
-          quietEndHour: 7,
-        },
-      },
-    })
-    vi.mocked(updateManagerSettings)
-      .mockResolvedValueOnce({
-        proactive: {
-          enabled: true,
-          cadenceMinutes: 240,
-          timeZone: 'Europe/Berlin',
-          quietStartHour: 23,
-          quietEndHour: 8,
-          nextCheckAt: '2026-11-05T07:00:00.000Z',
-        },
-      })
-      .mockResolvedValueOnce({
-        proactive: {
-          enabled: false,
-          cadenceMinutes: 240,
-          timeZone: 'Europe/Berlin',
-          quietStartHour: 23,
-          quietEndHour: 8,
-          latestCheckAt: '2026-11-04T12:00:00.000Z',
-          latestCheckState: 'done',
-        },
-      })
-    render(<OracleSettings models={models} />)
-
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Enable periodic checks' }))
-    fireEvent.change(screen.getByRole('combobox', { name: 'Periodic check cadence' }), {
-      target: { value: '240' },
-    })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Periodic check timezone' }), {
-      target: { value: 'Europe/Berlin' },
-    })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Quiet hours start' }), {
-      target: { value: '23' },
-    })
-    fireEvent.change(screen.getByRole('combobox', { name: 'Quiet hours end' }), {
-      target: { value: '8' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Save periodic checks' }))
-
-    await waitFor(() => expect(updateManagerSettings).toHaveBeenCalledWith({
-      proactive: {
-        enabled: true,
-        cadenceMinutes: 240,
-        timeZone: 'Europe/Berlin',
-        quietStartHour: 23,
-        quietEndHour: 8,
-      },
-    }))
-    expect(await screen.findByText(/Next check:/)).toHaveTextContent(
-      '2026-11-05T07:00:00.000Z',
-    )
-    expect(screen.getByText('Periodic checks saved.')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Enable periodic checks' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Save periodic checks' }))
-    await waitFor(() => expect(updateManagerSettings).toHaveBeenLastCalledWith({
-      proactive: {
-        enabled: false,
-        cadenceMinutes: 240,
-        timeZone: 'Europe/Berlin',
-        quietStartHour: 23,
-        quietEndHour: 8,
-      },
-    }))
-    expect(await screen.findByText('Periodic checks paused.')).toBeInTheDocument()
   })
 
   it('does not offer the choice on a hub from before it, which opens terminals', async () => {

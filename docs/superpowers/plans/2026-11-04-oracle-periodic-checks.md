@@ -1,5 +1,10 @@
 # Oracle Periodic Checks Implementation Plan
 
+> **Superseded by #511.** Periodic checks were removed before any hub ran them;
+> Dreamer now keeps Oracle current with a periodic session-progress refresh
+> ([design](../specs/2026-11-07-dreamer-periodic-refresh-design.md)). The
+> draft-status change still stands.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove redundant draft-save copy and add opt-in, durable, read-only periodic Oracle status checks.

@@ -849,4 +849,86 @@ describe('Dreamer settings and morning review', () => {
     expect(screen.getAllByRole('button', { name: 'Done' })[0]).toBeEnabled()
     expect(updateDreamerPlan).toHaveBeenCalledTimes(1)
   })
+
+  describe('session progress', () => {
+    const refreshedAt = '2026-10-29T11:55:00.000Z'
+    const nextRefreshAt = '2026-10-29T12:00:00.000Z'
+    const local = (iso: string, options: Intl.DateTimeFormatOptions) =>
+      new Intl.DateTimeFormat(undefined, options).format(new Date(iso)).replace(/\s+/g, ' ')
+    const clock = (iso: string) => local(iso, { hour: 'numeric', minute: '2-digit' })
+
+    beforeEach(() => {
+      vi.useFakeTimers({ now: new Date('2026-10-29T11:57:00.000Z'), toFake: ['Date'] })
+    })
+
+    it('tells the user how often Dreamer refreshes session progress', async () => {
+      render(<DreamerSettings />)
+
+      expect(await screen.findByText(/refreshes session progress every 5 minutes/))
+        .toBeInTheDocument()
+      expect(screen.queryByText(/Session progress updated/)).not.toBeInTheDocument()
+    })
+
+    it('shows the refresh times, unreachable computers, and a failed refresh in settings', async () => {
+      vi.mocked(getDreamer).mockResolvedValue({
+        ...ready,
+        progress: {
+          refreshedAt,
+          nextRefreshAt,
+          staleComputers: ['prod-node', 'laptop'],
+          error: 'Dreamer could not refresh session progress.',
+        },
+      })
+      render(<DreamerSettings />)
+
+      const updated = await screen.findByText(/Session progress updated/)
+      expect(updated).toHaveTextContent(
+        `Session progress updated ${clock(refreshedAt)}; next refresh ${clock(nextRefreshAt)}.`,
+      )
+      expect(within(updated).getByText(clock(refreshedAt))).toHaveAttribute('datetime', refreshedAt)
+      expect(within(updated).getByText(clock(nextRefreshAt))).toHaveAttribute('datetime', nextRefreshAt)
+      expect(screen.getByText(/unreachable computers: prod-node, laptop\./)).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('Dreamer could not refresh session progress.')
+    })
+
+    it('says when Dreamer has not refreshed session progress yet', async () => {
+      vi.mocked(getDreamer).mockResolvedValue({ ...ready, progress: { nextRefreshAt, staleComputers: [] } })
+      render(<DreamerSettings />)
+
+      expect(await screen.findByText(/has not refreshed session progress yet/)).toHaveTextContent(
+        `Dreamer has not refreshed session progress yet; next refresh ${clock(nextRefreshAt)}.`,
+      )
+      expect(screen.queryByText(/unreachable/)).not.toBeInTheDocument()
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    })
+
+    it('shows in the morning plan when session progress was updated', async () => {
+      vi.mocked(getDreamer).mockResolvedValue({
+        ...ready,
+        progress: {
+          refreshedAt: '2026-10-28T09:00:00.000Z',
+          nextRefreshAt,
+          staleComputers: ['prod-node'],
+          error: 'Dreamer could not refresh session progress.',
+        },
+      })
+      render(<DreamerMorningPlan />)
+      await openMorningPlan()
+
+      expect(screen.getByText(/Session progress updated/)).toHaveTextContent(
+        `Session progress updated ${local('2026-10-28T09:00:00.000Z', { month: 'short', day: 'numeric' })}.`,
+      )
+      expect(screen.queryByText(/next refresh/)).not.toBeInTheDocument()
+      expect(screen.getByText(/unreachable computers: prod-node\./)).toBeInTheDocument()
+      expect(screen.getByText('Dreamer could not refresh session progress.')).toBeInTheDocument()
+    })
+
+    it('shows no session progress in the morning plan while it is absent', async () => {
+      vi.mocked(getDreamer).mockResolvedValue(ready)
+      render(<DreamerMorningPlan />)
+      await openMorningPlan()
+
+      expect(screen.queryByText(/session progress/i)).not.toBeInTheDocument()
+    })
+  })
 })

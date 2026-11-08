@@ -1129,10 +1129,16 @@ export class SessionStore {
     })
   }
 
+  /**
+   * `liveAdmission` names owners the app admitted work to before this record
+   * showed them as open terminal sessions. It is read when the write commits,
+   * so an admission that lands while discovery runs still grants recovery.
+   */
   async syncBackends(
     terminalSessionIds: string[],
     sdkSessionIds: string[],
     isCurrent?: () => boolean,
+    liveAdmission?: (sessionId: string) => boolean,
   ): Promise<void> {
     const activeTerminal = new Set(terminalSessionIds)
     const knownSdk = new Set(sdkSessionIds)
@@ -1141,13 +1147,16 @@ export class SessionStore {
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
-          const retainQueuedTerminal = requiresExplicitTerminalReopen(session)
+          const admitted = session.managedOpen !== true &&
+            (liveAdmission?.(session.id) ?? false)
+          const retainQueuedTerminal = !admitted && requiresExplicitTerminalReopen(session)
           const interruption = retainQueuedTerminal
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
             }
             : undefined
           if (
+            !admitted &&
             session.backend === 'terminal' &&
             session.isOpen === true &&
             session.interruption === interruption &&
@@ -1170,6 +1179,7 @@ export class SessionStore {
             sdkRestartRecovery: undefined,
             sdkAcceptedReply: undefined,
             archivedAt: undefined,
+            ...(admitted ? { managedOpen: true } : {}),
           }
         } else if (
           !session.backend &&
@@ -1252,7 +1262,12 @@ export class SessionStore {
     })
   }
 
-  async markInterrupted(sessionId: string): Promise<SessionDetail> {
+  /**
+   * `retainedQueueOnly` re-checks at commit that the record still holds a
+   * queue it may not deliver, so a Reopen or recovery grant that landed after
+   * the caller decided is not interrupted again.
+   */
+  async markInterrupted(sessionId: string, retainedQueueOnly = false): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.interruption ??= {
         detectedAt: new Date(this.now()).toISOString(),
@@ -1268,9 +1283,10 @@ export class SessionStore {
       }
       if (session.pendingPermission) session.pendingPermission.stale = true
       if (session.pendingUserInput) session.pendingUserInput.stale = true
-    }, (session) => !session.interruption ||
+    }, (session) => (!retainedQueueOnly || requiresExplicitTerminalReopen(session)) && (
+      !session.interruption ||
       Boolean(session.pendingPermission && !session.pendingPermission.stale) ||
-      Boolean(session.pendingUserInput && !session.pendingUserInput.stale))
+      Boolean(session.pendingUserInput && !session.pendingUserInput.stale)))
   }
 
   sdkRecovery(sessionId: string): SdkRestartRecovery | undefined {

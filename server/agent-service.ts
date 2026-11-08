@@ -2027,6 +2027,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly sdkDrainRequested = new Set<string>()
   private readonly startupTerminalQueues = new Set<string>()
   private readonly rediscoveredTerminalQueues = new Map<string, 'resume' | 'reopen'>()
+  // Live owners work was queued to before their record showed them as open
+  // tmux sessions, keyed to the admission's sequence number. Discovery grants
+  // them recovery when it records the owner, as an open record's admission
+  // would have, and forgets one a later snapshot no longer lists.
+  private readonly liveTerminalAdmissions = new Map<string, number>()
+  private liveTerminalAdmissionSequence = 0
   private nativeStartupDiscoveryReady = false
   private nativeDiscoveryCompleted = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
@@ -6292,15 +6298,32 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     priority = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(
-      sessionId,
-      content,
-      command,
-      answers,
-      delivery,
-      steer,
-      priority,
-    )
+    // Every caller found the owner live. Recorded before the write so a
+    // discovery commit that lands with it still sees the admission.
+    const previousAdmission = this.liveTerminalAdmissions.get(sessionId)
+    const admission = this.store.isManagedOpen(sessionId)
+      ? undefined
+      : ++this.liveTerminalAdmissionSequence
+    if (admission !== undefined) this.liveTerminalAdmissions.set(sessionId, admission)
+    let queued: SessionDetail
+    try {
+      queued = await this.enqueuePrompt(
+        sessionId,
+        content,
+        command,
+        answers,
+        delivery,
+        steer,
+        priority,
+      )
+    } catch (error) {
+      if (admission !== undefined && this.liveTerminalAdmissions.get(sessionId) === admission) {
+        if (previousAdmission === undefined) this.liveTerminalAdmissions.delete(sessionId)
+        else this.liveTerminalAdmissions.set(sessionId, previousAdmission)
+      }
+      throw error
+    }
+    if (this.store.isManagedOpen(sessionId)) this.liveTerminalAdmissions.delete(sessionId)
     if (!wasIdle) {
       // Nothing else drains mid-turn, so the queue is polled for the composer.
       if (steer) this.retryTerminalQueueClaim(sessionId)
@@ -9260,6 +9283,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let sessions: SessionMetadata[]
     let activeSessions: DiscoveredSession[]
     let generation: number
+    let admissionsBeforeSnapshot: number
     while (true) {
       // A provider may list a new session before createSession() has returned
       // its ID. Do not discover it before its identity write and cleanup settle.
@@ -9268,6 +9292,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (this.stopped || this.lifecycleLocks.size) return false
       generation = this.discoveryGeneration
+      admissionsBeforeSnapshot = this.liveTerminalAdmissionSequence
       const discovery = await Promise.allSettled([
         this.client.listSessions(),
         this.discoverTerminalSessions(),
@@ -9365,8 +9390,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       activeSessions.map((session) => session.id),
       indexedSessions.map((session) => session.id),
       isCurrent,
+      (id) => this.liveTerminalAdmissions.has(id),
     )
     if (!isCurrent()) return false
+    const listed = new Set(activeSessions.map((session) => session.id))
+    for (const [id, admission] of [...this.liveTerminalAdmissions]) {
+      // Admitted before this snapshot yet not listed: that owner is gone.
+      if (
+        this.store.isManagedOpen(id) || !this.store.get(id) ||
+        (!listed.has(id) && admission <= admissionsBeforeSnapshot)
+      ) {
+        this.liveTerminalAdmissions.delete(id)
+      }
+    }
     const renameTerminal = this.terminalController.rename?.bind(
       this.terminalController,
     )
@@ -9423,10 +9459,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           continue
         }
         if (recovery !== 'reopen') continue
-        const interrupted = await this.store.markInterrupted(id)
+        // A Reopen or recovery grant that settled during this pass owns the
+        // queue now; interrupting it again would strand that queue.
+        if (this.store.isManagedOpen(id)) {
+          this.rediscoveredTerminalQueues.set(id, 'resume')
+          continue
+        }
+        const interrupted = await this.store.markInterrupted(id, true)
         if (!isCurrent()) {
           this.nativeStartupDiscoveryReady = false
           return false
+        }
+        if (this.store.isManagedOpen(id)) {
+          this.rediscoveredTerminalQueues.set(id, 'resume')
+          continue
         }
         this.rediscoveredTerminalQueues.delete(id)
         this.publish(interrupted)

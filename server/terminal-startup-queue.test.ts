@@ -639,6 +639,93 @@ describe('Persisted native queue startup', () => {
     expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
   }, 15_000)
 
+  it('keeps a Reopen that settles while rediscovery retains the queue', async () => {
+    const native = await fixture()
+    await native.seed(['Deliver after the concurrent Reopen'])
+    await native.control('waiting')
+    const runtime = native.connect()
+    await runtime.service.start()
+
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.refreshDiscovery()
+    await runtime.store.setOpen(native.id, false, true)
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+
+    // The pass has decided to retain the queue; Reopen settles before it ends.
+    const syncOpen = runtime.store.syncOpen.bind(runtime.store)
+    vi.spyOn(runtime.store, 'syncOpen').mockImplementationOnce(async (...args) => {
+      await runtime.service.activateSession(native.id)
+      await new Promise((resolve) => setImmediate(resolve))
+      return syncOpen(...args)
+    })
+    await runtime.service.refreshDiscovery()
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
+    expect(runtime.service.getSession(native.id)?.queueState?.message)
+      .toMatch(/retry automatically/i)
+
+    await native.control('idle')
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+
+    expect((await native.receipt()).submits).toEqual(['Deliver after the concurrent Reopen'])
+    expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
+  }, 15_000)
+
+  it('grants recovery to work queued to a live owner before discovery records it', async () => {
+    const native = await fixture()
+    await native.seed([], (store) => store.setOpen(native.id, false, true))
+    await native.control('waiting')
+    const runtime = native.connect()
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.start()
+    expect(runtime.store.get(native.id)).toMatchObject({ isOpen: false })
+    expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
+
+    // The owner is live, but no discovery pass has recorded it yet.
+    await runtime.service.sendMessage(native.id, 'Admitted to the live owner', true)
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    await runtime.service.refreshDiscovery()
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
+    expect(runtime.service.getSession(native.id)?.queueState?.message)
+      .toMatch(/retry automatically/i)
+
+    await native.control('idle')
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+
+    expect((await native.receipt()).submits).toEqual(['Admitted to the live owner'])
+    expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
+  }, 15_000)
+
+  it('holds work queued to an owner that is gone before discovery records it', async () => {
+    const native = await fixture()
+    await native.seed([], (store) => store.setOpen(native.id, false, true))
+    await native.control('waiting')
+    const runtime = native.connect()
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.start()
+    await runtime.service.sendMessage(native.id, 'Held for an explicit Reopen', true)
+
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.refreshDiscovery()
+    expect(runtime.service['liveTerminalAdmissions'].has(native.id)).toBe(false)
+    await runtime.service.refreshDiscovery()
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+    expect((await native.receipt()).submits).toEqual([])
+  }, 15_000)
+
   it('does not bypass the ordered startup queue phase when recovery rediscovers an owner', async () => {
     const native = await fixture()
     await native.seed(['Wait for ordered startup recovery'])

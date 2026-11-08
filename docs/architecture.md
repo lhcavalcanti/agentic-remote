@@ -303,6 +303,13 @@ unmanaged session never qualified for startup queue intent.
 Eligibility comes from the original persisted intent, not discovery-observed
 metadata; an acknowledgement cannot revive an intent already retired.
 
+A rediscovered unmanaged owner's queue is held behind Reopen. Discovery decides
+this from its snapshot, then re-checks at commit, so a Reopen that settles
+mid-pass is resumed rather than interrupted again. Work queued to a live owner
+while its record still showed it closed is remembered in memory with an
+admission sequence: discovery grants recovery when it records that owner, and
+drops the admission once a snapshot taken after it no longer lists the owner.
+
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then
 replay it after publishing the created/replacement session. Failed identity

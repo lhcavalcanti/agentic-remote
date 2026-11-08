@@ -420,7 +420,7 @@
   "inputs": {
     ".github/copilot-instructions.md": "03d9664de9489495b64bdda845ea7419e677bfa6b14145e03cd9fcc6cca79a30",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "3895af31192466fcb016e7d2696d5c0419506cb01b2a42442b634d90b780a12a",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "3bda1b711e0e090ae2321e755a31870b783a1aa56c0752467cec4d34c94f53b3",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -449,7 +449,7 @@
     "bin/agentic-remote": "19359d888276fda1ba423b8f5118e37232f2ba7c63299b9f075142c9df7e4340",
     "bin/agentic-remote-gate": "98e30166620bd152ca32581e4afa99b77ec24bae093b416c160e5ad564877f88",
     "bin/agentic-remote-promotion-monitor": "2c43caed3091ab291aa5da9a1598ac1797c278dffc9bacbd7537582a0bfaa477",
-    "bin/agentic-remote-promotion-setup": "5d4fb19a9e3a9a5c29532d2151e7619920b05a53490c733b9660ff2fa3b2bfd6",
+    "bin/agentic-remote-promotion-setup": "a98d649946727ac53fe1df94ceea5a8dfe3bae83a0ea1f30da343e0699e220aa",
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
@@ -459,7 +459,7 @@
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
-    "docs/deployment-promotion.md": "e2b4bdd37fd6398bb342edb8b5c89334146a0058086cdf3ad3b3af2ebffeb71d",
+    "docs/deployment-promotion.md": "71e7b202933941e39165ee05aa85563d60cde8720144f13220a68f62bc2b2e1c",
     "docs/design/agent-workspace.md": "300d9ebda9e419ddd55103b7627ec53f29f2175f530a1de36141cd5d766a6d0a",
     "docs/design/oracle-conversation-mode.md": "2e57dfa4c540302fb9a04a5bb18b058935db26fa6ed28cbc6851e737d93db249",
     "docs/design/oracle-dreamer.md": "c641c69c99e492eb0f15f9b93888a2d3cabf1d92d95d4be2ed75c1578f1844e4",
@@ -670,8 +670,8 @@
     "server/oracle-voice-worker.ts": "d800d4ee0a97b5e7b8044a36463407fdc169ea401aca7b324312e3298f1234c4",
     "server/paths.ts": "11789bf5288ae72e1ce71a17f75b02c1432912d9dc5c5b859f0d1855100b2c14",
     "server/promotion-monitor.test.ts": "cac9fb7d30241163c64e1e49ca14b1994c75a559519d5a67e83fe4dd7ffe45a7",
-    "server/promotion-setup-execution.test.ts": "8d2c09306b0a7f80aa0e269de4930ae3864190091c092565430e9e8f8a3dec08",
-    "server/promotion-setup.test.ts": "b2b7b33d9b92fd7dffa304f16ef7feebfa466c47a70f576090690bfbbb08b320",
+    "server/promotion-setup-execution.test.ts": "1ad58247e5311d1e4f3621361dbd93f73f8dc2fc230cdc93c57a548381affdaf",
+    "server/promotion-setup.test.ts": "8e530c15c4db5c37b6dca384d3daf01caff55dbf9c8e27a235a1d4cd80f50dff",
     "server/prompt-form-layout.test.ts": "74ae644b07a6a745c1541c4106492b27b24729dffdbe9d90f111125b06373ce6",
     "server/provider-session-service.test.ts": "561bc411661230c5fee9b23017ad4455a7084a08436e206a3d378f7973f33321",
     "server/provider-session-service.ts": "9196ad0f890051fbc2e52059d240d4a021103fc3bfc8c7df8316ba50c03bb351",
@@ -1031,17 +1031,19 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "47e1e57a1e50702f35d592c8c1abbfdb81e7a4ac946c651ec93056bbce06f1a2",
+    "GRAPH_REPORT.md": "cc1db8f158f29350d6f739e0ca6843dba2188955589fc0843ed7eb5421bfb140",
     "communities.json": "4e06c0954bb958babcb9c4c320ea3b5d51dd4d567ffbd8ffadfd892f452fd8b3",
-    "graph.html": "5318de5f77e6c01bbdd39d81cf593a2bfaf920880e56eec695c8cfce4edc257d",
-    "graph.json": "9f9303671dd648fade8d1e6188054801d237844bfe9bd6f4ce6c4af51973a4b2"
+    "graph.html": "b326514d5947f336b88e9765df1815bc9f2947d4bb001331ffc738ad2b7b9933",
+    "graph.json": "62c28cd2d3a730d0d6e65b1153285da52968bc40a7f7cb881c9b47876d928162"
   },
   "schema_version": 1,
-  "source_commit": "7bb3b5ee6762a4b3325c2752b5d4648dee9cdbc6",
-  "source_fingerprint": "3e2654247e40302bbc4d98e02b09d0c881a1f0134af6277bbc178338c788ea28",
+  "source_commit": "a285457a5393eef1568f50361188e05ebb305bb0",
+  "source_fingerprint": "3b8ec52e397fdbd1259f806cc915e9ff0865c783766e0eb725bc7f253e8f6237",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    ".github/skills/agentic-remote-navigation/SKILL.md",
+    "bin/agentic-remote-promotion-setup",
+    "docs/deployment-promotion.md",
+    "server/promotion-setup-execution.test.ts",
+    "server/promotion-setup.test.ts"
   ]
 }

@@ -71,6 +71,8 @@ export interface DreamerProgressSnapshot {
 export interface DreamerProgressRefresh {
   /** Open sessions as listed by computers that answered for themselves. */
   authoritative: ManagedSession[]
+  /** Each computer's pairing generation, read before the listing. */
+  computerGenerations: ReadonlyMap<string, string>
 }
 
 export interface DreamerProgressSource {
@@ -78,7 +80,7 @@ export interface DreamerProgressSource {
     sessions: ManagedSession[]
     answeredComputerIds: string[]
   }>
-  listComputers(): Pick<ComputerSummary, 'id' | 'name'>[]
+  listComputers(): Pick<ComputerSummary, 'id' | 'name' | 'lifecycleGeneration'>[]
   /** Must be passive: reading a session must never resume or close it. */
   readSession(computerId: string, sessionId: string): Promise<ManagedSession>
 }
@@ -276,6 +278,11 @@ export class DreamerProgress {
   private async runRefresh(generation: number): Promise<DreamerProgressRefresh | undefined> {
     const touches = new Set<string>()
     this.listingTouches = touches
+    // Read first, so a computer paired anew mid-listing is never credited.
+    const computerGenerations = new Map(
+      this.source.listComputers().flatMap(({ id, lifecycleGeneration }) =>
+        lifecycleGeneration ? [[id, lifecycleGeneration] as const] : []),
+    )
     let listing: Awaited<ReturnType<DreamerProgressSource['listSessionsWithAuthority']>>
     try {
       listing = await this.source.listSessionsWithAuthority()
@@ -298,6 +305,7 @@ export class DreamerProgress {
     this.prune()
     return {
       authoritative: listing.sessions.filter((session) => answered.has(session.computerId)),
+      computerGenerations,
     }
   }
 

@@ -1485,6 +1485,30 @@ describe('ManagerProactiveInbox', () => {
       { taskGeneration: 1, kind: 'finished' },
     ])
   })
+
+  it('admits at the retained-event bound once acknowledged evidence expires', async () => {
+    const inbox = await openInbox({
+      maxEventRecords: 1,
+      terminalEventRetentionMs: 1_000,
+    })
+    await inbox.observe(observation())
+    await inbox.observe(observation({ revision: 2, status: 'idle' }))
+    await inbox.acknowledge([inbox.pending()[0]!.id], 'handled')
+    await inbox.observe(observation({ revision: 3, status: 'running' }))
+    await expect(inbox.observe(observation({
+      revision: 4,
+      status: 'idle',
+    }))).rejects.toMatchObject({ statusCode: 507 })
+
+    clock += 1_001
+    await expect(inbox.observe(observation({
+      revision: 4,
+      status: 'idle',
+    }))).resolves.toMatchObject({ outcome: 'admitted' })
+    expect(inbox.pending()).toMatchObject([
+      { taskGeneration: 2, kind: 'finished', revision: 4 },
+    ])
+  })
 })
 
 type TestState = {

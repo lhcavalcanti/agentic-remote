@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "e8b3a7a70ad0a402c3e4564b6cf70e71df94834a",
+  "built_at_commit": "a3b7f43e0b34b83af62aff2a75ecf6cd00637368",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -225344,7 +225344,7 @@
       "relation": "contains",
       "source": "src_session_response_order",
       "source_file": "src/session-response-order.ts",
-      "source_location": "L78",
+      "source_location": "L79",
       "target": "src_session_response_order_carrysnapshottranscripts",
       "weight": 1.0
     },
@@ -315242,7 +315242,7 @@
       "label": "carrySnapshotTranscripts()",
       "norm_label": "carrysnapshottranscripts()",
       "source_file": "src/session-response-order.ts",
-      "source_location": "L78"
+      "source_location": "L79"
     },
     {
       "_callable": true,

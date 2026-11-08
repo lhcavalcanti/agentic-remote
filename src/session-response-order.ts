@@ -57,6 +57,7 @@ export function projectSessionResponse(
   return rememberSessionResponse({
     ...incoming,
     failedPrompt: current.failedPrompt,
+    recoveryAcknowledgementPending: current.recoveryAcknowledgementPending,
     queueState: current.queueState,
   }, startedAt)
 }

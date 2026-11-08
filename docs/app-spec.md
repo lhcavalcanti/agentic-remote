@@ -1285,7 +1285,8 @@ Questions and permissions are the highest-priority UI state.
   view before attempting its receipt write. Every public session response,
   including mutation results and queue-removal envelopes, MUST omit accepted or
   obsolete recovery markers without mutating internal recovery state or dropping
-  a newer unaccepted recovery.
+  a newer unaccepted recovery. An omitted accepted marker that still holds the
+  queue MUST be reported as a pending acknowledgement.
 - A failed recovery submission MUST return its current recovery token and owning
   session through both local and paired-node HTTP paths. The browser MUST bind
   any restored draft to that token, including across navigation, reload and clear
@@ -1293,7 +1294,8 @@ Questions and permissions are the highest-priority UI state.
   draft. Missing error metadata MUST retain the original binding rather than
   silently turning a retry into an independent message.
 - HTTP session results serialized before an observed recovery event MUST NOT
-  overwrite that event's recovery field at an equal or older durable revision.
+  overwrite that event's recovery marker or pending acknowledgement at an equal
+  or older durable revision.
   Immediate equal-revision redaction events and fresh reads issued after them
   MUST remain valid. The client MUST preserve detail hydration, genuinely newer
   revisions/recovery tokens, and session/computer replacement ownership rather

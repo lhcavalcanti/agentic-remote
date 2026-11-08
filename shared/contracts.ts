@@ -355,6 +355,13 @@ export interface SessionSummary {
   archivedAt?: string
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
+  /** A claimed terminal queue head is still awaiting a safe delivery outcome. */
+  terminalQueueDispatchPending?: boolean
+  /**
+   * An accepted recovery resend is still clearing its marker. The marker stays
+   * hidden so it cannot be sent twice, but queued work waits until it clears.
+   */
+  recoveryAcknowledgementPending?: boolean
   queueState?: QueueState
   /** A durable dispatch intent. It must never be retried automatically. */
   queuedDispatch?: QueuedPromptDispatch

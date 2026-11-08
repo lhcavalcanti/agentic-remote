@@ -1117,17 +1117,23 @@ Questions and permissions are the highest-priority UI state.
   the last 30 seconds can still open a startup dialog over an empty prompt,
   so its prompt MUST stay live for about three seconds first; one running
   longer MUST only need its prompt seen steady once. A steer to a settled,
-  working Copilot that shows no usable composer (within five seconds after a
-  restart, or at once otherwise) MUST NOT hold the send lock for the startup
-  timeout or fail: nothing is typed, and the message joins the app FIFO
-  exactly once while the session is `running`, marked as a steer. A queued
-  steer at the head of the FIFO MUST be typed into the running turn as soon as
-  the composer is ready and empty again, not held until the turn ends. This
+  working Copilot that shows no usable composer within a brief subsecond
+  readiness window MUST NOT hold the send lock for the startup timeout or
+  fail: nothing is typed, and the message joins the app FIFO exactly once
+  while the session is `running`, marked as a steer. A queued steer at the
+  head of the FIFO MUST use a short steer-only readiness wake and be typed
+  into the running turn as soon as the composer is ready and empty again, not
+  held until the turn ends or coupled only to transcript polling. This
   includes a turn that outlived a hub restart. A steer behind an older queued
-  prompt keeps its place and steers the turn that prompt starts. A steer the terminal refuses
-  again before anything was typed stays at the head without a new error; an
-  uncertain one is never retyped. Steers that would replace a terminal draft,
-  and refusals for any other reason, still return a 409.
+  prompt keeps its place and steers the turn that prompt starts. While a
+  runnable retained head exists, a later immediate steer MUST join behind it
+  instead of attempting direct delivery, including when both sends overlap
+  before the first refusal settles. After restart, a running steer head blocked
+  by a typed or unreadable composer MUST regain the same short steer-only
+  readiness wake. A steer the terminal refuses again before anything was typed
+  stays at the head without a new error; an uncertain one is never retyped.
+  Steers that would replace a terminal draft, and refusals for any other
+  reason, still return a 409.
 - A working terminal composer MUST accept native queued messages and slash
   commands whose catalog explicitly allows execution during a turn. Other
   immediate messages MUST wait. These delivery modes MUST still reject
@@ -1279,7 +1285,8 @@ Questions and permissions are the highest-priority UI state.
   view before attempting its receipt write. Every public session response,
   including mutation results and queue-removal envelopes, MUST omit accepted or
   obsolete recovery markers without mutating internal recovery state or dropping
-  a newer unaccepted recovery.
+  a newer unaccepted recovery. An omitted accepted marker that still holds the
+  queue MUST be reported as a pending acknowledgement.
 - A failed recovery submission MUST return its current recovery token and owning
   session through both local and paired-node HTTP paths. The browser MUST bind
   any restored draft to that token, including across navigation, reload and clear
@@ -1287,7 +1294,8 @@ Questions and permissions are the highest-priority UI state.
   draft. Missing error metadata MUST retain the original binding rather than
   silently turning a retry into an independent message.
 - HTTP session results serialized before an observed recovery event MUST NOT
-  overwrite that event's recovery field at an equal or older durable revision.
+  overwrite that event's recovery marker or pending acknowledgement at an equal
+  or older durable revision.
   Immediate equal-revision redaction events and fresh reads issued after them
   MUST remain valid. The client MUST preserve detail hydration, genuinely newer
   revisions/recovery tokens, and session/computer replacement ownership rather
@@ -1347,6 +1355,15 @@ keyboard Return inserts a newline.
 The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not
 required to be individually editable.
+
+The queue region MUST say **Steering when ready** only while a tmux session is
+running and its runnable head is a non-command steer. A head held behind
+recovery or an unsettled dispatch, including an accepted resend still awaiting
+its durable acknowledgement, is not runnable. An SDK fallback or idle
+queue remains **Queued for later**, later steers behind an ordinary head do not
+relabel the queue, and archived or interrupted queues say **Retained until
+reopened**. The region's accessible name, description, and per-prompt steer
+marker MUST match that same current state.
 
 An app-queued terminal prompt MUST be durably removed from automatic retry
 before delivery begins. A failed completion write MUST NOT resend the prompt;

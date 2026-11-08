@@ -779,7 +779,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   Such a close MUST be recorded as closing before the deletion, so a restart
   finishes it, and its card MUST show that Oracle closed it, with no buttons.
   Oracle learns the outcome from its tool result. A hub from before this
-  setting does not report it, so App settings MUST NOT offer it there.
+  setting does not report it, so App settings MUST NOT offer it there. Such a
+  hub keeps an earlier opt-in, which returns once it is updated, so a choice
+  it answers without, **Ask me every time** included, MUST NOT show as saved.
 - Oracle's data lives in `<data>/manager/`: app-owned state, transcript,
   queue, journal, registry, and settings, plus the agent's Markdown memory under
   `memory/`, and optional `structured-memory.json` with its validated backup.

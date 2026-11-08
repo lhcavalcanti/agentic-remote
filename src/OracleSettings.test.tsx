@@ -207,6 +207,20 @@ describe('OracleSettings', () => {
     expect(screen.queryByRole('combobox', { name: "Closing Oracle's sessions" })).toBeNull()
   })
 
+  it('does not report Ask as saved by a rolled-back hub, which keeps the earlier opt-in', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { sessionClosePolicy: 'oracle-started' },
+    })
+    // A hub from before the setting drops it and answers without it.
+    vi.mocked(updateManagerSettings).mockResolvedValueOnce({})
+    render(<OracleSettings models={models} />)
+    fireEvent.change(await screen.findByRole('combobox', { name: "Closing Oracle's sessions" }), { target: { value: 'ask' } })
+    await waitFor(() => expect(updateManagerSettings).toHaveBeenCalledWith({ sessionClosePolicy: 'ask' }))
+    expect(await screen.findByText('This hub did not keep that choice; update it, then choose again, or Oracle goes back to closing idle sessions without asking.')).toBeInTheDocument()
+    expect(screen.queryByText('Saved. Oracle asks before closing any session.')).toBeNull()
+  })
+
   it('says so when the hub does not keep the choice, rather than that it saved', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],

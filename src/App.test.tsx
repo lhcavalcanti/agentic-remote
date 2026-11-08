@@ -9275,6 +9275,20 @@ describe('App', () => {
         description: 'Messages waiting for later delivery',
         steering: false,
       },
+      {
+        name: 'a running steer queue behind an accepted recovery awaiting acknowledgement',
+        state: {
+          ...running,
+          recoveryAcknowledgementPending: true,
+          queuedPrompts: [
+            { id: 'q1', content: steer, createdAt: new Date().toISOString(), steer: true },
+          ],
+        },
+        region: 'Queued prompts',
+        heading: 'Queued for later',
+        description: 'Messages waiting for later delivery',
+        steering: false,
+      },
     ])('labels $name from lifecycle and its runnable head', async ({
       state,
       region,

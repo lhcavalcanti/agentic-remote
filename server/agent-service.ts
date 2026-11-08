@@ -11961,9 +11961,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const obsolete = !current || current.failedAt !== failed.failedAt || current.content !== failed.content
     const accepted = this.recoveryClaims.get(failed.failedAt)?.accepted ||
       (receipt && receipt.failedAt === failed.failedAt && receipt.accepted)
-    return obsolete || accepted
+    return obsolete
       ? { ...session, failedPrompt: undefined }
-      : { ...session, failedPrompt: current }
+      : accepted
+        ? { ...session, failedPrompt: undefined, recoveryAcknowledgementPending: true }
+        : { ...session, failedPrompt: current }
   }
 
   private publishError(sessionId: string, error: unknown): void {

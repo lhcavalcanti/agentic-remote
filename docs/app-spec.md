@@ -1355,7 +1355,9 @@ support edit and remove operations. Direct CLI-native queue entries are not
 required to be individually editable.
 
 The queue region MUST say **Steering when ready** only while a tmux session is
-running and its runnable head is a non-command steer. An SDK fallback or idle
+running and its runnable head is a non-command steer. A head held behind
+recovery or an unsettled dispatch, including an accepted resend still awaiting
+its durable acknowledgement, is not runnable. An SDK fallback or idle
 queue remains **Queued for later**, later steers behind an ordinary head do not
 relabel the queue, and archived or interrupted queues say **Retained until
 reopened**. The region's accessible name, description, and per-prompt steer

@@ -1,14 +1,16 @@
+import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { noTmuxServer } from './tmux-errors.js'
 import { createIsolatedTmuxRoot, stopIsolatedTmuxServer } from './tmux-test-helpers.js'
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }))
+const { execute, watchdog } = vi.hoisted(() => ({ execute: vi.fn(), watchdog: vi.fn() }))
 
 vi.mock('node:child_process', () => ({
   execFile: Object.assign(vi.fn(), {
     [Symbol.for('nodejs.util.promisify.custom')]: execute,
   }),
+  spawn: watchdog,
 }))
 vi.mock('node:fs/promises', () => ({
   mkdtemp: vi.fn(),
@@ -61,6 +63,11 @@ beforeEach(() => {
   vi.mocked(rm).mockResolvedValue()
   vi.mocked(mkdtemp).mockImplementation(async () => `/owned/initialized-${++fixtures}`)
   vi.mocked(noTmuxServer).mockResolvedValue(false)
+  watchdog.mockImplementation(() => {
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn() })
+    queueMicrotask(() => child.emit('spawn'))
+    return child
+  })
 })
 
 afterEach(() => {
@@ -357,6 +364,18 @@ describe('initialized tmux fixture', () => {
     })
     vi.mocked(readFile).mockImplementation(async () => processStat(pid, killed ? 'Z' : 'S'))
     await expect(createIsolatedTmuxRoot()).rejects.toThrow()
+    expect(commands('kill-server')).toHaveLength(1)
+    expect(rm).toHaveBeenCalledOnce()
+  })
+
+  it('retires its server and rejects when the abandonment watchdog cannot start', async () => {
+    watchdog.mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), { unref: vi.fn() })
+      queueMicrotask(() => child.emit('error', errno('EAGAIN')))
+      return child
+    })
+    vi.mocked(readFile).mockImplementation(async () => processStat(pid, killed ? 'Z' : 'S'))
+    await expect(createIsolatedTmuxRoot()).rejects.toThrow('EAGAIN')
     expect(commands('kill-server')).toHaveLength(1)
     expect(rm).toHaveBeenCalledOnce()
   })

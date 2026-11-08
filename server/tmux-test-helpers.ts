@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { once } from 'node:events'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -38,6 +39,7 @@ export async function createIsolatedTmuxRoot(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'agentic-remote-tmux-test-'))
   try {
     ownedServers.set(root, await startOwnedServer(root))
+    await retireWhenAbandoned(root)
   } catch (error) {
     try {
       await stopIsolatedTmuxServer(root)
@@ -79,6 +81,37 @@ async function startOwnedServer(root: string): Promise<ServerIdentity> {
     throw new Error(`Owned tmux server PID ${pid} did not stay running`)
   }
   return identity
+}
+
+/**
+ * Teardown never runs when an earlier `afterEach` step throws or times out,
+ * which skips the rest of that test's hooks, or when the run is killed. With
+ * `exit-empty` off, the server and its panes would then run indefinitely, so
+ * a detached watchdog retires the namespace once the creating process is gone
+ * and the root is still there. Teardown removes the root, which ends it.
+ *
+ * It reaches tmux only through the namespace's own socket, and stops each live
+ * pane's process group first because some fake CLIs ignore SIGHUP.
+ */
+const abandonmentWatchdog = `
+owner=$1 root=$2
+while [ -d "$root" ] && kill -0 "$owner" 2>/dev/null; do sleep 1; done
+[ -d "$root" ] || exit 0
+tmux list-panes -a -F '#{?pane_dead,,#{pane_pid}}' 2>/dev/null | while read -r pane; do
+  [ -n "$pane" ] && kill -TERM "-$pane" 2>/dev/null
+done
+tmux kill-server 2>/dev/null
+rm -rf -- "$root"
+`
+
+async function retireWhenAbandoned(root: string): Promise<void> {
+  const watchdog = spawn('sh', ['-c', abandonmentWatchdog, 'tmux-fixture-watchdog', String(process.pid), root], {
+    detached: true,
+    env: isolatedTmuxEnv(root),
+    stdio: 'ignore',
+  })
+  await once(watchdog, 'spawn')
+  watchdog.unref()
 }
 
 /**

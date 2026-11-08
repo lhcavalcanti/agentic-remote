@@ -522,7 +522,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "319bd19a9bba95bae8079fd6e2336fbcf44e3243700ac5ebb814f3e9a59a5354",
+    "package.json": "12b419e2a44b2573c2bd56ff8e37386eef514b000bcff6884a7ad9f4c25f8f51",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "3fd03facc1f69300d8a98a951f6d2d7d74146d0ed2228a258f8a411e36069274",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -793,10 +793,10 @@
     "shared/side-question.ts": "026d2e3fae18f5348da782057d669400bb67ed91b7623fe3975c1f2d788ea855",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "3f31465a0aea8e999ce1c5bb73c2f2180145054bf5fb94fd7bff4342cd19a4ba",
+    "shell/README.md": "1337f8f1cf036c5c40bd23908edc7270d1dbc6f1cc79d0b552c0e042a3c31b77",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "4ef1ddd4655cbba7f5053e67d69b2d667275cbb9d62c17e1255530261bb8c578",
-    "shell/src-tauri/Cargo.toml": "dad2ed7ee92ff53fa761c176ad8c6796c99d41a4e1cd8baa71c8583850974afb",
+    "shell/package.json": "dc54ce4e47464eb35a43605224d704465738ae77884bd449e925b9cb46cab171",
+    "shell/src-tauri/Cargo.toml": "2fc6745846c563569e4c0bd3011e447f65dbda5d69fe925576926ce469d9ff4e",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -804,7 +804,7 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "fbbe74bddd475b3b841c86453ef1790692d6a89cdc8487a08357f8ac4abe5c61",
+    "shell/src-tauri/tauri.conf.json": "6d04c18b01f81b0f7f94dc33f173db234a406683f726743f5b9239dcd4be42af",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
@@ -1031,19 +1031,19 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "cc1db8f158f29350d6f739e0ca6843dba2188955589fc0843ed7eb5421bfb140",
+    "GRAPH_REPORT.md": "be314d7ce0f2880abe0f3b063ba7e1ccc2ec14b89a78849f24655c5a9bbf49da",
     "communities.json": "4e06c0954bb958babcb9c4c320ea3b5d51dd4d567ffbd8ffadfd892f452fd8b3",
-    "graph.html": "b326514d5947f336b88e9765df1815bc9f2947d4bb001331ffc738ad2b7b9933",
-    "graph.json": "62c28cd2d3a730d0d6e65b1153285da52968bc40a7f7cb881c9b47876d928162"
+    "graph.html": "01c8e9837bef134bf457266059ab2a1934b700b8c10806d2a97faf84bcd85f8f",
+    "graph.json": "760b12f42d6bdf9f868ca2385342f313fddf1ec1304521c0f2e9ad4492268415"
   },
   "schema_version": 1,
-  "source_commit": "a285457a5393eef1568f50361188e05ebb305bb0",
-  "source_fingerprint": "3b8ec52e397fdbd1259f806cc915e9ff0865c783766e0eb725bc7f253e8f6237",
+  "source_commit": "3fcc2195d0cc14350340d0da557b6688c2367828",
+  "source_fingerprint": "87312a06fc58cd1644bb88f98b0846038b7ac97493f418417a02be00d60e2004",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    "bin/agentic-remote-promotion-setup",
-    "docs/deployment-promotion.md",
-    "server/promotion-setup-execution.test.ts",
-    "server/promotion-setup.test.ts"
+    "package.json",
+    "shell/README.md",
+    "shell/package.json",
+    "shell/src-tauri/Cargo.toml",
+    "shell/src-tauri/tauri.conf.json"
   ]
 }

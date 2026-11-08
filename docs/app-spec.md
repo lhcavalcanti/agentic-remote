@@ -954,7 +954,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   chronological order.
 - User and assistant messages MUST show their persisted creation time in the
   viewer's local time alongside the sender label, with the date for messages
-  from other days and the year for other years of the viewer's calendar. An
+  from other days and the year for other years of the viewer's calendar. Each
+  shown time MUST gain its date once the viewer's day turns, including after
+  the device sleeps, without a reload. An
   unreadable time MUST show nothing rather than break the transcript.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.

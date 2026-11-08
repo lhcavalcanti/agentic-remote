@@ -14,7 +14,8 @@ outbox, settings, quiet hours, memory, voice, or session actions. The intended
 future integration must explicitly supply:
 
 - a trusted, durable computer generation (the registered pairing generation,
-  not an observation or runtime `registrationId`);
+  not an observation or runtime `registrationId`), captured when the session
+  is read rather than when it is observed;
 - an owner-issued monotonic session revision;
 - a real adapter that owns observation cadence and calls `bindComputer` when a
   pairing generation changes.

@@ -65,6 +65,8 @@ const PROACTIVE_AUTOMATIC_RETRY_LIMIT = 1
 interface SessionLifecycle {
   key: string
   computerId: string
+  /** The computer's pairing when the session was read, not when observed. */
+  computerGeneration: string
   sessionId: string
   revision: number
   status: ManagedSession['status']
@@ -77,8 +79,14 @@ interface SessionLifecycle {
   signature: string
 }
 
-function sessionLifecycle(session: ManagedSession): SessionLifecycle | undefined {
-  if (!Number.isSafeInteger(session.revision)) return undefined
+type ComputerGenerations = ReadonlyMap<string, string | undefined>
+
+function sessionLifecycle(
+  session: ManagedSession,
+  generations: ComputerGenerations,
+): SessionLifecycle | undefined {
+  const computerGeneration = generations.get(session.computerId)
+  if (!computerGeneration || !Number.isSafeInteger(session.revision)) return undefined
   const state = {
     status: session.status,
     queuedCount: session.queuedCount ?? session.queuedPrompts?.length ?? 0,
@@ -95,6 +103,7 @@ function sessionLifecycle(session: ManagedSession): SessionLifecycle | undefined
   return {
     key: registryKey(session.computerId, session.id),
     computerId: session.computerId,
+    computerGeneration,
     sessionId: session.id,
     revision: session.revision!,
     ...state,
@@ -102,8 +111,11 @@ function sessionLifecycle(session: ManagedSession): SessionLifecycle | undefined
   }
 }
 
-function lifecycles(sessions: readonly ManagedSession[]): SessionLifecycle[] {
-  return sessions.flatMap((session) => sessionLifecycle(session) ?? [])
+function lifecycles(
+  sessions: readonly ManagedSession[],
+  generations: ComputerGenerations,
+): SessionLifecycle[] {
+  return sessions.flatMap((session) => sessionLifecycle(session, generations) ?? [])
 }
 
 export class ManagerProactiveCoordinator {
@@ -161,7 +173,7 @@ export class ManagerProactiveCoordinator {
     }
     if (event.type !== 'session.upserted') return
     // Only the lifecycle is kept, never the transcript a streamed event carries.
-    const lifecycle = sessionLifecycle(event.session)
+    const lifecycle = sessionLifecycle(event.session, this.generations())
     if (!lifecycle) return
     this.pendingLifecycles.push(lifecycle)
     this.schedule()
@@ -203,10 +215,15 @@ export class ManagerProactiveCoordinator {
    * Observes the sessions a Dreamer refresh listed, so a lifecycle transition
    * whose event never reached this hub is still admitted. The inbox ignores a
    * revision it has already seen, so a sweep never admits a transition twice.
+   * Pass the computer generations read before the listing; a session listed
+   * under a pairing that has since been replaced is skipped.
    */
-  sweep(sessions: readonly ManagedSession[]): Promise<void> {
+  sweep(
+    sessions: readonly ManagedSession[],
+    generations: ComputerGenerations = this.generations(),
+  ): Promise<void> {
     if (!this.initialized || this.stopped || !this.enabled) return Promise.resolve()
-    const listed = lifecycles(sessions)
+    const listed = lifecycles(sessions, generations)
     return this.enqueue(async () => {
       if (this.stopped || !this.enabled) return
       // The listing predates any event still waiting out the debounce.
@@ -360,9 +377,16 @@ export class ManagerProactiveCoordinator {
     this.observed.clear()
   }
 
+  private generations(): ComputerGenerations {
+    return new Map(
+      this.computers().map((computer) => [computer.id, computer.lifecycleGeneration]),
+    )
+  }
+
   private async reconcileCurrentSessions(): Promise<void> {
     if (!this.listSessions) return
-    await this.observeLifecycles(lifecycles(await this.listSessions()))
+    const generations = this.generations()
+    await this.observeLifecycles(lifecycles(await this.listSessions(), generations))
   }
 
   private async flushEvents(): Promise<void> {
@@ -373,13 +397,13 @@ export class ManagerProactiveCoordinator {
     pending: readonly SessionLifecycle[],
   ): Promise<void> {
     if (pending.length === 0) return
-    const generations = new Map(
-      this.computers().map((computer) => [computer.id, computer.lifecycleGeneration]),
-    )
+    const generations = this.generations()
     const registry = this.registry()
     for (const lifecycle of pending) {
-      const computerGeneration = generations.get(lifecycle.computerId)
-      if (!computerGeneration) continue
+      const { computerGeneration } = lifecycle
+      // A session read under a since-replaced pairing must not set the new
+      // pairing's revision cursor, and the inbox refuses a retired binding.
+      if (generations.get(lifecycle.computerId) !== computerGeneration) continue
       const origin = registry[lifecycle.key]?.origin ?? 'discovered'
       const seen = this.observed.get(lifecycle.key)
       const current = seen?.computerGeneration === computerGeneration
@@ -397,7 +421,6 @@ export class ManagerProactiveCoordinator {
       const { key, signature, ...state } = lifecycle
       const result = await this.inbox.observe({
         ...state,
-        computerGeneration,
         origin,
       })
       if (!('reason' in result) || result.reason === 'ineligible-origin') {

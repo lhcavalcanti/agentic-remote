@@ -549,4 +549,35 @@ describe('ManagerProactiveCoordinator', () => {
       { kind: 'finished', revision: 3 },
     ])
   })
+
+  it('skips a debounced upsert read under a retired pairing', async () => {
+    const { coordinator, inbox, setGeneration } = await fixture(await directory())
+    await coordinator.setEnabled(true)
+    coordinator.handle(event(managed('idle', 50)))
+    setGeneration('pairing-b')
+    coordinator.handle(event(managed('idle', 3)))
+
+    await expect(coordinator.sweep([managed('running', 2)])).resolves.toBeUndefined()
+
+    expect(inbox.pending(20)).toMatchObject([
+      { kind: 'finished', revision: 3 },
+    ])
+  })
+
+  it('skips a swept listing read under a retired pairing', async () => {
+    const { coordinator, inbox, setGeneration } = await fixture(await directory())
+    await coordinator.setEnabled(true)
+    const listedUnder = new Map([['computer-a', 'pairing-a']])
+    setGeneration('pairing-b')
+    coordinator.handle(event(managed('running', 2)))
+    await coordinator.drain()
+
+    await coordinator.sweep([managed('idle', 50)], listedUnder)
+    coordinator.handle(event(managed('idle', 3)))
+    await coordinator.drain()
+
+    expect(inbox.pending(20)).toMatchObject([
+      { kind: 'finished', revision: 3 },
+    ])
+  })
 })

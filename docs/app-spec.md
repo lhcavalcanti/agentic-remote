@@ -883,9 +883,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   and explicit failure or blocked reasons. A queued or running attempt MUST NOT
   be duplicated by another dispatch. If an attempt's dispatch message leaves
   the Oracle conversation (Start over, or the 1,000-message bound), only a
-  still-queued attempt MAY be dispatched again with the same identity; a
-  running one fails until **Retry**, and a blocked or in-review one keeps its
-  state. Refresh, startup, manager updates and
+  still-queued attempt with no linked execution session MAY be dispatched again
+  with the same identity. A linked attempt keeps following its sessions'
+  evidence; once none decides it, a queued or running attempt fails until
+  **Retry** and a failed one keeps its reason. An unlinked running attempt
+  fails until **Retry**; an unlinked blocked or in-review one keeps its state.
+  Refresh, startup, manager updates and
   session updates MUST reconcile task state without polling or a second wake
   endpoint. A failed Oracle manager turn MUST NOT make a task retryable while
   an authoritatively linked execution session is still running.
@@ -931,7 +934,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
     and 20 closed ones for 24 h.
   - Each refresh MUST then reconcile tasks and, after a successful listing,
     sweep the proactive lifecycle inbox with it so a missed transition is
-    admitted once.
+    admitted once. A lifecycle MUST carry the computer generation read before
+    its listing or with its event, and MUST be skipped once that pairing is
+    replaced.
   - A failed refresh MUST show a safe error, retry at the next interval and
     leave the morning plan alone. Disable, stop and storage failure MUST stop
     the refresh, fence any in-flight one and clear the cache.

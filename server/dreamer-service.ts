@@ -84,6 +84,8 @@ export interface DreamerProgressView extends DreamerProgressSnapshot {
 }
 
 const PROGRESS_REFRESH_ERROR = 'Dreamer could not refresh session progress.'
+const DISPATCH_LEFT_ERROR =
+  'The dispatch left the Oracle conversation before it finished; retry to run it again.'
 
 export interface DreamerServiceOptions {
   now?: () => Date
@@ -109,8 +111,14 @@ export interface DreamerServiceOptions {
   progressSource?: DreamerProgressSource
   progressRefreshMs?: number
   progressLimits?: Partial<DreamerProgressLimits>
-  /** Runs after each refresh with the sessions computers answered for. */
-  sweepLifecycle?: (sessions: ManagedSession[]) => Promise<void>
+  /**
+   * Runs after each refresh with the sessions computers answered for and the
+   * computer generations read before that listing.
+   */
+  sweepLifecycle?: (
+    sessions: ManagedSession[],
+    computerGenerations: ReadonlyMap<string, string>,
+  ) => Promise<void>
 }
 
 export class DreamerUnavailableError extends Error {
@@ -1302,9 +1310,15 @@ export class DreamerService {
       let messages = this.managerMessages()
       let managerMessage = messages.find(({ id }) => id === attempt.managerMessageId)
         ?? this.managerMessage?.(attempt.managerMessageId)
+      // A trimmed dispatch can leave newer replies that already link a session.
+      const linked = attempt.sessionRefs.length > 0 || messages.some(
+        ({ replyTo, sessionRefs }) =>
+          replyTo === attempt.managerMessageId && Boolean(sessionRefs?.length),
+      )
       if (
         !managerMessage &&
         attempt.status === 'queued' &&
+        !linked &&
         this.enqueueManagerTask &&
         task.executionPrompt
       ) {
@@ -1402,6 +1416,15 @@ export class DreamerService {
         } else if (managerFailure) {
           status = 'failed'
           error = managerFailure
+        } else if (
+          !managerMessage &&
+          (attempt.status === 'queued' ||
+            attempt.status === 'running' ||
+            attempt.status === 'failed')
+        ) {
+          // The dispatch left the conversation and no session evidence decides.
+          status = 'failed'
+          error = attempt.status === 'failed' ? attempt.error : DISPATCH_LEFT_ERROR
         } else if (sessions.length > 0) {
           status = 'blocked'
           error = 'Execution stopped without verified completion.'
@@ -1416,9 +1439,9 @@ export class DreamerService {
         error = 'Oracle did not attach an execution session with verified results.'
       } else if (!managerMessage && attempt.status === 'running') {
         // Start over, or trimming the conversation, removed the dispatch.
-        // Only a queued attempt is re-enqueued; anything else waits for Retry.
+        // Only a never-linked queued attempt is re-enqueued; others wait for Retry.
         status = 'failed'
-        error = 'The dispatch left the Oracle conversation before it finished; retry to run it again.'
+        error = DISPATCH_LEFT_ERROR
       } else if (
         !managerMessage &&
         (attempt.status === 'blocked' || attempt.status === 'review')
@@ -1705,7 +1728,7 @@ export class DreamerService {
     await this.reconcileTasks().catch(() => undefined)
     if (!refreshed || generation !== this.progressGeneration || !this.sweepLifecycle) return
     try {
-      await this.sweepLifecycle(refreshed.authoritative)
+      await this.sweepLifecycle(refreshed.authoritative, refreshed.computerGenerations)
     } catch {
       // The next refresh sweeps again; the inbox keeps its own cursor.
     }

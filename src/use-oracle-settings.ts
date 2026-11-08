@@ -121,10 +121,13 @@ export function useOracleSettings(active = true): OracleSettingsState {
     policy === 'oracle-started'
       ? 'Saved. Oracle closes idle sessions it started without asking.'
       : 'Saved. Oracle asks before closing any session.',
-    // A hub from before this setting ignores it and always asks.
-    (next) => next.sessionClosePolicy === policy || (policy === 'ask' && !next.sessionClosePolicy)
+    // A hub from before this setting drops it and answers without it. It
+    // always asks, but keeps an earlier opt-in that returns once it is updated.
+    (next) => next.sessionClosePolicy === policy
       ? undefined
-      : 'This hub did not keep that choice; update it to let Oracle close sessions without asking.',
+      : policy === 'ask'
+        ? 'This hub did not keep that choice; update it, then choose again, or Oracle goes back to closing idle sessions without asking.'
+        : 'This hub did not keep that choice; update it to let Oracle close sessions without asking.',
   ), [update])
 
   return {

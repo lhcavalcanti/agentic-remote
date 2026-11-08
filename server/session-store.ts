@@ -292,6 +292,24 @@ function requiresExplicitTerminalReopen(session: StoredSession): boolean {
   return session.managedOpen !== true && Boolean(session.queuedPrompts?.length)
 }
 
+/**
+ * Work admitted to a live owner grants it recovery. Discovery can hold that
+ * owner's queue behind Reopen after the send was admitted but before this
+ * write lands; the next pass would then lift the hold with nothing left to
+ * wake the queue, so the grant lifts it in the same write. `liveOwner` is
+ * read at commit, so an owner a later pass found gone keeps its hold.
+ */
+function admitToTerminalOwner(session: StoredSession, liveOwner?: () => boolean): void {
+  const held = session.managedOpen !== true && Boolean(session.interruption)
+  grantTerminalRecovery(session)
+  if (
+    held && session.managedOpen === true && !session.suspended &&
+    !session.archivedAt && !session.sdkRestartRecovery && liveOwner?.() === true
+  ) {
+    session.interruption = undefined
+  }
+}
+
 // A committed session is never changed in place: every change installs a new
 // object for the session it changes. Each one's encoded form can therefore be
 // reused by every later write it is still part of, so a write serializes and
@@ -1899,12 +1917,13 @@ export class SessionStore {
     sessionId: string,
     prompt: QueuedPrompt,
     prepend = false,
+    liveOwner?: () => boolean,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
-      grantTerminalRecovery(session)
+      admitToTerminalOwner(session, liveOwner)
     })
   }
 
@@ -2508,6 +2527,7 @@ export class SessionStore {
     prompt: QueuedPrompt,
     answers: string | undefined,
     priority = false,
+    liveOwner?: () => boolean,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       if (session.terminalQueueDispatch || session.sdkQueueAdmission) {
@@ -2516,7 +2536,7 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = priority ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
-      grantTerminalRecovery(session)
+      admitToTerminalOwner(session, liveOwner)
       if (
         !session.recoverySeed &&
         session.failedPrompt &&

@@ -2857,6 +2857,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     assertSessionNotRetained(this.store.get(sessionId), action, archivedOnly)
   }
 
+  private assertSendNotHeld(sessionId: string): void {
+    const session = this.store.get(sessionId)
+    if (session?.interruption || session?.archivedAt) {
+      throw Object.assign(
+        queueConflict('Reopen the interrupted session before sending. Nothing was sent.'),
+        { uncertainDelivery: false },
+      )
+    }
+  }
+
   private assertTerminalRecoverySettled(sessionId: string): void {
     if (this.isTerminalRecoveryPending(sessionId)) {
       throw Object.assign(
@@ -4940,12 +4950,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
     // Before any recovery token is claimed: a queued send must not consume it.
-    if (this.store.get(sessionId)?.interruption || this.store.get(sessionId)?.archivedAt) {
-      throw Object.assign(
-        queueConflict('Reopen the interrupted session before sending. Nothing was sent.'),
-        { uncertainDelivery: false },
-      )
-    }
+    this.assertSendNotHeld(sessionId)
     if (
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
@@ -5652,6 +5657,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery, true)
     }
+    // Discovery can hold the queue behind Reopen while this send reads the
+    // pane and decides. A held session is not eligible to queue, so the send
+    // would otherwise be typed in front of the held work.
+    if (terminalBacked) this.assertSendNotHeld(sessionId)
     let terminalSent: boolean
     try {
       terminalSent = await this.sendTerminalInput(
@@ -6257,6 +6266,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     delivery?: DeliveryBoundary,
     steer = false,
     priority = false,
+    liveOwner?: () => boolean,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
@@ -6276,8 +6286,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             prompt,
             answers,
             priority,
+            liveOwner,
           )
-        : await this.store.enqueuePrompt(sessionId, prompt)
+        : await this.store.enqueuePrompt(sessionId, prompt, false, liveOwner)
       if (delivery) delivery.accepted = true
       this.admissions.markCommitted(sessionId)
       if (this.externalSessionIds.has(sessionId)) this.terminalDrainRequested.add(sessionId)
@@ -6315,6 +6326,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         delivery,
         steer,
         priority,
+        () => this.externalSessionIds.has(sessionId),
       )
     } catch (error) {
       if (admission !== undefined && this.liveTerminalAdmissions.get(sessionId) === admission) {
@@ -7237,6 +7249,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.admissionClosed.has(sessionId) || this.deletingSessions.has(sessionId)) {
       throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409, uncertainDelivery: false })
     }
+    // As for messages: discovery can hold the queue behind Reopen while the
+    // command is read and decided, and a held session is not eligible to queue.
+    if (!fromQueue && !catalog.session) this.assertNotRetained(sessionId, 'running commands')
     if (!catalog.session) this.assertStartupDispatchSettled(sessionId, enqueue)
     if (!nativeEnqueue && !enqueue && !commandInfo?.allowDuringAgentExecution) {
       if (

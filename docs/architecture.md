@@ -309,6 +309,10 @@ mid-pass is resumed rather than interrupted again. Work queued to a live owner
 while its record still showed it closed is remembered in memory with an
 admission sequence: discovery grants recovery when it records that owner, and
 drops the admission once a snapshot taken after it no longer lists the owner.
+If discovery holds the queue before the admission's write lands, that write
+grants recovery and lifts the hold together while the owner is still listed, so
+the queue is woken rather than stranded. A send that does not queue re-checks
+the hold just before typing and is refused with nothing sent.
 
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then

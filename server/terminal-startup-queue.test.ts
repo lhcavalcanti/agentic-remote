@@ -705,6 +705,83 @@ describe('Persisted native queue startup', () => {
     expect(runtime.service.getSession(native.id)?.queuedPrompts).toEqual([])
   }, 15_000)
 
+  it('grants recovery to work admitted just before discovery retains the queue', async () => {
+    const native = await fixture()
+    // Queued while the owner was gone, so its record is closed and unmanaged.
+    await native.seed(['Held until the owner returned'], (store) => store.setOpen(native.id, false, true))
+    await native.control('waiting')
+    const runtime = native.connect()
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.start()
+    expect(runtime.store.get(native.id)).toMatchObject({ isOpen: false })
+    expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
+
+    // The send decides to queue; discovery then records the owner and holds
+    // its queue behind Reopen before the send's admission and write land.
+    const service = runtime.service as unknown as {
+      shouldEnqueueTerminalPrompt(id: string): Promise<boolean>
+    }
+    const shouldEnqueue = service.shouldEnqueueTerminalPrompt.bind(runtime.service)
+    vi.spyOn(service, 'shouldEnqueueTerminalPrompt').mockImplementationOnce(async (id) => {
+      const decided = await shouldEnqueue(id)
+      await runtime.service.refreshDiscovery()
+      expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+      return decided
+    })
+    await runtime.service.sendMessage(native.id, 'Admitted to the live owner', true)
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
+    expect(runtime.service.getSession(native.id)?.queueState?.message)
+      .toMatch(/retry automatically/i)
+
+    await native.control('idle')
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+
+    expect((await native.receipt()).submits).toEqual(['Held until the owner returned'])
+    expect(runtime.service.getSession(native.id)?.queuedPrompts?.map((prompt) => prompt.content))
+      .toEqual(['Admitted to the live owner'])
+  }, 15_000)
+
+  it.each([
+    { kind: 'message' as const },
+    { kind: 'command' as const },
+  ])('refuses a queued $kind that discovery holds behind Reopen before it decides', async ({ kind }) => {
+    const native = await fixture()
+    await native.seed(['Held until the owner returned'], (store) => store.setOpen(native.id, false, true))
+    await native.control('idle')
+    const runtime = native.connect()
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.start()
+    expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
+
+    // The send passed its interruption check; discovery holds the queue before
+    // it decides how to deliver, so it is no longer eligible to queue.
+    const service = runtime.service as unknown as {
+      claimFailure(...args: unknown[]): Promise<unknown>
+    }
+    const claimFailure = service.claimFailure.bind(runtime.service)
+    vi.spyOn(service, 'claimFailure').mockImplementationOnce(async (...args) => {
+      const claim = await claimFailure(...args)
+      await runtime.service.refreshDiscovery()
+      expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+      return claim
+    })
+    const sending = kind === 'command'
+      ? runtime.service.executeCommand(native.id, '/usage', true)
+      : runtime.service.sendMessage(native.id, 'Sent past the hold', true)
+    await expect(sending)
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen/) })
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+
+    expect((await native.receipt()).submits).toEqual([])
+    expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+    expect(runtime.service.getSession(native.id)?.queuedPrompts?.map((prompt) => prompt.content))
+      .toEqual(['Held until the owner returned'])
+  }, 15_000)
+
   it('holds work queued to an owner that is gone before discovery records it', async () => {
     const native = await fixture()
     await native.seed([], (store) => store.setOpen(native.id, false, true))

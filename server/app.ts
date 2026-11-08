@@ -470,8 +470,8 @@ export async function buildApp(
             await proactiveCoordinator?.setEnabled(enabled)
           },
           progressSource: dreamerManager,
-          sweepLifecycle: async (sessions) => {
-            await proactiveCoordinator?.sweep(sessions).catch((error: unknown) => {
+          sweepLifecycle: async (sessions, generations) => {
+            await proactiveCoordinator?.sweep(sessions, generations).catch((error: unknown) => {
               app.log.warn({ err: error }, 'Dreamer lifecycle sweep failed')
             })
           },

@@ -15,9 +15,12 @@ import type { ManagerAgent } from './manager-agent.js'
 import {
   ManagerProactiveInbox,
   type ManagerProactiveInboxEvent,
-  type ManagerProactiveInboxObservation,
 } from './manager-proactive-inbox.js'
-import { registryKey, type ManagerRegistry } from './manager-store.js'
+import {
+  registryKey,
+  type ManagerRegistry,
+  type SessionOrigin,
+} from './manager-store.js'
 import { OracleTaskStore } from './oracle-task-store.js'
 
 interface ProactiveManager {
@@ -58,6 +61,63 @@ function isTerminal(message: ManagerMessage): boolean {
 
 const PROACTIVE_AUTOMATIC_RETRY_LIMIT = 1
 
+/** The session state the inbox reads, captured when the session is seen. */
+interface SessionLifecycle {
+  key: string
+  computerId: string
+  /** The computer's pairing when the session was read, not when observed. */
+  computerGeneration: string
+  sessionId: string
+  revision: number
+  status: ManagedSession['status']
+  queuedCount: number
+  hasPendingRequest: boolean
+  isOpen: boolean
+  suspended: boolean
+  recovering: boolean
+  /** The inbox fields above, as one comparable value. */
+  signature: string
+}
+
+type ComputerGenerations = ReadonlyMap<string, string | undefined>
+
+function sessionLifecycle(
+  session: ManagedSession,
+  generations: ComputerGenerations,
+): SessionLifecycle | undefined {
+  const computerGeneration = generations.get(session.computerId)
+  if (!computerGeneration || !Number.isSafeInteger(session.revision)) return undefined
+  const state = {
+    status: session.status,
+    queuedCount: session.queuedCount ?? session.queuedPrompts?.length ?? 0,
+    hasPendingRequest: Boolean(
+      session.pendingPermission || session.pendingUserInput,
+    ),
+    isOpen: session.isOpen !== false,
+    suspended: session.suspended === true,
+    recovering:
+      session.restartRecovery?.state === 'recovering' ||
+      session.recoverySeedState === 'pending' ||
+      session.recoverySeedState === 'dispatching',
+  }
+  return {
+    key: registryKey(session.computerId, session.id),
+    computerId: session.computerId,
+    computerGeneration,
+    sessionId: session.id,
+    revision: session.revision!,
+    ...state,
+    signature: JSON.stringify(Object.values(state)),
+  }
+}
+
+function lifecycles(
+  sessions: readonly ManagedSession[],
+  generations: ComputerGenerations,
+): SessionLifecycle[] {
+  return sessions.flatMap((session) => sessionLifecycle(session, generations) ?? [])
+}
+
 export class ManagerProactiveCoordinator {
   private readonly inbox: ManagerProactiveInbox
   private readonly taskStore: OracleTaskStore
@@ -66,7 +126,17 @@ export class ManagerProactiveCoordinator {
   private readonly registry: () => ManagerRegistry
   private readonly listSessions?: () => Promise<ManagedSession[]>
   private readonly debounceMs: number
-  private readonly pendingEvents: HubEvent[] = []
+  private readonly pendingLifecycles: SessionLifecycle[] = []
+  /**
+   * What the inbox last accepted per session. The inbox admits nothing for
+   * the same fields twice in a row, so a repeat needs no durable write.
+   */
+  private readonly observed = new Map<string, {
+    computerGeneration: string
+    origin: SessionOrigin
+    signature: string
+    revision: number
+  }>()
   private queue: Promise<unknown> = Promise.resolve()
   private timer?: ReturnType<typeof setTimeout>
   private initialized = false
@@ -96,13 +166,16 @@ export class ManagerProactiveCoordinator {
   }
 
   handle(event: HubEvent): void {
-    if (
-      !this.initialized ||
-      this.stopped ||
-      !this.enabled ||
-      event.type !== 'session.upserted'
-    ) return
-    this.pendingEvents.push(structuredClone(event))
+    if (!this.initialized || this.stopped || !this.enabled) return
+    if (event.type === 'session.removed') {
+      this.observed.delete(registryKey(event.computerId, event.sessionId))
+      return
+    }
+    if (event.type !== 'session.upserted') return
+    // Only the lifecycle is kept, never the transcript a streamed event carries.
+    const lifecycle = sessionLifecycle(event.session, this.generations())
+    if (!lifecycle) return
+    this.pendingLifecycles.push(lifecycle)
     this.schedule()
   }
 
@@ -111,7 +184,7 @@ export class ManagerProactiveCoordinator {
     const generation = ++this.enableGeneration
     if (!enabled) {
       this.enabled = false
-      this.pendingEvents.length = 0
+      this.forgetSessions()
       this.clearTimer()
       const disabling = this.agent.setProactiveMessagesEnabled(false)
       return this.enqueue(async () => {
@@ -142,15 +215,19 @@ export class ManagerProactiveCoordinator {
    * Observes the sessions a Dreamer refresh listed, so a lifecycle transition
    * whose event never reached this hub is still admitted. The inbox ignores a
    * revision it has already seen, so a sweep never admits a transition twice.
+   * Pass the computer generations read before the listing; a session listed
+   * under a pairing that has since been replaced is skipped.
    */
-  sweep(sessions: readonly ManagedSession[]): Promise<void> {
+  sweep(
+    sessions: readonly ManagedSession[],
+    generations: ComputerGenerations = this.generations(),
+  ): Promise<void> {
     if (!this.initialized || this.stopped || !this.enabled) return Promise.resolve()
-    // Observation reads only session state, never the transcript.
-    const listed = sessions.map((session) => ({ ...session, messages: [] }))
+    const listed = lifecycles(sessions, generations)
     return this.enqueue(async () => {
       if (this.stopped || !this.enabled) return
       // The listing predates any event still waiting out the debounce.
-      for (const session of listed) await this.observeSession(session)
+      await this.observeLifecycles(listed)
       await this.flushEvents()
       await this.drainNow()
     })
@@ -189,7 +266,7 @@ export class ManagerProactiveCoordinator {
         )
       }
       const pendingById = new Map(
-        this.inbox.pending(20).map((event) => [event.id, event]),
+        (await this.livePendingEvents()).map((event) => [event.id, event]),
       )
       if (eventIds.some((id) => !pendingById.has(id))) {
         throw Object.assign(
@@ -245,6 +322,9 @@ export class ManagerProactiveCoordinator {
       if (irrelevant.length) {
         await this.inbox.acknowledge(irrelevant, 'irrelevant')
       }
+      // The outcomes are already durable; the next acknowledgment retries a
+      // failed prune, and admission drops expired evidence at capacity.
+      await this.inbox.prune().catch(() => undefined)
       this.schedule()
       return `Recorded ${tasks} proactive ${tasks === 1 ? 'task' : 'tasks'} and ${irrelevant.length} no-action ${irrelevant.length === 1 ? 'event' : 'events'}.`
     })
@@ -254,7 +334,7 @@ export class ManagerProactiveCoordinator {
     if (!this.initialized) return
     this.stopped = true
     this.enabled = false
-    this.pendingEvents.length = 0
+    this.forgetSessions()
     this.clearTimer()
     this.agent.off('event', this.handleManagerEvent)
     await this.queue.catch(() => undefined)
@@ -292,50 +372,98 @@ export class ManagerProactiveCoordinator {
     this.timer = undefined
   }
 
+  private forgetSessions(): void {
+    this.pendingLifecycles.length = 0
+    this.observed.clear()
+  }
+
+  private generations(): ComputerGenerations {
+    return new Map(
+      this.computers().map((computer) => [computer.id, computer.lifecycleGeneration]),
+    )
+  }
+
+  private isLivePairing(
+    scope: { computerId: string; computerGeneration: string },
+  ): boolean {
+    return this.generations().get(scope.computerId) === scope.computerGeneration
+  }
+
+  /**
+   * Pending evidence Oracle may receive or record. Evidence admitted before
+   * its pairing was replaced would scope Oracle to the replacement, so binding
+   * the live pairing first supersedes it; anything replaced again meanwhile is
+   * withheld until the next read. Each computer is rebound at most once.
+   */
+  private async livePendingEvents(): Promise<ManagerProactiveInboxEvent[]> {
+    const rebound = new Set<string>()
+    for (;;) {
+      const generations = this.generations()
+      const events = this.inbox.pending(20)
+      const replaced = events.filter((event) => {
+        const live = generations.get(event.computerId)
+        return live !== undefined && live !== event.computerGeneration
+      })
+      const next = replaced.find(({ computerId }) => !rebound.has(computerId))
+      if (!next) return events.filter((event) => !replaced.includes(event))
+      rebound.add(next.computerId)
+      await this.inbox.bindComputer(
+        next.computerId,
+        generations.get(next.computerId)!,
+      )
+    }
+  }
+
   private async reconcileCurrentSessions(): Promise<void> {
     if (!this.listSessions) return
-    const sessions = await this.listSessions()
-    for (const session of sessions) {
-      await this.observeSession(session)
-    }
+    const generations = this.generations()
+    await this.observeLifecycles(lifecycles(await this.listSessions(), generations))
   }
 
   private async flushEvents(): Promise<void> {
-    const events = this.pendingEvents.splice(0)
-    for (const event of events) {
-      if (event.type === 'session.upserted') {
-        await this.observeSession(event.session)
-      }
-    }
+    await this.observeLifecycles(this.pendingLifecycles.splice(0))
   }
 
-  private async observeSession(session: ManagedSession): Promise<void> {
-    const computer = this.computers().find(({ id }) => id === session.computerId)
-    const generation = computer?.lifecycleGeneration
-    if (!computer || !generation || !Number.isSafeInteger(session.revision)) return
-    await this.inbox.bindComputer(computer.id, generation)
-    const origin = this.registry()[
-      registryKey(session.computerId, session.id)
-    ]?.origin ?? 'discovered'
-    const observation: ManagerProactiveInboxObservation = {
-      computerId: session.computerId,
-      computerGeneration: generation,
-      sessionId: session.id,
-      revision: session.revision!,
-      origin,
-      status: session.status,
-      queuedCount: session.queuedCount ?? session.queuedPrompts?.length ?? 0,
-      hasPendingRequest: Boolean(
-        session.pendingPermission || session.pendingUserInput,
-      ),
-      isOpen: session.isOpen !== false,
-      suspended: session.suspended === true,
-      recovering:
-        session.restartRecovery?.state === 'recovering' ||
-        session.recoverySeedState === 'pending' ||
-        session.recoverySeedState === 'dispatching',
+  private async observeLifecycles(
+    pending: readonly SessionLifecycle[],
+  ): Promise<void> {
+    if (pending.length === 0) return
+    const registry = this.registry()
+    for (const lifecycle of pending) {
+      const { computerGeneration } = lifecycle
+      // A session read under a since-replaced pairing must not set the new
+      // pairing's revision cursor, and the inbox refuses a retired binding.
+      // A pairing can be replaced during any await, so each one rechecks it.
+      if (!this.isLivePairing(lifecycle)) continue
+      const origin = registry[lifecycle.key]?.origin ?? 'discovered'
+      const seen = this.observed.get(lifecycle.key)
+      const current = seen?.computerGeneration === computerGeneration
+        ? seen
+        : undefined
+      if (current && lifecycle.revision <= current.revision) continue
+      if (
+        current?.origin === origin &&
+        current.signature === lifecycle.signature
+      ) {
+        current.revision = lifecycle.revision
+        continue
+      }
+      await this.inbox.bindComputer(lifecycle.computerId, computerGeneration)
+      if (!this.isLivePairing(lifecycle)) continue
+      const { key, signature, ...state } = lifecycle
+      const result = await this.inbox.observe({
+        ...state,
+        origin,
+      })
+      if (!('reason' in result) || result.reason === 'ineligible-origin') {
+        this.observed.set(key, {
+          computerGeneration,
+          origin,
+          signature,
+          revision: lifecycle.revision,
+        })
+      }
     }
-    await this.inbox.observe(observation)
   }
 
   private async drainNow(): Promise<void> {
@@ -346,7 +474,7 @@ export class ManagerProactiveCoordinator {
       (message.state === 'queued' || message.state === 'running')
     )
     if (active) return
-    const events = this.inbox.pending(20)
+    const events = await this.livePendingEvents()
     if (events.length === 0) return
     const message = await this.agent.enqueueInternal({
       id: batchMessageId(events),

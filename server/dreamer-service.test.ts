@@ -1091,6 +1091,252 @@ describe('DreamerService', () => {
     expect(service.snapshot().tasks![0]).toMatchObject({ status: 'queued' })
   })
 
+  it.each([
+    {
+      state: 'done' as const,
+      before: 'blocked',
+      after: {
+        status: 'blocked',
+        error: 'Oracle did not attach an execution session with verified results.',
+      },
+    },
+    {
+      state: 'running' as const,
+      before: 'running',
+      after: {
+        status: 'failed',
+        error: expect.stringContaining('left the Oracle conversation'),
+      },
+    },
+  ])(
+    'never re-dispatches a $before attempt whose dispatch left the conversation',
+    async ({ state, before, after }) => {
+      const directory = await root()
+      const now = () => new Date('2026-10-29T04:00:00.000Z')
+      const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+      await taskStore.initialize()
+      const task = await taskStore.upsertFinding({
+        sourceEventIds: ['d'.repeat(64)],
+        title: 'Investigate the stalled queue',
+        summary: 'Oracle dispatched this before Start over.',
+        nextAction: 'Run the focused queue test.',
+        owner: 'oracle',
+        executionPrompt: 'Run the focused queue test.',
+      })
+      await taskStore.beginAttempt({
+        revision: task.revision,
+        taskId: task.id,
+        requestId: '2f0b8f8e-8b8f-4f0e-9c55-3f4a8f8e8b8f',
+        managerMessageId: 'task-attempt-start-over',
+      })
+      const managerMessages: ManagerMessage[] = [{
+        id: 'task-attempt-start-over',
+        role: 'user',
+        content: 'Run the focused queue test.',
+        createdAt: now().toISOString(),
+        state,
+      }]
+      const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'queued',
+        }
+        managerMessages.push(message)
+        return message
+      })
+      const service = new DreamerService(directory, options(now, {
+        taskStore,
+        enqueueManagerTask,
+        managerMessages: () => managerMessages,
+      }))
+      await service.initialize()
+      await service.reconcileTasks()
+      expect(service.snapshot().tasks![0]!.attempts[0]).toMatchObject({ status: before })
+
+      // Start over, or trimming the conversation, removes the dispatch.
+      managerMessages.length = 0
+      await service.reconcileTasks()
+      await service.reconcileTasks()
+
+      expect(enqueueManagerTask).not.toHaveBeenCalled()
+      const settled = service.snapshot().tasks![0]!
+      expect(settled).toMatchObject({ status: after.status, attempts: [after] })
+
+      await service.dispatchTask({
+        revision: settled.revision,
+        taskId: task.id,
+        requestId: '6c1d2f4e-2a7b-4c3d-8e9f-0a1b2c3d4e5f',
+      })
+      expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it('follows a linked execution after its dispatch leaves the conversation', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['b'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'Oracle linked an execution session before Start over.',
+      nextAction: 'Run the focused queue test.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const prompt = {
+      id: 'linked-task-prompt',
+      role: 'user' as const,
+      content: 'Run the focused queue test.',
+      createdAt: now().toISOString(),
+    }
+    let execution = completionSession(false, '', {
+      id: 'execution-linked',
+      status: 'idle',
+      queuedCount: 1,
+      queuedPrompts: [prompt],
+      messages: [],
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+      readSession: async () => execution,
+    }))
+    await service.initialize()
+    await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '0d6c1f2e-3b4a-4c5d-8e6f-7a8b9c0d1e2f',
+    })
+    managerMessages[0]!.state = 'done'
+    managerMessages.push({
+      id: 'linked-session',
+      role: 'activity',
+      content: 'Queued execution prompt',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{
+        computerId: 'computer-a',
+        sessionId: 'execution-linked',
+        promptId: prompt.id,
+      }],
+    })
+    // The message bound drops the dispatch before its newer link is persisted.
+    managerMessages.shift()
+    await service.reconcileTasks()
+    const status = () => service.snapshot().tasks![0]!.attempts[0]
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    expect(status()).toMatchObject({ status: 'queued' })
+
+    // Start over removes the link too; the prompt still waits in its session.
+    managerMessages.length = 0
+    await service.reconcileTasks()
+    await service.reconcileTasks()
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    expect(status()).toMatchObject({ status: 'queued' })
+
+    execution = { ...execution, status: 'running', queuedCount: 0, queuedPrompts: [], messages: [prompt] }
+    await service.reconcileTasks()
+    expect(status()).toMatchObject({ status: 'running' })
+
+    execution = { ...execution, status: 'idle' }
+    await service.reconcileTasks()
+    await service.reconcileTasks()
+    expect(status()).toMatchObject({
+      status: 'failed',
+      error: expect.stringContaining('left the Oracle conversation'),
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+
+    await service.dispatchTask({
+      revision: service.snapshot().tasks![0]!.revision,
+      taskId: task.id,
+      requestId: '1e7d2a3f-4c5b-4d6e-9f7a-8b9c0d1e2f3a',
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a linked failure reason after its dispatch leaves the conversation', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['c'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'Oracle failed after linking an execution session.',
+      nextAction: 'Run the focused queue test.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const enqueueManagerTask = vi.fn(async (input: ManagerInternalSubmission) => {
+      const message: ManagerMessage = {
+        ...input,
+        role: 'user',
+        createdAt: now().toISOString(),
+        state: 'queued',
+      }
+      managerMessages.push(message)
+      return message
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask,
+      managerMessages: () => managerMessages,
+      readSession: async () => completionSession(false, '', {
+        id: 'execution-failed',
+        status: 'idle',
+        messages: [],
+      }),
+    }))
+    await service.initialize()
+    await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '2a8e3b4f-5d6c-4e7f-8a9b-0c1d2e3f4a5b',
+    })
+    managerMessages[0]!.state = 'failed'
+    managerMessages[0]!.error = 'Oracle lost its own turn after dispatch.'
+    managerMessages.push({
+      id: 'failed-session-link',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{ computerId: 'computer-a', sessionId: 'execution-failed' }],
+    })
+    await service.reconcileTasks()
+    const failed = {
+      status: 'failed',
+      error: 'Oracle lost its own turn after dispatch.',
+    }
+    expect(service.snapshot().tasks![0]!.attempts[0]).toMatchObject(failed)
+
+    managerMessages.length = 0
+    await service.reconcileTasks()
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'failed',
+      attempts: [failed],
+    })
+    expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+  })
+
   it('links carried suggestions to one durable task and replays investigation idempotently', async () => {
     const directory = await root()
     const now = () => new Date('2026-10-29T04:00:00.000Z')
@@ -2509,7 +2755,9 @@ function progressSource(sessions: () => ManagedSession[] = () => [progressSessio
       sessions: sessions(),
       answeredComputerIds: ['computer-a'],
     })),
-    listComputers: vi.fn(() => [{ id: 'computer-a', name: 'development' }]),
+    listComputers: vi.fn((): Array<{ id: string; name: string; lifecycleGeneration?: string }> => [
+      { id: 'computer-a', name: 'development' },
+    ]),
     readSession: vi.fn(async (computerId: string, sessionId: string) => {
       const session = sessions().find((candidate) =>
         candidate.computerId === computerId && candidate.id === sessionId)
@@ -2704,7 +2952,7 @@ describe('DreamerService session progress', () => {
     })
     const source = progressSource(() => [answered, cached])
     source.listComputers.mockReturnValue([
-      { id: 'computer-a', name: 'development' },
+      { id: 'computer-a', name: 'development', lifecycleGeneration: 'pairing-a' },
       { id: 'computer-b', name: 'production' },
     ])
     const order: string[] = []
@@ -2722,7 +2970,10 @@ describe('DreamerService session progress', () => {
     await service.updateSettings(enabledSettings(service))
 
     await vi.waitFor(() => expect(sweepLifecycle).toHaveBeenCalledTimes(1))
-    expect(sweepLifecycle).toHaveBeenCalledWith([answered])
+    expect(sweepLifecycle).toHaveBeenCalledWith(
+      [answered],
+      new Map([['computer-a', 'pairing-a']]),
+    )
     expect(order).toEqual(['reconcile', 'sweep'])
     expect(service.snapshot().progress?.staleComputers).toEqual(['production'])
     await service.stop()

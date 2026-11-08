@@ -404,6 +404,14 @@ runtime makes after Stop has drained it belongs to the next turn.
   follows the session composer.
 - Session references, whether chips or `?computer=…&session=…` links, open that
   session.
+- Every stored prompt, answer, notice, tool activity, and close card shows the
+  time the hub recorded it (`createdAt`) through `MessageTime`
+  (`src/MessageTime.tsx`), which session transcripts share: the viewer's
+  locale, calendar, and timezone, the time alone today, the day added on other
+  days, the year in other calendar years, and the full date as its title.
+  Waiting prompts keep theirs in the queue, including while edited. A reply
+  still streaming has no time until it is stored; an unreadable time shows
+  nothing.
 - Sessions Oracle started get a small **Oracle** badge in the session list.
 - Startup, manual Refresh, reconnect, and visibility return re-read Oracle
   alongside sessions and Dreamer. An in-place refresh keeps the last snapshot

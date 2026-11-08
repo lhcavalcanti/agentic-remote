@@ -846,6 +846,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   never switching model or provider itself. A provider that refuses a listed
   model only once the task runs leaves that session with a failed first turn,
   which Oracle reports before asking the same way.
+- Oracle's transcript MUST show each stored prompt, answer, notice, action, and
+  close card with its persisted creation time, as in the conversation timeline
+  (§4); a waiting prompt keeps its time, including while it is edited. A reply
+  still streaming shows no time until it is stored.
 
 ### 3.8 Oracle Dreamer foundation
 
@@ -943,7 +947,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - User messages, assistant messages, notices, and tool activity MUST remain in
   chronological order.
 - User and assistant messages MUST show their persisted creation time in the
-  viewer's local time alongside the sender label.
+  viewer's local time alongside the sender label, with the date for messages
+  from other days and the year for other years of the viewer's calendar. Each
+  shown time MUST gain its date once the viewer's day turns, including after
+  the device sleeps, without a reload. An
+  unreadable time MUST show nothing rather than break the transcript.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
 - Parallel tools MUST retain independent running/completed/failed states.

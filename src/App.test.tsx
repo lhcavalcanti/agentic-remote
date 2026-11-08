@@ -4160,6 +4160,28 @@ describe('App', () => {
     )
   })
 
+  it('dates a session message from another day and leaves out a time it cannot read', async () => {
+    const older = '2020-01-02T03:04:00.000Z'
+    const datedSession = {
+      ...session,
+      messages: [
+        { id: 'old-1', role: 'user' as const, content: 'From long ago', createdAt: older },
+        { id: 'bad-1', role: 'assistant' as const, content: 'No readable time', createdAt: 'not a time' },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([datedSession])
+    vi.mocked(getSession).mockResolvedValue(datedSession)
+    render(<App />)
+
+    const full = new Intl.DateTimeFormat(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).format(new Date(older))
+    const oldTime = (await screen.findByText('From long ago')).closest('.message')?.querySelector('time')
+    expect(oldTime).toHaveTextContent(full)
+    expect(oldTime).toHaveAttribute('title', full)
+    expect(screen.getByText('No readable time').closest('.message')?.querySelector('time')).toBeNull()
+  })
+
   it('renders MCP activity as a compact, identifiable tool row', async () => {
     const mcpSession: ManagedSession = {
       ...session,

@@ -1409,10 +1409,12 @@ runtime; unknown prior delivery or explicit closed/suspended state stays held.
 Repeated startup MUST NOT duplicate delivery or create additional pollers.
 An unmanaged owner that discovery lists again MUST hold its queue behind Reopen,
 except for work admitted to that live owner before discovery recorded it: that
-work's write MUST grant recovery and lift the hold together, whichever lands
-first. A send that finds the hold before typing MUST be refused with nothing
-sent. A Reopen that settles during a discovery pass MUST NOT be interrupted by
-it.
+work MUST be granted recovery, lifting the hold and waking the queue, whichever
+lands first. A write landing after a snapshot lost the owner, or while one is
+in flight, MUST leave that decision to discovery, and committed work MUST keep
+its admission even if publishing it fails. A send that finds the hold before
+typing MUST be refused with nothing sent. A Reopen that settles during a
+discovery pass MUST NOT be interrupted by it.
 
 An explicit recovery token MUST match the current failed prompt. For Claude,
 accepting a token-bearing retry MUST atomically retain one canonical FIFO entry

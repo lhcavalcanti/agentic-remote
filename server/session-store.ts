@@ -297,14 +297,17 @@ function requiresExplicitTerminalReopen(session: StoredSession): boolean {
  * owner's queue behind Reopen after the send was admitted but before this
  * write lands; the next pass would then lift the hold with nothing left to
  * wake the queue, so the grant lifts it in the same write. `liveOwner` is
- * read at commit, so an owner a later pass found gone keeps its hold.
+ * read at commit: when the last snapshot no longer lists the owner, or one in
+ * flight may not, the record's open state can be stale, so neither happens
+ * here and discovery decides from the admission instead.
  */
 function admitToTerminalOwner(session: StoredSession, liveOwner?: () => boolean): void {
+  if (liveOwner && !liveOwner()) return
   const held = session.managedOpen !== true && Boolean(session.interruption)
   grantTerminalRecovery(session)
   if (
     held && session.managedOpen === true && !session.suspended &&
-    !session.archivedAt && !session.sdkRestartRecovery && liveOwner?.() === true
+    !session.archivedAt && !session.sdkRestartRecovery && liveOwner
   ) {
     session.interruption = undefined
   }
@@ -1151,22 +1154,26 @@ export class SessionStore {
    * `liveAdmission` names owners the app admitted work to before this record
    * showed them as open terminal sessions. It is read when the write commits,
    * so an admission that lands while discovery runs still grants recovery.
+   * Resolves to the sessions whose Reopen hold such a grant lifted: their
+   * queue stopped at the hold, so the caller has to wake it.
    */
   async syncBackends(
     terminalSessionIds: string[],
     sdkSessionIds: string[],
     isCurrent?: () => boolean,
     liveAdmission?: (sessionId: string) => boolean,
-  ): Promise<void> {
+  ): Promise<string[]> {
     const activeTerminal = new Set(terminalSessionIds)
     const knownSdk = new Set(sdkSessionIds)
     return this.change((state) => {
-      if (isCurrent && !isCurrent()) return () => undefined
+      const released: string[] = []
+      if (isCurrent && !isCurrent()) return () => released
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
           const admitted = session.managedOpen !== true &&
             (liveAdmission?.(session.id) ?? false)
+          if (admitted && session.interruption) released.push(session.id)
           const retainQueuedTerminal = !admitted && requiresExplicitTerminalReopen(session)
           const interruption = retainQueuedTerminal
             ? session.interruption ?? {
@@ -1210,7 +1217,7 @@ export class SessionStore {
           }
         }
       }
-      return () => undefined
+      return () => released
     })
   }
 

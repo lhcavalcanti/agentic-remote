@@ -2027,12 +2027,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly sdkDrainRequested = new Set<string>()
   private readonly startupTerminalQueues = new Set<string>()
   private readonly rediscoveredTerminalQueues = new Map<string, 'resume' | 'reopen'>()
-  // Live owners work was queued to before their record showed them as open
-  // tmux sessions, keyed to the admission's sequence number. Discovery grants
-  // them recovery when it records the owner, as an open record's admission
-  // would have, and forgets one a later snapshot no longer lists.
+  // Live owners work was queued to whose write could not grant recovery
+  // itself, keyed to the admission's sequence number: their record did not
+  // show them as open tmux sessions yet, or a snapshot in flight might no
+  // longer list them. Discovery grants them recovery when it lists the owner,
+  // as the write would have, and forgets one a later snapshot no longer lists.
   private readonly liveTerminalAdmissions = new Map<string, number>()
   private liveTerminalAdmissionSequence = 0
+  private discoverySnapshots = 0
   private nativeStartupDiscoveryReady = false
   private nativeDiscoveryCompleted = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
@@ -6316,6 +6318,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ? undefined
       : ++this.liveTerminalAdmissionSequence
     if (admission !== undefined) this.liveTerminalAdmissions.set(sessionId, admission)
+    // Marks the committed write: publishing it can still throw, and the
+    // admission is then what lets discovery grant the accepted work recovery.
+    const boundary = delivery ?? { accepted: false }
     let queued: SessionDetail
     try {
       queued = await this.enqueuePrompt(
@@ -6323,13 +6328,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         content,
         command,
         answers,
-        delivery,
+        boundary,
         steer,
         priority,
-        () => this.externalSessionIds.has(sessionId),
+        () => this.externalSessionIds.has(sessionId) && this.discoverySnapshots === 0,
       )
     } catch (error) {
-      if (admission !== undefined && this.liveTerminalAdmissions.get(sessionId) === admission) {
+      if (
+        !boundary.accepted && admission !== undefined &&
+        this.liveTerminalAdmissions.get(sessionId) === admission
+      ) {
         if (previousAdmission === undefined) this.liveTerminalAdmissions.delete(sessionId)
         else this.liveTerminalAdmissions.set(sessionId, previousAdmission)
       }
@@ -9308,10 +9316,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.stopped || this.lifecycleLocks.size) return false
       generation = this.discoveryGeneration
       admissionsBeforeSnapshot = this.liveTerminalAdmissionSequence
-      const discovery = await Promise.allSettled([
-        this.client.listSessions(),
-        this.discoverTerminalSessions(),
-      ])
+      // An admitted write landing while this is out cannot tell whether it
+      // will still list the owner, so it leaves the grant to this pass. The
+      // count drops in the same turn that records the result below.
+      this.discoverySnapshots += 1
+      let discovery: [
+        PromiseSettledResult<SessionMetadata[]>,
+        PromiseSettledResult<DiscoveredSession[]>,
+      ]
+      try {
+        discovery = await Promise.allSettled([
+          this.client.listSessions(),
+          this.discoverTerminalSessions(),
+        ])
+      } finally {
+        this.discoverySnapshots -= 1
+      }
       // Terminal uncertainty may be deferred, but an independent SDK listing
       // failure must still fail startup even when both probes reject.
       if (discovery[0].status === 'rejected') {
@@ -9401,12 +9421,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       isCurrent,
     )
     if (!isCurrent()) return false
-    await this.store.syncBackends(
+    const released = await this.store.syncBackends(
       activeSessions.map((session) => session.id),
       indexedSessions.map((session) => session.id),
       isCurrent,
       (id) => this.liveTerminalAdmissions.has(id),
     )
+    // A grant this pass made lifted their hold, and their queue stopped there.
+    for (const id of released) this.rediscoveredTerminalQueues.set(id, 'resume')
     if (!isCurrent()) return false
     const listed = new Set(activeSessions.map((session) => session.id))
     for (const [id, admission] of [...this.liveTerminalAdmissions]) {

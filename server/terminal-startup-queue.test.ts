@@ -291,6 +291,48 @@ afterEach(async () => {
   vi.unstubAllEnvs()
 })
 
+type NativeFixture = Awaited<ReturnType<typeof fixture>>
+type NativeRuntime = ReturnType<NativeFixture['connect']>
+
+// A live tmux session discovery recorded but the app never drove.
+async function discoveredOwner() {
+  const native = await fixture()
+  await native.seed([], (store) => store.setOpen(native.id, false, true))
+  await native.control('waiting')
+  const runtime = native.connect()
+  await runtime.service.start()
+  expect(runtime.store.get(native.id)).toMatchObject({ isOpen: true })
+  expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+  return { native, runtime }
+}
+
+// Holds the admitted send's queue write until it is released.
+function delayQueueWrite(store: SessionStore) {
+  const entered = gate()
+  const release = gate()
+  const landed = gate()
+  const enqueue = store.enqueuePrompt.bind(store)
+  vi.spyOn(store, 'enqueuePrompt').mockImplementationOnce(async (...args) => {
+    entered.finish()
+    await release.promise
+    try {
+      return await enqueue(...args)
+    } finally {
+      landed.finish()
+    }
+  })
+  return { entered: entered.promise, release: release.finish, landed: landed.promise }
+}
+
+async function expectReopenAfterRediscovery(native: NativeFixture, runtime: NativeRuntime) {
+  await runtime.service.refreshDiscovery()
+  await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+  expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+  expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+  expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
+  expect((await native.receipt()).submits).toEqual([])
+}
+
 describe('Persisted native queue startup', () => {
   it.each([
     { kind: 'message', history: 'none' },
@@ -801,6 +843,146 @@ describe('Persisted native queue startup', () => {
     expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
     expect(runtime.service.getSession(native.id)?.queueState?.message).toMatch(/Reopen/)
     expect((await native.receipt()).submits).toEqual([])
+  }, 15_000)
+
+  it('holds an owner discovery lost before the admitted write landed', async () => {
+    const { native, runtime } = await discoveredOwner()
+    const write = delayQueueWrite(runtime.store)
+    const sending = runtime.service.sendMessage(native.id, 'Admitted before the owner left', true)
+    await write.entered
+
+    // A snapshot taken after the admission no longer lists the owner. The
+    // write lands once the pass has recorded that, before it closes records.
+    runtime.finder.mockResolvedValueOnce([])
+    const syncOpen = runtime.store.syncOpen.bind(runtime.store)
+    vi.spyOn(runtime.store, 'syncOpen').mockImplementationOnce(async (...args) => {
+      write.release()
+      await write.landed
+      return syncOpen(...args)
+    })
+    await runtime.service.refreshDiscovery()
+    await sending
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    await expectReopenAfterRediscovery(native, runtime)
+  }, 15_000)
+
+  it('holds an owner a snapshot in flight loses when the admitted write lands', async () => {
+    const { native, runtime } = await discoveredOwner()
+    const write = delayQueueWrite(runtime.store)
+    const sending = runtime.service.sendMessage(native.id, 'Admitted before the owner left', true)
+    await write.entered
+
+    // The snapshot follows the admission; the write lands while it is in flight.
+    const listing = gate()
+    const lost = gate()
+    runtime.finder.mockImplementationOnce(async () => {
+      listing.finish()
+      await lost.promise
+      return []
+    })
+    const refreshing = runtime.service.refreshDiscovery()
+    await listing.promise
+    write.release()
+    await write.landed
+    lost.finish()
+    await refreshing
+    await sending
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    await expectReopenAfterRediscovery(native, runtime)
+  }, 15_000)
+
+  it('wakes a held queue when discovery grants an admission it deferred', async () => {
+    const native = await fixture()
+    await native.seed(['Held until the owner returned'], (store) => store.setOpen(native.id, false, true))
+    await native.control('waiting')
+    const runtime = native.connect()
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.start()
+
+    // The send decides to queue; one pass then holds the returned owner's queue
+    // behind Reopen, and the admitted write lands while the next pass's
+    // snapshot, which lists the owner, is in flight.
+    const list = runtime.finder.getMockImplementation()!
+    const listing = gate()
+    const listed = gate()
+    let refreshing: Promise<void> | undefined
+    const service = runtime.service as unknown as {
+      shouldEnqueueTerminalPrompt(id: string): Promise<boolean>
+    }
+    const shouldEnqueue = service.shouldEnqueueTerminalPrompt.bind(runtime.service)
+    vi.spyOn(service, 'shouldEnqueueTerminalPrompt').mockImplementationOnce(async (id) => {
+      const decided = await shouldEnqueue(id)
+      await runtime.service.refreshDiscovery()
+      expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+      runtime.finder.mockImplementationOnce(async () => {
+        listing.finish()
+        await listed.promise
+        return list()
+      })
+      refreshing = runtime.service.refreshDiscovery()
+      await listing.promise
+      return decided
+    })
+    await runtime.service.sendMessage(native.id, 'Admitted to the live owner', true)
+    listed.finish()
+    await refreshing
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
+    expect(runtime.service.getSession(native.id)?.queueState?.message)
+      .toMatch(/retry automatically/i)
+
+    await native.control('idle')
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+
+    expect((await native.receipt()).submits).toEqual(['Held until the owner returned'])
+    expect(runtime.service.getSession(native.id)?.queuedPrompts?.map((prompt) => prompt.content))
+      .toEqual(['Admitted to the live owner'])
+  }, 15_000)
+
+  it('grants recovery to queued work whose publication failed after it committed', async () => {
+    const native = await fixture()
+    await native.seed([], (store) => store.setOpen(native.id, false, true))
+    await native.control('waiting')
+    const runtime = native.connect()
+    runtime.finder.mockResolvedValueOnce([])
+    await runtime.service.start()
+
+    const content = 'Committed before publication failed'
+    const service = runtime.service as unknown as {
+      publish(session: { queuedPrompts?: Array<{ content: string }> }): void
+    }
+    const publish = service.publish.bind(runtime.service)
+    let failed = false
+    vi.spyOn(service, 'publish').mockImplementation((session) => {
+      if (!failed && session.queuedPrompts?.some((prompt) => prompt.content === content)) {
+        failed = true
+        throw new Error('Publication failed after the queue write')
+      }
+      publish(session)
+    })
+    await expect(runtime.service.sendMessage(native.id, content, true)).rejects.toThrow()
+    expect(failed).toBe(true)
+    expect(runtime.service.getSession(native.id)?.queuedPrompts?.map((prompt) => prompt.content))
+      .toEqual([content])
+
+    await runtime.service.refreshDiscovery()
+    await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(true)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
+    expect(runtime.service.getSession(native.id)?.queueState?.message)
+      .toMatch(/retry automatically/i)
+
+    await native.control('idle')
+    runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+    await runtime.service['drainTerminalQueue'](native.id)
+
+    expect((await native.receipt()).submits).toEqual([content])
   }, 15_000)
 
   it('does not bypass the ordered startup queue phase when recovery rediscovers an owner', async () => {

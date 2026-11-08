@@ -452,7 +452,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "257901379ea52f1f1e7c0acacf148e0e96d64eae1adebe4f01018457b9e1eeb6",
+    "docs/app-spec.md": "c3c86e5a0bb153043cc504839e4e33cb3117896a80eda92a57e9ef5f61bc6969",
     "docs/architecture.md": "5cf48ead513dfe86e5f217f7ce041af55d0eb4cfea7afe6cd73cf4ee270036ea",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -902,8 +902,8 @@
     "src/session-presentation.ts": "6b90de22ed86db9d94aceaed6cde51fee1381eca505ee40eaae3f7b91c7190c9",
     "src/session-resource-commands.test.ts": "aad01518e46dd66c0910f8c113f9895712c7628bf9385eee6d33ef0f0e73e62a",
     "src/session-resource-commands.ts": "0ed9df05cac3541796e74ffa8670660e4d7605d933eac10c67ec2f7b96764bd3",
-    "src/session-response-order.test.ts": "3d9be8eb973b211be0670e1ef49edbb1b9b575cbe433755ff8fd6de4ca930ebe",
-    "src/session-response-order.ts": "a1c1b41d5ccd6ca9bc7a406b4bc969553ff195774fa87e463c2a6472236a879f",
+    "src/session-response-order.test.ts": "b83b67e6377201a77bd9b52df193bbe8178dad14c66e178e9a43dfcfef89c1ec",
+    "src/session-response-order.ts": "ed719a1de11eedd0be06b074892fb6978b6de711346680b004fc41e50c4c16e5",
     "src/settings-profile.test.ts": "924462183efbf7b00dc81750882a4106d15e0a2fa8ad260cc7ec95842206b178",
     "src/settings-profile.ts": "b980e3077240c22c5dc6d9e209256af615e719d6b8efa42ad25e6e5cb486bf5b",
     "src/shell-notifications.test.ts": "d571dfa0a8bc77802139ed279df2ec0d0d54a7eca882e79066946cc1dc45e4ce",
@@ -1029,20 +1029,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "bcc2704c35dc4ea0b39f0757ccb8b2751db4109bbe128b7f7f8eb0f09f04e211",
+    "GRAPH_REPORT.md": "4fba997d276ebc617c17b85171f39685c0083a2e40a8467190b5540c159edf75",
     "communities.json": "9ac080f65c268ed2fa3d651574b4e9a2ee75c217b163bf750a277fddc990a5ce",
-    "graph.html": "4938f17b603f0e9b648de3192d426a5043b524ffc07faf62760def26e2b41e39",
-    "graph.json": "e326d75d2be7254e0228d02ef70c5a6477b33179adba4688dfcfc13e0137c39f"
+    "graph.html": "36300651b21c98ddd0ab2eff2ceeb499e77e03c8ecd70a36d4a2bba9ddeb212d",
+    "graph.json": "02bb5717d15500d404e92d1da7bacaca0b9f6c6d25907906b2129c6bdd18cfce"
   },
   "schema_version": 1,
-  "source_commit": "d6d7e0be12b24a1561138f9c474fed84684bdac6",
-  "source_fingerprint": "416c02cf55a7e076a56a82d3d0795a29f982f667aa227c71ba71ab965ec47405",
+  "source_commit": "3c8f2f4687050966b0ae04e3128ef040018ba2bd",
+  "source_fingerprint": "544cdd1984e50a5e315c63ab45ba9435d0d537e69a5b76853200b629c91dcc87",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "server/agent-service.ts",
-    "server/recovery-resend-durability.test.ts",
-    "shared/contracts.ts",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "src/session-response-order.test.ts",
+    "src/session-response-order.ts"
   ]
 }

@@ -76,6 +76,23 @@ describe('Session response causal ordering', () => {
       .toEqual(queueState)
   })
 
+  it('keeps the newer recovery acknowledgement state over an older same-revision response', () => {
+    const unaccepted = rememberSessionResponse({ ...session, failedPrompt: failure }, currentSessionEventSequence())
+    let eventAt = nextSessionEventSequence()
+    const held = projectSessionResponse(
+      unaccepted, { ...session, recoveryAcknowledgementPending: true }, eventAt,
+    )
+    expect(held.failedPrompt).toBeUndefined()
+    expect(held.recoveryAcknowledgementPending).toBe(true)
+
+    const pending = rememberSessionResponse(
+      { ...session, recoveryAcknowledgementPending: true }, currentSessionEventSequence(),
+    )
+    eventAt = nextSessionEventSequence()
+    expect(projectSessionResponse(pending, { ...session }, eventAt).recoveryAcknowledgementPending)
+      .toBeUndefined()
+  })
+
   it('does not cross session or computer ownership', () => {
     const incoming = rememberSessionResponse({ ...session, failedPrompt: failure }, currentSessionEventSequence())
     const eventAt = nextSessionEventSequence()

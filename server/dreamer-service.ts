@@ -243,6 +243,7 @@ export class DreamerService {
   private activeCommit?: Promise<void>
   private memoryReconciliation?: Promise<void>
   private taskReconciliation?: Promise<void>
+  private followUpTaskReconciliation?: Promise<void>
   private runtimeError?: string
 
   constructor(
@@ -497,8 +498,26 @@ export class DreamerService {
   return this.snapshotForApi()
   }
 
+  /**
+   * Passes never overlap. A request made while one runs may concern a task
+   * that pass has already read, so it waits for a pass that starts after it;
+   * every request made during the same pass shares that one follow-up.
+   */
   async reconcileTasks(): Promise<void> {
-  if (this.taskReconciliation) return this.taskReconciliation
+  if (this.followUpTaskReconciliation) return this.followUpTaskReconciliation
+  const running = this.taskReconciliation
+  if (!running) return this.startTaskReconciliation()
+  const followUp = running.then(() => undefined, () => undefined).then(() => {
+    if (this.followUpTaskReconciliation === followUp) {
+      this.followUpTaskReconciliation = undefined
+    }
+    return this.startTaskReconciliation()
+  })
+  this.followUpTaskReconciliation = followUp
+  return followUp
+  }
+
+  private startTaskReconciliation(): Promise<void> {
   const operation = this.reconcileTasksInternal()
   this.taskReconciliation = operation
   operation.finally(() => {

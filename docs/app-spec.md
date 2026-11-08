@@ -890,8 +890,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   fails until **Retry**; an unlinked blocked or in-review one keeps its state.
   Refresh, startup, manager updates and
   session updates MUST reconcile task state without polling or a second wake
-  endpoint. A failed Oracle manager turn MUST NOT make a task retryable while
-  an authoritatively linked execution session is still running.
+  endpoint. Reconciles requested while one is running MUST coalesce into one
+  later pass instead of joining it, so a mid-pass change is never lost. A
+  failed Oracle manager turn MUST NOT make a task retryable while an
+  authoritatively linked execution session is still running.
 - An Oracle task MUST reach `completed` only after the user reviews and confirms
   a successful root `task_complete` marker from the exact linked execution
   session in the exact root user turn dispatched for the current attempt.

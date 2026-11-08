@@ -1084,6 +1084,132 @@ describe('manager tools', () => {
     expect(Object.keys(host)).not.toContain('deleteSession')
   })
 
+  describe('when the user lets Oracle close the sessions it started', () => {
+    const started = {
+      'hub:abc12345-aaaa': {
+        computerId: 'hub', sessionId: 'abc12345-aaaa', title: 'Session abc12345-aaaa',
+        origin: 'manager' as const, firstSeenAt: '2026-10-15T10:00:00.000Z',
+      },
+    }
+    let closeWithoutAsking: ReturnType<typeof vi.fn>
+    let closes: number
+    let unfinished: () => Array<{ computerId: string; sessionId: string }>
+    let live: boolean
+    let earlier: boolean
+    const turn = () => ({ messageId: 'm1', source: 'typed' as const, live: () => live })
+
+    beforeEach(() => {
+      closes = 0
+      unfinished = () => []
+      live = true
+      earlier = false
+      closeWithoutAsking = vi.fn(async (target: ManagedSession) => {
+        closes += 1
+        return { kind: 'close-session', computerId: target.computerId, sessionId: target.id, title: target.title, state: 'confirmed', decidedBy: 'oracle' }
+      })
+      Object.assign(host, {
+        sessionClosePolicy: () => 'oracle-started',
+        registry: () => started,
+        unfinishedTaskSessions: () => unfinished(),
+        autonomousClosesThisTurn: () => closes,
+        backgroundTasks: vi.fn(async () => ({ tasks: [], runningCount: 0, supported: true })),
+        closeWithoutAsking,
+        callTurn: turn,
+        earlierWorkRunning: () => earlier,
+      })
+    })
+
+    it('closes an idle session it started, named by its full id, without asking', async () => {
+      const result = await call('close_session', { sessionId: 'abc12345-aaaa', reason: 'Its PR merged.' })
+      expect(closeWithoutAsking).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'Its PR merged.')
+      expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
+      expect(host.readSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
+      expect(String(result)).toContain('Closed "Session abc12345-aaaa" (abc12345-aaaa) without asking')
+      expect(String(result)).toContain('permanently deleted')
+    })
+
+    it('asks instead, and says why, whenever a boundary is not met', async () => {
+      const busy = (change: Partial<ManagedSession>) => () =>
+        vi.mocked(host.readSession).mockResolvedValueOnce(session('abc12345-aaaa', change))
+      const cases: Array<[string, () => void, string, string?]> = [
+        ['shortened id', () => undefined, 'it was named by a shortened id', 'abc12345'],
+        ['started by the user', () => Object.assign(host, { registry: () => ({}) }), 'it was not started by Oracle'],
+        ['turn cap', () => { closes = 5 }, 'Oracle already closed 5 sessions without asking this turn'],
+        ['unreadable', () => vi.mocked(host.readSession).mockRejectedValueOnce(new Error('node offline')), 'its current state could not be read'],
+        ['running', busy({ status: 'running' }), 'it is still running'],
+        ['errored', busy({ status: 'error' }), 'it stopped with an error'],
+        ['queued', busy({ queuedCount: 1 }), 'it has queued messages'],
+        ['dispatching', busy({ queueState: { state: 'waiting', promptId: 'p', message: 'Waiting', updatedAt: 't' } }), 'it has queued messages'],
+        ['failed prompt', busy({ failedPrompt: { content: 'x', failedAt: 't' } }), 'it holds a message that failed to send'],
+        ['permission', busy({ status: 'waiting', pendingPermission: { requestId: 'p', title: 'Run', kind: 'shell', options: [] } }), 'it is waiting for an answer'],
+        ['question', busy({ pendingUserInput: { requestId: 'q', question: 'Which?', choices: [], allowFreeform: true } }), 'it is waiting for an answer'],
+        ['pinned', busy({ retention: { pinned: true } }), 'it is pinned'],
+        ['interrupted', busy({ interruption: { detectedAt: 't', previousStatus: 'running' } }), 'it is recovering from a restart'],
+        ['restart recovery', busy({ restartRecovery: { state: 'recovering', detectedAt: 't' } }), 'it is recovering from a restart'],
+        ['recovery brief', busy({ recoverySeedState: 'pending' }), 'it is recovering from a restart'],
+        ['background work', () => vi.mocked(host.backgroundTasks!).mockResolvedValueOnce({
+          tasks: [
+            { id: 'a', type: 'shell', description: 'Build', status: 'running', startedAt: 't', canCancel: true, executionMode: 'background' },
+            { id: 'b', type: 'agent', description: 'Review', status: 'queued', startedAt: 't', canCancel: true },
+            { id: 'c', type: 'shell', description: 'Lint', status: 'completed', startedAt: 't', canCancel: false },
+          ],
+          runningCount: 1,
+          supported: true,
+        }), 'it has 2 background tasks running or queued'],
+        ['unreadable background work', () => vi.mocked(host.backgroundTasks!).mockRejectedValueOnce(new Error('offline')), 'its background tasks could not be read'],
+        ['background work it cannot see', () => vi.mocked(host.backgroundTasks!).mockResolvedValueOnce({ tasks: [], runningCount: 0, supported: false }), 'its background tasks could not be read'],
+        ['task in progress', () => { unfinished = () => [{ computerId: 'hub', sessionId: 'abc12345-aaaa' }] }, 'an unfinished Oracle task uses it'],
+        ['unreadable tasks', () => { unfinished = () => { throw new Error('not ready') } }, 'Oracle tasks could not be read'],
+        ['earlier work', () => { earlier = true }, 'Oracle may still be finishing work for an earlier message'],
+        ['earlier work unknown', () => Object.assign(host, { earlierWorkRunning: undefined }), 'Oracle may still be finishing work for an earlier message'],
+        ['outside a turn', () => Object.assign(host, { callTurn: () => undefined }), 'Oracle is no longer answering the message that asked for it'],
+        ['stopped while it checked', () => vi.mocked(host.backgroundTasks!).mockImplementationOnce(async () => {
+          live = false
+          return { tasks: [], runningCount: 0, supported: true }
+        }), 'Oracle is no longer answering the message that asked for it'],
+      ]
+      for (const [name, arrange, why, sessionId = 'abc12345-aaaa'] of cases) {
+        vi.mocked(host.requestCloseConfirmation).mockClear()
+        closes = 0
+        unfinished = () => []
+        live = true
+        earlier = false
+        Object.assign(host, { registry: () => started, callTurn: turn, earlierWorkRunning: () => earlier })
+        arrange()
+        const result = await call('close_session', { sessionId, reason: 'Done.' })
+        expect(host.requestCloseConfirmation, name).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'Done.', why)
+        expect(String(result), name).toContain(`because ${why}`)
+        expect(String(result), name).toContain('stays open until they confirm')
+      }
+      expect(closeWithoutAsking).not.toHaveBeenCalled()
+    })
+
+    it('asks when it cannot tell which tasks are unfinished', async () => {
+      Object.assign(host, { unfinishedTaskSessions: undefined })
+      await call('close_session', { sessionId: 'abc12345-aaaa' })
+      expect(host.requestCloseConfirmation).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), undefined, 'Oracle tasks could not be read')
+      expect(closeWithoutAsking).not.toHaveBeenCalled()
+    })
+
+    it('reports a close that failed so Oracle can tell the user', async () => {
+      closeWithoutAsking.mockResolvedValueOnce({
+        kind: 'close-session', computerId: 'hub', sessionId: 'abc12345-aaaa', title: 'Session abc12345-aaaa', state: 'failed', error: 'node offline', decidedBy: 'oracle',
+      })
+      const result = await call('close_session', { sessionId: 'abc12345-aaaa' })
+      expect(result).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result)).toContain('Could not close')
+      expect(JSON.stringify(result)).toContain('node offline')
+    })
+
+    it('still asks with the ask policy, exactly as before', async () => {
+      Object.assign(host, { sessionClosePolicy: () => 'ask' })
+      const result = await call('close_session', { sessionId: 'abc12345-aaaa', reason: 'It finished.' })
+      expect(host.requestCloseConfirmation).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'It finished.')
+      expect(String(result)).not.toContain('because')
+      expect(closeWithoutAsking).not.toHaveBeenCalled()
+    })
+  })
+
   it('keeps notes in memory and reports a refused path as a failure', async () => {
     await call('memory_write', { path: 'MEMORY.md', content: '# Index' })
     await call('memory_append', { path: 'MEMORY.md', content: '- likes PRs' })

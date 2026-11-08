@@ -436,7 +436,8 @@ describe('manager turn context', () => {
   it('states the management-only role and the deletion rule in the system prompt', () => {
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/^You are Oracle/)
     expect(MANAGER_SYSTEM_PROMPT).toMatch(/never do .*work yourself/i)
-    expect(MANAGER_SYSTEM_PROMPT).toContain('close_session only asks')
+    expect(MANAGER_SYSTEM_PROMPT).toContain('close_session asks the user')
+    expect(MANAGER_SYSTEM_PROMPT).toContain('never close sessions just to tidy up')
     expect(MANAGER_SYSTEM_PROMPT).toContain('?computer=<computerId>&session=<sessionId>')
   })
 
@@ -446,7 +447,7 @@ describe('manager turn context', () => {
       /the actual answer/,
       /uncertainty/,
       /errors and failures[^.;]*with their message/,
-      /every action you took[^.;]*started, messaged, answered, or asked to close/,
+      /every action you took[^.;]*started, messaged, answered, closed, or asked to close/,
       /declined or refused, and why/,
       /waiting for the user/,
       /exact commands, code, paths, IDs, or log lines/,

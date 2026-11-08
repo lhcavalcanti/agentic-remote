@@ -229,7 +229,7 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | `send_to_session` | Send a follow-up to any session. A busy session is steered: the message is typed into its running turn (a terminal that is not ready yet takes it as soon as its composer is back). Only a refusal that certainly sent nothing falls back to the session's queue; a possibly-delivered steer is never retried. A closed session is reopened and a suspended one resumed first. A folder-trust prompt is answered only when it is Copilot's genuine terminal prompt (exact options) naming the session's own folder |
 | `answer_session` | Answer what a session waits on, so it carries on without you: a permission request (option by name, or approve/deny), including Copilot's folder trust; a question (a choice or free text), several choices, or a form's values; or dismiss it. An optional `requestId` stops an answer reaching a different prompt |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
-| `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything |
+| `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything. With `sessionClosePolicy: 'oracle-started'` it closes an idle session Oracle started, named by its full id, without asking, under the checks in [Closing without asking](#closing-without-asking) |
 | `list_skills` | Your skills (name and description) through the runtime's `skills.discover`, so delegated prompts can name them |
 | `memory_list`, `memory_read`, `memory_write`, `memory_append`, `memory_delete` | The agent's memory |
 | `structured_memory_search` | Search active records in the exact scopes available to this Oracle turn |
@@ -238,6 +238,39 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 Sessions are addressed by ID; the computer is resolved from the live list. Tool
 errors return as tool results the model can read, never as thrown failures that
 end the turn.
+
+### Closing without asking
+
+`sessionClosePolicy` is `ask` by default; only the settings route changes it.
+Under `oracle-started`, `close_session` still asks, naming the first reason,
+unless every check passes. Each check fails closed: what cannot be read is a
+reason to ask.
+
+| Check | Asks when |
+|---|---|
+| Provenance | The message is not typed (the tool's guards already refuse voice, scheduled, proactive, task, and Ask turns) |
+| Name | The session was named by a shortened id |
+| Origin | The registry entry is not `origin: 'manager'`, or is removed or replaced |
+| Live state | `readSession` fails, or the session is not idle, or has a pending permission or question, queued or dispatching messages, a failed prompt, a pin, or restart recovery |
+| Background work | The list cannot be read or is unsupported, or a task is running or queued, as for suspending |
+| Earlier work | A tool call from another turn, such as a stopped task's, is still running: what it starts or uses is recorded only when it ends. Calls are counted by turn at the tool boundary |
+| Oracle tasks | Tasks cannot be read, or a task that is not completed or dismissed lists the session as its source or in an attempt, or, before reconciliation records it there, an attempt's turn used it: on the turn's message or a reply to it, in the whole conversation, counting activity recorded but not yet written |
+| Turn | The turn the call started in has ended, been stopped, or belongs to an earlier conversation. Each tool call keeps that turn (`AsyncLocalStorage` at the tool boundary), so a late call cannot close under the next message's source or cap |
+| Cap | 5 sessions were already closed without asking for this message. The turn and the cap are checked last, and the close is counted before anything is awaited, so parallel calls cannot exceed it. Retries and a restart count the transcript's records |
+
+A close that passes is recorded as `{ state: 'closing', decidedBy: 'oracle' }`
+before `deleteSession`, then confirmed or failed like a close you confirmed.
+Whatever a call records, a close, a request, or other activity, is filed under
+the message whose turn made the call, even after Stop.
+The tool result reports it, so no note is added; a restart that finishes it adds
+one. **Residual risk:** with the policy on, an instruction injected through a
+transcript during a typed turn can close up to 5 idle sessions Oracle started.
+A session that becomes busy between the live read and the deletion is still
+deleted, as with a close you confirm. After **Start over**, a session an
+earlier conversation's task turn used counts only once reconciliation has
+recorded it on the attempt; so does one a task turn was starting when the hub
+restarted. The SDK does not say which turn a call belongs to, so a call the
+runtime makes after Stop has drained it belongs to the next turn.
 
 ## Runtime and recovery
 
@@ -281,13 +314,15 @@ end the turn.
   `startedAt` records through restarts and Retry; 400 blank; 413 too long), keeping its id and its place,
   which is its first line in `conversation.jsonl`; `PUT /api/manager/settings` with `{ model, reasoningEffort }` (null for
   the hub default) chooses Oracle's model, and with `{ sessionFolders: { <computer id>: path | null } }`
-  its session folders, and with `{ sessionBackend: 'sdk' | 'terminal' }` how
-  it opens new sessions; each part is optional and leaves the rest as it is.
+  its session folders, with `{ sessionBackend: 'sdk' | 'terminal' }` how
+  it opens new sessions, and with `{ sessionClosePolicy: 'ask' | 'oracle-started' }`
+  whether it may close idle sessions it started without asking; each part is optional and leaves the rest as it is.
   Only `null` clears a folder (a blank one is a 400), and a computer that is
   not paired is a 404 unless a folder kept for it is being removed.
   The snapshot reports them as `settings` and the socket as
-  `manager.settings`; `sessionBackend` is always reported, `sdk` by default. `state.json` keeps `sessionFolders`,
-  `sessionBackend` only when it is `terminal`, the model the SDK
+  `manager.settings`; `sessionBackend` is always reported, `sdk` by default, and
+  `sessionClosePolicy`, `ask` by default. `state.json` keeps `sessionFolders`,
+  `sessionBackend` only when it is `terminal`, `sessionClosePolicy` only when it is `oracle-started`, the model the SDK
   conversation runs on (`sessionRuntime`), and the model and effort that
   could not start (`unavailableRuntime`); each answer compares the choice with
   `sessionRuntime`, so a change survives a restart or a switch in progress.

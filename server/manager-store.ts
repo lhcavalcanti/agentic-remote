@@ -42,6 +42,8 @@ export interface ManagerState {
   sessionFolders?: Record<string, string>
   /** Set only to open Oracle's sessions in a terminal; unset opens them with the Copilot SDK. */
   sessionBackend?: 'terminal'
+  /** Set only when the user lets Oracle close idle sessions it started; unset asks every time. */
+  sessionClosePolicy?: 'oracle-started'
   /** A model and effort that could not start; Copilot's default answers until the choice changes. */
   unavailableRuntime?: ManagerSettings
   /** The newest journal entry a completed turn has shown the agent. */

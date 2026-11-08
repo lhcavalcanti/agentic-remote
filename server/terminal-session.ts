@@ -288,6 +288,17 @@ export class TerminalDraftConflictError extends Error {
   }
 }
 
+function terminalSessionInUseError(pane: string): Error {
+  return Object.assign(
+    new Error(
+      parseTerminalSessionInUse(pane)
+        ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
+        : 'Copilot says this session is already in use by another client or application. Close or resume it there before sending here.',
+    ),
+    { statusCode: 409, uncertainDelivery: false },
+  )
+}
+
 const MAX_FORM_VIEWPORT_WIDTH = 256
 const MAX_FORM_VIEWPORT_HEIGHT = 256
 const MIN_FORM_QUESTION_REFLOW_WIDTH = 128
@@ -1905,16 +1916,16 @@ export class TmuxTerminalSessionController
         const overlay = isTerminalOverlay(pane)
         if (
           overlay ||
+          isTerminalSessionInUseConflict(pane) ||
           parseTerminalPermission(pane) ||
           parseTerminalUserInput(pane) ||
           parseTerminalFormPrompt(pane)
         ) {
+          if (isTerminalSessionInUseConflict(pane)) {
+            throw terminalSessionInUseError(pane)
+          }
           throw Object.assign(
-            new Error(
-              isTerminalSessionInUsePrompt(pane)
-                ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
-                : 'The terminal is waiting for user input. Answer it before sending a message.',
-            ),
+            new Error('The terminal is waiting for user input. Answer it before sending a message.'),
             {
               statusCode: 409,
               ...(idleOnly && overlay
@@ -1997,13 +2008,12 @@ export class TmuxTerminalSessionController
         }
         if (startup !== 'ready') {
           const pane = await capturePane(owner.target)
+          if (isTerminalSessionInUseConflict(pane)) {
+            throw terminalSessionInUseError(pane)
+          }
           const overlay = isTerminalOverlay(pane)
           throw Object.assign(
-            new Error(
-              isTerminalSessionInUsePrompt(pane)
-                ? 'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.'
-                : 'The terminal is waiting for user input. Answer it before sending a message.',
-            ),
+            new Error('The terminal is waiting for user input. Answer it before sending a message.'),
             {
               statusCode: 409,
               ...(idleOnly && overlay
@@ -2053,7 +2063,7 @@ export class TmuxTerminalSessionController
         (replacementComposerHasText || !terminalInputReady(paneBeforePaste)) &&
         !isTerminalOverlay(paneBeforePaste) &&
         !isTerminalAgentWorking(paneBeforePaste) &&
-        !isTerminalSessionInUsePrompt(paneBeforePaste) &&
+        !isTerminalSessionInUseConflict(paneBeforePaste) &&
         !parseTerminalPermission(paneBeforePaste) &&
         !parseTerminalUserInput(paneBeforePaste) &&
         !parseTerminalFormPrompt(paneBeforePaste)
@@ -2103,13 +2113,8 @@ export class TmuxTerminalSessionController
           paneBeforePaste = await capturePane(currentOwner.target)
         }
       }
-      if (isTerminalSessionInUsePrompt(paneBeforePaste)) {
-        throw Object.assign(
-          new Error(
-            'Copilot needs confirmation to resume this session. Choose Resume anyway or Go back in the permission card.',
-          ),
-          { statusCode: 409 },
-        )
+      if (isTerminalSessionInUseConflict(paneBeforePaste)) {
+        throw terminalSessionInUseError(paneBeforePaste)
       }
       const existingInput =
         composerText(paneBeforePaste) !== undefined &&
@@ -2703,6 +2708,13 @@ export function isTerminalSessionInUsePrompt(pane: string): boolean {
   return Boolean(parseTerminalSessionInUse(pane))
 }
 
+export function isTerminalSessionInUseConflict(pane: string): boolean {
+  return Boolean(
+    parseTerminalSessionInUse(pane) ||
+      hasPassiveTerminalSessionInUseWarning(pane),
+  )
+}
+
 export function isTerminalDesktopInstallPrompt(pane: string): boolean {
   const lines = pane.split('\n')
   const cleaned = lines.map(cleanDialogLine)
@@ -2902,6 +2914,7 @@ async function clearAutomaticStartupPrompts(
     const pane = await capture()
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
+      isTerminalSessionInUseConflict(pane) ||
       parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
@@ -2949,6 +2962,7 @@ export async function waitForTerminalStartup(
     )
     if (
       hasTerminalCommandPermissionQuestion(pane) ||
+      isTerminalSessionInUseConflict(pane) ||
       parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane)
@@ -3731,7 +3745,7 @@ export function terminalInputReady(pane: string, allowWorking = false): boolean 
     hasLiveTerminalComposer(pane) &&
     (allowWorking || !isTerminalAgentWorking(pane)) &&
     !isTerminalOverlay(pane) &&
-    !isTerminalSessionInUsePrompt(pane) &&
+    !isTerminalSessionInUseConflict(pane) &&
     !isTerminalDesktopInstallPrompt(pane) &&
     !parseTerminalPermission(pane) &&
     !parseTerminalUserInput(pane) &&
@@ -4546,6 +4560,30 @@ function parseTerminalSessionInUse(pane: string): PendingPermission | undefined 
       { optionId: 'terminal:stop', name: 'Go back', kind: 'reject_once' },
     ],
   }
+}
+
+function hasPassiveTerminalSessionInUseWarning(pane: string): boolean {
+  const lines = pane.split('\n')
+  while (lines.length > 0 && !lines[lines.length - 1].trim()) {
+    lines.pop()
+  }
+  const composer = terminalComposerFrame(
+    lines,
+    false,
+    composerFocusWitnessed(pane),
+  )
+  if (!composer) return false
+  const controls = lines.slice(composer.bottom + 1).map(cleanDialogLine)
+  return Boolean(
+    findTerminalWrappedText(
+      controls,
+      'IDE auto-connect skipped: session is already in use by another client',
+    ) ||
+      findTerminalWrappedText(
+        controls,
+        'This session may already be in use by another CLI or application.',
+      ),
+  )
 }
 
 function parseTerminalFolderTrust(pane: string): PendingPermission | undefined {

@@ -23,6 +23,7 @@ import { SessionStore } from './session-store.js'
 import {
   isTerminalAgentWorking,
   isTerminalOverlay,
+  isTerminalSessionInUseConflict,
   parseTerminalFormPrompt,
   parseTerminalPermission,
   parseTerminalUserInput,
@@ -73,6 +74,11 @@ const dialogs = {
     'Select a session',
     '- session one',
     '↑/↓ to navigate · enter to select · esc to cancel',
+  ].join('\n'),
+  passive: [
+    readyComposer(),
+    ' IDE auto-connect skipped: session is already in use by another client',
+    ' This session may already be in use by another CLI or application.',
   ].join('\n'),
 }
 
@@ -132,7 +138,17 @@ const NEW_TEXT = {
   name: 'TerminalDraftConflictError',
   message: 'New terminal text appeared before the app draft could be sent. Nothing new was pasted.',
 } as const
-type Refusal = typeof BUSY | typeof CLEAR_REFUSED | typeof FULL_SCREEN | typeof NEW_TEXT
+const PASSIVE_SESSION_CONFLICT = {
+  name: 'Error',
+  message:
+    'Copilot says this session is already in use by another client or application. Close or resume it there before sending here.',
+} as const
+type Refusal =
+  | typeof BUSY
+  | typeof CLEAR_REFUSED
+  | typeof FULL_SCREEN
+  | typeof NEW_TEXT
+  | typeof PASSIVE_SESSION_CONFLICT
 
 type Expected =
   // Exactly one paste and one Enter of the message; `clears` stale drafts.
@@ -196,7 +212,18 @@ function client(): CopilotClientLike {
     abort: async () => {}, disconnect: vi.fn(async () => {}),
     sendAndWait: vi.fn(async () => { throw new Error('Terminal sends must never use the SDK') }),
     rpc: {
-      commands: { list: async () => ({ commands: [] }), invoke: vi.fn(), enqueue: vi.fn() },
+      commands: {
+        list: async () => ({
+          commands: [{
+            name: 'usage',
+            description: 'Synthetic usage',
+            kind: 'builtin' as const,
+            allowDuringAgentExecution: true,
+          }],
+        }),
+        invoke: vi.fn(),
+        enqueue: vi.fn(),
+      },
       model: {
         getCurrent: async () => ({ modelId: 'synthetic' }),
         switchTo: async () => ({ modelId: 'synthetic' }),
@@ -408,7 +435,10 @@ describe('send matrix with the app’s real send options', () => {
     expect(parseTerminalUserInput(dialogs.question)).toBeTruthy()
     expect(parseTerminalPermission(dialogs.permission)).toBeTruthy()
     expect(parseTerminalFormPrompt(dialogs.form)).toBe(true)
-    for (const pane of Object.values(dialogs)) expect(isTerminalOverlay(pane)).toBe(true)
+    expect(isTerminalSessionInUseConflict(dialogs.passive)).toBe(true)
+    for (const pane of Object.values(dialogs).filter((pane) => pane !== dialogs.passive)) {
+      expect(isTerminalOverlay(pane)).toBe(true)
+    }
   })
 
   it.each(table)('%s pane · %s draft · %s', async (rowName, draft, action, expected) => {
@@ -526,6 +556,98 @@ describe('send matrix with the app’s real send options', () => {
     const receipt = await eventually(fixture.receipt, (value) => Boolean(value?.submits.length))
     expect(receipt).toEqual({
       pastes: [message], submits: [{ key: 'enter', text: message }], clears: 0, keys: '', draft: '',
+    })
+  }, 30_000)
+
+  it('startup-owned passive session-use conflict · Queue waits without claiming, then drains once', async () => {
+    const fixture = await terminal('passive', 'idle', '')
+    const claims = vi.spyOn(fixture.store, 'claimTerminalQueuedPrompt')
+    const owner = await Reflect.get(fixture.controller, 'owner').call(
+      fixture.controller,
+      fixture.id,
+    )
+    expect(owner).toBeTruthy()
+    Reflect.get(fixture.controller, 'automaticStartupSessions').set(
+      fixture.id,
+      owner,
+    )
+
+    await expectRefusal(
+      sendLikeTheApp(fixture, 'idle', false),
+      PASSIVE_SESSION_CONFLICT,
+    )
+    expect(await fixture.receipt()).toEqual({
+      pastes: [], submits: [], clears: 0, keys: '', draft: '',
+    })
+
+    const session = await sendLikeTheApp(fixture, 'idle', true)
+    expect(session.queuedPrompts?.map((prompt) => prompt.content)).toEqual([message])
+    await settle()
+    expect(claims).not.toHaveBeenCalled()
+    expect(fixture.store.get(fixture.id)?.queuedPrompts?.map((prompt) => prompt.content))
+      .toEqual([message])
+    expect(await fixture.receipt()).toEqual({
+      pastes: [], submits: [], clears: 0, keys: '', draft: '',
+    })
+
+    process.kill(fixture.pid, 'SIGUSR2')
+    await eventually(
+      () => fixture.controller.inputReady(fixture.id),
+      Boolean,
+    )
+    const retryAt = Reflect.get(
+      fixture.service,
+      'pendingTerminalQueueClaims',
+    ).get(fixture.id)?.retryAt as number | undefined
+    if (retryAt) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, retryAt - Date.now())),
+      )
+    }
+    await fixture.service['drainTerminalQueue'](fixture.id)
+    const drained = await eventually(
+      fixture.receipt,
+      (receipt) => receipt.submits.length === 1,
+    )
+
+    expect(drained.submits).toHaveLength(1)
+    expect(fixture.store.get(fixture.id)?.queuedPrompts ?? []).toEqual([])
+    expect(await fixture.receipt()).toEqual({
+      pastes: [message],
+      submits: [{ key: 'enter', text: message }],
+      clears: 0,
+      keys: '',
+      draft: '',
+    })
+  }, 30_000)
+
+  it('startup-owned passive session-use conflict · queued command joins the FIFO without typing', async () => {
+    const fixture = await terminal('passive', 'idle', '')
+    const owner = await Reflect.get(fixture.controller, 'owner').call(
+      fixture.controller,
+      fixture.id,
+    )
+    expect(owner).toBeTruthy()
+    Reflect.get(fixture.controller, 'automaticStartupSessions').set(
+      fixture.id,
+      owner,
+    )
+
+    const session = await fixture.service.executeCommand(
+      fixture.id,
+      '/usage queued while conflicted',
+      true,
+    )
+
+    expect(session.queuedPrompts?.map((prompt) => ({
+      content: prompt.content,
+      command: prompt.command,
+    }))).toEqual([{
+      content: '/usage queued while conflicted',
+      command: true,
+    }])
+    expect(await fixture.receipt()).toEqual({
+      pastes: [], submits: [], clears: 0, keys: '', draft: '',
     })
   }, 30_000)
 

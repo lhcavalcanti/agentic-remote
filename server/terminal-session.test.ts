@@ -11,6 +11,7 @@ import {
   isTerminalVisiblyIdle,
   isTerminalDesktopInstallPrompt,
   isTerminalOverlay,
+  isTerminalSessionInUseConflict,
   isTerminalSessionInUsePrompt,
   composerHoldsOtherText,
   composerHoldsText,
@@ -31,6 +32,7 @@ import {
   terminalCommandOutput,
   terminalFormShowsFields,
   TmuxTerminalSessionController,
+  waitForTerminalStartup,
 } from './terminal-session.js'
 import {
   createIsolatedTmuxRoot,
@@ -56,6 +58,15 @@ const sessionInUsePane = [
   '│   2. Go back (Esc)                                                    │',
   '│ ↑/↓ to navigate · enter to select · esc to cancel                     │',
   '╰──────────────────────────────────────────────────────────────────────╯',
+].join('\n')
+
+const passiveSessionInUsePane = [
+  ' /work/project                                      Session: 0 AIC used',
+  '────────────────────────────────────────────────────────────',
+  '❯',
+  '────────────────────────────────────────────────────────────',
+  ' IDE auto-connect skipped: session is already in use by another client',
+  ' This session may already be in use by another CLI or application.',
 ].join('\n')
 
 const folderTrustPane = [
@@ -2178,6 +2189,59 @@ process.stdin.on('data', () => undefined)
     expect(JSON.parse(received)).toMatchObject({ pastes: ['Only after explicit consent'], submits: 1 })
   }, 15_000)
 
+  it('classifies a passive session-use warning during startup wait', async () => {
+    const { controller, sessionId, output } =
+      await deliveryFixture(false, passiveSessionInUsePane)
+    await controller.send(sessionId, 'Warmup', true)
+    const pane = await eventually(
+      () => controller.capture(sessionId),
+      (pane) => Boolean(pane?.includes('IDE auto-connect skipped')),
+    )
+    expect({
+      detected: isTerminalSessionInUseConflict(pane || ''),
+      pane,
+    }).toMatchObject({ detected: true })
+    const inspectable = controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{
+        target: string
+      } | undefined>
+    }
+    const owner = await inspectable.owner(sessionId, undefined, true)
+    expect(owner).toBeDefined()
+
+    await expect(waitForTerminalStartup(
+      owner!.target,
+      true,
+      async () => undefined,
+      5_000,
+      1,
+    )).resolves.toBe('action-required')
+    expect(JSON.parse(await readFile(output, 'utf8'))).toEqual({
+      pastes: ['Warmup'],
+      submits: ['queue'],
+    })
+  }, 15_000)
+
+  it('refuses a passive session-use conflict without typing', async () => {
+    const { controller, sessionId, output } =
+      await deliveryFixture(false, passiveSessionInUsePane)
+    await controller.send(sessionId, 'Warmup', true)
+    await eventually(
+      () => controller.capture(sessionId),
+      (pane) => Boolean(pane?.includes('IDE auto-connect skipped')),
+    )
+    const before = await readFile(output, 'utf8')
+
+    await expect(controller.send(sessionId, 'Do not type this', false))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: false,
+        message:
+          'Copilot says this session is already in use by another client or application. Close or resume it there before sending here.',
+      })
+    expect(await readFile(output, 'utf8')).toBe(before)
+  }, 15_000)
+
   async function clearFixture() {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-clear-test-'))
     directories.push(directory)
@@ -2848,6 +2912,29 @@ draw()
 ╰────
       `),
     ).toBe(false)
+  })
+
+  it('detects only active passive session-use warnings', () => {
+    expect(isTerminalSessionInUseConflict(passiveSessionInUsePane)).toBe(true)
+    expect(isTerminalSessionInUsePrompt(passiveSessionInUsePane)).toBe(false)
+    expect(isTerminalSessionInUseConflict(
+      passiveSessionInUsePane.replace(
+        ' IDE auto-connect skipped: session is already in use by another client\n',
+        '',
+      ),
+    )).toBe(true)
+    expect(isTerminalSessionInUseConflict(
+      passiveSessionInUsePane.replace(
+        ' This session may already be in use by another CLI or application.',
+        ' This session may already be in use by another CLI\n or application.',
+      ),
+    )).toBe(true)
+    expect(parseTerminalPermission(passiveSessionInUsePane)).toBeUndefined()
+    expect(isTerminalSessionInUseConflict([
+      '● IDE auto-connect skipped: session is already in use by another client',
+      '● This session may already be in use by another CLI or application.',
+      readyComposer(),
+    ].join('\n'))).toBe(false)
   })
 
   it('detects the Copilot desktop-app startup promotion', () => {

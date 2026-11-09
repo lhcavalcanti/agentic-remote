@@ -599,10 +599,10 @@ describe('send matrix with the app’s real send options', () => {
       fixture.service,
       'pendingTerminalQueueClaims',
     ).get(fixture.id)?.retryAt as number | undefined
-    if (retryAt) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, Math.max(0, retryAt - Date.now())),
-      )
+    // A timer can fire just before Date.now() reaches its deadline, and an
+    // early drain is a no-op here: this service's transcript poll never runs.
+    while (retryAt && Date.now() < retryAt) {
+      await new Promise((resolve) => setTimeout(resolve, retryAt - Date.now()))
     }
     await fixture.service['drainTerminalQueue'](fixture.id)
     const drained = await eventually(

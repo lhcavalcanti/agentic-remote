@@ -353,8 +353,8 @@ and must still change on every build.
 6. **Merge only when the exact head is eligible** under Owned work
    follow-through in `.github/copilot-instructions.md`: Supervisor `APPROVE`,
    every required check, an `agentic-remote/full-gate` `success`, and clean
-   mergeability. A `main` ruleset requires the full-gate status, with an
-   administrator bypass.
+   mergeability. GitHub does not enforce this: `main` has no ruleset or
+   branch protection.
    Follow the review loop below; delete the branch after graduation.
 7. **Deploy and verify on development**, then follow the promotion policy in
    `.github/copilot-instructions.md` (see Rolling out).

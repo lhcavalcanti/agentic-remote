@@ -188,7 +188,7 @@ describe('promotion setup refresh', () => {
       await readFile(MONITOR, 'utf8'),
     )
     expect(await readFile(context.service, 'utf8')).toContain(
-      'TimeoutStartSec=60min',
+      'TimeoutStartSec=180min',
     )
     expect(result.stdout).toContain(
       `timer enabled=${enabled ? 1 : 0} active=${active ? 1 : 0}`,

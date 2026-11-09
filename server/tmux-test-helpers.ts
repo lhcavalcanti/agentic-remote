@@ -351,7 +351,11 @@ async function processStat(pid: number, owner: string): Promise<ProcessStat | un
   const [state = '', ppid = '', pgrp = '', ...rest] = stat.slice(stat.lastIndexOf(')') + 1).trim().split(/\s+/)
   // The start time is the 22nd field of /proc/<pid>/stat.
   const startTicks = rest[16] ?? ''
-  if (Number(processId) !== pid || !/^[A-Za-z]$/.test(state) || ![ppid, pgrp, startTicks].every((field) => /^\d+$/.test(field))) {
+  // ppid and pgrp are signed: a task the kernel is releasing reports pgrp -1.
+  if (
+    Number(processId) !== pid || !/^[A-Za-z]$/.test(state)
+    || ![ppid, pgrp].every((field) => /^-?\d+$/.test(field)) || !/^\d+$/.test(startTicks)
+  ) {
     throw new Error(`Unable to read ${owner} identity for PID ${pid}`)
   }
   return { pid, state, ppid: Number(ppid), pgrp: Number(pgrp), startTicks }

@@ -124,6 +124,16 @@ describe('owned tmux fixture retirement', () => {
     expect(rm).toHaveBeenCalledExactlyOnceWith(root, { recursive: true, force: true })
   })
 
+  it('accepts the stat line of a killed server the kernel is releasing', async () => {
+    // Once its signal handlers are released, the kernel reports ppid 0 and
+    // pgrp, session, and tpgid -1 for the dead task until it disappears.
+    vi.mocked(readFile).mockImplementation(async () => (killed
+      ? `${pid} (tmux: server) X 0 -1 -1 0 -1 4227084 59 0 0 0 0 0 0 0 20 0 0 0 ${start} 0 0\n`
+      : processStat()))
+    await stopIsolatedTmuxServer(root)
+    expect(rm).toHaveBeenCalledExactlyOnceWith(root, { recursive: true, force: true })
+  })
+
   it.each(['ENOENT', 'ESRCH'])('accepts a captured process disappearing with %s', async (code) => {
     vi.mocked(readFile).mockImplementation(async () => {
       if (killed) throw errno(code)

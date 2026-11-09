@@ -71,6 +71,16 @@ function headerSafe(value: string): string {
   return value.replace(/[^\x20-\x7e]/g, '').slice(0, 200)
 }
 
+/**
+ * Fetch's DOM typing accepts only ArrayBuffer-backed bytes. View the buffer's
+ * memory directly, copying only the rare buffer over shared memory.
+ */
+function requestBytes(data: Buffer): Uint8Array<ArrayBuffer> {
+  return data.buffer instanceof ArrayBuffer
+    ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+    : new Uint8Array(data)
+}
+
 interface RemoteNodeClientEvents {
   event: [event: ServerEvent]
   status: [online: boolean]
@@ -399,7 +409,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
           'content-type': 'application/octet-stream',
           'x-agentic-filename': Buffer.from(filename).toString('base64url'),
         },
-        body: data,
+        body: requestBytes(data),
       },
       120_000,
     )
@@ -421,7 +431,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
           [AUDIO_FILENAME_HEADER]: Buffer.from(filename).toString('base64url'),
           [AUDIO_TYPE_HEADER]: headerSafe(mimeType),
         },
-        body: data,
+        body: requestBytes(data),
         signal,
       },
       TRANSCRIPTION_TIMEOUT_MS,

@@ -868,6 +868,7 @@ export async function setupWorkspaceFixture(
       }
       if (!state.sessionOrder.bootstrapped) {
         state.sessionOrder = {
+          ...state.sessionOrder,
           revision: state.sessionOrder.revision + 1,
           bootstrapped: true,
           showSuspended: state.sessionOrder.showSuspended,

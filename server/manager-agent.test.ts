@@ -217,11 +217,14 @@ describe('ManagerAgent', () => {
     return agent
   }
 
+  // Follows the queue's own work, not a wall-clock budget, so a loaded host
+  // only slows a test down; a queue left stuck still fails here, by name.
   async function settled() {
-    await vi.waitFor(() => {
-      const snapshot = agent!.snapshot()
-      expect(snapshot.messages.some((message) => message.role === 'user' && ['queued', 'running'].includes(message.state!))).toBe(false)
-    }, { timeout: 4000 })
+    await agent!.drained()
+    const pending = agent!.snapshot().messages
+      .filter((message) => message.role === 'user' && ['queued', 'running'].includes(message.state!))
+      .map(({ id, content, state }) => ({ id, content, state }))
+    expect(pending).toEqual([])
   }
 
   it('answers a queued message with the generated context and streams the reply', async () => {

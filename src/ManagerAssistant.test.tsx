@@ -1630,6 +1630,179 @@ describe('ManagerAssistant', () => {
     expect(document.querySelector('.manager-message__text--clamped')).toBeNull()
   })
 
+  describe('following the conversation', () => {
+    const docs = { computerId: 'hub', sessionId: 's1', title: 'Docs' }
+    const conversation: ManagerSnapshot = {
+      ...empty,
+      status: 'working',
+      messages: [
+        { id: 'u1', role: 'user', content: 'What changed overnight?', createdAt: 't', state: 'done' },
+        {
+          id: 'c0', role: 'activity', content: 'Close "Docs"? It finished.', createdAt: 't', tool: 'close_session', sessionRefs: [docs],
+          confirmation: { kind: 'close-session', ...docs, state: 'pending' },
+        },
+        { id: 'a1', role: 'assistant', content: 'Three sessions finished.', createdAt: 't', replyTo: 'u1' },
+        { id: 'u2', role: 'user', content: 'Which is riskiest?', createdAt: 't', state: 'running' },
+      ],
+    }
+
+    /** Gives the transcript a size, since jsdom lays nothing out. */
+    function measure(list: HTMLElement, scrollHeight: number, scrollTop: number) {
+      Object.defineProperties(list, {
+        clientHeight: { configurable: true, value: 400 },
+        scrollHeight: { configurable: true, value: scrollHeight },
+        scrollTop: { configurable: true, value: scrollTop, writable: true },
+      })
+    }
+
+    function scrollTo(list: HTMLElement, scrollTop: number, scrollHeight = 2000) {
+      measure(list, scrollHeight, scrollTop)
+      fireEvent.scroll(list)
+    }
+
+    it('leaves a reader who scrolled up where they are, and follows again at the end', async () => {
+      const { emit } = setup(conversation)
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 600)
+
+      emit({ type: 'manager.delta', messageId: 'r2', content: 'The migration' })
+      emit({ type: 'manager.message', message: { id: 'r2', role: 'assistant', content: 'The migration.', createdAt: 't', replyTo: 'u2' } })
+      expect(list.scrollTop).toBe(600)
+
+      // A few lines short of the end counts as the end.
+      scrollTo(list, 1560)
+      measure(list, 2400, 1560)
+      emit({ type: 'manager.delta', messageId: 'r3', content: 'More' })
+      expect(list.scrollTop).toBe(2400)
+    })
+
+    it('offers Scroll to latest away from the end until you return there or reopen Oracle', async () => {
+      const { emit } = setup(conversation)
+      await openPanel()
+      let list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 1600)
+      expect(screen.queryByRole('button', { name: 'Scroll to latest' })).not.toBeInTheDocument()
+
+      scrollTo(list, 600)
+      fireEvent.click(screen.getByRole('button', { name: 'Scroll to latest' }))
+      expect(list.scrollTop).toBe(2000)
+      expect(screen.queryByRole('button', { name: 'Scroll to latest' })).not.toBeInTheDocument()
+      measure(list, 2400, 2000)
+      emit({ type: 'manager.delta', messageId: 'r2', content: 'Still going' })
+      expect(list.scrollTop).toBe(2400)
+
+      scrollTo(list, 600, 2400)
+      fireEvent.click(screen.getByRole('button', { name: 'Close Oracle' }))
+      await openPanel()
+      list = screen.getByRole('list', { name: 'Oracle conversation' })
+      expect(screen.queryByRole('button', { name: 'Scroll to latest' })).not.toBeInTheDocument()
+      measure(list, 2800, 0)
+      emit({ type: 'manager.delta', messageId: 'r2', content: 'Still going, reopened' })
+      expect(list.scrollTop).toBe(2800)
+    })
+
+    it('follows again when you send', async () => {
+      vi.mocked(sendManagerMessage).mockResolvedValue({ id: 'u3', role: 'user', content: 'And the tests?', createdAt: 't', state: 'queued' })
+      setup(conversation)
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 600)
+      const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+      fireEvent.change(input, { target: { value: 'And the tests?' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+      await waitFor(() => expect(input).toHaveValue(''))
+      expect(list.scrollTop).toBe(2000)
+      expect(screen.queryByRole('button', { name: 'Scroll to latest' })).not.toBeInTheDocument()
+    })
+
+    it('brings a new confirmation into view because it needs an answer, but not an older one', async () => {
+      const { emit } = setup(conversation)
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 600)
+      emit({ type: 'manager.message', message: { id: 'n1', role: 'activity', content: 'Started "Docs"', createdAt: 't', tool: 'create_session', sessionRefs: [docs] } })
+      expect(list.scrollTop).toBe(600)
+
+      const request: ManagerMessage = {
+        id: 'c1', role: 'activity', content: 'Close "Docs"? Its PR merged.', createdAt: 't', tool: 'close_session', sessionRefs: [docs],
+        confirmation: { kind: 'close-session', ...docs, state: 'pending' },
+      }
+      emit({ type: 'manager.message', message: request })
+      expect(list.scrollTop).toBe(2000)
+
+      // Answering it leaves the older request the newest one waiting, which is not new.
+      scrollTo(list, 600)
+      emit({ type: 'manager.message', message: { ...request, confirmation: { ...request.confirmation!, state: 'declined' } } })
+      expect(list.scrollTop).toBe(600)
+    })
+
+    it('keeps a reader it brought to a new confirmation paused, so later text leaves it in view', async () => {
+      const { emit } = setup(conversation)
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 600)
+      emit({
+        type: 'manager.message',
+        message: {
+          id: 'c1', role: 'activity', content: 'Close "Docs"? Its PR merged.', createdAt: 't', tool: 'close_session', sessionRefs: [docs],
+          confirmation: { kind: 'close-session', ...docs, state: 'pending' },
+        },
+      })
+      expect(list.scrollTop).toBe(2000)
+      // The browser reports the scroll that bringing it into view caused.
+      fireEvent.scroll(list)
+
+      measure(list, 2400, 2000)
+      emit({ type: 'manager.delta', messageId: 'r2', content: 'Meanwhile' })
+      expect(list.scrollTop).toBe(2000)
+      expect(screen.getByRole('button', { name: 'Scroll to latest' })).toBeInTheDocument()
+
+      scrollTo(list, 2000, 2400)
+      measure(list, 2600, 2000)
+      emit({ type: 'manager.delta', messageId: 'r2', content: 'Meanwhile, more' })
+      expect(list.scrollTop).toBe(2600)
+    })
+
+    it('keeps a following reader at the end as a queued message starts and Oracle starts thinking', async () => {
+      const queued: ManagerMessage = { id: 'u3', role: 'user', content: 'And the tests?', createdAt: 't', state: 'queued' }
+      const { emit } = setup({ ...conversation, status: 'idle', messages: [...conversation.messages, queued] })
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 1600)
+
+      measure(list, 2400, 1600)
+      emit({ type: 'manager.message', message: { ...queued, state: 'running' } })
+      expect(list.scrollTop).toBe(2400)
+
+      measure(list, 2600, 2400)
+      emit({ type: 'manager.status', status: 'working', queued: 0 })
+      expect(list.scrollTop).toBe(2600)
+    })
+
+    it('follows a prompt spoken in this conversation like a sent one, but not one spoken elsewhere', async () => {
+      const spoken = (id: string): ManagerMessage => ({
+        id, role: 'user', content: 'Where is the docs work?', createdAt: 't', state: 'queued', answerOnly: true, source: 'voice',
+      })
+      const { emit } = setup(conversation)
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 600)
+      emit({ type: 'manager.message', message: spoken('v1') })
+      expect(list.scrollTop).toBe(600)
+
+      vi.mocked(useOracleConversation).mockReturnValue(conversationState('thinking'))
+      emit({ type: 'manager.message', message: spoken('v2') })
+      expect(list.scrollTop).toBe(2000)
+      expect(screen.queryByRole('button', { name: 'Scroll to latest' })).not.toBeInTheDocument()
+
+      // Its later updates are not a new prompt.
+      scrollTo(list, 600)
+      emit({ type: 'manager.message', message: { ...spoken('v2'), state: 'running' } })
+      expect(list.scrollTop).toBe(600)
+    })
+  })
+
   it('recognises only same-origin session links', () => {
     expect(sessionLinkTarget('?computer=hub&session=s1')).toEqual({ computerId: 'hub', sessionId: 's1' })
     expect(sessionLinkTarget('https://elsewhere.example/?computer=hub&session=s1')).toBeUndefined()

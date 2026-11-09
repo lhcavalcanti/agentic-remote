@@ -154,9 +154,13 @@ describe('Claude recovered draft admission', () => {
     await combined.sendMessage(id, 'A', false, token)
     await vi.waitFor(() => expect(claude['active'].size).toBe(0))
     await expect(combined.sendMessage(id, 'A', false, token)).rejects.toMatchObject({ statusCode: 409 })
-    await vi.waitFor(() => expect(calls).toEqual(tail ? ['B', 'A'] : ['A']))
-    expect(store.get(id)?.failedPrompt).toBeUndefined()
-    expect(store.get(id)?.queuedCount).toBe(0)
+    // The provider is called before the dispatch's completion write clears
+    // its crash-recovery marker, so wait for the settled state as a whole.
+    await vi.waitFor(() => {
+      expect(calls).toEqual(tail ? ['B', 'A'] : ['A'])
+      expect(store.get(id)?.failedPrompt).toBeUndefined()
+      expect(store.get(id)?.queuedCount).toBe(0)
+    })
   })
 
   it('keeps a refused claim private and retryable without any provider call', async () => {

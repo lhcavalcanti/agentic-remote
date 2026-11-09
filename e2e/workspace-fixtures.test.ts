@@ -1,6 +1,8 @@
-import type { Page, Route } from '@playwright/test'
+import type { Page, Route, WebSocketRoute } from '@playwright/test'
 import { describe, expect, it, vi } from 'vitest'
 import type { KnowledgeRoot, SessionKnowledgeBinding } from '../shared/contracts'
+import { ORACLE_VOICE_PROTOCOL, type VoiceCapabilities } from '../shared/oracle-voice'
+import type { SettingsProfileSnapshot, SettingsUpdateResult } from '../shared/settings-profile'
 import {
   createWorkspaceFixtureState,
   fixtureKnowledgeRoots,
@@ -12,9 +14,10 @@ import {
 
 async function fixtureApi() {
   let handler!: (route: Route) => Promise<void>
+  let socketHandler!: (socket: WebSocketRoute) => void
   const context = {
     addInitScript: vi.fn(),
-    routeWebSocket: vi.fn(),
+    routeWebSocket: vi.fn((_pattern: string, callback: typeof socketHandler) => { socketHandler = callback }),
     route: vi.fn(async (_pattern: string, callback: typeof handler) => { handler = callback }),
   }
   const page = {
@@ -38,7 +41,19 @@ async function fixtureApi() {
     const response = fulfill.mock.calls[0][0]
     return { status: response.status ?? 200, body: JSON.parse(response.body ?? '{}') as T }
   }
-  return { fixture, request, state }
+  /** Opens the app's event socket and returns what the fixture sends on it. */
+  function openEvents() {
+    const sent: unknown[] = []
+    socketHandler({
+      url: () => 'ws://127.0.0.1:4840/api/events?patches=1',
+      onClose: vi.fn(),
+      onMessage: vi.fn(),
+      send: (message: string) => { sent.push(JSON.parse(message)) },
+      close: vi.fn(),
+    } as unknown as WebSocketRoute)
+    return sent
+  }
+  return { fixture, openEvents, request, state }
 }
 
 describe('workspace fixture directory routing', () => {
@@ -104,6 +119,57 @@ describe('workspace fixture directory routing', () => {
     const { fixture, request } = await fixtureApi()
     expect((await request(path, method)).status).toBe(501)
     expect(fixture.failures).toHaveLength(1)
+    expect(() => fixture.assertHealthy()).toThrow()
+  })
+})
+
+describe('workspace fixture hub protocol', () => {
+  it('answers settings and voice as a current hub with voice switched off', async () => {
+    const { fixture, request } = await fixtureApi()
+    const initial = await request<{ settings: SettingsProfileSnapshot }>('/api/settings')
+    expect(initial).toEqual({
+      status: 200,
+      body: { settings: { profileId: expect.any(String), revision: 0, values: {} } },
+    })
+    const imported = await request<{ settings: SettingsProfileSnapshot }>('/api/settings/import', 'POST', {
+      deviceId: 'device-a', values: { appearance: 'graphite' },
+    })
+    expect(imported.body.settings).toMatchObject({ revision: 1, values: { appearance: 'graphite' } })
+    const ignored = await request<{ settings: SettingsProfileSnapshot }>('/api/settings/import', 'POST', {
+      deviceId: 'device-b', values: { appearance: 'light' },
+    })
+    expect(ignored.body.settings).toMatchObject({ revision: 1, values: { appearance: 'graphite' } })
+    const updated = await request<SettingsUpdateResult>('/api/settings', 'PATCH', {
+      deviceId: 'device-a', changes: { appearance: { value: 'light', baseRevision: 1 } },
+    })
+    expect(updated.body).toMatchObject({ settings: { revision: 2, values: { appearance: 'light' } }, conflicts: [] })
+    const voice = await request<VoiceCapabilities>('/api/oracle-voice/capabilities')
+    expect(voice.status).toBe(200)
+    expect(voice.body).toMatchObject({ protocol: ORACLE_VOICE_PROTOCOL, available: false })
+    fixture.assertHealthy()
+  })
+
+  it('tells open devices about a settings commit only when it changed something', async () => {
+    const { fixture, openEvents, request } = await fixtureApi()
+    const sent = openEvents()
+    await request('/api/settings/import', 'POST', { deviceId: 'device-a', values: { accent: 'ocean' } })
+    await request('/api/settings/import', 'POST', { deviceId: 'device-b', values: { accent: 'violet' } })
+    await request('/api/settings', 'PATCH', {
+      deviceId: 'device-b', changes: { accent: { value: 'violet', baseRevision: 1 } },
+    })
+    expect(sent).toEqual([
+      { type: 'settings.updated', settings: expect.objectContaining({ revision: 1, values: { accent: 'ocean' } }) },
+      { type: 'settings.updated', settings: expect.objectContaining({ revision: 2, values: { accent: 'violet' } }) },
+    ])
+    fixture.assertHealthy()
+  })
+
+  it('refuses a settings request the hub would refuse', async () => {
+    const { fixture, request } = await fixtureApi()
+    const refused = await request('/api/settings', 'PATCH', {
+      changes: { appearance: { value: 'neon', baseRevision: 0 } },
+    })
+    expect(refused.status).toBe(400)
     expect(() => fixture.assertHealthy()).toThrow()
   })
 })

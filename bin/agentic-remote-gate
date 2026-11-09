@@ -173,7 +173,8 @@ and records the `agentic-remote/full-gate` commit status on that commit.
 
   --repo owner/name  GitHub repository (default: this checkout's origin)
   --no-status        do not post commit statuses
-  --no-wait          fail at once if another gate is running on this host
+  --no-wait          fail at once if another gate or a promotion validation
+                     is running on this host
 USAGE
   exit 2
 }
@@ -586,10 +587,10 @@ trap 'on_signal INT' INT
 trap 'on_signal TERM' TERM
 
 if ! flock -n 9; then
-  ((NO_WAIT)) && die "another gate is already running on this host; retry later or omit --no-wait"
-  log "another gate is running on this host; waiting for it to finish"
+  ((NO_WAIT)) && die "another gate or a promotion validation is already running on this host; retry later or omit --no-wait"
+  log "another gate or a promotion validation is running on this host; waiting for it to finish"
   PHASE="the queue"
-  post_status pending "waiting for another gate on this host" ||
+  post_status pending "waiting for another gate or a promotion validation on this host" ||
     die "could not record the $CONTEXT status on $SHA"
   PENDING_POSTED=1
   # In the background so an interrupt is handled while still queued.

@@ -101,7 +101,7 @@ import {
   uploadSessionFile,
 } from './api'
 import { composerMaximumHeight } from './composer-sizing'
-import { getDreamer } from './dreamer-api'
+import { DreamerApiError, getDreamer } from './dreamer-api'
 import { PWA_UPDATE_EVENT } from './pwa'
 import * as shell from './shell'
 
@@ -3807,6 +3807,83 @@ describe('App', () => {
     })
     expect(sendMessage).not.toHaveBeenCalled()
     expect(sendManagerMessage).not.toHaveBeenCalled()
+  })
+
+  it('keeps a hub without Dreamer from failing reconnect and visibility refreshes', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.mocked(getDreamer).mockRejectedValue(
+      new DreamerApiError('Dreamer is unavailable. Try refreshing later.', 503),
+    )
+    try {
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      const dreamerBefore = vi.mocked(getDreamer).mock.calls.length
+
+      act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+      await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 1))
+      fireEvent(document, new Event('visibilitychange'))
+      await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 2))
+
+      await waitFor(() => expect(
+        screen.queryByRole('status', { name: 'Session data freshness' }),
+      ).not.toBeInTheDocument())
+      expect(screen.queryByText('Connection failed')).not.toBeInTheDocument()
+      expect(screen.queryAllByRole('alert')).toHaveLength(0)
+    } finally {
+      vi.mocked(getDreamer).mockReset()
+    }
+  })
+
+  it('marks data stale without reporting a session failure when Dreamer refresh fails', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.mocked(getDreamer).mockRejectedValue(
+      new DreamerApiError('Dreamer is unavailable. Try refreshing later.', 500),
+    )
+    try {
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      const dreamerBefore = vi.mocked(getDreamer).mock.calls.length
+      const freshness = () => screen.queryByRole('status', { name: 'Session data freshness' })
+
+      act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+      await waitFor(() => expect(freshness())
+        .toHaveTextContent('Data may be stale: Dreamer is unavailable. Try refreshing later.'))
+      fireEvent(document, new Event('visibilitychange'))
+      await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 2))
+      await waitFor(() => expect(freshness())
+        .toHaveTextContent('Data may be stale: Dreamer is unavailable. Try refreshing later.'))
+
+      expect(screen.queryByText('Connection failed')).not.toBeInTheDocument()
+      expect(screen.queryAllByRole('alert')).toHaveLength(0)
+    } finally {
+      vi.mocked(getDreamer).mockReset()
+    }
+  })
+
+  it('still reports a session list failure from reconnect and visibility refreshes', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    vi.mocked(listSessionListing).mockRejectedValueOnce(new Error('The hub is unavailable'))
+    act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+    expect(await screen.findByText('The hub is unavailable')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Retry loading sessions' })).toBeInTheDocument()
+    expect(screen.getByText('Connection failed')).toBeInTheDocument()
+
+    vi.mocked(listSessionListing).mockRejectedValueOnce(new Error('The hub stopped answering'))
+    fireEvent(document, new Event('visibilitychange'))
+    expect((await screen.findAllByText('The hub stopped answering'))[0]).toBeVisible()
+    expect(screen.getAllByRole('button', { name: 'Dismiss error' })).not.toHaveLength(0)
   })
 
   it('restores session search and filter context after a remount', async () => {

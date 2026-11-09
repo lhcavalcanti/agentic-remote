@@ -66,11 +66,19 @@ export async function requestCoordinatedAuthoritativeRefresh(): Promise<void> {
   await settleAuthoritativeRefresh(event)
 }
 
+/** A hub without Dreamer answers 503: that is its answer, not a failed refresh. */
+function unlessUnavailable(work: Promise<unknown>): Promise<unknown> {
+  return work.catch((caught: unknown) => {
+    if (caught instanceof DreamerApiError && caught.status === 503) return undefined
+    throw caught
+  })
+}
+
 export function DreamerRefreshOwner() {
   useEffect(() => {
     const update = (event: Event) => {
       if (activeDreamerViews === 0) {
-        waitUntilAuthoritativeRefresh(event, getDreamer())
+        waitUntilAuthoritativeRefresh(event, unlessUnavailable(getDreamer()))
       }
     }
     window.addEventListener(authoritativeRefresh, update)
@@ -133,7 +141,7 @@ function useDreamer(active: boolean, onRefreshed?: () => void) {
     void Promise.resolve().then(() => { if (!disposed) void refresh() })
     const update = () => { if (!disposed) void refresh() }
     const refreshAuthoritative = (event: Event) => {
-      if (!disposed) waitUntilAuthoritativeRefresh(event, refresh(true))
+      if (!disposed) waitUntilAuthoritativeRefresh(event, unlessUnavailable(refresh(true)))
     }
     const timer = window.setInterval(update, 30_000)
     window.addEventListener(dreamerChanged, update)

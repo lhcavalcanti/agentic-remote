@@ -5,6 +5,7 @@ import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   ArrowUp,
+  ChevronDown,
   CircleStop,
   ExternalLink,
   LoaderCircle,
@@ -146,6 +147,9 @@ function conversationStateLabel(state: OracleConversation['state']): string {
       return 'Error'
   }
 }
+
+/** How near its end, in pixels, the transcript still counts as there, as a session timeline does. */
+const followThreshold = 48
 
 function applyEvent(snapshot: ManagerSnapshot, event: ManagerEvent): ManagerSnapshot {
   switch (event.type) {
@@ -638,7 +642,26 @@ export function ManagerAssistant({
   }, [])
   const editInputRef = useRef<HTMLTextAreaElement>(null)
   const editButtons = useRef(new Map<string, HTMLButtonElement>())
-  const listRef = useRef<HTMLOListElement>(null)
+  const listRef = useRef<HTMLOListElement | null>(null)
+  // New text moves the transcript only while the reader is at its end.
+  const followingRef = useRef(true)
+  const [followingLatest, setFollowingLatest] = useState(true)
+  const setFollowing = useCallback((following: boolean) => {
+    followingRef.current = following
+    setFollowingLatest(following)
+  }, [])
+  /** Returns to the end of the conversation and follows it again. */
+  const followLatest = useCallback(() => {
+    setFollowing(true)
+    const list = listRef.current
+    if (list) list.scrollTop = list.scrollHeight
+  }, [setFollowing])
+  // A transcript that appears, as Oracle opens or a conversation starts,
+  // starts at its end.
+  const transcriptRef = useCallback((list: HTMLOListElement | null) => {
+    listRef.current = list
+    if (list) followLatest()
+  }, [followLatest])
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const focusRequestRef = useRef(focusRequest)
@@ -825,8 +848,22 @@ export function ManagerAssistant({
   const streamLength = snapshot?.streaming?.content.length ?? 0
   useEffect(() => {
     const list = listRef.current
-    if (list && open) list.scrollTop = list.scrollHeight
-  }, [messageCount, streamLength, open])
+    if (list && followingRef.current) list.scrollTop = list.scrollHeight
+  }, [messageCount, streamLength])
+
+  // A confirmation needs an answer, so a new one comes into view even for a
+  // reader further up. Answering one leaves the others where they were.
+  const pendingConfirmations = snapshot?.messages
+    .filter((message) => message.confirmation?.state === 'pending')
+    .map((message) => message.id)
+    .join('\n') ?? ''
+  const pendingConfirmationsRef = useRef<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    const previous = pendingConfirmationsRef.current
+    const current = new Set(pendingConfirmations ? pendingConfirmations.split('\n') : [])
+    pendingConfirmationsRef.current = current
+    if ([...current].some((id) => !previous.has(id))) followLatest()
+  }, [pendingConfirmations, followLatest])
 
   const wasOpenRef = useRef(false)
   useEffect(() => {
@@ -905,9 +942,11 @@ export function ManagerAssistant({
   }), [openSession])
 
   const sendText = useCallback(async (content: string, onlyOracle: boolean) => {
+    // Asking something follows the conversation again, to show the answer.
+    followLatest()
     const message = await sendManagerMessage(content, defaults, { answerOnly: onlyOracle })
     updateSnapshot((current) => withReturnedMessage(current, message))
-  }, [defaults, updateSnapshot])
+  }, [defaults, followLatest, updateSnapshot])
 
   useEffect(() => {
     if (!controlRef) return
@@ -940,6 +979,13 @@ export function ManagerAssistant({
       controlRef.current = undefined
     }
   }, [controlRef, onOpenChange, sendText])
+
+  function transcriptScrolled() {
+    const list = listRef.current
+    if (!list) return
+    // Scrolling up stops following the conversation, and back to its end takes it up again.
+    setFollowing(list.scrollHeight - list.scrollTop - list.clientHeight <= followThreshold)
+  }
 
   async function send(content = draft, onlyOracle = answerOnly) {
     const text = content.trim()
@@ -1193,58 +1239,76 @@ export function ManagerAssistant({
         </div>
       ) : null}
       {transcript.length || streaming || working ? (
-        <ol aria-label="Oracle conversation" className="manager-transcript" ref={listRef}>
-          {transcript.map((message) => {
-            if (message.role === 'user') {
+        <div className="manager-transcript-frame">
+          <ol
+            aria-label="Oracle conversation"
+            className="manager-transcript"
+            onScroll={transcriptScrolled}
+            ref={transcriptRef}
+          >
+            {transcript.map((message) => {
+              if (message.role === 'user') {
+                return (
+                  <UserMessage
+                    key={message.id}
+                    message={message}
+                    onRetry={(next) => void act(next, () => retryManagerMessage(next.id))}
+                    retrying={busyMessage === message.id}
+                  />
+                )
+              }
+              if (message.role === 'activity' && message.confirmation) {
+                return (
+                  <ConfirmationCard
+                    answering={busyMessage === message.id}
+                    key={message.id}
+                    message={message}
+                    onAnswer={(next, accept) => void act(next, () => resolveManagerConfirmation(next.id, accept))}
+                    onOpenSession={openSession}
+                  />
+                )
+              }
+              if (message.role === 'activity') {
+                return <ActivityRow key={message.id} message={message} onOpenSession={openSession} />
+              }
               return (
-                <UserMessage
-                  key={message.id}
-                  message={message}
-                  onRetry={(next) => void act(next, () => retryManagerMessage(next.id))}
-                  retrying={busyMessage === message.id}
-                />
+                <li className={`manager-message manager-message--${message.role}`} key={message.id}>
+                  <div className="manager-message__markdown message__content">
+                    <ReactMarkdown components={markdown} remarkPlugins={[remarkGfm, remarkSafeBreaks]}>
+                      {message.content}
+                    </ReactMarkdown>
+                  </div>
+                  <MessageTime className="message__timestamp manager-message__time" value={message.createdAt} />
+                </li>
               )
-            }
-            if (message.role === 'activity' && message.confirmation) {
-              return (
-                <ConfirmationCard
-                  answering={busyMessage === message.id}
-                  key={message.id}
-                  message={message}
-                  onAnswer={(next, accept) => void act(next, () => resolveManagerConfirmation(next.id, accept))}
-                  onOpenSession={openSession}
-                />
-              )
-            }
-            if (message.role === 'activity') {
-              return <ActivityRow key={message.id} message={message} onOpenSession={openSession} />
-            }
-            return (
-              <li className={`manager-message manager-message--${message.role}`} key={message.id}>
+            })}
+            {streaming ? (
+              <li aria-busy="true" className="manager-message manager-message--assistant manager-message--streaming">
                 <div className="manager-message__markdown message__content">
                   <ReactMarkdown components={markdown} remarkPlugins={[remarkGfm, remarkSafeBreaks]}>
-                    {message.content}
+                    {streaming.content}
                   </ReactMarkdown>
                 </div>
-                <MessageTime className="message__timestamp manager-message__time" value={message.createdAt} />
               </li>
-            )
-          })}
-          {streaming ? (
-            <li aria-busy="true" className="manager-message manager-message--assistant manager-message--streaming">
-              <div className="manager-message__markdown message__content">
-                <ReactMarkdown components={markdown} remarkPlugins={[remarkGfm, remarkSafeBreaks]}>
-                  {streaming.content}
-                </ReactMarkdown>
-              </div>
-            </li>
-          ) : working ? (
-            <li className="manager-message manager-message--thinking">
-              <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={14} />
-              {snapshot.status === 'recovering' ? 'Reconnecting…' : 'Thinking…'}
-            </li>
-          ) : null}
-        </ol>
+            ) : working ? (
+              <li className="manager-message manager-message--thinking">
+                <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={14} />
+                {snapshot.status === 'recovering' ? 'Reconnecting…' : 'Thinking…'}
+              </li>
+            ) : null}
+          </ol>
+          {followingLatest ? null : (
+            <button
+              aria-label="Scroll to latest"
+              className="timeline-follow__button manager-transcript__follow"
+              onClick={followLatest}
+              title="Scroll to latest"
+              type="button"
+            >
+              <ChevronDown size={18} />
+            </button>
+          )}
+        </div>
       ) : (
         <div className="manager-empty">
           <h3>Ask about your sessions</h3>

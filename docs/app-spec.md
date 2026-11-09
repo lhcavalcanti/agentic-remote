@@ -526,6 +526,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   transcribe**; at most 15 minutes), transcribes on the hub as a session's
   recording does, and adds the words to the message rather than sending them.
   Closing the panel discards a recording in progress.
+- Oracle's conversation opens at its latest message and follows new messages
+  and streamed text only while the reader is within 48px of its end, as a
+  session's timeline does. Scrolling up stops following and offers **Scroll
+  to latest** over the conversation's bottom right; returning to the end,
+  Scroll to latest, or sending a message follows again. A newly pending
+  confirmation MUST come into view, since it needs an answer.
 - Oracle's non-empty message draft and queued-message edit MUST be saved in
   versioned browser storage independently of whether the panel is open,
   docked, overlaid, or moved by a responsive layout. A remount or reload MUST

@@ -245,10 +245,10 @@ describe('reproducible promotion setup', () => {
     expect(script).toContain('Persistent=true')
     expect(script).not.toContain('OnUnitActiveSec=')
     expect(script).not.toContain('OnBootSec=')
-    // Validation plus graduation measured 16.5 minutes, and a timeout can kill
-    // the unit after setup replaced the service, so the budget keeps several
-    // times that cost in reserve.
-    expect(script).toContain('TimeoutStartSec=60min')
+    // Validation plus graduation measured 39 minutes and keeps growing, and a
+    // timeout can kill the unit after setup replaced the service, so the
+    // budget keeps several times that cost in reserve.
+    expect(script).toContain('TimeoutStartSec=180min')
     expect(script).toContain('Local promotion monitor refreshed; profile preserved')
     expect(script).toContain('systemctl --user is-enabled --quiet "$TIMER_NAME"')
     expect(script).toContain('systemctl --user is-active --quiet "$TIMER_NAME"')

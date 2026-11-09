@@ -240,7 +240,13 @@ export default defineConfig(({ command, mode }) => {
       },
     },
     test: {
-      exclude: [...configDefaults.exclude, 'e2e/**'],
+      // These two are Playwright specs, like `*.pw.ts`; the fixtures' own unit
+      // tests under `e2e/` run here with the rest.
+      exclude: [
+        ...configDefaults.exclude,
+        'e2e/oracle-conversation.test.ts',
+        'e2e/oracle-conversation-real.test.ts',
+      ],
       // React resolves to its production CJS build when NODE_ENV=production, and
       // that build omits `act`, so every component test fails. `pnpm start` and
       // the systemd unit both export NODE_ENV=production, so pin it here to keep

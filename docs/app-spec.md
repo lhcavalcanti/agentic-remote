@@ -1418,6 +1418,14 @@ Unavailable observations or refused claim writes MUST retain FIFO and use
 bounded retry. A queued entry MUST NOT by itself create or reopen a native
 runtime; unknown prior delivery or explicit closed/suspended state stays held.
 Repeated startup MUST NOT duplicate delivery or create additional pollers.
+An unmanaged owner that discovery lists again MUST hold its queue behind Reopen,
+except for work the app queued to that live owner: the next discovery pass that
+lists the owner MUST grant that work recovery, lifting the hold and waking the
+queue. The queue write itself MUST NOT grant recovery, and committed work MUST
+keep its admission even if publishing it fails; a restart before that pass
+leaves the queue held behind Reopen. A direct send MUST re-check the hold
+immediately before typing and be refused with nothing sent. A Reopen that
+settles during a discovery pass MUST NOT be interrupted by it.
 
 An explicit recovery token MUST match the current failed prompt. For Claude,
 accepting a token-bearing retry MUST atomically retain one canonical FIFO entry

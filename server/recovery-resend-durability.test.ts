@@ -1157,7 +1157,7 @@ describe('Recovery and admission integration', () => {
         if (enqueue) {
           expect(context.terminal.send).toHaveBeenNthCalledWith(
             2, sessionId, nextContent, true,
-            ...(nextKind === 'command' ? [{ allowDuringAgentExecution: true }] : []),
+            { ...(nextKind === 'command' ? { allowDuringAgentExecution: true } : {}), confirm: expect.any(Function) },
           )
         }
       }

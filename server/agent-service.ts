@@ -2027,6 +2027,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly sdkDrainRequested = new Set<string>()
   private readonly startupTerminalQueues = new Set<string>()
   private readonly rediscoveredTerminalQueues = new Map<string, 'resume' | 'reopen'>()
+  // Live owners the app queued work to without owning them yet, keyed to the
+  // admission's sequence number. The queue write never grants recovery, since
+  // a snapshot taken before it commits may no longer list the owner. The next
+  // pass that lists the owner grants it; one whose snapshot followed the
+  // admission and no longer lists the owner forgets it.
+  private readonly liveTerminalAdmissions = new Map<string, number>()
+  private liveTerminalAdmissionSequence = 0
   private nativeStartupDiscoveryReady = false
   private nativeDiscoveryCompleted = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
@@ -2849,6 +2856,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private assertNotRetained(sessionId: string, action: string, archivedOnly = false): void {
     assertSessionNotRetained(this.store.get(sessionId), action, archivedOnly)
+  }
+
+  private assertSendNotHeld(sessionId: string): void {
+    const session = this.store.get(sessionId)
+    if (session?.interruption || session?.archivedAt) {
+      throw Object.assign(
+        queueConflict('Reopen the interrupted session before sending. Nothing was sent.'),
+        { uncertainDelivery: false },
+      )
+    }
   }
 
   private assertTerminalRecoverySettled(sessionId: string): void {
@@ -4934,12 +4951,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.store.readAfterWrites(sessionId)
     this.assertTerminalQueueSettled(sessionId)
     // Before any recovery token is claimed: a queued send must not consume it.
-    if (this.store.get(sessionId)?.interruption || this.store.get(sessionId)?.archivedAt) {
-      throw Object.assign(
-        queueConflict('Reopen the interrupted session before sending. Nothing was sent.'),
-        { uncertainDelivery: false },
-      )
-    }
+    this.assertSendNotHeld(sessionId)
     if (
       this.store.get(sessionId)?.suspended ||
       this.suspendingSessions.has(sessionId)
@@ -5646,22 +5658,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery, true)
     }
+    // Discovery can hold the queue behind Reopen while this send reads the
+    // pane and decides, or while the controller reads it again before typing.
+    // A held session is not eligible to queue, so the send would otherwise be
+    // typed in front of the held work.
+    const confirm = terminalBacked ? () => this.assertSendNotHeld(sessionId) : undefined
+    confirm?.()
+    const sendOptions: TerminalSendOptions | undefined = answerDelivery
+      ? { idleOnly: true }
+      : steer
+        ? {
+            allowDuringAgentExecution: true,
+            ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+          }
+        : replaceTerminalDraft
+          ? { replaceExistingInput: true }
+          : undefined
     let terminalSent: boolean
     try {
       terminalSent = await this.sendTerminalInput(
         sessionId,
         content,
         nativeEnqueue,
-        answerDelivery
-          ? { idleOnly: true }
-          : steer
-            ? {
-                allowDuringAgentExecution: true,
-                ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
-              }
-            : replaceTerminalDraft
-              ? { replaceExistingInput: true }
-              : undefined,
+        confirm ? { ...sendOptions, confirm } : sendOptions,
       )
     } catch (error) {
       // A steer the busy terminal could not take yet goes on the queue, just
@@ -6292,15 +6311,39 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     priority = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    const queued = await this.enqueuePrompt(
-      sessionId,
-      content,
-      command,
-      answers,
-      delivery,
-      steer,
-      priority,
-    )
+    // Every caller found the owner live, but only discovery grants it
+    // recovery (see liveTerminalAdmissions). Recorded before the write so a
+    // pass that lands with it still sees the admission.
+    const previousAdmission = this.liveTerminalAdmissions.get(sessionId)
+    const admission = this.store.isManagedOpen(sessionId)
+      ? undefined
+      : ++this.liveTerminalAdmissionSequence
+    if (admission !== undefined) this.liveTerminalAdmissions.set(sessionId, admission)
+    // Marks the committed write: publishing it can still throw, and the
+    // admission is then what lets discovery grant the accepted work recovery.
+    const boundary = delivery ?? { accepted: false }
+    let queued: SessionDetail
+    try {
+      queued = await this.enqueuePrompt(
+        sessionId,
+        content,
+        command,
+        answers,
+        boundary,
+        steer,
+        priority,
+      )
+    } catch (error) {
+      if (
+        !boundary.accepted && admission !== undefined &&
+        this.liveTerminalAdmissions.get(sessionId) === admission
+      ) {
+        if (previousAdmission === undefined) this.liveTerminalAdmissions.delete(sessionId)
+        else this.liveTerminalAdmissions.set(sessionId, previousAdmission)
+      }
+      throw error
+    }
+    if (this.store.isManagedOpen(sessionId)) this.liveTerminalAdmissions.delete(sessionId)
     if (!wasIdle) {
       // Nothing else drains mid-turn, so the queue is polled for the composer.
       if (steer) this.retryTerminalQueueClaim(sessionId)
@@ -7214,6 +7257,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.admissionClosed.has(sessionId) || this.deletingSessions.has(sessionId)) {
       throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409, uncertainDelivery: false })
     }
+    // As for messages: discovery can hold the queue behind Reopen while the
+    // command is read and decided, or while the controller reads the pane
+    // again before typing, and a held session is not eligible to queue.
+    const confirmNotHeld = !fromQueue && !catalog.session
+      ? () => this.assertNotRetained(sessionId, 'running commands')
+      : undefined
+    confirmNotHeld?.()
     if (!catalog.session) this.assertStartupDispatchSettled(sessionId, enqueue)
     if (!nativeEnqueue && !enqueue && !commandInfo?.allowDuringAgentExecution) {
       if (
@@ -7248,6 +7298,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         current.queuedDispatch?.attemptId !== queuedDelivery.attemptId
       ) throw queueConflict('The session is no longer idle and available for this command.')
     }
+    const sendOptions: TerminalSendOptions | undefined = commandInfo?.allowDuringAgentExecution
+      ? {
+          allowDuringAgentExecution: true,
+          ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+        }
+      : replaceTerminalDraft
+        ? { replaceExistingInput: true }
+        : undefined
     let terminalSent: boolean
     try {
       queuedDelivery?.submit()
@@ -7255,14 +7313,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         canonicalCommand,
         nativeEnqueue,
-        commandInfo?.allowDuringAgentExecution
-          ? {
-              allowDuringAgentExecution: true,
-              ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
-            }
-          : replaceTerminalDraft
-            ? { replaceExistingInput: true }
-            : undefined,
+        confirmNotHeld ? { ...sendOptions, confirm: confirmNotHeld } : sendOptions,
       )
       if (!terminalSent && !catalog.session) queuedDelivery?.refuse()
     } catch (error) {
@@ -9260,6 +9311,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let sessions: SessionMetadata[]
     let activeSessions: DiscoveredSession[]
     let generation: number
+    let admissionsBeforeSnapshot: number
     while (true) {
       // A provider may list a new session before createSession() has returned
       // its ID. Do not discover it before its identity write and cleanup settle.
@@ -9268,6 +9320,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (this.stopped || this.lifecycleLocks.size) return false
       generation = this.discoveryGeneration
+      admissionsBeforeSnapshot = this.liveTerminalAdmissionSequence
       const discovery = await Promise.allSettled([
         this.client.listSessions(),
         this.discoverTerminalSessions(),
@@ -9361,12 +9414,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       isCurrent,
     )
     if (!isCurrent()) return false
-    await this.store.syncBackends(
+    const released = await this.store.syncBackends(
       activeSessions.map((session) => session.id),
       indexedSessions.map((session) => session.id),
       isCurrent,
+      (id) => this.liveTerminalAdmissions.has(id),
     )
+    // A grant this pass made lifted their hold, and their queue stopped there.
+    for (const id of released) this.rediscoveredTerminalQueues.set(id, 'resume')
     if (!isCurrent()) return false
+    const listed = new Set(activeSessions.map((session) => session.id))
+    for (const [id, admission] of [...this.liveTerminalAdmissions]) {
+      // Admitted before this snapshot yet not listed: that owner is gone.
+      if (
+        this.store.isManagedOpen(id) || !this.store.get(id) ||
+        (!listed.has(id) && admission <= admissionsBeforeSnapshot)
+      ) {
+        this.liveTerminalAdmissions.delete(id)
+      }
+    }
     const renameTerminal = this.terminalController.rename?.bind(
       this.terminalController,
     )
@@ -9423,10 +9489,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           continue
         }
         if (recovery !== 'reopen') continue
-        const interrupted = await this.store.markInterrupted(id)
+        // A Reopen or recovery grant that settled during this pass owns the
+        // queue now; interrupting it again would strand that queue.
+        if (this.store.isManagedOpen(id)) {
+          this.rediscoveredTerminalQueues.set(id, 'resume')
+          continue
+        }
+        const interrupted = await this.store.markInterrupted(id, true)
         if (!isCurrent()) {
           this.nativeStartupDiscoveryReady = false
           return false
+        }
+        if (this.store.isManagedOpen(id)) {
+          this.rediscoveredTerminalQueues.set(id, 'resume')
+          continue
         }
         this.rediscoveredTerminalQueues.delete(id)
         this.publish(interrupted)

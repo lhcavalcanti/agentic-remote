@@ -57,6 +57,13 @@ export interface TerminalSendOptions {
   replaceExistingInput?: boolean
   /** Refuse, under the send lock, unless the agent is idle at its composer. */
   idleOnly?: boolean
+  /**
+   * Runs synchronously immediately before each step that changes the pane's
+   * input (clearing a draft, pasting), inside the send lock, so a caller can
+   * refuse a send that stopped being allowed while the pane was being read.
+   * Whatever it throws is rethrown with nothing typed.
+   */
+  confirm?: () => void
 }
 
 export interface TerminalCancelOptions {
@@ -1793,6 +1800,7 @@ export class TmuxTerminalSessionController
     sessionId: string,
     owner: TerminalOwner,
     pane: string,
+    confirm?: () => void,
   ): Promise<string> {
     const readable = composerText(pane)
     if (readable === undefined) {
@@ -1838,6 +1846,7 @@ export class TmuxTerminalSessionController
       `#{==:#{pane_id},${owner.target}}`,
       `#{==:#{pane_pid},${owner.rootPid}}`,
     ]
+    confirm?.()
     const cleared = await execFileAsync('tmux', [
       'if-shell',
       '-F',
@@ -2187,6 +2196,7 @@ export class TmuxTerminalSessionController
             sessionId,
             currentOwner,
             paneBeforePaste,
+            options.confirm,
           )
         }
         if (options.replaceExistingInput) {
@@ -2216,6 +2226,8 @@ export class TmuxTerminalSessionController
             throw new TerminalDraftConflictError('new-text')
           }
         }
+        // Outside the delivery try below: a refusal here typed nothing.
+        options.confirm?.()
         // The paste can reach the pane even if its acknowledgement is lost.
         // Preflight and buffer preparation above have not changed native input.
         let pasteAcknowledged = false

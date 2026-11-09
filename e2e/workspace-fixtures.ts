@@ -1,4 +1,5 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
+import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
 import type { KnowledgePosition } from '../src/knowledge-position'
 import type {
@@ -504,6 +505,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
     sessionOrder: {
       revision: 1,
       bootstrapped: true,
+      showSuspended: true,
       order: Object.fromEntries(
         fixtureComputers.map((computer) => [
           computer.id,
@@ -525,6 +527,23 @@ export interface WorkspaceFixture {
   failures: string[]
   assertHealthy: () => void
   emit: (event: HubEvent) => void
+}
+
+// The only message the app sends on its event socket here: whether Oracle is on screen.
+function isPresenceReport(message: string | Buffer): boolean {
+  if (typeof message !== 'string') return false
+  try {
+    const report: unknown = JSON.parse(message)
+    return (
+      typeof report === 'object' &&
+      report !== null &&
+      Object.keys(report).length === 2 &&
+      (report as { type?: unknown }).type === 'presence' &&
+      typeof (report as { oracleVisible?: unknown }).oracleVisible === 'boolean'
+    )
+  } catch {
+    return false
+  }
 }
 
 function fixtureValue<T>(values: Record<string, T>, key: string): T | undefined {
@@ -646,8 +665,10 @@ export async function setupWorkspaceFixture(
       if (url.pathname === '/api/events') {
         eventSockets.add(socket)
         socket.onClose(() => eventSockets.delete(socket))
-        socket.onMessage(() => {
-          failures.push('Unexpected client message on fixture /api/events')
+        socket.onMessage((message) => {
+          if (!isPresenceReport(message)) {
+            failures.push('Unexpected client message on fixture /api/events')
+          }
         })
         return
       }
@@ -717,6 +738,25 @@ export async function setupWorkspaceFixture(
       })
       return
     }
+    if (method === 'GET' && path === '/api/manager/dreamer') {
+      await respond({
+        available: true,
+        revision: 0,
+        settings: { enabled: false, timeZone: 'UTC' },
+        tasks: [],
+      } satisfies DreamerSnapshot)
+      return
+    }
+    // Left out of this hub and answered as one without them would, so the app
+    // keeps its seeded local settings and hides voice.
+    if (method === 'GET' && path === '/api/settings') {
+      await respond({ error: 'Not part of this fixture' }, 404)
+      return
+    }
+    if (method === 'GET' && path === '/api/oracle-voice/capabilities') {
+      await respond({ error: 'Not part of this fixture' }, 404)
+      return
+    }
     if (method === 'GET' && path === '/api/sessions') {
       await respond({
         sessions,
@@ -758,6 +798,7 @@ export async function setupWorkspaceFixture(
         state.sessionOrder = {
           revision: state.sessionOrder.revision + 1,
           bootstrapped: true,
+          showSuspended: state.sessionOrder.showSuspended,
           order: structuredClone(input.order),
         }
         emit({ type: 'session.order.updated', order: state.sessionOrder })

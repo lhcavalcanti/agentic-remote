@@ -362,6 +362,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   /** Bumped by Start over; work for an earlier conversation stores nothing. */
   private epoch = 0
   private pumping = false
+  /** Settles when the current pass over the queue ends. */
+  private pumpDone: Promise<void> = Promise.resolve()
   private started = false
   private stopped = false
   private idleTimer?: ReturnType<typeof setTimeout>
@@ -1341,9 +1343,18 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     })
   }
 
+  /** Settles once nothing is working the queue, including messages that arrive meanwhile. */
+  async drained(): Promise<void> {
+    while (this.pumping) await this.pumpDone
+  }
+
   private async pump(): Promise<void> {
     if (this.pumping || this.stopped || !this.started) return
     this.pumping = true
+    let passEnded!: () => void
+    this.pumpDone = new Promise((resolve) => {
+      passEnded = resolve
+    })
     try {
       for (;;) {
         if (this.stopped) return
@@ -1366,6 +1377,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     } finally {
       this.processing = undefined
       this.pumping = false
+      passEnded()
     }
   }
 

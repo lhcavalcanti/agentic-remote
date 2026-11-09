@@ -307,15 +307,15 @@ A rediscovered unmanaged owner's queue is held behind Reopen. Discovery decides
 this from its snapshot, then re-checks at commit, so a Reopen that settles
 mid-pass is resumed rather than interrupted again. Work queued to a live owner
 while its record still showed it closed is remembered in memory with an
-admission sequence: discovery grants recovery when it records that owner, and
-drops the admission once a snapshot taken after it no longer lists the owner.
-If discovery holds the queue before the admission's write lands, that write
-grants recovery and lifts the hold together, so the queue is woken rather than
-stranded. It does so only while the last recorded snapshot lists the owner and
-none is in flight; otherwise discovery decides, lifting the hold and waking the
-queue when it lists the owner. An admission whose write committed survives a
-failure to publish it. A send that does not queue re-checks the hold just
-before typing and is refused with nothing sent.
+admission sequence. The queue write never grants recovery, because a snapshot
+taken before it commits may no longer list the owner. The next discovery pass
+that records the owner grants it, lifting any hold and waking the queue; a pass
+whose snapshot followed the admission but no longer lists the owner drops it.
+An admission whose write committed survives a failure to publish it, but not a
+restart, which leaves the queue held behind Reopen. A send that does not queue
+gives the controller a `confirm` check that re-reads the hold immediately before
+typing or clearing a replaced draft, so a hold installed during the controller's
+preflight refuses it with nothing sent.
 
 An SDK object's registration is not admission of its persisted identity.
 Creation and clear buffer SDK metadata until the identity write succeeds, then

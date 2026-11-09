@@ -278,9 +278,12 @@ function clearRecoverySeedFailure(session: StoredSession): void {
 }
 
 /**
- * A live tmux session the app sends work or answers to, relaunches, clears,
+ * A live tmux session the app types work or answers into, relaunches, clears,
  * suspends, or resumes is one the app now owns, so it joins boot recovery
- * like one the app created there. Discovery alone never calls this.
+ * like one the app created there. Work only queued to it is granted by the
+ * discovery pass that next lists the owner (`syncBackends`), never by the
+ * queue write: a snapshot taken before that write commits may no longer list
+ * the owner.
  */
 function grantTerminalRecovery(session: StoredSession): void {
   if (session.backend === 'terminal' && session.isOpen === true) {
@@ -290,27 +293,6 @@ function grantTerminalRecovery(session: StoredSession): void {
 
 function requiresExplicitTerminalReopen(session: StoredSession): boolean {
   return session.managedOpen !== true && Boolean(session.queuedPrompts?.length)
-}
-
-/**
- * Work admitted to a live owner grants it recovery. Discovery can hold that
- * owner's queue behind Reopen after the send was admitted but before this
- * write lands; the next pass would then lift the hold with nothing left to
- * wake the queue, so the grant lifts it in the same write. `liveOwner` is
- * read at commit: when the last snapshot no longer lists the owner, or one in
- * flight may not, the record's open state can be stale, so neither happens
- * here and discovery decides from the admission instead.
- */
-function admitToTerminalOwner(session: StoredSession, liveOwner?: () => boolean): void {
-  if (liveOwner && !liveOwner()) return
-  const held = session.managedOpen !== true && Boolean(session.interruption)
-  grantTerminalRecovery(session)
-  if (
-    held && session.managedOpen === true && !session.suspended &&
-    !session.archivedAt && !session.sdkRestartRecovery && liveOwner
-  ) {
-    session.interruption = undefined
-  }
 }
 
 // A committed session is never changed in place: every change installs a new
@@ -1151,11 +1133,12 @@ export class SessionStore {
   }
 
   /**
-   * `liveAdmission` names owners the app admitted work to before this record
-   * showed them as open terminal sessions. It is read when the write commits,
-   * so an admission that lands while discovery runs still grants recovery.
-   * Resolves to the sessions whose Reopen hold such a grant lifted: their
-   * queue stopped at the hold, so the caller has to wake it.
+   * `liveAdmission` names live owners the app queued work to without owning
+   * them yet; this pass grants them recovery because its snapshot lists them.
+   * It is read when the write is applied, so an admission recorded while
+   * discovery runs is still seen. Resolves to the sessions whose Reopen hold
+   * such a grant lifted: their queue stopped at the hold, so the caller has to
+   * wake it.
    */
   async syncBackends(
     terminalSessionIds: string[],
@@ -1924,13 +1907,11 @@ export class SessionStore {
     sessionId: string,
     prompt: QueuedPrompt,
     prepend = false,
-    liveOwner?: () => boolean,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
-      admitToTerminalOwner(session, liveOwner)
     })
   }
 
@@ -2534,7 +2515,6 @@ export class SessionStore {
     prompt: QueuedPrompt,
     answers: string | undefined,
     priority = false,
-    liveOwner?: () => boolean,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       if (session.terminalQueueDispatch || session.sdkQueueAdmission) {
@@ -2543,7 +2523,6 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = priority ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
-      admitToTerminalOwner(session, liveOwner)
       if (
         !session.recoverySeed &&
         session.failedPrompt &&

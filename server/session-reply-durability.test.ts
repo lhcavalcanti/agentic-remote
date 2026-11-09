@@ -479,7 +479,7 @@ describe('Reply durability regressions', () => {
     expect(f.dismiss).toHaveBeenCalledOnce()
     expect(f.wait).not.toHaveBeenCalled()
     expect(f.inputReady).toHaveBeenCalledOnce()
-    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true })
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true, confirm: expect.any(Function) })
     // Held until the terminal accepted the answer, so nothing could dispatch ahead of it.
     expect(f.cardAtSend).toEqual([f.requestId])
     expect(f.service['terminalFormContinuations'].size).toBe(0)
@@ -569,7 +569,7 @@ describe('Reply durability regressions', () => {
     expect(f.store.get(sessionId)?.pendingUserInput?.requestId).toBe(f.requestId)
 
     await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
-    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true })
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true, confirm: expect.any(Function) })
   })
 
   it('bounds the read-only readiness probe by the reply deadline', async () => {
@@ -742,7 +742,7 @@ describe('Reply durability regressions', () => {
 
     await expect(f.reply()).resolves.toMatchObject({ pendingUserInput: undefined })
 
-    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true })
+    expect(f.send).toHaveBeenCalledExactlyOnceWith(sessionId, retainedAnswer, false, { idleOnly: true, confirm: expect.any(Function) })
     expect(f.store.get(sessionId)?.queuedPrompts?.map((prompt) => prompt.id)).toEqual(['queued-1', 'queued-2'])
   })
 

@@ -324,6 +324,26 @@ function delayQueueWrite(store: SessionStore) {
   return { entered: entered.promise, release: release.finish, landed: landed.promise }
 }
 
+// Holds the queue write carrying `content` after it was prepared, before its
+// file write and rename commit it.
+function holdQueueCommit(native: NativeFixture, content: string) {
+  const held = gate()
+  const release = gate()
+  let holding = false
+  vi.mocked(writeFile).mockImplementation(async (...args) => {
+    if (!holding && String(args[0]) === path.join(native.stateDirectory, 'state.json.tmp') &&
+        JSON.parse(String(args[1])).sessions[native.id]?.queuedPrompts?.some(
+          (prompt: { content: string }) => prompt.content === content,
+        )) {
+      holding = true
+      held.finish()
+      await release.promise
+    }
+    return disk.writeFile(...args)
+  })
+  return { held: held.promise, release: release.finish }
+}
+
 async function expectReopenAfterRediscovery(native: NativeFixture, runtime: NativeRuntime) {
   await runtime.service.refreshDiscovery()
   await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
@@ -771,6 +791,10 @@ describe('Persisted native queue startup', () => {
       return decided
     })
     await runtime.service.sendMessage(native.id, 'Admitted to the live owner', true)
+    // The write leaves the grant to the next pass that lists the owner.
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+    await runtime.service.refreshDiscovery()
     await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
 
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
@@ -891,6 +915,77 @@ describe('Persisted native queue startup', () => {
 
     expect(runtime.store.isManagedOpen(native.id)).toBe(false)
     await expectReopenAfterRediscovery(native, runtime)
+  }, 15_000)
+
+  it('leaves the grant to discovery when a snapshot loses the owner before the admitted write commits', async () => {
+    const { native, runtime } = await discoveredOwner()
+    const content = 'Prepared before the owner left'
+    const commit = holdQueueCommit(native, content)
+    const sending = runtime.service.sendMessage(native.id, content, true)
+    await commit.held
+
+    // Prepared with no snapshot in flight; one that no longer lists the owner
+    // is taken before the write commits.
+    const listed = gate()
+    runtime.finder.mockImplementationOnce(async () => {
+      listed.finish()
+      return []
+    })
+    const refreshing = runtime.service.refreshDiscovery()
+    await listed.promise
+    commit.release()
+    await refreshing
+    await sending
+
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+    await expectReopenAfterRediscovery(native, runtime)
+  }, 15_000)
+
+  it.each([
+    { kind: 'message' as const },
+    { kind: 'command' as const },
+  ])('refuses a $kind whose queue discovery holds while the terminal prepares to type it', async ({ kind }) => {
+    const native = await fixture()
+    await native.seed([], (store) => store.setOpen(native.id, false, true))
+    await native.control('idle')
+    const runtime = native.connect()
+    await runtime.service.start()
+    expect(runtime.store.isManagedOpen(native.id)).toBe(false)
+
+    // Older work reaches the queue, and discovery holds it behind Reopen, after
+    // the send passed its checks but while the controller reads the pane.
+    const controller = runtime.terminal as unknown as {
+      owner(...args: unknown[]): Promise<unknown>
+    }
+    const owner = controller.owner.bind(runtime.terminal)
+    const send = runtime.terminal.send.bind(runtime.terminal)
+    let refreshing: Promise<void> | undefined
+    vi.spyOn(runtime.terminal, 'send').mockImplementationOnce(async (...args) => {
+      vi.spyOn(controller, 'owner').mockImplementationOnce(async (...ownerArgs) => {
+        const found = await owner(...ownerArgs)
+        await runtime.store.update(native.id, (session) => {
+          session.queuedPrompts = [{
+            id: randomUUID(), content: 'Held until Reopen', createdAt: new Date().toISOString(),
+          }]
+          session.queuedCount = 1
+        })
+        refreshing = runtime.service.refreshDiscovery()
+        await vi.waitFor(() => expect(runtime.store.get(native.id)?.interruption).toBeDefined())
+        return found
+      })
+      return send(...args)
+    })
+    const sending = kind === 'command'
+      ? runtime.service.executeCommand(native.id, '/usage')
+      : runtime.service.sendMessage(native.id, 'Typed past the hold')
+    await expect(sending)
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen/) })
+    await refreshing
+
+    expect((await native.receipt()).pastes).toEqual([])
+    expect(runtime.service.getSession(native.id)?.interruption).toBeDefined()
+    expect(runtime.service.getSession(native.id)?.queuedPrompts?.map((prompt) => prompt.content))
+      .toEqual(['Held until Reopen'])
   }, 15_000)
 
   it('wakes a held queue when discovery grants an admission it deferred', async () => {

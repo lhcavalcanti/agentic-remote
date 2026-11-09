@@ -2027,14 +2027,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly sdkDrainRequested = new Set<string>()
   private readonly startupTerminalQueues = new Set<string>()
   private readonly rediscoveredTerminalQueues = new Map<string, 'resume' | 'reopen'>()
-  // Live owners work was queued to whose write could not grant recovery
-  // itself, keyed to the admission's sequence number: their record did not
-  // show them as open tmux sessions yet, or a snapshot in flight might no
-  // longer list them. Discovery grants them recovery when it lists the owner,
-  // as the write would have, and forgets one a later snapshot no longer lists.
+  // Live owners the app queued work to without owning them yet, keyed to the
+  // admission's sequence number. The queue write never grants recovery, since
+  // a snapshot taken before it commits may no longer list the owner. The next
+  // pass that lists the owner grants it; one whose snapshot followed the
+  // admission and no longer lists the owner forgets it.
   private readonly liveTerminalAdmissions = new Map<string, number>()
   private liveTerminalAdmissionSequence = 0
-  private discoverySnapshots = 0
   private nativeStartupDiscoveryReady = false
   private nativeDiscoveryCompleted = false
   private readonly sdkQueueWakeups = new Map<string, Promise<void>>()
@@ -5660,25 +5659,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery, true)
     }
     // Discovery can hold the queue behind Reopen while this send reads the
-    // pane and decides. A held session is not eligible to queue, so the send
-    // would otherwise be typed in front of the held work.
-    if (terminalBacked) this.assertSendNotHeld(sessionId)
+    // pane and decides, or while the controller reads it again before typing.
+    // A held session is not eligible to queue, so the send would otherwise be
+    // typed in front of the held work.
+    const confirm = terminalBacked ? () => this.assertSendNotHeld(sessionId) : undefined
+    confirm?.()
+    const sendOptions: TerminalSendOptions | undefined = answerDelivery
+      ? { idleOnly: true }
+      : steer
+        ? {
+            allowDuringAgentExecution: true,
+            ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+          }
+        : replaceTerminalDraft
+          ? { replaceExistingInput: true }
+          : undefined
     let terminalSent: boolean
     try {
       terminalSent = await this.sendTerminalInput(
         sessionId,
         content,
         nativeEnqueue,
-        answerDelivery
-          ? { idleOnly: true }
-          : steer
-            ? {
-                allowDuringAgentExecution: true,
-                ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
-              }
-            : replaceTerminalDraft
-              ? { replaceExistingInput: true }
-              : undefined,
+        confirm ? { ...sendOptions, confirm } : sendOptions,
       )
     } catch (error) {
       // A steer the busy terminal could not take yet goes on the queue, just
@@ -6268,7 +6270,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     delivery?: DeliveryBoundary,
     steer = false,
     priority = false,
-    liveOwner?: () => boolean,
   ): Promise<SessionDetail> {
     const prompt: QueuedPrompt = {
       id: randomUUID(),
@@ -6288,9 +6289,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             prompt,
             answers,
             priority,
-            liveOwner,
           )
-        : await this.store.enqueuePrompt(sessionId, prompt, false, liveOwner)
+        : await this.store.enqueuePrompt(sessionId, prompt)
       if (delivery) delivery.accepted = true
       this.admissions.markCommitted(sessionId)
       if (this.externalSessionIds.has(sessionId)) this.terminalDrainRequested.add(sessionId)
@@ -6311,8 +6311,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     priority = false,
   ): Promise<SessionDetail> {
     const wasIdle = this.store.get(sessionId)?.status === 'idle'
-    // Every caller found the owner live. Recorded before the write so a
-    // discovery commit that lands with it still sees the admission.
+    // Every caller found the owner live, but only discovery grants it
+    // recovery (see liveTerminalAdmissions). Recorded before the write so a
+    // pass that lands with it still sees the admission.
     const previousAdmission = this.liveTerminalAdmissions.get(sessionId)
     const admission = this.store.isManagedOpen(sessionId)
       ? undefined
@@ -6331,7 +6332,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         boundary,
         steer,
         priority,
-        () => this.externalSessionIds.has(sessionId) && this.discoverySnapshots === 0,
       )
     } catch (error) {
       if (
@@ -7258,8 +7258,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw Object.assign(new Error('The session is changing state; try again once it settles'), { statusCode: 409, uncertainDelivery: false })
     }
     // As for messages: discovery can hold the queue behind Reopen while the
-    // command is read and decided, and a held session is not eligible to queue.
-    if (!fromQueue && !catalog.session) this.assertNotRetained(sessionId, 'running commands')
+    // command is read and decided, or while the controller reads the pane
+    // again before typing, and a held session is not eligible to queue.
+    const confirmNotHeld = !fromQueue && !catalog.session
+      ? () => this.assertNotRetained(sessionId, 'running commands')
+      : undefined
+    confirmNotHeld?.()
     if (!catalog.session) this.assertStartupDispatchSettled(sessionId, enqueue)
     if (!nativeEnqueue && !enqueue && !commandInfo?.allowDuringAgentExecution) {
       if (
@@ -7294,6 +7298,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         current.queuedDispatch?.attemptId !== queuedDelivery.attemptId
       ) throw queueConflict('The session is no longer idle and available for this command.')
     }
+    const sendOptions: TerminalSendOptions | undefined = commandInfo?.allowDuringAgentExecution
+      ? {
+          allowDuringAgentExecution: true,
+          ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+        }
+      : replaceTerminalDraft
+        ? { replaceExistingInput: true }
+        : undefined
     let terminalSent: boolean
     try {
       queuedDelivery?.submit()
@@ -7301,14 +7313,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         sessionId,
         canonicalCommand,
         nativeEnqueue,
-        commandInfo?.allowDuringAgentExecution
-          ? {
-              allowDuringAgentExecution: true,
-              ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
-            }
-          : replaceTerminalDraft
-            ? { replaceExistingInput: true }
-            : undefined,
+        confirmNotHeld ? { ...sendOptions, confirm: confirmNotHeld } : sendOptions,
       )
       if (!terminalSent && !catalog.session) queuedDelivery?.refuse()
     } catch (error) {
@@ -9316,22 +9321,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.stopped || this.lifecycleLocks.size) return false
       generation = this.discoveryGeneration
       admissionsBeforeSnapshot = this.liveTerminalAdmissionSequence
-      // An admitted write landing while this is out cannot tell whether it
-      // will still list the owner, so it leaves the grant to this pass. The
-      // count drops in the same turn that records the result below.
-      this.discoverySnapshots += 1
-      let discovery: [
-        PromiseSettledResult<SessionMetadata[]>,
-        PromiseSettledResult<DiscoveredSession[]>,
-      ]
-      try {
-        discovery = await Promise.allSettled([
-          this.client.listSessions(),
-          this.discoverTerminalSessions(),
-        ])
-      } finally {
-        this.discoverySnapshots -= 1
-      }
+      const discovery = await Promise.allSettled([
+        this.client.listSessions(),
+        this.discoverTerminalSessions(),
+      ])
       // Terminal uncertainty may be deferred, but an independent SDK listing
       // failure must still fail startup even when both probes reject.
       if (discovery[0].status === 'rejected') {

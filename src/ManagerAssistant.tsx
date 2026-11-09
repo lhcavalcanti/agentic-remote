@@ -151,6 +151,17 @@ function conversationStateLabel(state: OracleConversation['state']): string {
 /** How near its end, in pixels, the transcript still counts as there, as a session timeline does. */
 const followThreshold = 48
 
+/** Calls `onNew` when the newline-joined `ids` gain an id, while `enabled`. */
+function useOnNewId(ids: string, onNew: () => void, enabled = true): void {
+  const knownRef = useRef<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    const known = knownRef.current
+    const current = new Set(ids ? ids.split('\n') : [])
+    knownRef.current = current
+    if (enabled && [...current].some((id) => !known.has(id))) onNew()
+  }, [ids, onNew, enabled])
+}
+
 function applyEvent(snapshot: ManagerSnapshot, event: ManagerEvent): ManagerSnapshot {
   switch (event.type) {
     case 'manager.status':
@@ -844,12 +855,12 @@ export function ManagerAssistant({
     })
   }, [available, status, unread, queuedCount, unavailableReason])
 
-  const messageCount = snapshot?.messages.length ?? 0
-  const streamLength = snapshot?.streaming?.content.length ?? 0
+  // Any change to the conversation, including a queued message starting or
+  // Thinking appearing, keeps a reader who is following at its end.
   useEffect(() => {
     const list = listRef.current
     if (list && followingRef.current) list.scrollTop = list.scrollHeight
-  }, [messageCount, streamLength])
+  }, [snapshot])
 
   // A confirmation needs an answer, so a new one comes into view even for a
   // reader further up. Answering one leaves the others where they were.
@@ -857,13 +868,14 @@ export function ManagerAssistant({
     .filter((message) => message.confirmation?.state === 'pending')
     .map((message) => message.id)
     .join('\n') ?? ''
-  const pendingConfirmationsRef = useRef<ReadonlySet<string>>(new Set())
-  useEffect(() => {
-    const previous = pendingConfirmationsRef.current
-    const current = new Set(pendingConfirmations ? pendingConfirmations.split('\n') : [])
-    pendingConfirmationsRef.current = current
-    if ([...current].some((id) => !previous.has(id))) followLatest()
-  }, [pendingConfirmations, followLatest])
+  useOnNewId(pendingConfirmations, followLatest)
+  // The hub sends what you say in Conversation, so a new spoken prompt follows
+  // like a typed send. One spoken on another device leaves this reader alone.
+  const spokenPrompts = snapshot?.messages
+    .filter((message) => message.role === 'user' && message.source === 'voice')
+    .map((message) => message.id)
+    .join('\n') ?? ''
+  useOnNewId(spokenPrompts, followLatest, conversationActive)
 
   const wasOpenRef = useRef(false)
   useEffect(() => {

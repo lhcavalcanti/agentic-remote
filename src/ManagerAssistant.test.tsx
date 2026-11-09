@@ -1736,6 +1736,44 @@ describe('ManagerAssistant', () => {
       emit({ type: 'manager.message', message: { ...request, confirmation: { ...request.confirmation!, state: 'declined' } } })
       expect(list.scrollTop).toBe(600)
     })
+
+    it('keeps a following reader at the end as a queued message starts and Oracle starts thinking', async () => {
+      const queued: ManagerMessage = { id: 'u3', role: 'user', content: 'And the tests?', createdAt: 't', state: 'queued' }
+      const { emit } = setup({ ...conversation, status: 'idle', messages: [...conversation.messages, queued] })
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 1600)
+
+      measure(list, 2400, 1600)
+      emit({ type: 'manager.message', message: { ...queued, state: 'running' } })
+      expect(list.scrollTop).toBe(2400)
+
+      measure(list, 2600, 2400)
+      emit({ type: 'manager.status', status: 'working', queued: 0 })
+      expect(list.scrollTop).toBe(2600)
+    })
+
+    it('follows a prompt spoken in this conversation like a sent one, but not one spoken elsewhere', async () => {
+      const spoken = (id: string): ManagerMessage => ({
+        id, role: 'user', content: 'Where is the docs work?', createdAt: 't', state: 'queued', answerOnly: true, source: 'voice',
+      })
+      const { emit } = setup(conversation)
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 600)
+      emit({ type: 'manager.message', message: spoken('v1') })
+      expect(list.scrollTop).toBe(600)
+
+      vi.mocked(useOracleConversation).mockReturnValue(conversationState('thinking'))
+      emit({ type: 'manager.message', message: spoken('v2') })
+      expect(list.scrollTop).toBe(2000)
+      expect(screen.queryByRole('button', { name: 'Scroll to latest' })).not.toBeInTheDocument()
+
+      // Its later updates are not a new prompt.
+      scrollTo(list, 600)
+      emit({ type: 'manager.message', message: { ...spoken('v2'), state: 'running' } })
+      expect(list.scrollTop).toBe(600)
+    })
   })
 
   it('recognises only same-origin session links', () => {

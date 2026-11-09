@@ -414,7 +414,7 @@
   ],
   "communities": 226,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19963,
+  "edges": 19965,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -453,7 +453,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "606be81cbd6d589f71c0ea9d5481b2066ae3b62d1ddef1c1e74458214c518708",
+    "docs/app-spec.md": "5a6eb3970cbc54e02119dff7a210de0d51f4ab345ad1c6bb781c6aaf50495e9c",
     "docs/architecture.md": "5cf48ead513dfe86e5f217f7ce041af55d0eb4cfea7afe6cd73cf4ee270036ea",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -819,8 +819,8 @@
     "src/KnowledgeRootChoices.tsx": "0eab2c54bd6a3187487a50e323204cae90c235469ae25e5bf7c61686c8a20852",
     "src/KnowledgeRootSelector.test.tsx": "817e7fdf9002ea5ed7c4869ef82a78627385729528699707daa79b0adf748f05",
     "src/KnowledgeRootSelector.tsx": "bf822308bd25c81dbfbc3de2ca99a95753c7bd8d360199bf9e00ad30225c76fc",
-    "src/ManagerAssistant.test.tsx": "54d14407abd5f237069e45d2d36435ee964c1279758f600c680c0d94815941ca",
-    "src/ManagerAssistant.tsx": "57303ca1cf9dec26daec3135c61cbd45090c9a8e2dc469e77483177020538fdb",
+    "src/ManagerAssistant.test.tsx": "ead037c122e2f10d00f52dbc7742be8e217a68d7543ea62ee0713d4f416ac7ff",
+    "src/ManagerAssistant.tsx": "18ca336d8a4c3d5a506e598cee252d179aaadec6514e4fd270744b07619f572b",
     "src/MarkdownCodeBlock.test.tsx": "d1f77ecdfb929df6e3970eaa06a065c8ef63a25ab3f030fff405cd0a46fefc69",
     "src/MarkdownCodeBlock.tsx": "46ffdce3491901abf4a9648f22c20dacf42972641346e444230dc72fa6e00f9a",
     "src/MermaidDiagram.real.test.tsx": "ceb9a1f176b48b1c84b3cbf5174b16ac08dc833ce59b40613a380478588a2dcd",
@@ -929,7 +929,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 7177,
+  "nodes": 7178,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1031,18 +1031,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "c6e59ab5908981332a6292c318ac09cc729c3e4af7eade918c5f5beca9bb4441",
-    "communities.json": "730480c521bbcd8f046a70e429b7ffe1d650d4a59416131beadb935c23f0c59a",
-    "graph.html": "7a1d2035db6f2a7f28b222e6a7b4ac113602e4357836017f746439ef25fb823f",
-    "graph.json": "f8754d86e7b4654ad56a7d74420ade8b0d09558a75cd93b41de158facc4501bb"
+    "GRAPH_REPORT.md": "2d2522fc5ed3ccedad366d0ee47779df9752ab2020d2fa427b987dc06a385a67",
+    "communities.json": "704a8a0ac5cfcd26cd916e4256ea83b073751a208f78f6b3e15006a2523aa965",
+    "graph.html": "44035aa70cb5cd49c067a91508dce184e4225d6350a0605bb4f60696d88a82fa",
+    "graph.json": "c5a3b6b397e00bf5fff72ef3564cc1dc1165c8a0c72f0acc37ce3c89b6845276"
   },
   "schema_version": 1,
-  "source_commit": "b45c630fb50a0cb8d6f96562ff5464098c1910fb",
-  "source_fingerprint": "7f886ffae57774e43ee10deb23f04ba6ed94910067b3715e0ce91bcd4c2e343f",
+  "source_commit": "7eace2e53f64946e815e1c68578092ebc6cf7ac6",
+  "source_fingerprint": "08e6971a387c342ae25bf6ef140e626ab6166260f952ea3cca9dc2aacb42934c",
   "working_tree_changes": [
     "docs/app-spec.md",
     "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/index.css"
+    "src/ManagerAssistant.tsx"
   ]
 }

@@ -118,7 +118,7 @@ const report = {
   screenshots: [] as Array<{ file: string; sha256: string }>,
   failures: [] as string[],
   creation: undefined as Record<string, unknown> | undefined,
-  tabAccentIsolation: undefined as Record<string, unknown> | undefined,
+  tabAccentSync: undefined as Record<string, unknown> | undefined,
   syntheticDataOnly: true,
 }
 const save = () => writeFile(join(output, 'evidence.json'), `${JSON.stringify(report, null, 2)}\n`)
@@ -232,21 +232,32 @@ try {
       if (theme) sessionStorage.setItem('agentic-remote:accent-theme', theme)
     })
     try {
+      // Accent is synced: the first tab's earlier choice fills the hub's unset
+      // accent, a second tab's earlier choice must not replace it, and a choice
+      // made in one tab reaches the other live.
+      const code = (page: Page) => page.locator('.message__content p > code').first()
       await first.goto(`${fixture.url}&proofAccent=ocean`)
-      const before = await measure(first.locator('.message__content p > code').first(), 'first-tab-inline-code')
+      await expect(first.locator('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
+      const before = await measure(code(first), 'first-tab-inline-code')
       const second = await context.newPage()
       await second.goto(`${fixture.url}&proofAccent=violet`)
-      const other = await measure(second.locator('.message__content p > code').first(), 'second-tab-inline-code')
-      const after = await measure(first.locator('.message__content p > code').first(), 'first-tab-after-opening-second')
-      await expect(first.locator('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
-      await expect(second.locator('.app-shell')).toHaveAttribute('data-accent-theme', 'violet')
-      expect(after.foreground).toBe(before.foreground)
-      expect(other.foreground).not.toBe(before.foreground)
-      expect(Math.min(before.ratio, other.ratio, after.ratio)).toBeGreaterThanOrEqual(report.threshold)
+      await expect(second.locator('.app-shell')).toHaveAttribute('data-accent-theme', 'ocean')
+      const other = await measure(code(second), 'second-tab-inline-code')
+      const kept = await measure(code(first), 'first-tab-after-opening-second')
+      await second.getByRole('button', { name: 'App settings', exact: true }).click()
+      await second.getByRole('radiogroup', { name: 'Accent color', exact: true })
+        .getByText('Violet', { exact: true }).click()
+      await expect(second.getByRole('radio', { name: 'Violet accent', exact: true })).toBeChecked()
+      await expect(first.locator('.app-shell')).toHaveAttribute('data-accent-theme', 'violet')
+      const after = await measure(code(first), 'first-tab-after-second-chose')
+      expect(other.foreground).toBe(before.foreground)
+      expect(kept.foreground).toBe(before.foreground)
+      expect(after.foreground).not.toBe(before.foreground)
+      expect(Math.min(before.ratio, other.ratio, kept.ratio, after.ratio)).toBeGreaterThanOrEqual(report.threshold)
       fixture.assertHealthy()
-      report.tabAccentIsolation = { passed: true, before, other, after }
+      report.tabAccentSync = { passed: true, before, other, kept, after }
     } catch (error) {
-      report.tabAccentIsolation = { passed: false, error: String(error) }
+      report.tabAccentSync = { passed: false, error: String(error) }
       report.failures.push(`tab accents: ${String(error)}`)
     } finally {
       await context.close()

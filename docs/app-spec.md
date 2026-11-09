@@ -508,7 +508,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   IME composition.
 - On desktop, Oracle opens as a non-modal overlay by default and MAY be pinned
   beside the working session with the visible **Dock Oracle** control in its
-  header; the same control becomes **Undock Oracle** while pinned.
+  header; the same control becomes **Undock Oracle** while pinned. Pinned, it
+  is exactly the window's height: its transcript scrolls inside the panel, and
+  neither its composer nor the session's leaves the window.
   `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles
   that choice while Oracle is open. App settings MUST NOT expose a second
   placement control. Both placements are resizable from the panel's left edge
@@ -526,6 +528,14 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   transcribe**; at most 15 minutes), transcribes on the hub as a session's
   recording does, and adds the words to the message rather than sending them.
   Closing the panel discards a recording in progress.
+- Oracle's conversation opens at its latest message and keeps its end in view
+  as the conversation changes only while the reader is within 48px of that end,
+  as a session's timeline does. Scrolling up stops following and offers **Scroll
+  to latest** over the conversation's bottom right; returning to the end,
+  Scroll to latest, or sending a message, typed or spoken in this tab's
+  Conversation, follows again. A newly pending confirmation MUST come into
+  view, since it needs an answer, while a reader who had scrolled up stays
+  paused so later text leaves it in view.
 - Oracle's non-empty message draft and queued-message edit MUST be saved in
   versioned browser storage independently of whether the panel is open,
   docked, overlaid, or moved by a responsive layout. A remount or reload MUST
@@ -867,6 +877,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   MUST remain distinct and actionable. Background Tasks is the live provider
   task surface; the morning plan is durable review state. Review edits affect
   only the latter, while both participate in the same authoritative refresh.
+  A hub without Dreamer answers 503; that MUST count as its answer, not a
+  failed refresh. Only the session list's own failure MAY report sessions as
+  failed to load; a failure reading the selected session, Oracle, or Dreamer
+  MUST only mark the data stale.
 - A journal-derived plan item is a suggestion only. It MUST say that Oracle has
   not investigated or assigned the work, MUST NOT expose a generic completion
   action, and MUST NOT be treated as execution evidence. Asking Oracle to
@@ -890,8 +904,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   fails until **Retry**; an unlinked blocked or in-review one keeps its state.
   Refresh, startup, manager updates and
   session updates MUST reconcile task state without polling or a second wake
-  endpoint. A failed Oracle manager turn MUST NOT make a task retryable while
-  an authoritatively linked execution session is still running.
+  endpoint. Reconciles requested while one is running MUST coalesce into one
+  later pass instead of joining it, so a mid-pass change is never lost. A
+  failed Oracle manager turn MUST NOT make a task retryable while an
+  authoritatively linked execution session is still running.
 - An Oracle task MUST reach `completed` only after the user reviews and confirms
   a successful root `task_complete` marker from the exact linked execution
   session in the exact root user turn dispatched for the current attempt.
@@ -1418,6 +1434,14 @@ Unavailable observations or refused claim writes MUST retain FIFO and use
 bounded retry. A queued entry MUST NOT by itself create or reopen a native
 runtime; unknown prior delivery or explicit closed/suspended state stays held.
 Repeated startup MUST NOT duplicate delivery or create additional pollers.
+An unmanaged owner that discovery lists again MUST hold its queue behind Reopen,
+except for work the app queued to that live owner: the next discovery pass that
+lists the owner MUST grant that work recovery, lifting the hold and waking the
+queue. The queue write itself MUST NOT grant recovery, and committed work MUST
+keep its admission even if publishing it fails; a restart before that pass
+leaves the queue held behind Reopen. A direct send MUST re-check the hold
+immediately before typing and be refused with nothing sent. A Reopen that
+settles during a discovery pass MUST NOT be interrupted by it.
 
 An explicit recovery token MUST match the current failed prompt. For Claude,
 accepting a token-bearing retry MUST atomically retain one canonical FIFO entry

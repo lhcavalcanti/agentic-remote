@@ -325,11 +325,21 @@ A local-only monitor may run this sequence on an opt-in machine:
    run can change the runtime.
 2. Reconcile any pending promotion before treating the current release as a
    baseline. Finish recovery or completion and return; do not start a different
-   promotion in the same run.
+   promotion in the same run. Only re-verifying a locally verified candidate
+   runs tests, so only it takes the test lock (step 5); a rollback or
+   completion never waits for a gate.
 3. Require the development checkout to be a clean `main` worktree.
 4. Fetch and fast-forward `main`; never merge or rewrite local development
    changes.
-5. Prepare a validation worktree under `state_dir`, pinned to the candidate
+5. Take this host's test lock, the one [merge gates](#merge-gate) hold, and
+   keep it until the run ends, which covers validation and the local canary.
+   A gate's sandboxed tmux servers leave the host's own tmux evidence
+   indeterminate, and two full suites at once can exhaust memory. A helper
+   process holds the lock, so nothing a test leaves running inherits it. If
+   the lock stays busy for `AGENTIC_REMOTE_MONITOR_TEST_LOCK_WAIT` seconds
+   (default 5400), exit without changes and let the next run retry; a lock
+   that cannot be opened fails the run instead.
+6. Prepare a validation worktree under `state_dir`, pinned to the candidate
    commit, and install dependencies and run the configured validation there.
    The full Vitest suite runs with one worker and a 30-second per-test timeout,
    matching the stable local gate for timing-sensitive tmux and recovery tests.
@@ -342,21 +352,21 @@ A local-only monitor may run this sequence on an opt-in machine:
    The [advisory hosted check](#advisory-hosted-check) runs only a quick
    subset, so this is the only gate a commit passes before production and it
    has to include the tests.
-6. Remove the validation worktree afterwards, refusing to delete anything that
+7. Remove the validation worktree afterwards, refusing to delete anything that
    turns out to be a checkout this repository cannot account for.
-7. Verify the production runtime worktree is clean, intentionally detached, and
+8. Verify the production runtime worktree is clean, intentionally detached, and
    has not changed during validation, and stop here if promotion was paused
    meanwhile.
-8. Durably record the pending promotion and known-good baseline, then promote
+9. Durably record the pending promotion and known-good baseline, then promote
    the exact validated commit, publish an immutable release, and
    restart the managed service.
-9. Wait for the service, local health endpoint, external access check, paired
-   computers, and relevant sessions to recover, then run the
-   [host canary](#host-canary) in the runtime checkout. A canary failure rolls
-   the local runtime back exactly as a health failure does.
-10. Record completed verification and the candidate, tested, promoted, and
+10. Wait for the service, local health endpoint, external access check, paired
+    computers, and relevant sessions to recover, then run the
+    [host canary](#host-canary) in the runtime checkout. A canary failure rolls
+    the local runtime back exactly as a health failure does.
+11. Record completed verification and the candidate, tested, promoted, and
     previous release identifiers, then clear the pending journal.
-11. Log each host's refusal counts (see [Refusal counts](#refusal-counts)).
+12. Log each host's refusal counts (see [Refusal counts](#refusal-counts)).
 
 If validation or promotion fails, do not advance the success marker and do not
 discard the previous known-good release. The next run must be able to retry or
@@ -444,13 +454,16 @@ namespaces are blocked), the gate posts `failure` and never runs the checks
 unsandboxed.
 
 Each check takes about half an hour, and suites on one host interfere through
-real tmux, so gates hold a host-wide lock: a second gate waits for the first,
-or fails at once with `--no-wait`. Avoid running other full suites on the host
-meanwhile.
+real tmux, so gates hold a host-wide test lock: a second gate waits for the
+first, or fails at once with `--no-wait`. The promotion monitor takes the same
+lock for validation and its local canary (step 5 of
+[Pull, validate, and graduate](#pull-validate-and-graduate)). Avoid running
+other full suites on the host meanwhile.
 
-A ruleset on `main` requires the `agentic-remote/full-gate` status, with an
-administrator bypass. A new push needs a new gate, because the status belongs
-to the commit that was tested.
+GitHub does not enforce the `agentic-remote/full-gate` status: `main` has no
+ruleset or branch protection, so the merge policy in
+`.github/copilot-instructions.md` is what requires it. A new push needs a new
+gate, because the status belongs to the commit that was tested.
 
 ## Advisory hosted check
 
@@ -622,6 +635,8 @@ dependencies.
 - Its fixtures fake Copilot. `COPILOT_BIN` is `false`, `COPILOT_HOME` is
   private, and GitHub tokens are removed, so it makes no model requests.
 - It runs with `CI=true` under `timeout 600`.
+- On the monitor's own host it runs under the test lock, so a full gate cannot
+  disturb it and trigger a rollback.
 - A missing Vitest fails the canary rather than skipping it. A failure is
   handled like a failed health check on that host.
 

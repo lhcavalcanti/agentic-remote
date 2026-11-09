@@ -579,7 +579,7 @@ describe('Clear joins committed enqueue admissions', () => {
     const sending = runtime.service.sendMessage(id, 'CLI-native queued A', true)
       .then((value) => ({ value }), (error: unknown) => ({ error }))
     await writing.promise
-    expect(runtime.terminal.send).toHaveBeenCalledExactlyOnceWith(id, 'CLI-native queued A', true)
+    expect(runtime.terminal.send).toHaveBeenCalledExactlyOnceWith(id, 'CLI-native queued A', true, { confirm: expect.any(Function) })
     const clearing = runtime.service.clearConversation(id).then((value) => ({ value }), (error: unknown) => ({ error }))
     if (refused) await mkdir(path.join(runtime.directory, 'state.json.tmp'))
     releaseWrite.finish()

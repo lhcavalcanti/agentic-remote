@@ -273,11 +273,14 @@ Environment=$(systemd_quote "HOME=$USER_HOME")
 Environment=$(systemd_quote "AGENTIC_REMOTE_MONITOR_PROFILE=$PROFILE_DEST")
 Environment=$(systemd_quote "PATH=$runtime_path")
 # A full validation run (install, lint, the whole suite, build) plus
-# graduation measured 16.5 minutes, and the suite grows as tests are added.
+# graduation took 20 minutes in October 2026 and 39 by November, growing as
+# tests are added, and a full gate running alongside slows it further.
 # A timeout here is not a clean abort: the kill can land after setup has
 # already replaced the running service, leaving recovery half done. Keep
-# several times the observed cost in reserve.
-TimeoutStartSec=60min
+# several times the observed cost in reserve. A run that outlasts the
+# schedule only delays the next one, because the monitor's lock refuses
+# overlapping runs.
+TimeoutStartSec=180min
 ExecStart=$(systemd_quote "$MONITOR_DEST") run
 EOF
 

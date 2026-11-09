@@ -341,7 +341,8 @@ and must still change on every build.
    Use `Refs #11` for a partial slice that should leave the issue open.
 5. **Gate the exact final head.** Run `bin/agentic-remote-gate <PR>` once the
    head is final. It clones that SHA afresh, runs `pnpm check` and
-   `NODE_ENV=production pnpm check` serially under a host-wide lock inside a
+   `NODE_ENV=production pnpm check` serially under a host-wide lock (promotion
+   validation takes it too, so a gate can queue behind one) inside a
    credentialless `bwrap` sandbox, with `bwrap` itself started from the
    scrubbed environment (it fails rather than run unsandboxed). The sandbox
    has no host network: install (`--ignore-scripts`) and `pnpm rebuild` reach
@@ -353,8 +354,8 @@ and must still change on every build.
 6. **Merge only when the exact head is eligible** under Owned work
    follow-through in `.github/copilot-instructions.md`: Supervisor `APPROVE`,
    every required check, an `agentic-remote/full-gate` `success`, and clean
-   mergeability. A `main` ruleset requires the full-gate status, with an
-   administrator bypass.
+   mergeability. GitHub does not enforce this: `main` has no ruleset or
+   branch protection.
    Follow the review loop below; delete the branch after graduation.
 7. **Deploy and verify on development**, then follow the promotion policy in
    `.github/copilot-instructions.md` (see Rolling out).

@@ -10355,7 +10355,9 @@ function App() {
     let stopped = false
     let reconnectDelay = 1_000
 
-    const refreshSnapshot = async (): Promise<ManagedSession[]> => {
+    const refreshSnapshot = async (
+      onListingFailed?: (caught: unknown) => void,
+    ): Promise<ManagedSession[]> => {
       // Refreshes overlap: a reconnect and a tab becoming visible can each
       // start one. Without a generation the slower response applies last and
       // reinstates whatever the newer one already replaced, including a
@@ -10399,7 +10401,10 @@ function App() {
           console.warn('Unable to refresh notification mute settings:', caught)
           return undefined
         }),
-      ])
+      ]).catch((caught: unknown) => {
+        onListingFailed?.(caught)
+        throw caught
+      })
       setSessionLoadError(undefined)
       const claim = claimGeneration(listing.answeredComputerIds)
       if (!claim.whole && !claim.speaksFor.size) {
@@ -10673,14 +10678,25 @@ function App() {
       return reconciledForClaim
     }
 
-    const refreshAllAuthoritativeState = async () => {
+    // Only the listing failing is a failure to load sessions. The selected
+    // session's detail, Oracle and Dreamer only leave the data stale; Oracle
+    // and Dreamer also report their own failures.
+    const refreshAllAuthoritativeState = async (
+      onSessionListFailed?: (message: string) => void,
+    ) => {
       const generation = authoritativeRefreshGeneration.current + 1
       authoritativeRefreshGeneration.current = generation
       setRefreshState('refreshing')
       setRefreshMessage(undefined)
       try {
         const settled = await Promise.allSettled([
-          refreshSnapshot().then((refreshedSessions) =>
+          refreshSnapshot((caught) => {
+            if (authoritativeRefreshGeneration.current === generation) {
+              onSessionListFailed?.(
+                caught instanceof Error ? caught.message : String(caught),
+              )
+            }
+          }).then((refreshedSessions) =>
             Promise.all(refreshedSessions.map((session) =>
               loadBackgroundTasks(session, true)))),
           dispatchAuthoritativeRefresh(),
@@ -10726,11 +10742,7 @@ function App() {
         void syncSessionOrderRef.current()
         // Settings events are not replayed either.
         void settingsClient.sync()
-        void refreshAllAuthoritativeState().catch((caught: unknown) => {
-          setSessionLoadError(
-            caught instanceof Error ? caught.message : String(caught),
-          )
-        })
+        void refreshAllAuthoritativeState(setSessionLoadError).catch(() => undefined)
       }
       socket.onmessage = (message) => {
         const event = patches.receive(JSON.parse(message.data as string) as HubWireEvent)
@@ -10988,9 +11000,7 @@ function App() {
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        void refreshAllAuthoritativeState().catch((caught: unknown) => {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        })
+        void refreshAllAuthoritativeState(setError).catch(() => undefined)
       }
     }
 

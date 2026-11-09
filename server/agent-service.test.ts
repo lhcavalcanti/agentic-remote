@@ -8500,27 +8500,28 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       'hello terminal',
       false,
+      { confirm: expect.any(Function) },
     )
     expect(terminal.send).toHaveBeenNthCalledWith(
       2,
       client.session.sessionId,
       '/allow-all on',
       false,
-      { allowDuringAgentExecution: true },
+      { allowDuringAgentExecution: true, confirm: expect.any(Function) },
     )
     expect(terminal.send).toHaveBeenNthCalledWith(
       3,
       client.session.sessionId,
       '/usage',
       false,
-      { allowDuringAgentExecution: true },
+      { allowDuringAgentExecution: true, confirm: expect.any(Function) },
     )
     expect(terminal.send).toHaveBeenNthCalledWith(
       4,
       client.session.sessionId,
       'replace terminal draft',
       false,
-      { replaceExistingInput: true },
+      { replaceExistingInput: true, confirm: expect.any(Function) },
     )
     expect(terminal.send).toHaveBeenNthCalledWith(
       5,
@@ -8530,6 +8531,7 @@ describe('AgentService deletion', () => {
       {
         allowDuringAgentExecution: true,
         replaceExistingInput: true,
+        confirm: expect.any(Function),
       },
     )
     expect(sent).toMatchObject({
@@ -8708,7 +8710,7 @@ describe('AgentService deletion', () => {
         id,
         'hello terminal',
         false,
-        ...(working ? [{ allowDuringAgentExecution: true }] : []),
+        { ...(working ? { allowDuringAgentExecution: true } : {}), confirm: expect.any(Function) },
       )
       await service.stop()
     })
@@ -8826,7 +8828,8 @@ describe('AgentService deletion', () => {
       } else {
         expect(terminal.send).toHaveBeenCalledOnce()
         expect(terminal.send).toHaveBeenCalledWith(
-          client.session.sessionId, 'Steer when you can', false, { allowDuringAgentExecution: true },
+          client.session.sessionId, 'Steer when you can', false,
+          { allowDuringAgentExecution: true, confirm: expect.any(Function) },
         )
       }
       const expected = [
@@ -9082,7 +9085,7 @@ describe('AgentService deletion', () => {
           sessionId,
           'Recover this first',
           false,
-          { allowDuringAgentExecution: true },
+          { allowDuringAgentExecution: true, confirm: expect.any(Function) },
         )
         expect(sent.failedPrompt).toBeUndefined()
         expect(sent.queuedPrompts).toMatchObject([
@@ -9628,6 +9631,7 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       'send while idle',
       false,
+      { confirm: expect.any(Function) },
     )
     expect(sent).toMatchObject({
       status: 'idle',
@@ -10425,12 +10429,14 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       'first direct prompt',
       false,
+      { confirm: expect.any(Function) },
     )
     expect(terminal.send).toHaveBeenNthCalledWith(
       2,
       client.session.sessionId,
       'native queued prompt',
       true,
+      { confirm: expect.any(Function) },
     )
     expect(queued.queuedCount ?? 0).toBe(0)
     expect(queued.activity).toBe('Queued in terminal')
@@ -11069,7 +11075,7 @@ describe('AgentService deletion', () => {
     }
   })
 
-  it('keeps a non-retryable terminal queue failure blocked across restart', async () => {
+  it.each([true, false])('keeps a non-retryable terminal queue failure blocked across restart (rediscovered=%s)', async (rediscovered) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)
     const stateDirectory = path.join(directory, 'state')
@@ -11124,6 +11130,8 @@ describe('AgentService deletion', () => {
       state: 'error',
       message: expect.stringMatching(/was not sent/),
     })
+    // The discovery pass that lists the owner, not the queue write, grants it recovery.
+    if (rediscovered) await first.refreshDiscovery()
     await first.stop()
 
     const restartedClient = new FakeCopilotClient()
@@ -11156,12 +11164,15 @@ describe('AgentService deletion', () => {
       await new Promise((resolve) => setTimeout(resolve, 20))
 
       expect(restartedTerminal.sendWhenIdle).not.toHaveBeenCalled()
+      const failure = { state: 'error', message: expect.stringMatching(/was not sent/) }
+      // Restarting before that pass holds the queue behind Reopen, which still
+      // finds the failure recorded underneath.
+      expect(restarted.store.get(sessionId)?.queueState).toMatchObject(failure)
       expect(restarted.getSession(sessionId)).toMatchObject({
         queuedPrompts: [{ content: 'keep this blocked' }],
-        queueState: {
-          state: 'error',
-          message: expect.stringMatching(/was not sent/),
-        },
+        queueState: rediscovered
+          ? failure
+          : { state: 'waiting', message: 'Reopen the session to resume queued delivery.' },
       })
     } finally {
       await restarted.stop()
@@ -11565,7 +11576,7 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       '/usage',
       false,
-      { allowDuringAgentExecution: true },
+      { allowDuringAgentExecution: true, confirm: expect.any(Function) },
     )
     expect(result.messages.at(-1)?.content).toBe('/usage')
     await expect(
@@ -11804,6 +11815,7 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       'Continue the work',
       false,
+      { confirm: expect.any(Function) },
     )
     expect(
       service.store.get(client.session.sessionId)?.queuedPrompts ?? [],
@@ -11926,6 +11938,8 @@ describe('AgentService deletion', () => {
           sessionId,
           arrival === 'empty' ? 'New startup prompt' : 'Older queued prompt',
           false,
+          // Only a direct send re-checks the queue hold just before typing.
+          ...(arrival === 'empty' ? [{ confirm: expect.any(Function) }] : []),
         )
         expect(((await persisted()).queuedPrompts ?? []).map((prompt: { content: string }) => prompt.content))
           .toEqual(arrival === 'empty' ? [] : ['New startup prompt'])
@@ -11982,6 +11996,7 @@ describe('AgentService deletion', () => {
             sessionId,
             submitted,
             false,
+            { confirm: expect.any(Function) },
           )
           expect((await persisted()).queuedPrompts).toEqual([olderPrompt])
         } else {
@@ -12066,7 +12081,7 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       '/usage',
       false,
-      { allowDuringAgentExecution: true },
+      { allowDuringAgentExecution: true, confirm: expect.any(Function) },
     )
     await service.stop()
   })
@@ -12118,6 +12133,7 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       'Send after blocker',
       false,
+      { confirm: expect.any(Function) },
     )
     expect(
       service.store.get(client.session.sessionId)?.queuedPrompts ?? [],
@@ -12208,12 +12224,14 @@ describe('AgentService deletion', () => {
       client.session.sessionId,
       'First startup prompt',
       false,
+      { confirm: expect.any(Function) },
     )
     expect(terminal.send).toHaveBeenNthCalledWith(
       2,
       client.session.sessionId,
       'Second startup prompt',
       true,
+      { confirm: expect.any(Function) },
     )
     await service.stop()
   })
@@ -12256,7 +12274,7 @@ describe('AgentService deletion', () => {
       try {
         await service.sendMessage(client.session.sessionId, 'Continue reviewing')
         expect(terminal.send).toHaveBeenCalledWith(
-          client.session.sessionId, 'Continue reviewing', false,
+          client.session.sessionId, 'Continue reviewing', false, { confirm: expect.any(Function) },
         )
       } finally {
         await service.stop()
@@ -13957,6 +13975,7 @@ describe('AgentService deletion', () => {
         sessionId,
         'Continue',
         false,
+        { confirm: expect.any(Function) },
       )
     } finally {
       await service.stop()

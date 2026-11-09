@@ -278,9 +278,12 @@ function clearRecoverySeedFailure(session: StoredSession): void {
 }
 
 /**
- * A live tmux session the app sends work or answers to, relaunches, clears,
+ * A live tmux session the app types work or answers into, relaunches, clears,
  * suspends, or resumes is one the app now owns, so it joins boot recovery
- * like one the app created there. Discovery alone never calls this.
+ * like one the app created there. Work only queued to it is granted by the
+ * discovery pass that next lists the owner (`syncBackends`), never by the
+ * queue write: a snapshot taken before that write commits may no longer list
+ * the owner.
  */
 function grantTerminalRecovery(session: StoredSession): void {
   if (session.backend === 'terminal' && session.isOpen === true) {
@@ -1129,25 +1132,39 @@ export class SessionStore {
     })
   }
 
+  /**
+   * `liveAdmission` names live owners the app queued work to without owning
+   * them yet; this pass grants them recovery because its snapshot lists them.
+   * It is read when the write is applied, so an admission recorded while
+   * discovery runs is still seen. Resolves to the sessions whose Reopen hold
+   * such a grant lifted: their queue stopped at the hold, so the caller has to
+   * wake it.
+   */
   async syncBackends(
     terminalSessionIds: string[],
     sdkSessionIds: string[],
     isCurrent?: () => boolean,
-  ): Promise<void> {
+    liveAdmission?: (sessionId: string) => boolean,
+  ): Promise<string[]> {
     const activeTerminal = new Set(terminalSessionIds)
     const knownSdk = new Set(sdkSessionIds)
     return this.change((state) => {
-      if (isCurrent && !isCurrent()) return () => undefined
+      const released: string[] = []
+      if (isCurrent && !isCurrent()) return () => released
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
         if (activeTerminal.has(session.id)) {
-          const retainQueuedTerminal = requiresExplicitTerminalReopen(session)
+          const admitted = session.managedOpen !== true &&
+            (liveAdmission?.(session.id) ?? false)
+          if (admitted && session.interruption) released.push(session.id)
+          const retainQueuedTerminal = !admitted && requiresExplicitTerminalReopen(session)
           const interruption = retainQueuedTerminal
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
             }
             : undefined
           if (
+            !admitted &&
             session.backend === 'terminal' &&
             session.isOpen === true &&
             session.interruption === interruption &&
@@ -1170,6 +1187,7 @@ export class SessionStore {
             sdkRestartRecovery: undefined,
             sdkAcceptedReply: undefined,
             archivedAt: undefined,
+            ...(admitted ? { managedOpen: true } : {}),
           }
         } else if (
           !session.backend &&
@@ -1182,7 +1200,7 @@ export class SessionStore {
           }
         }
       }
-      return () => undefined
+      return () => released
     })
   }
 
@@ -1252,7 +1270,12 @@ export class SessionStore {
     })
   }
 
-  async markInterrupted(sessionId: string): Promise<SessionDetail> {
+  /**
+   * `retainedQueueOnly` re-checks at commit that the record still holds a
+   * queue it may not deliver, so a Reopen or recovery grant that landed after
+   * the caller decided is not interrupted again.
+   */
+  async markInterrupted(sessionId: string, retainedQueueOnly = false): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       session.interruption ??= {
         detectedAt: new Date(this.now()).toISOString(),
@@ -1268,9 +1291,10 @@ export class SessionStore {
       }
       if (session.pendingPermission) session.pendingPermission.stale = true
       if (session.pendingUserInput) session.pendingUserInput.stale = true
-    }, (session) => !session.interruption ||
+    }, (session) => (!retainedQueueOnly || requiresExplicitTerminalReopen(session)) && (
+      !session.interruption ||
       Boolean(session.pendingPermission && !session.pendingPermission.stale) ||
-      Boolean(session.pendingUserInput && !session.pendingUserInput.stale))
+      Boolean(session.pendingUserInput && !session.pendingUserInput.stale)))
   }
 
   sdkRecovery(sessionId: string): SdkRestartRecovery | undefined {
@@ -1888,7 +1912,6 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
-      grantTerminalRecovery(session)
     })
   }
 
@@ -2500,7 +2523,6 @@ export class SessionStore {
       const queue = session.queuedPrompts || []
       session.queuedPrompts = priority ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
-      grantTerminalRecovery(session)
       if (
         !session.recoverySeed &&
         session.failedPrompt &&

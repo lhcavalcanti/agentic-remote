@@ -7701,6 +7701,9 @@ button {
   grid-column: 3;
   width: var(--oracle-width, 440px);
   min-width: 0;
+  /* Like the sidebar and workspace: a grid item's automatic minimum is its
+     content, which would let the transcript, not the window, set the row. */
+  min-height: 0;
   box-shadow: none;
 }
 
@@ -7797,6 +7800,22 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   list-style: none;
+}
+
+/* Scroll to latest sits over the transcript's bottom right, outside its scroll. */
+.manager-transcript-frame {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.manager-transcript__follow {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: 12px;
+  z-index: 1;
 }
 
 .manager-message {

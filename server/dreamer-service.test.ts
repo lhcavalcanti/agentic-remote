@@ -276,6 +276,107 @@ describe('DreamerService', () => {
     expect(replayedCompletion.tasks![0]!.revision).toBe(completed.tasks![0]!.revision)
   })
 
+  it('answers reconciles requested mid-pass with one later pass that sees the change', async () => {
+    const directory = await root()
+    const now = () => new Date('2026-10-29T04:00:00.000Z')
+    const taskStore = new OracleTaskStore(directory, { hubId: 'hub-a', now })
+    await taskStore.initialize()
+    const task = await taskStore.upsertFinding({
+      sourceEventIds: ['f'.repeat(64)],
+      title: 'Run the focused queue test',
+      summary: 'The execution session finishes while a pass is reading it.',
+      nextAction: 'Review the execution result.',
+      owner: 'oracle',
+      executionPrompt: 'Run the focused queue test.',
+    })
+    const managerMessages: ManagerMessage[] = []
+    const prompt = {
+      id: 'task-prompt',
+      role: 'user' as const,
+      content: 'Run the focused queue test.',
+      createdAt: '2026-10-29T04:00:00.000Z',
+    }
+    let execution = completionSession(false, 'Still working.', {
+      id: 'execution-a',
+      revision: 1,
+      status: 'running',
+      messages: [prompt],
+    })
+    let held: Promise<void> | undefined
+    let active = 0
+    let overlapping = 0
+    const readSession = vi.fn(async () => {
+      const read = execution
+      active += 1
+      overlapping = Math.max(overlapping, active)
+      await held
+      active -= 1
+      return read
+    })
+    const service = new DreamerService(directory, options(now, {
+      taskStore,
+      enqueueManagerTask: async (input) => {
+        const message: ManagerMessage = {
+          ...input,
+          role: 'user',
+          createdAt: now().toISOString(),
+          state: 'done',
+        }
+        managerMessages.push(message)
+        return message
+      },
+      managerMessages: () => managerMessages,
+      readSession,
+    }))
+    await service.initialize()
+    await service.dispatchTask({
+      revision: task.revision,
+      taskId: task.id,
+      requestId: '0d4f1f5e-7f1c-4a8e-9a43-2b6f3c1d5e70',
+    })
+    managerMessages.push({
+      id: 'execution-link',
+      role: 'activity',
+      content: 'Started execution session',
+      createdAt: now().toISOString(),
+      replyTo: managerMessages[0]!.id,
+      sessionRefs: [{ computerId: 'computer-a', sessionId: 'execution-a', promptId: 'task-prompt' }],
+    })
+    let release = () => {}
+    held = new Promise<void>((resolve) => { release = resolve })
+    const running = service.reconcileTasks()
+    await vi.waitFor(() => expect(readSession).toHaveBeenCalledOnce())
+
+    // The session finishes after the running pass has read it.
+    held = undefined
+    execution = completionSession(true, 'Focused queue test passed.', {
+      id: 'execution-a',
+      revision: 2,
+      status: 'idle',
+      messages: [prompt, {
+        id: 'task-completion',
+        role: 'assistant',
+        content: 'Focused queue test passed.',
+        createdAt: '2026-10-29T04:01:00.000Z',
+        taskCompletion: {
+          source: 'root-task-complete',
+          toolCallId: 'task-complete-call',
+          completedAt: '2026-10-29T04:01:00.000Z',
+        },
+      }],
+    })
+    const requested = Promise.all([service.reconcileTasks(), service.reconcileTasks(), service.reconcileTasks()])
+    release()
+    await Promise.all([running, requested])
+
+    expect(service.snapshot().tasks![0]).toMatchObject({
+      status: 'review',
+      attempts: [{ status: 'review' }],
+    })
+    expect(readSession).toHaveBeenCalledTimes(2)
+    expect(overlapping).toBe(1)
+  })
+
   it('keeps a task running when its linked execution outlives a failed Oracle turn', async () => {
     const directory = await root()
     const now = () => new Date('2026-10-29T04:00:00.000Z')
@@ -2252,11 +2353,14 @@ describe('DreamerService', () => {
   it('fences an in-flight plan after disable and keeps the previous plan', async () => {
     const directory = await root()
     let release: (() => void) | undefined
+    let started: (() => void) | undefined
     const blocked = new Promise<void>((resolve) => { release = resolve })
+    const plannerStarted = new Promise<void>((resolve) => { started = resolve })
     const service = new DreamerService(directory, options(
       () => new Date('2026-10-29T04:00:00.000Z'),
       {
         planner: async (input) => {
+          started?.()
           await blocked
           return input.defaultPlan
         },
@@ -2265,9 +2369,10 @@ describe('DreamerService', () => {
     await service.start()
     const initial = service.snapshot()
     const enabling = service.updateSettings({ revision: initial.revision, enabled: true, timeZone: 'UTC' })
-    await vi.waitFor(() => {
-      expect(service.snapshot().settings.enabled).toBe(true)
-    })
+    // Enabling commits twice: the settings, then the claimed run. Only once the
+    // planner is running is the revision the disable must name settled.
+    await plannerStarted
+    expect(service.snapshot().settings.enabled).toBe(true)
 
     const beforeDisable = service.snapshot()
     const disabling = service.updateSettings({
@@ -2286,11 +2391,14 @@ describe('DreamerService', () => {
   it('does not wait indefinitely for a fenced planner when disabling', async () => {
     const directory = await root()
     let release: (() => void) | undefined
+    let started: (() => void) | undefined
     const blocked = new Promise<void>((resolve) => { release = resolve })
+    const plannerStarted = new Promise<void>((resolve) => { started = resolve })
     const service = new DreamerService(directory, options(
       () => new Date('2026-10-29T04:00:00.000Z'),
       {
         planner: async (input) => {
+          started?.()
           await blocked
           return input.defaultPlan
         },
@@ -2303,7 +2411,8 @@ describe('DreamerService', () => {
       enabled: true,
       timeZone: 'UTC',
     })
-    await vi.waitFor(() => expect(service.snapshot().settings.enabled).toBe(true))
+    await plannerStarted
+    expect(service.snapshot().settings.enabled).toBe(true)
     const disabling = service.updateSettings({
       revision: service.snapshot().revision,
       enabled: false,

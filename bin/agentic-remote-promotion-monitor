@@ -53,6 +53,12 @@ readonly CANARY="$(profile_value AGENTIC_REMOTE_MONITOR_CANARY 1)"
 # more; a constrained test or a fast one may want less.
 readonly READY_ATTEMPTS="$(profile_value AGENTIC_REMOTE_MONITOR_READY_ATTEMPTS 30)"
 readonly READY_INTERVAL="$(profile_value AGENTIC_REMOTE_MONITOR_READY_INTERVAL 2)"
+# Full test runs on one host interfere: a gate's sandboxed tmux servers leave
+# the host's own tmux evidence indeterminate, and two suites at once can run
+# the machine out of memory. Validation and the canaries therefore take the
+# host-wide lock that bin/agentic-remote-gate holds, waiting at most this long.
+readonly TEST_LOCK="$(profile_value AGENTIC_REMOTE_MONITOR_TEST_LOCK "${XDG_STATE_HOME:-$USER_HOME/.local/state}/agentic-remote/gates/gate.lock")"
+readonly TEST_LOCK_WAIT="$(profile_value AGENTIC_REMOTE_MONITOR_TEST_LOCK_WAIT 5400)"
 readonly PRODUCTION_HOST="$(profile_value AGENTIC_REMOTE_MONITOR_HOST '')"
 readonly PRODUCTION_PORT="$(profile_value AGENTIC_REMOTE_MONITOR_PORT '')"
 readonly PRODUCTION_ROLE="$(profile_value AGENTIC_REMOTE_MONITOR_ROLE '')"
@@ -622,6 +628,10 @@ recover_pending_promotion() {
   if [[ "$PENDING_PHASE" == local-verified &&
     "$current_release" == "$PENDING_RELEASE" &&
     ! -e "$PENDING_RELEASE/.promotion-failed" ]]; then
+    # Only this path runs tests. The candidate already passed here once, so it
+    # can keep serving while a gate finishes; completions and rollbacks never
+    # wait.
+    acquire_test_lock "re-verification of $PENDING_COMMIT" || return 0
     if failure="$(verify_local_promotion "$PENDING_COMMIT" "$PENDING_RELEASE")"; then
       promote_downstream "$PENDING_COMMIT" ||
         die "downstream promotion failed; the pending promotion and success marker were left unchanged"
@@ -1066,6 +1076,39 @@ run_pnpm() {
   corepack "pnpm@$(package_manager_version "$root")" --dir "$root" "$@"
 }
 
+# Holds the host's test lock until this run exits, however it exits. A helper
+# holds it rather than a descriptor of this shell, which every validation
+# command would inherit: a test process left running, such as an orphaned tmux
+# server, would then keep every later gate queued. Returns non-zero, having
+# changed nothing, when the lock stays busy for the configured wait.
+acquire_test_lock() {
+  local purpose="$1" held helper polls=0 status=0
+  held="$STATE_DIR/test-lock.$$.held"
+  # Only the run holding $LOCK_FILE gets here, so any other marker is a dead
+  # run's.
+  rm -f -- "$STATE_DIR"/test-lock.*.held
+  mkdir -p -- "$(dirname -- "$TEST_LOCK")"
+  log "waiting up to ${TEST_LOCK_WAIT}s for this host's test lock before $purpose"
+  # 75 (EX_TEMPFAIL) means only that the wait expired.
+  flock -E 75 -o -w "$TEST_LOCK_WAIT" "$TEST_LOCK" bash -c \
+    ': >"$1" || exit 1; while kill -0 "$2" 2>/dev/null; do sleep 0.2; done' \
+    test-lock "$held" "$$" </dev/null 8>&- 9>&- &
+  helper=$!
+  until [[ -e "$held" ]]; do
+    if ! kill -0 "$helper" 2>/dev/null; then
+      [[ -e "$held" ]] && break
+      wait "$helper" || status=$?
+      ((status == 75)) || die "could not take this host's test lock $TEST_LOCK (exit $status)"
+      log "this host's test lock stayed busy for ${TEST_LOCK_WAIT}s, most likely held by a full gate; deferring $purpose to the next run"
+      return 1
+    fi
+    # Prompt when the lock is free, without spinning through a long wait.
+    if ((polls++ < 40)); then sleep 0.05; else sleep 1; fi
+  done
+  rm -f -- "$held"
+  log "holding this host's test lock until this run ends"
+}
+
 run() {
   # Before anything else, including reconciling an interrupted promotion: a
   # paused monitor fetches, validates, and changes nothing, and leaves any
@@ -1081,6 +1124,8 @@ run() {
   require_value AGENTIC_REMOTE_MONITOR_PROD_ROOT "$PROD_ROOT"
   require_value AGENTIC_REMOTE_MONITOR_HOME "$USER_HOME"
   require_value AGENTIC_REMOTE_MONITOR_HEALTH_URL "$HEALTH_URL"
+  [[ "$TEST_LOCK_WAIT" =~ ^[0-9]+$ ]] ||
+    die "AGENTIC_REMOTE_MONITOR_TEST_LOCK_WAIT must be a whole number of seconds"
   # Validate cross-field requirements before anything is built or restarted, so
   # an incomplete downstream profile cannot be discovered after local promotion.
   if [[ -n "$DOWNSTREAM_HOSTS" ]]; then
@@ -1166,6 +1211,8 @@ run() {
   else
     log "main advanced to $candidate_commit"
   fi
+  # Held from validation through the canaries that follow graduation.
+  acquire_test_lock "validation of $candidate_commit" || return 0
 
   # Validation runs in a worktree of its own, pinned to the commit being
   # promoted, under the state directory.

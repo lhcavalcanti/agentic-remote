@@ -453,7 +453,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "5f0e772591e9dfa9d4eca6f2e5e742d659c7a4a76a16dfd030a14306b80e1e48",
+    "docs/app-spec.md": "eb462f091d5d31f61bab378c792d08ffd11f74c15eea628f5f7b7347098004b9",
     "docs/architecture.md": "a0b949d5e752b96d53f064e96944a7d0590f0ecb34982e95007a993298927cb0",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -809,8 +809,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "0602e3a4b0fc76078faf58219074a0f28291a69216068d5134c4984ec81d980d",
-    "src/App.tsx": "ee7250172a9077a84aaa983d80e40c939ce1a1ed8f9701ea23019f068fefffc2",
+    "src/App.test.tsx": "062ea73c46033f9b6725ea3e43508e8e4a473d3f646383d8e2b2bdf6b386e05c",
+    "src/App.tsx": "dc5df171b98f51c414dccccdea01064b729e6959c2f5572593dcf096ac9ef675",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -1031,19 +1031,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6f588edb74f1f27aef7a21d76a5a32715f807f6e75b56d960591b56e069ff6e3",
+    "GRAPH_REPORT.md": "ff9ce5358a338b67424de788900504291aacb4728091fbcab307071f75e71468",
     "communities.json": "58901cce7e114196bcd982ff4186cb39c121f5f506959c2529d57087ac521b49",
-    "graph.html": "8bcdb200d57fbbc7504f3a3d4caf17e33599ad2d962ae377c6a521c4f74b4271",
-    "graph.json": "36142755d579e646aaa6e4ba72093e90864c8d1637f684258e196e4d1b81c162"
+    "graph.html": "64d68cc5d79b1b0665a427022b5b38b28b481ed656ce0d0af9cddb641dbd3b51",
+    "graph.json": "dc7861e1fe3fb3990bee4838501e116f1757a194c899e5f0a9e3c2ef8e050379"
   },
   "schema_version": 1,
-  "source_commit": "da9d2df65bfe78f85c0cb5b6dcd5e075c3e74e33",
-  "source_fingerprint": "814d2d574eb3aa63eb468d2907b923615cc92f8d1eeb823bd74397e51c10bdcd",
+  "source_commit": "92a6e82c002dfa49a80ea46fa2d718e199bdb1ea",
+  "source_fingerprint": "e1fa4bb4cf18e057b0e410a5eb90e821332ea932fe39c70109695281da2d744c",
   "working_tree_changes": [
     "docs/app-spec.md",
     "src/App.test.tsx",
-    "src/App.tsx",
-    "src/OracleDreamer.test.tsx",
-    "src/OracleDreamer.tsx"
+    "src/App.tsx"
   ]
 }

@@ -869,7 +869,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   only the latter, while both participate in the same authoritative refresh.
   A hub without Dreamer answers 503; that MUST count as its answer, not a
   failed refresh. Only the session list's own failure MAY report sessions as
-  failed to load; an Oracle or Dreamer failure MUST only mark the data stale.
+  failed to load; a failure reading the selected session, Oracle, or Dreamer
+  MUST only mark the data stale.
 - A journal-derived plan item is a suggestion only. It MUST say that Oracle has
   not investigated or assigned the work, MUST NOT expose a generic completion
   action, and MUST NOT be treated as execution evidence. Asking Oracle to

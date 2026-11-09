@@ -2014,6 +2014,9 @@ describe('App', () => {
     dragHandlers.clear()
     vi.restoreAllMocks()
     vi.clearAllMocks()
+    // Restores the factory's default answer; neither call above undoes a
+    // test's own Dreamer answer.
+    vi.mocked(getDreamer).mockReset()
     dragHandlers.clear()
     localStorage.clear()
     sessionStorage.clear()
@@ -3817,24 +3820,20 @@ describe('App', () => {
     vi.mocked(getDreamer).mockRejectedValue(
       new DreamerApiError('Dreamer is unavailable. Try refreshing later.', 503),
     )
-    try {
-      render(<App />)
-      await screen.findAllByText('Project chat')
-      const dreamerBefore = vi.mocked(getDreamer).mock.calls.length
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const dreamerBefore = vi.mocked(getDreamer).mock.calls.length
 
-      act(() => MockWebSocket.instances.at(-1)?.onopen?.())
-      await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 1))
-      fireEvent(document, new Event('visibilitychange'))
-      await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 2))
+    act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+    await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 1))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 2))
 
-      await waitFor(() => expect(
-        screen.queryByRole('status', { name: 'Session data freshness' }),
-      ).not.toBeInTheDocument())
-      expect(screen.queryByText('Connection failed')).not.toBeInTheDocument()
-      expect(screen.queryAllByRole('alert')).toHaveLength(0)
-    } finally {
-      vi.mocked(getDreamer).mockReset()
-    }
+    await waitFor(() => expect(
+      screen.queryByRole('status', { name: 'Session data freshness' }),
+    ).not.toBeInTheDocument())
+    expect(screen.queryByText('Connection failed')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('alert')).toHaveLength(0)
   })
 
   it('marks data stale without reporting a session failure when Dreamer refresh fails', async () => {
@@ -3845,25 +3844,50 @@ describe('App', () => {
     vi.mocked(getDreamer).mockRejectedValue(
       new DreamerApiError('Dreamer is unavailable. Try refreshing later.', 500),
     )
-    try {
-      render(<App />)
-      await screen.findAllByText('Project chat')
-      const dreamerBefore = vi.mocked(getDreamer).mock.calls.length
-      const freshness = () => screen.queryByRole('status', { name: 'Session data freshness' })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const dreamerBefore = vi.mocked(getDreamer).mock.calls.length
+    const freshness = () => screen.queryByRole('status', { name: 'Session data freshness' })
 
-      act(() => MockWebSocket.instances.at(-1)?.onopen?.())
-      await waitFor(() => expect(freshness())
-        .toHaveTextContent('Data may be stale: Dreamer is unavailable. Try refreshing later.'))
-      fireEvent(document, new Event('visibilitychange'))
-      await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 2))
-      await waitFor(() => expect(freshness())
-        .toHaveTextContent('Data may be stale: Dreamer is unavailable. Try refreshing later.'))
+    act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+    await waitFor(() => expect(freshness())
+      .toHaveTextContent('Data may be stale: Dreamer is unavailable. Try refreshing later.'))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(getDreamer).toHaveBeenCalledTimes(dreamerBefore + 2))
+    await waitFor(() => expect(freshness())
+      .toHaveTextContent('Data may be stale: Dreamer is unavailable. Try refreshing later.'))
 
-      expect(screen.queryByText('Connection failed')).not.toBeInTheDocument()
-      expect(screen.queryAllByRole('alert')).toHaveLength(0)
-    } finally {
-      vi.mocked(getDreamer).mockReset()
-    }
+    expect(screen.queryByText('Connection failed')).not.toBeInTheDocument()
+    expect(screen.queryAllByRole('alert')).toHaveLength(0)
+  })
+
+  it('marks data stale without reporting a session failure when the selected detail refresh fails', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    render(<App />)
+    await screen.findByRole('textbox', { name: 'Message' })
+    vi.mocked(getSession).mockRejectedValue(new Error('The session detail is unavailable'))
+    const passiveDetailReads = () => vi.mocked(getSession).mock.calls
+      .filter(([computerId, id, , options]) =>
+        computerId === session.computerId && id === session.id && options?.passive)
+      .length
+    const detailReadsBefore = passiveDetailReads()
+    const freshness = () => screen.queryByRole('status', { name: 'Session data freshness' })
+
+    act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+    await waitFor(() => expect(freshness())
+      .toHaveTextContent('Data may be stale: The session detail is unavailable'))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(freshness())
+      .toHaveTextContent('Data may be stale: The session detail is unavailable'))
+
+    expect(passiveDetailReads()).toBe(detailReadsBefore + 2)
+    expect(screen.queryByText('Connection failed')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry loading sessions' }))
+      .not.toBeInTheDocument()
+    expect(screen.queryAllByRole('alert')).toHaveLength(0)
   })
 
   it('still reports a session list failure from reconnect and visibility refreshes', async () => {

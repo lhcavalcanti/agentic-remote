@@ -1207,7 +1207,7 @@ describe('SessionStore', () => {
     expect(restarted.isManagedOpen('closed-queued-terminal')).toBe(false)
   })
 
-  it('grants boot recovery once the app sends or queues work for a discovered terminal', async () => {
+  it('grants boot recovery once the app sends work, or discovery lists an owner it queued work to', async () => {
     const { directory, store } = await createStore()
     const ids = ['sent', 'queued', 'answered', 'claimed', 'observed']
     await store.syncDiscovered(ids.map((id) => ({
@@ -1230,8 +1230,13 @@ describe('SessionStore', () => {
       session.activity = 'Observed in the terminal'
     })
 
-    for (const id of ['sent', 'queued', 'answered', 'claimed']) {
+    for (const id of ['sent', 'claimed']) expect(store.isManagedOpen(id)).toBe(true)
+    // A queue write leaves the grant to the next pass whose snapshot lists the owner.
+    for (const id of ['queued', 'answered']) expect(store.isManagedOpen(id)).toBe(false)
+    await store.syncBackends(ids, [], undefined, (id) => id === 'queued' || id === 'answered')
+    for (const id of ['queued', 'answered']) {
       expect(store.isManagedOpen(id)).toBe(true)
+      expect(store.get(id)?.interruption).toBeUndefined()
     }
     expect(store.isManagedOpen('observed')).toBe(false)
 

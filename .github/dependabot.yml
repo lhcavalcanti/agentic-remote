@@ -5,6 +5,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Sherpa 2 ignores the VITS dataDir that Oracle's shipped voice profiles
+      # pass. Keep 1.x until the voice runtime is migrated and verified (#531).
+      - dependency-name: sherpa-onnx-node
+        update-types: ["version-update:semver-major"]
     groups:
       production-dependencies:
         dependency-type: production

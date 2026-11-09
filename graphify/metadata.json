@@ -699,7 +699,7 @@
     "server/remote-voice-client.test.ts": "16e8c31f055a519f64cd0760e8c5c979113dc344c4d7435630211a92ed3f7856",
     "server/remote-voice-client.ts": "a240dec15c9d4778373260b2025a5a2b77629fa26615019ee3da59e9a96ebfc4",
     "server/safe-area.test.ts": "528bbfad9c5cf4dca776d0e5e35933790d0a283de02acbc3cb7e88ffcbdf325c",
-    "server/send-matrix.integration.test.ts": "94bf974b75f3b3d41a0cb4d9c53d6998306407d78cd9a000313b7887aa0e459d",
+    "server/send-matrix.integration.test.ts": "4b6d0757c7a79db06d78525afd2cd1a88c801f45500e548e00d0844ee7a1b781",
     "server/service-unit.test.ts": "7b78bab1401fe1ebeec3cedee090e354c4c28b0adabd92c7c1f5e9e9a1803601",
     "server/service-worker.test.ts": "c3dbf4bc25609a9b92360c3e6abc6e298cf7f808bf3434215dac525c50abb997",
     "server/session-admission-lifecycle.test.ts": "3deed16f7b5b8874417103f0bf5b93fa22b6717f4e4b0ae6fc91ee09fe6a07ac",
@@ -1031,38 +1031,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "41e39a796545863fd4d1c1e9f49bac6109119080916587c572b5b39b828a2c51",
+    "GRAPH_REPORT.md": "5eb3d344c9e70e89686d8fc7327e59104b3ac9f4d86f3d9446b86bbdc62952f2",
     "communities.json": "a3bf4f9a02e4ff6c97ea12e2ecab39ca4eba54459d37eaaa78b258730280cbf3",
-    "graph.html": "c21309b07ea76517c64d95810003ac2d899e468d6c51499cdfd1d1955d2e59ae",
-    "graph.json": "62ef9ced7b78e9f9d556a2e2b73e83924c99488560bd7241b6e637fe0215f74f"
+    "graph.html": "1646322ce25755056c376c4ffb7345be615428a5e6ed6f8b48acd8881603d259",
+    "graph.json": "ccc71e87d1683cb760551b32ade204075712a4c7c0c0c9bed1f8704d2c124dd1"
   },
   "schema_version": 1,
-  "source_commit": "6435bf1d524c3c5364b5b23c1457c2929d427f9f",
-  "source_fingerprint": "ed6e11049892839bd5ae5cfb937427d2384873b7516e114cdf68514123aecf3b",
+  "source_commit": "e52bb8f098a94615947b77ac8ba257eb95f6096f",
+  "source_fingerprint": "ee8f515ee3f8eaeee7fb89ddccf4e1887770b11b07d77d61f73be5c90d1d32d1",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    "bin/agentic-remote-promotion-setup",
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "docs/deployment-promotion.md",
-    "package.json",
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/promotion-setup-execution.test.ts",
-    "server/promotion-setup.test.ts",
-    "server/recovery-resend-durability.test.ts",
-    "server/session-enqueue-clear.test.ts",
-    "server/session-reply-durability.test.ts",
-    "server/session-store-providers.test.ts",
-    "server/session-store.test.ts",
-    "server/session-store.ts",
-    "server/terminal-session.ts",
-    "server/terminal-startup-queue.test.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/send-matrix.integration.test.ts"
   ]
 }

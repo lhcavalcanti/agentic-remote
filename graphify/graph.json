@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "7ec9acf695aa9073f5b53726912bc3e8632e2ef2",
+  "built_at_commit": "18aaed8270b985c0ae24f70cb44614af3ee7cbed",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -3534,7 +3534,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L314",
+      "source_location": "L317",
       "target": "bin_agentic_remote_promotion_setup_create_runtime_worktree",
       "weight": 1.0
     },
@@ -3556,7 +3556,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L499",
+      "source_location": "L502",
       "target": "bin_agentic_remote_promotion_setup_disable_monitor",
       "weight": 1.0
     },
@@ -3578,7 +3578,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L463",
+      "source_location": "L466",
       "target": "bin_agentic_remote_promotion_setup_enable_monitor",
       "weight": 1.0
     },
@@ -3611,7 +3611,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L342",
+      "source_location": "L345",
       "target": "bin_agentic_remote_promotion_setup_init_profile",
       "weight": 1.0
     },
@@ -3633,7 +3633,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L367",
+      "source_location": "L370",
       "target": "bin_agentic_remote_promotion_setup_install_monitor",
       "weight": 1.0
     },
@@ -3644,7 +3644,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L307",
+      "source_location": "L310",
       "target": "bin_agentic_remote_promotion_setup_install_monitor_binary",
       "weight": 1.0
     },
@@ -3732,7 +3732,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L425",
+      "source_location": "L428",
       "target": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "weight": 1.0
     },
@@ -3809,7 +3809,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L539",
+      "source_location": "L542",
       "target": "bin_agentic_remote_promotion_setup_status_monitor",
       "weight": 1.0
     },
@@ -3864,7 +3864,7 @@
       "relation": "defines",
       "source": "bin_agentic_remote_promotion_setup",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L576",
+      "source_location": "L579",
       "target": "bin_agentic_remote_promotion_setup_uninstall_monitor",
       "weight": 1.0
     },
@@ -3920,7 +3920,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L597",
+      "source_location": "L600",
       "target": "bin_agentic_remote_promotion_setup_die",
       "weight": 1.0
     },
@@ -3932,7 +3932,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L605",
+      "source_location": "L608",
       "target": "bin_agentic_remote_promotion_setup_disable_monitor",
       "weight": 1.0
     },
@@ -3944,7 +3944,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L602",
+      "source_location": "L605",
       "target": "bin_agentic_remote_promotion_setup_enable_monitor",
       "weight": 1.0
     },
@@ -3956,7 +3956,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L591",
+      "source_location": "L594",
       "target": "bin_agentic_remote_promotion_setup_init_profile",
       "weight": 1.0
     },
@@ -3968,7 +3968,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L594",
+      "source_location": "L597",
       "target": "bin_agentic_remote_promotion_setup_install_monitor",
       "weight": 1.0
     },
@@ -3980,7 +3980,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L598",
+      "source_location": "L601",
       "target": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "weight": 1.0
     },
@@ -3992,7 +3992,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L609",
+      "source_location": "L612",
       "target": "bin_agentic_remote_promotion_setup_status_monitor",
       "weight": 1.0
     },
@@ -4004,7 +4004,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L613",
+      "source_location": "L616",
       "target": "bin_agentic_remote_promotion_setup_uninstall_monitor",
       "weight": 1.0
     },
@@ -4016,7 +4016,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup__entry",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L616",
+      "source_location": "L619",
       "target": "bin_agentic_remote_promotion_setup_usage",
       "weight": 1.0
     },
@@ -4028,7 +4028,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_create_runtime_worktree",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L319",
+      "source_location": "L322",
       "target": "bin_agentic_remote_promotion_setup_die",
       "weight": 1.0
     },
@@ -4040,7 +4040,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_create_runtime_worktree",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L316",
+      "source_location": "L319",
       "target": "bin_agentic_remote_promotion_setup_profile_value",
       "weight": 1.0
     },
@@ -4052,7 +4052,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_disable_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L504",
+      "source_location": "L507",
       "target": "bin_agentic_remote_promotion_setup_die",
       "weight": 1.0
     },
@@ -4064,7 +4064,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_disable_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L523",
+      "source_location": "L526",
       "target": "bin_agentic_remote_promotion_setup_disarm_timer",
       "weight": 1.0
     },
@@ -4076,7 +4076,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_disable_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L522",
+      "source_location": "L525",
       "target": "bin_agentic_remote_promotion_setup_pause_marker",
       "weight": 1.0
     },
@@ -4088,7 +4088,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_disable_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L515",
+      "source_location": "L518",
       "target": "bin_agentic_remote_promotion_setup_require_command",
       "weight": 1.0
     },
@@ -4100,7 +4100,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_enable_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L468",
+      "source_location": "L471",
       "target": "bin_agentic_remote_promotion_setup_die",
       "weight": 1.0
     },
@@ -4112,7 +4112,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_enable_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L482",
+      "source_location": "L485",
       "target": "bin_agentic_remote_promotion_setup_pause_marker",
       "weight": 1.0
     },
@@ -4124,7 +4124,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_enable_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L474",
+      "source_location": "L477",
       "target": "bin_agentic_remote_promotion_setup_profile_value",
       "weight": 1.0
     },
@@ -4136,7 +4136,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_enable_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L464",
+      "source_location": "L467",
       "target": "bin_agentic_remote_promotion_setup_require_command",
       "weight": 1.0
     },
@@ -4160,104 +4160,8 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_init_profile",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L351",
+      "source_location": "L354",
       "target": "bin_agentic_remote_promotion_setup_die",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote_promotion_setup_install_monitor",
-      "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L402",
-      "target": "bin_agentic_remote_promotion_setup_create_runtime_worktree",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote_promotion_setup_install_monitor",
-      "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L372",
-      "target": "bin_agentic_remote_promotion_setup_die",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote_promotion_setup_install_monitor",
-      "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L419",
-      "target": "bin_agentic_remote_promotion_setup_enable_monitor",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote_promotion_setup_install_monitor",
-      "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L412",
-      "target": "bin_agentic_remote_promotion_setup_hold_pause",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote_promotion_setup_install_monitor",
-      "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L404",
-      "target": "bin_agentic_remote_promotion_setup_install_monitor_binary",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote_promotion_setup_install_monitor",
-      "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L408",
-      "target": "bin_agentic_remote_promotion_setup_read_pause_state",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote_promotion_setup_install_monitor",
-      "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L390",
-      "target": "bin_agentic_remote_promotion_setup_require_command",
-      "weight": 1.0
-    },
-    {
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "call",
-      "relation": "calls",
-      "source": "bin_agentic_remote_promotion_setup_install_monitor",
-      "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L394",
-      "target": "bin_agentic_remote_promotion_setup_validate_profile",
       "weight": 1.0
     },
     {
@@ -4269,6 +4173,102 @@
       "source": "bin_agentic_remote_promotion_setup_install_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
       "source_location": "L405",
+      "target": "bin_agentic_remote_promotion_setup_create_runtime_worktree",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote_promotion_setup_install_monitor",
+      "source_file": "bin/agentic-remote-promotion-setup",
+      "source_location": "L375",
+      "target": "bin_agentic_remote_promotion_setup_die",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote_promotion_setup_install_monitor",
+      "source_file": "bin/agentic-remote-promotion-setup",
+      "source_location": "L422",
+      "target": "bin_agentic_remote_promotion_setup_enable_monitor",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote_promotion_setup_install_monitor",
+      "source_file": "bin/agentic-remote-promotion-setup",
+      "source_location": "L415",
+      "target": "bin_agentic_remote_promotion_setup_hold_pause",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote_promotion_setup_install_monitor",
+      "source_file": "bin/agentic-remote-promotion-setup",
+      "source_location": "L407",
+      "target": "bin_agentic_remote_promotion_setup_install_monitor_binary",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote_promotion_setup_install_monitor",
+      "source_file": "bin/agentic-remote-promotion-setup",
+      "source_location": "L411",
+      "target": "bin_agentic_remote_promotion_setup_read_pause_state",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote_promotion_setup_install_monitor",
+      "source_file": "bin/agentic-remote-promotion-setup",
+      "source_location": "L393",
+      "target": "bin_agentic_remote_promotion_setup_require_command",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote_promotion_setup_install_monitor",
+      "source_file": "bin/agentic-remote-promotion-setup",
+      "source_location": "L397",
+      "target": "bin_agentic_remote_promotion_setup_validate_profile",
+      "weight": 1.0
+    },
+    {
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "relation": "calls",
+      "source": "bin_agentic_remote_promotion_setup_install_monitor",
+      "source_file": "bin/agentic-remote-promotion-setup",
+      "source_location": "L408",
       "target": "bin_agentic_remote_promotion_setup_write_units",
       "weight": 1.0
     },
@@ -4304,7 +4304,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L431",
+      "source_location": "L434",
       "target": "bin_agentic_remote_promotion_setup_die",
       "weight": 1.0
     },
@@ -4316,7 +4316,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L447",
+      "source_location": "L450",
       "target": "bin_agentic_remote_promotion_setup_hold_pause",
       "weight": 1.0
     },
@@ -4328,7 +4328,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L443",
+      "source_location": "L446",
       "target": "bin_agentic_remote_promotion_setup_install_monitor_binary",
       "weight": 1.0
     },
@@ -4340,7 +4340,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L441",
+      "source_location": "L444",
       "target": "bin_agentic_remote_promotion_setup_read_pause_state",
       "weight": 1.0
     },
@@ -4352,7 +4352,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L426",
+      "source_location": "L429",
       "target": "bin_agentic_remote_promotion_setup_require_command",
       "weight": 1.0
     },
@@ -4364,7 +4364,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L434",
+      "source_location": "L437",
       "target": "bin_agentic_remote_promotion_setup_validate_profile",
       "weight": 1.0
     },
@@ -4376,7 +4376,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_refresh_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L444",
+      "source_location": "L447",
       "target": "bin_agentic_remote_promotion_setup_write_units",
       "weight": 1.0
     },
@@ -4400,7 +4400,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_status_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L545",
+      "source_location": "L548",
       "target": "bin_agentic_remote_promotion_setup_read_pause_state",
       "weight": 1.0
     },
@@ -4412,7 +4412,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_status_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L540",
+      "source_location": "L543",
       "target": "bin_agentic_remote_promotion_setup_require_command",
       "weight": 1.0
     },
@@ -4424,7 +4424,7 @@
       "relation": "calls",
       "source": "bin_agentic_remote_promotion_setup_uninstall_monitor",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L577",
+      "source_location": "L580",
       "target": "bin_agentic_remote_promotion_setup_require_command",
       "weight": 1.0
     },
@@ -235358,7 +235358,7 @@
       },
       "norm_label": "create_runtime_worktree()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L314"
+      "source_location": "L317"
     },
     {
       "_origin": "ast",
@@ -235388,7 +235388,7 @@
       },
       "norm_label": "disable_monitor()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L499"
+      "source_location": "L502"
     },
     {
       "_origin": "ast",
@@ -235418,7 +235418,7 @@
       },
       "norm_label": "enable_monitor()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L463"
+      "source_location": "L466"
     },
     {
       "_origin": "ast",
@@ -235463,7 +235463,7 @@
       },
       "norm_label": "init_profile()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L342"
+      "source_location": "L345"
     },
     {
       "_origin": "ast",
@@ -235493,7 +235493,7 @@
       },
       "norm_label": "install_monitor()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L367"
+      "source_location": "L370"
     },
     {
       "_origin": "ast",
@@ -235508,7 +235508,7 @@
       },
       "norm_label": "install_monitor_binary()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L307"
+      "source_location": "L310"
     },
     {
       "_origin": "ast",
@@ -235628,7 +235628,7 @@
       },
       "norm_label": "refresh_monitor()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L425"
+      "source_location": "L428"
     },
     {
       "_origin": "ast",
@@ -235733,7 +235733,7 @@
       },
       "norm_label": "status_monitor()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L539"
+      "source_location": "L542"
     },
     {
       "_origin": "ast",
@@ -235808,7 +235808,7 @@
       },
       "norm_label": "uninstall_monitor()",
       "source_file": "bin/agentic-remote-promotion-setup",
-      "source_location": "L576"
+      "source_location": "L579"
     },
     {
       "_origin": "ast",
@@ -240453,7 +240453,7 @@
       "source_file": "shell/src-tauri/Cargo.toml",
       "source_location": "L1",
       "type": "package",
-      "version": "1.46.0"
+      "version": "1.46.1"
     },
     {
       "_origin": "ast",

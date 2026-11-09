@@ -448,9 +448,10 @@ real tmux, so gates hold a host-wide lock: a second gate waits for the first,
 or fails at once with `--no-wait`. Avoid running other full suites on the host
 meanwhile.
 
-A ruleset on `main` requires the `agentic-remote/full-gate` status, with an
-administrator bypass. A new push needs a new gate, because the status belongs
-to the commit that was tested.
+GitHub does not enforce the `agentic-remote/full-gate` status: `main` has no
+ruleset or branch protection, so the merge policy in
+`.github/copilot-instructions.md` is what requires it. A new push needs a new
+gate, because the status belongs to the commit that was tested.
 
 ## Advisory hosted check
 

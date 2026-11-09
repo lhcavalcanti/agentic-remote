@@ -2,7 +2,12 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DreamerMorningPlan, DreamerSettings } from './OracleDreamer'
+import {
+  dispatchAuthoritativeRefresh,
+  DreamerMorningPlan,
+  DreamerRefreshOwner,
+  DreamerSettings,
+} from './OracleDreamer'
 import {
   completeDreamerTask,
   dispatchDreamerTask,
@@ -756,6 +761,40 @@ describe('Dreamer settings and morning review', () => {
     expect(screen.getByRole('status', { name: 'Dreamer data freshness' }))
       .toHaveTextContent('Data may be stale')
     expect(screen.getByRole('alert')).toHaveTextContent('Hub offline.')
+  })
+
+  it('settles the authoritative refresh for a hub without Dreamer but not for a failing one', async () => {
+    render(<DreamerRefreshOwner />)
+
+    vi.mocked(getDreamer).mockRejectedValueOnce(
+      new DreamerApiError('Dreamer is unavailable. Try refreshing later.', 503),
+    )
+    await expect(dispatchAuthoritativeRefresh()).resolves.toBeUndefined()
+
+    vi.mocked(getDreamer).mockRejectedValueOnce(
+      new DreamerApiError('Dreamer is unavailable. Try refreshing later.', 500),
+    )
+    await expect(dispatchAuthoritativeRefresh())
+      .rejects.toThrow('Dreamer is unavailable. Try refreshing later.')
+  })
+
+  it('settles the authoritative refresh while an open view still shows Dreamer unavailable', async () => {
+    vi.mocked(getDreamer).mockResolvedValueOnce(ready)
+    render(<DreamerMorningPlan />)
+    await openMorningPlan()
+
+    vi.mocked(getDreamer).mockRejectedValueOnce(
+      new DreamerApiError('Dreamer is unavailable. Try refreshing later.', 503),
+    )
+    await act(async () => {
+      await expect(dispatchAuthoritativeRefresh()).resolves.toBeUndefined()
+    })
+
+    expect(screen.getByText('Review failed session')).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Dreamer data freshness' }))
+      .toHaveTextContent('Data may be stale')
+    expect(screen.getByRole('alert'))
+      .toHaveTextContent('Dreamer is unavailable. Try refreshing later.')
   })
 
   it('keeps the original settings revision on a draft across background refresh', async () => {

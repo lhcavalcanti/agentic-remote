@@ -774,6 +774,10 @@ export async function setupWorkspaceFixture(
         revision: state.settings.revision,
         values: structuredClone(state.settings.values),
       })
+      // Like the hub, tells the open devices only when a commit changed something.
+      const announce = (before: number) => {
+        if (state.settings.revision !== before) emit({ type: 'settings.updated', settings: snapshot() })
+      }
       try {
         if (method === 'GET' && path === '/api/settings') {
           await respond({ settings: snapshot() })
@@ -781,18 +785,22 @@ export async function setupWorkspaceFixture(
         }
         if (method === 'POST' && path === '/api/settings/import') {
           const input = request.postDataJSON() as { deviceId?: string; values: Record<string, unknown> }
+          const before = state.settings.revision
           state.settings = applySettingsImport(
             state.settings, validateSettingsImport(input.values), input.deviceId,
           )
+          announce(before)
           await respond({ settings: snapshot() })
           return
         }
         if (method === 'PATCH' && path === '/api/settings') {
           const input = request.postDataJSON() as { deviceId?: string; changes: Record<string, unknown> }
+          const before = state.settings.revision
           const result = applySettingsChanges(
             state.settings, validateSettingsChanges(input.changes), input.deviceId,
           )
           state.settings = result.record
+          announce(before)
           await respond({ settings: snapshot(), conflicts: result.conflicts } satisfies SettingsUpdateResult)
           return
         }

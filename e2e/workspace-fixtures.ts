@@ -1,6 +1,21 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
 import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
+import {
+  ORACLE_VOICE_PROTOCOL,
+  ORACLE_VOICE_SAMPLE_RATE,
+  type VoiceCapabilities,
+} from '../shared/oracle-voice'
+import {
+  applySettingsChanges,
+  applySettingsImport,
+  SettingsRequestError,
+  validateSettingsChanges,
+  validateSettingsImport,
+  type SettingsProfileRecord,
+  type SettingsProfileSnapshot,
+  type SettingsUpdateResult,
+} from '../shared/settings-profile'
 import type { KnowledgePosition } from '../src/knowledge-position'
 import type {
   BackgroundTaskSnapshot,
@@ -482,7 +497,10 @@ export interface WorkspaceFixtureState {
   sessionOrder: SessionOrderSnapshot
   eventSockets: Set<WebSocketRoute>
   nextRootId: number
+  settings: SettingsProfileRecord
 }
+
+const FIXTURE_SETTINGS_PROFILE_ID = 'fixture-settings'
 
 export function createWorkspaceFixtureState(): WorkspaceFixtureState {
   const roots = structuredClone(fixtureKnowledgeRoots)
@@ -517,6 +535,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
     },
     eventSockets: new Set(),
     nextRootId: 1,
+    settings: { revision: 0, values: {}, keyRevisions: {} },
   }
 }
 
@@ -747,14 +766,59 @@ export async function setupWorkspaceFixture(
       } satisfies DreamerSnapshot)
       return
     }
-    // Left out of this hub and answered as one without them would, so the app
-    // keeps its seeded local settings and hides voice.
-    if (method === 'GET' && path === '/api/settings') {
-      await respond({ error: 'Not part of this fixture' }, 404)
-      return
+    // The hub's settings profile under the hub's own rules, so the seeded
+    // device settings are imported the way a current hub takes them.
+    if (path === '/api/settings' || path === '/api/settings/import') {
+      const snapshot = (): SettingsProfileSnapshot => ({
+        profileId: FIXTURE_SETTINGS_PROFILE_ID,
+        revision: state.settings.revision,
+        values: structuredClone(state.settings.values),
+      })
+      try {
+        if (method === 'GET' && path === '/api/settings') {
+          await respond({ settings: snapshot() })
+          return
+        }
+        if (method === 'POST' && path === '/api/settings/import') {
+          const input = request.postDataJSON() as { deviceId?: string; values: Record<string, unknown> }
+          state.settings = applySettingsImport(
+            state.settings, validateSettingsImport(input.values), input.deviceId,
+          )
+          await respond({ settings: snapshot() })
+          return
+        }
+        if (method === 'PATCH' && path === '/api/settings') {
+          const input = request.postDataJSON() as { deviceId?: string; changes: Record<string, unknown> }
+          const result = applySettingsChanges(
+            state.settings, validateSettingsChanges(input.changes), input.deviceId,
+          )
+          state.settings = result.record
+          await respond({ settings: snapshot(), conflicts: result.conflicts } satisfies SettingsUpdateResult)
+          return
+        }
+      } catch (caught) {
+        if (!(caught instanceof SettingsRequestError)) throw caught
+        failures.push(`Refused settings request: ${caught.message}`)
+        await respond({ error: caught.message }, caught.statusCode)
+        return
+      }
     }
+    // A current hub with voice switched off, so Conversation mode stays hidden.
     if (method === 'GET' && path === '/api/oracle-voice/capabilities') {
-      await respond({ error: 'Not part of this fixture' }, 404)
+      await respond({
+        protocol: ORACLE_VOICE_PROTOCOL,
+        available: false,
+        computerId: 'fixture-hub',
+        computerName: 'Hub',
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        playbackSampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        languages: [],
+        sttProfile: '',
+        ttsVoice: '',
+        resourceClass: 'low',
+        limits: { maxFrameBytes: 32 * 1024, maxQueueBytes: 384_000, maxUtteranceMs: 30_000 },
+        reason: 'Oracle voice is disabled (AGENTIC_REMOTE_ORACLE_VOICE=on to enable).',
+      } satisfies VoiceCapabilities)
       return
     }
     if (method === 'GET' && path === '/api/sessions') {

@@ -412,9 +412,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 232,
+  "communities": 215,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19981,
+  "edges": 19985,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -453,7 +453,7 @@
     "config/agentic-remote-promotion.env.example": "7421cf1c776017a99109438896cc03669f4808b0b682822c7e41c09084288632",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "f852d0b6008607952045492ba1661967668af95cf18c739f40a04a7a98ee006b",
+    "docs/app-spec.md": "859c41f06f54ba2f6f351526e1197ef45b29f73dc9d96c39d7de95dc8ad8388e",
     "docs/architecture.md": "a0b949d5e752b96d53f064e96944a7d0590f0ecb34982e95007a993298927cb0",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -509,7 +509,7 @@
     "e2e/screenshot-stability.ts": "7f52b64902d7dc77c02cd11a69682dd46f3c6028d19221098794ef31d2c7e16a",
     "e2e/session-patch-browser.ts": "c311e0dabbcd4d4e14e75ae707d9098ad7403889fe5ed6e1f22d4b6b96ea7985",
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
-    "e2e/workspace-fixtures.ts": "17f3951213ccee0d20db5bf2ef49bed3c353b29472a9d80ad43a38403c30a087",
+    "e2e/workspace-fixtures.ts": "7f6a9ecab4a9e6998eeaef6639ece2e17182d0acb9b02d2a45b435f3b359fca5",
     "fixtures/voice/README.md": "c85318f655ee28bee3957558d215a36526cb93f8f9826d3dc05fe4019e59345e",
     "fixtures/voice/en-false-start.wav": "2272d8ae82743ae34ebf2018db4c294d89b1a9d0e0dcbda7dfff580ca8771355",
     "fixtures/voice/en-long-male-clean.wav": "08a5352989b38877f086d3022161e8606bcb90e6febef223f9593994c9c9d2d7",
@@ -866,7 +866,7 @@
     "src/features/prompts/PromptCards.test.tsx": "53427c6b4d7ff7ece561d930f35ea9921e2b75b11b487670660a0d00f5767479",
     "src/features/prompts/PromptCards.tsx": "6d23f53748d6c60de9e4f47f0b6c36c1776586f69009ad3c53ec3680547fcafd",
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
-    "src/index.css": "b914fbd9ffd270004e52bca8e633dfeb63977cf3cf8387927dfce012ca5f054b",
+    "src/index.css": "a4383ecd0243f697fd2961cef857266fbf62ed8a2409e9262940af6bc8193705",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -929,7 +929,7 @@
     "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
   },
   "mode": "local-ast-only",
-  "nodes": 7186,
+  "nodes": 7187,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1031,15 +1031,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "5eb3d344c9e70e89686d8fc7327e59104b3ac9f4d86f3d9446b86bbdc62952f2",
-    "communities.json": "a3bf4f9a02e4ff6c97ea12e2ecab39ca4eba54459d37eaaa78b258730280cbf3",
-    "graph.html": "1646322ce25755056c376c4ffb7345be615428a5e6ed6f8b48acd8881603d259",
-    "graph.json": "ccc71e87d1683cb760551b32ade204075712a4c7c0c0c9bed1f8704d2c124dd1"
+    "GRAPH_REPORT.md": "e3031c516bfd14866200ba5edda9bedd7f6c08d67937d0f08dbfd8f308f9ad3e",
+    "communities.json": "65f3c789f2befe015fa5b989f0ce391065985b967462662f11d59a7953b0090d",
+    "graph.html": "373e3fd1b02c24934e4d6bbe5a584069fd5e61e5d5589b49d28da67b999db7d4",
+    "graph.json": "2e0fc184027ae94cb48d87a3c5a97f1079160d22b3be249eecc4791768efc3d5"
   },
   "schema_version": 1,
-  "source_commit": "e52bb8f098a94615947b77ac8ba257eb95f6096f",
-  "source_fingerprint": "ee8f515ee3f8eaeee7fb89ddccf4e1887770b11b07d77d61f73be5c90d1d32d1",
+  "source_commit": "da9d2df65bfe78f85c0cb5b6dcd5e075c3e74e33",
+  "source_fingerprint": "7717afc2e9e53d11017ee19833e183c180cf7ccb4033b0ebd8313a095c12e3c1",
   "working_tree_changes": [
-    "server/send-matrix.integration.test.ts"
+    "docs/app-spec.md",
+    "e2e/workspace-fixtures.ts",
+    "src/index.css"
   ]
 }

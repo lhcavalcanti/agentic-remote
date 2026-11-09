@@ -7701,6 +7701,9 @@ button {
   grid-column: 3;
   width: var(--oracle-width, 440px);
   min-width: 0;
+  /* Like the sidebar and workspace: a grid item's automatic minimum is its
+     content, which would let the transcript, not the window, set the row. */
+  min-height: 0;
   box-shadow: none;
 }
 

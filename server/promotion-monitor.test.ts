@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -50,6 +50,7 @@ interface Fixture {
   releases: string
   profile: string
   callLog: string
+  testLock: string
   env: NodeJS.ProcessEnv
 }
 
@@ -66,6 +67,8 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
   const bin = path.join(root, 'bin')
   const state = path.join(root, 'state')
   const callLog = path.join(root, 'calls.log')
+  // Never the host's real lock: a gate running this suite holds that one.
+  const testLock = path.join(root, 'test.lock')
 
   await mkdir(bin, { recursive: true })
   await mkdir(releases, { recursive: true })
@@ -171,6 +174,15 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
       '  flock "$PAUSE_RACE_DIR/pause.lock" bash -c \'touch "$1"; sleep 1; printf "paused_at=2026-10-01T18:39:55Z\\nreason=racing pause\\n" >"$2"\' _ "$PAUSE_RACE_DIR/.race-held" "$PAUSE_RACE_DIR/promotion-paused" </dev/null >/dev/null 2>&1 &',
       '  while [[ ! -e "$PAUSE_RACE_DIR/.race-held" ]]; do sleep 0.02; done',
       'fi',
+      'if [[ "${*: -1}" == "test" && -n "${TEST_LOCK_PROBE:-}" ]]; then',
+      '  if flock -n "$TEST_LOCK_PROBE" true; then state=free; else state=held; fi',
+      '  printf "test-lock %s during test\\n" "$state" >>"$CALL_LOG"',
+      'fi',
+      // A process the suite leaves running, such as a tmux server.
+      'if [[ "${*: -1}" == "test" && -n "${PNPM_TEST_ORPHAN:-}" ]]; then',
+      '  sleep 30 </dev/null >/dev/null 2>&1 &',
+      '  printf "%s" "$!" >"$PNPM_TEST_ORPHAN"',
+      'fi',
       'if [[ "${*: -1}" == "test" ]]; then exit "${PNPM_TEST_EXIT:-0}"; fi',
       'exit "${COREPACK_EXIT:-0}"',
     ].join('\n'),
@@ -234,6 +246,7 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
     AGENTIC_REMOTE_MONITOR_DOWNSTREAM_SSH: 'ssh',
     AGENTIC_REMOTE_MONITOR_READY_ATTEMPTS: '2',
     AGENTIC_REMOTE_MONITOR_READY_INTERVAL: '1',
+    AGENTIC_REMOTE_MONITOR_TEST_LOCK: testLock,
     ...overrides,
   }
   const profile = path.join(root, 'profile.env')
@@ -265,6 +278,7 @@ async function fixture(overrides: Record<string, string> = {}): Promise<Fixture>
     releases,
     profile,
     callLog,
+    testLock,
     env: {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
@@ -284,8 +298,50 @@ async function installVitest(checkout: string): Promise<void> {
   await stub(bin, 'vitest', [
     'printf "canary-env in=%s tmux=%s tmux_tmpdir=%s tmpdir=%s ci=%s copilot_bin=%s copilot_home=%s\\n" \\',
     '  "$(pwd -P)" "${TMUX-<unset>}" "${TMUX_TMPDIR-}" "${TMPDIR-}" "${CI-}" "${COPILOT_BIN-}" "${COPILOT_HOME-}" >>"$CALL_LOG"',
+    'if [[ -n "${TEST_LOCK_PROBE:-}" ]]; then',
+    '  if flock -n "$TEST_LOCK_PROBE" true; then state=free; else state=held; fi',
+    '  printf "test-lock %s during canary\\n" "$state" >>"$CALL_LOG"',
+    'fi',
     '[[ -z "${CANARY_FAIL_ROOT:-}" || "$(pwd -P)" != "$CANARY_FAIL_ROOT" ]] || exit 1',
   ].join('\n'))
+}
+
+// Holds the host's test lock the way a running full gate does, until released.
+async function holdTestLock(context: Fixture): Promise<() => Promise<void>> {
+  const held = path.join(context.root, 'test-lock-held')
+  const release = path.join(context.root, 'test-lock-release')
+  const holder = spawn(
+    'flock',
+    [
+      context.testLock,
+      'bash',
+      '-c',
+      'touch "$1"; for _ in $(seq 600); do [[ -e "$2" ]] && exit; sleep 0.05; done',
+      '_',
+      held,
+      release,
+    ],
+    { stdio: 'ignore' },
+  )
+  const exited = new Promise((resolve) => holder.once('exit', resolve))
+  while (!existsSync(held)) await new Promise((resolve) => setTimeout(resolve, 20))
+  return async () => {
+    await writeFile(release, '')
+    await exited
+  }
+}
+
+async function lockFree(lock: string): Promise<boolean> {
+  const deadline = Date.now() + 3_000
+  for (;;) {
+    try {
+      await run('flock', ['-n', lock, 'true'])
+      return true
+    } catch {
+      if (Date.now() > deadline) return false
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
 }
 
 async function addDownstream(context: Fixture, root: string): Promise<void> {
@@ -1742,6 +1798,95 @@ fs.fsyncSync = (fd) => {
   })
 })
 
+describe('promotion monitor test lock', () => {
+  const state = (context: Fixture, name: string) => path.join(context.root, 'state', name)
+
+  it('defers validation while a full gate holds the host test lock, then retries', async () => {
+    const context = await fixture({ AGENTIC_REMOTE_MONITOR_TEST_LOCK_WAIT: '1' })
+    const before = await git(context.runtime, 'rev-parse', 'HEAD')
+    const candidate = await advanceMain(context)
+    const release = await holdTestLock(context)
+
+    const deferred = await monitor(context)
+    await release()
+
+    expect(deferred.code).toBe(0)
+    expect(deferred.output).toContain(`deferring validation of ${candidate} to the next run`)
+    expect((await calls(context)).filter((line) => line.startsWith('corepack-dir '))).toEqual([])
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(before)
+    expect(existsSync(state(context, 'validate'))).toBe(false)
+    expect(existsSync(state(context, 'pending-promotion'))).toBe(false)
+
+    const retried = await monitor(context)
+
+    expect(retried.code).toBe(0)
+    expect(retried.output).toContain('retrying the unrecorded production state')
+    expect(await git(context.runtime, 'rev-parse', 'HEAD')).toBe(candidate)
+    expect(await readFile(state(context, 'last-graduated-commit'), 'utf8')).toBe(`${candidate}\n`)
+  })
+
+  it('holds the host test lock through validation and the canary, and no longer', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+    const orphanFile = path.join(context.root, 'orphan.pid')
+
+    const result = await monitor(context, {
+      TEST_LOCK_PROBE: context.testLock,
+      PNPM_TEST_ORPHAN: orphanFile,
+    })
+    const orphan = Number(await readFile(orphanFile, 'utf8'))
+
+    try {
+      expect(result.code).toBe(0)
+      expect((await calls(context)).filter((line) => line.startsWith('test-lock '))).toEqual([
+        'test-lock held during test',
+        'test-lock held during canary',
+      ])
+      // A process the suite left running must not keep later gates queued.
+      expect(() => process.kill(orphan, 0)).not.toThrow()
+      expect(await lockFree(context.testLock)).toBe(true)
+    } finally {
+      try {
+        process.kill(orphan)
+      } catch {
+        // Already gone.
+      }
+    }
+  })
+
+  it('fails rather than deferring forever when the host test lock cannot be opened', async () => {
+    const context = await fixture()
+    await advanceMain(context)
+    const readOnly = path.join(context.root, 'read-only')
+    await mkdir(readOnly, { mode: 0o500 })
+
+    const result = await monitor(context, {
+      AGENTIC_REMOTE_MONITOR_TEST_LOCK: path.join(readOnly, 'gate.lock'),
+    })
+    await chmod(readOnly, 0o700)
+
+    expect(result.code).not.toBe(0)
+    expect(result.output).toContain("could not take this host's test lock")
+    expect(result.output).not.toContain('deferring')
+    expect(existsSync(state(context, 'pending-promotion'))).toBe(false)
+  })
+
+  it('rolls back an interrupted promotion without waiting for the host test lock', async () => {
+    const { context, previous } = await healthyReleaseFixture(true)
+    expect((await monitor(context, { SETUP_KILL_AFTER_ACTIVATION: '1' })).code).not.toBe(0)
+    const release = await holdTestLock(context)
+
+    const recovery = await monitor(context, { AGENTIC_REMOTE_MONITOR_TEST_LOCK_WAIT: '20' })
+    await release()
+
+    expect(recovery.code).not.toBe(0)
+    expect(recovery.output).toContain('the previous runtime was restored')
+    expect(recovery.output).not.toContain('test lock')
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(previous)
+    expect(existsSync(state(context, 'pending-promotion'))).toBe(false)
+  })
+})
+
 describe('promotion monitor host canary', () => {
   async function canaryRuns(context: Fixture): Promise<Record<string, string>[]> {
     return (await calls(context))
@@ -1924,6 +2069,20 @@ describe('promotion monitor host canary', () => {
     expect(await git(context.remote, 'rev-parse', 'HEAD')).toBe(candidate)
     expect(await readFile(state(context, 'last-graduated-commit'), 'utf8')).toBe(`${candidate}\n`)
     expect(existsSync(state(context, 'pending-promotion'))).toBe(false)
+  })
+
+  it('keeps a locally verified promotion pending while the host test lock stays busy', async () => {
+    const { context, candidate, published, resumedCalls } = await interruptedAtLocalVerified()
+    const release = await holdTestLock(context)
+
+    const deferred = await monitor(context, { AGENTIC_REMOTE_MONITOR_TEST_LOCK_WAIT: '1' })
+    await release()
+
+    expect(deferred.code).toBe(0)
+    expect(deferred.output).toContain(`deferring re-verification of ${candidate} to the next run`)
+    expect((await resumedCalls()).filter((line) => line.startsWith('canary-env '))).toEqual([])
+    expect(await realpath(path.join(context.releases, 'current'))).toBe(published)
+    expect(JSON.parse(await readFile(state(context, 'pending-promotion'), 'utf8')).phase).toBe('local-verified')
   })
 
   it('rolls back and clears the journal when the local canary fails while resuming', async () => {

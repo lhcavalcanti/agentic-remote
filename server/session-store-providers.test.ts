@@ -973,7 +973,7 @@ describe('Provider queue persistence boundaries', () => {
     })])
     for (const prompt of waiting) await store.enqueuePrompt('session', prompt)
     await drainTerminal(service)
-    expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', 'Immediate prompt', false)
+    expect(terminal.send).toHaveBeenCalledExactlyOnceWith('session', 'Immediate prompt', false, { confirm: expect.any(Function) })
     expect(store.terminalQueueDispatch('session')).toBeUndefined()
     expect(store.get('session')?.queuedCount).toBe(2)
     finish()
@@ -987,7 +987,7 @@ describe('Provider queue persistence boundaries', () => {
     vi.mocked(Date.now).mockReturnValue(Date.now() + 1_000)
     await service.refreshTranscripts()
     expect(terminal.send.mock.calls).toEqual([
-      ['session', 'Immediate prompt', false], ['session', 'first', false],
+      ['session', 'Immediate prompt', false, { confirm: expect.any(Function) }], ['session', 'first', false],
     ])
     expect(store.get('session')?.queuedPrompts).toEqual([expect.objectContaining({ id: 'second' })])
   })
@@ -1415,7 +1415,7 @@ describe('Provider queue persistence boundaries', () => {
       expect(store.get(setup.replacement())).toBeUndefined()
       expect((await service.openSession(sessionId)).id).toBe(sessionId)
       await service.sendMessage(sessionId, 'Continue the original conversation')
-      expect(terminal.send).toHaveBeenCalledWith(sessionId, 'Continue the original conversation', false)
+      expect(terminal.send).toHaveBeenCalledWith(sessionId, 'Continue the original conversation', false, { confirm: expect.any(Function) })
       expect(client.resumeSession).not.toHaveBeenCalled()
     })
 

@@ -407,14 +407,15 @@
     "src/voice-recorder.test.ts",
     "src/voice-recorder.ts",
     "tsconfig.app.json",
+    "tsconfig.e2e.json",
     "tsconfig.json",
     "tsconfig.node.json",
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 216,
+  "communities": 225,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19995,
+  "edges": 20015,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -923,13 +924,14 @@
     "src/voice-recorder.test.ts": "233efe2e6c66d7fb78706918bebf21f6115e36491fbcd9af9fe389185c8d59bf",
     "src/voice-recorder.ts": "b01fad559d219bb7290666a30c315939a8ca53ca30a14d2b5255455c466dd2b4",
     "tsconfig.app.json": "9db467556a29303882f9844ff4a1607ac9ee47225b42c0589cb348cf913b4bb3",
+    "tsconfig.e2e.json": "c7248ff9c9af9bf2810a1c971dba8f649abffadb84539ce83ad6189d76cc866f",
     "tsconfig.json": "242dae217ea032b973140c1c150c29dbca637930596881e1e7b8abf82b0bfe3b",
     "tsconfig.node.json": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8",
     "tsconfig.server.json": "c3022e22834e731724ffa817c01bd2e4654184f9031945ffcbff4f489dca93bb",
     "vite.config.ts": "0713031ddabc3c3152463d4b15bde29578cbcfc2b597b752a07bab890861fe15"
   },
   "mode": "local-ast-only",
-  "nodes": 7191,
+  "nodes": 7212,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1031,23 +1033,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "90c419b17e9ebcad4fc788ab4ba0e034bd49823ff15554567f65e83ff4b6d9d6",
-    "communities.json": "b308a732fe9ea4ea83fb792202b6947833a7899ae1075b68bfa5e15ac1b6abf5",
-    "graph.html": "d2390b6f2bd531aa7935a9d78bf0e2c9761274b78fb4be464b2ac1bc345909c8",
-    "graph.json": "9c6b069d904598e5547dd48af01b8a81dd2199056788b8c64aef621cb392a9dd"
+    "GRAPH_REPORT.md": "dba177a425ab82049c0e08b5ac20448e7f0f654cf0fc3ce2ec1c9214d4b51cb0",
+    "communities.json": "7b2ac30174147614e5fe298cccf75904083a663b509585a0319adf937e8e47a8",
+    "graph.html": "b12394c8871b5f5e5d5715b51a7e6a6280cf0549713e7a1c0b1d74a515123b9a",
+    "graph.json": "69fbe9b30dd0ea579ee9880889e402a38d43d689a2cff21936cceff4f591038a"
   },
   "schema_version": 1,
-  "source_commit": "c2011849fcada4efb942b9a78df280d2ef04aca6",
-  "source_fingerprint": "51df218c2b506048b56421053e4915a920f563f5ade1de30bd0650e89b061703",
-  "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    "e2e/fixtures/fake-vad.ts",
-    "e2e/fixtures/fake-voice.ts",
-    "e2e/workspace-fixtures.ts",
-    "scripts/oracle-voice-benchmark.test.ts",
-    "scripts/oracle-voice-benchmark.ts",
-    "server/remote-node-client.ts",
-    "tsconfig.json",
-    "vite.config.ts"
-  ]
+  "source_commit": "6b71b94830fec6a74cef9f6c9e01ceec41064f90",
+  "source_fingerprint": "ab6fe35a1a1034d9f4793bb4c1665ade69279ea5186ba9ad1749dd8c51dd99b3",
+  "working_tree_changes": []
 }

@@ -504,6 +504,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
     sessionOrder: {
       revision: 1,
       bootstrapped: true,
+      showSuspended: true,
       order: Object.fromEntries(
         fixtureComputers.map((computer) => [
           computer.id,
@@ -756,6 +757,7 @@ export async function setupWorkspaceFixture(
       }
       if (!state.sessionOrder.bootstrapped) {
         state.sessionOrder = {
+          ...state.sessionOrder,
           revision: state.sessionOrder.revision + 1,
           bootstrapped: true,
           order: structuredClone(input.order),

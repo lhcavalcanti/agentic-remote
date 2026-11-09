@@ -412,15 +412,15 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 228,
+  "communities": 216,
   "community_algorithm": "louvain-seed-42",
-  "edges": 19987,
+  "edges": 19995,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
     ".github/copilot-instructions.md": "03d9664de9489495b64bdda845ea7419e677bfa6b14145e03cd9fcc6cca79a30",
     ".github/dependabot.yml": "d65b7cd858cbaba3b03b8fbeba7937380ccc19a28d5ad4b80242014242ba6a67",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "3bda1b711e0e090ae2321e755a31870b783a1aa56c0752467cec4d34c94f53b3",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "7b8ff518a0a6530f67ab3b4350a36380b28eb2d76ef4112161c1a5999d2a9b33",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -498,8 +498,8 @@
     "e2e/capture-workbench-review.ts": "0c19d55997cf62800b731c21431051645e46d487214e646a85d9cf01f649e705",
     "e2e/capture-workspace.ts": "9e4822a55a435bfdc8cc739dfa30fe550ac5a9d421a8cbd51bbb1a6187cc2dcc",
     "e2e/check-workspace-review-regressions.ts": "4af0c558cd0ef02f001e3d627739da338faa88590a96e38a79edd57c46a17f56",
-    "e2e/fixtures/fake-vad.ts": "fea5aea17e7e3236fdb3fe69c9bb1ac15a4f09ff10af5701eba3e0df544f6b59",
-    "e2e/fixtures/fake-voice.ts": "11acdc36a28b846a1cb26e3e0a72cdc74671f08eccb71588bd051af7a70810a9",
+    "e2e/fixtures/fake-vad.ts": "af55cfc7a2df0f8f7a819b82f000ae06c60b6916bbd23c775481ffa1c7d0e8e6",
+    "e2e/fixtures/fake-voice.ts": "33d7296553761b304dcbd8d6f3c223b7246f95d2593a274e575af2ab5c77b400",
     "e2e/fixtures/real-voice.ts": "58eb995cf6e4f694f915d14af35334df0155749813d22929bbb1f7ecdd19c26a",
     "e2e/nested-knowledge.pw.ts": "81eef00b2f302820e5efb66c32619c09d7378583bd3570723ff0b768161c93c9",
     "e2e/oracle-conversation-real.test.ts": "b13c24bb2dd23c1328031b0b8627f0f44cd46993b45cba6dca34424baef3ca41",
@@ -509,7 +509,7 @@
     "e2e/screenshot-stability.ts": "7f52b64902d7dc77c02cd11a69682dd46f3c6028d19221098794ef31d2c7e16a",
     "e2e/session-patch-browser.ts": "c311e0dabbcd4d4e14e75ae707d9098ad7403889fe5ed6e1f22d4b6b96ea7985",
     "e2e/workspace-fixtures.test.ts": "e16084f40ec339bc289525c92d99f6f252cb42cf0d1cf1729f81ca2308f65f87",
-    "e2e/workspace-fixtures.ts": "17f3951213ccee0d20db5bf2ef49bed3c353b29472a9d80ad43a38403c30a087",
+    "e2e/workspace-fixtures.ts": "34246c562c564bbd35b31d781fa6fee37c55795871ce49014493b0e6e28e6aa1",
     "fixtures/voice/README.md": "c85318f655ee28bee3957558d215a36526cb93f8f9826d3dc05fe4019e59345e",
     "fixtures/voice/en-false-start.wav": "2272d8ae82743ae34ebf2018db4c294d89b1a9d0e0dcbda7dfff580ca8771355",
     "fixtures/voice/en-long-male-clean.wav": "08a5352989b38877f086d3022161e8606bcb90e6febef223f9593994c9c9d2d7",
@@ -538,8 +538,8 @@
     "public/manifest.webmanifest": "d7190bd81bdd5a2cc410e4e55f51a4ca9c3a665a5928b4622ba67e50a966a32c",
     "public/sw.js": "9c9a28180df2933820ac15dd5b3467cc0022f92f91113b13b5f03c8ee2e0f920",
     "scripts/generate-pwa-icons.ts": "06c72f85520e5703fac8998ad7f3ea1bc67ab2989d2db8c9957504209a9b9d51",
-    "scripts/oracle-voice-benchmark.test.ts": "d9f469b6f10f0ade8a7eb7c7d5446cd2dd297bc4621d09f30fe49b8ce08e2748",
-    "scripts/oracle-voice-benchmark.ts": "6082c01f0a218a470478b7374ce276b2373d51190c62cd70577e1af75bfe3ee4",
+    "scripts/oracle-voice-benchmark.test.ts": "772991f50dd457dedf177a5529f14e3d274686ecb00ea5298a5b710ae0777d1f",
+    "scripts/oracle-voice-benchmark.ts": "6b405b9abbdc1771c2f673b1543bf2e2519680df681402cc61a63ae0d3f85983",
     "scripts/oracle-voice-engine-smoke-output.test.ts": "d001475e5a01eae5ce27385c64045abf6ad19f976bafbb1ec7ffaf2c3f0fef51",
     "scripts/oracle-voice-engine-smoke-output.ts": "d792e51b522b0aaa703604f13db7a1111bf7656baa54c27f7a6106dec1d49b8d",
     "scripts/oracle-voice-engine-smoke.ts": "8b115f5f463ed55e928f870441efedea4bb9396e60f5f67a828c0a5ee07c9b7c",
@@ -694,7 +694,7 @@
     "server/refusal-metrics.ts": "b89728ec3ba5d2f0a487c9e9d42a50cb2f1e817bee29e984eb7ce03e249ce11d",
     "server/release-publication.test.ts": "50777f86c4889c312bb6310ba4cbc07da19a4fc261db8a94f003e146993a13f7",
     "server/remote-node-client.test.ts": "8dca6533afcd4d809e3f7f4063d381c2797cae3c95594776aaa2518cfc8c3bd4",
-    "server/remote-node-client.ts": "248646699a0d202feea58c2f26cedb333cb9292656cacc1f87650a738f12c684",
+    "server/remote-node-client.ts": "dac0d657fc2fb3734117c939ce6335563d95a79807b2282096e548bd3c03a627",
     "server/remote-node-errors.ts": "9e56c83b925976648587e98da0d6becec0c43d15edadc1811f564912f2792c76",
     "server/remote-voice-client.test.ts": "16e8c31f055a519f64cd0760e8c5c979113dc344c4d7435630211a92ed3f7856",
     "server/remote-voice-client.ts": "a240dec15c9d4778373260b2025a5a2b77629fa26615019ee3da59e9a96ebfc4",
@@ -923,13 +923,13 @@
     "src/voice-recorder.test.ts": "233efe2e6c66d7fb78706918bebf21f6115e36491fbcd9af9fe389185c8d59bf",
     "src/voice-recorder.ts": "b01fad559d219bb7290666a30c315939a8ca53ca30a14d2b5255455c466dd2b4",
     "tsconfig.app.json": "9db467556a29303882f9844ff4a1607ac9ee47225b42c0589cb348cf913b4bb3",
-    "tsconfig.json": "91434fd9d32940ba5f1347be26f2c7ff676e7c1e203dba03e9986d71915755ff",
+    "tsconfig.json": "242dae217ea032b973140c1c150c29dbca637930596881e1e7b8abf82b0bfe3b",
     "tsconfig.node.json": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8",
     "tsconfig.server.json": "c3022e22834e731724ffa817c01bd2e4654184f9031945ffcbff4f489dca93bb",
-    "vite.config.ts": "d068299a0db02f266eb22a891d38fcc3c642106a41890f5b3cf5ce47b127ef4e"
+    "vite.config.ts": "0713031ddabc3c3152463d4b15bde29578cbcfc2b597b752a07bab890861fe15"
   },
   "mode": "local-ast-only",
-  "nodes": 7190,
+  "nodes": 7191,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1031,17 +1031,23 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "c5b1ac472a105258fb4ef333d218e8af615b8966d3ae0972818aaab8f5541e41",
-    "communities.json": "351161d3b0f6a9894c189b54bb0945bc6a72d380ff35940fd99e2c1f0dd24bb0",
-    "graph.html": "d282a30a8cf0cf7b5c60a9e41f3bedafabdcfea6202b69306c356a3a569bdde6",
-    "graph.json": "735b0d52c0e4abd303af36025203cd71e7d070ba724e91b17482d7aa3fec2f6f"
+    "GRAPH_REPORT.md": "90c419b17e9ebcad4fc788ab4ba0e034bd49823ff15554567f65e83ff4b6d9d6",
+    "communities.json": "b308a732fe9ea4ea83fb792202b6947833a7899ae1075b68bfa5e15ac1b6abf5",
+    "graph.html": "d2390b6f2bd531aa7935a9d78bf0e2c9761274b78fb4be464b2ac1bc345909c8",
+    "graph.json": "9c6b069d904598e5547dd48af01b8a81dd2199056788b8c64aef621cb392a9dd"
   },
   "schema_version": 1,
-  "source_commit": "68d5848f374c396b44136ebfdfd98bdb3451cc29",
-  "source_fingerprint": "8520b824a541ff4ef1b732d009298cef6a90be04c0396460ad4286a918eca908",
+  "source_commit": "c2011849fcada4efb942b9a78df280d2ef04aca6",
+  "source_fingerprint": "51df218c2b506048b56421053e4915a920f563f5ade1de30bd0650e89b061703",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx"
+    ".github/skills/agentic-remote-navigation/SKILL.md",
+    "e2e/fixtures/fake-vad.ts",
+    "e2e/fixtures/fake-voice.ts",
+    "e2e/workspace-fixtures.ts",
+    "scripts/oracle-voice-benchmark.test.ts",
+    "scripts/oracle-voice-benchmark.ts",
+    "server/remote-node-client.ts",
+    "tsconfig.json",
+    "vite.config.ts"
   ]
 }

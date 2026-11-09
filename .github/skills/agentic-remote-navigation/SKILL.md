@@ -245,6 +245,11 @@ bin/agentic-remote-gate <PR>    # merge gate: both checks on the exact head
   `pnpm test` still runs each file once, serially. Add a new real-tmux file to
   `canaryTests` or `tmuxTests` in `vite.config.ts`; otherwise it lands in
   `fast`, which must pass without tmux, Copilot, or Claude.
+- `tsconfig.e2e.json` type-checks `e2e/` with the DOM and the server its
+  fixtures boot, so `tsc -b` catches fixture drift. The fixtures' own unit
+  tests run in `fast`; Playwright specs (`*.pw.ts`,
+  `e2e/oracle-conversation*.test.ts`) stay out of Vitest, and neither the gate
+  nor hosted CI runs `pnpm test:e2e` (#538).
 - `.github/workflows/light-check.yml` is an advisory hosted check on ready pull
   request heads, on Node 22 (the `engines` floor): install, lint, `tsc -b`,
   `vite build`, and `pnpm test:quick`, sized to one billed minute (about

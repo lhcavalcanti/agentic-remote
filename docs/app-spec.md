@@ -508,7 +508,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   IME composition.
 - On desktop, Oracle opens as a non-modal overlay by default and MAY be pinned
   beside the working session with the visible **Dock Oracle** control in its
-  header; the same control becomes **Undock Oracle** while pinned.
+  header; the same control becomes **Undock Oracle** while pinned. Pinned, it
+  is exactly the window's height: its transcript scrolls inside the panel, and
+  neither its composer nor the session's leaves the window.
   `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles
   that choice while Oracle is open. App settings MUST NOT expose a second
   placement control. Both placements are resizable from the panel's left edge

@@ -1,5 +1,21 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
+import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
+import {
+  ORACLE_VOICE_PROTOCOL,
+  ORACLE_VOICE_SAMPLE_RATE,
+  type VoiceCapabilities,
+} from '../shared/oracle-voice'
+import {
+  applySettingsChanges,
+  applySettingsImport,
+  SettingsRequestError,
+  validateSettingsChanges,
+  validateSettingsImport,
+  type SettingsProfileRecord,
+  type SettingsProfileSnapshot,
+  type SettingsUpdateResult,
+} from '../shared/settings-profile'
 import type { KnowledgePosition } from '../src/knowledge-position'
 import type {
   BackgroundTaskSnapshot,
@@ -481,7 +497,10 @@ export interface WorkspaceFixtureState {
   sessionOrder: SessionOrderSnapshot
   eventSockets: Set<WebSocketRoute>
   nextRootId: number
+  settings: SettingsProfileRecord
 }
+
+const FIXTURE_SETTINGS_PROFILE_ID = 'fixture-settings'
 
 export function createWorkspaceFixtureState(): WorkspaceFixtureState {
   const roots = structuredClone(fixtureKnowledgeRoots)
@@ -504,6 +523,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
     sessionOrder: {
       revision: 1,
       bootstrapped: true,
+      showSuspended: true,
       order: Object.fromEntries(
         fixtureComputers.map((computer) => [
           computer.id,
@@ -515,6 +535,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
     },
     eventSockets: new Set(),
     nextRootId: 1,
+    settings: { revision: 0, values: {}, keyRevisions: {} },
   }
 }
 
@@ -525,6 +546,23 @@ export interface WorkspaceFixture {
   failures: string[]
   assertHealthy: () => void
   emit: (event: HubEvent) => void
+}
+
+// The only message the app sends on its event socket here: whether Oracle is on screen.
+function isPresenceReport(message: string | Buffer): boolean {
+  if (typeof message !== 'string') return false
+  try {
+    const report: unknown = JSON.parse(message)
+    return (
+      typeof report === 'object' &&
+      report !== null &&
+      Object.keys(report).length === 2 &&
+      (report as { type?: unknown }).type === 'presence' &&
+      typeof (report as { oracleVisible?: unknown }).oracleVisible === 'boolean'
+    )
+  } catch {
+    return false
+  }
 }
 
 function fixtureValue<T>(values: Record<string, T>, key: string): T | undefined {
@@ -646,8 +684,10 @@ export async function setupWorkspaceFixture(
       if (url.pathname === '/api/events') {
         eventSockets.add(socket)
         socket.onClose(() => eventSockets.delete(socket))
-        socket.onMessage(() => {
-          failures.push('Unexpected client message on fixture /api/events')
+        socket.onMessage((message) => {
+          if (!isPresenceReport(message)) {
+            failures.push('Unexpected client message on fixture /api/events')
+          }
         })
         return
       }
@@ -717,6 +757,78 @@ export async function setupWorkspaceFixture(
       })
       return
     }
+    if (method === 'GET' && path === '/api/manager/dreamer') {
+      await respond({
+        available: true,
+        revision: 0,
+        settings: { enabled: false, timeZone: 'UTC' },
+        tasks: [],
+      } satisfies DreamerSnapshot)
+      return
+    }
+    // The hub's settings profile under the hub's own rules, so the seeded
+    // device settings are imported the way a current hub takes them.
+    if (path === '/api/settings' || path === '/api/settings/import') {
+      const snapshot = (): SettingsProfileSnapshot => ({
+        profileId: FIXTURE_SETTINGS_PROFILE_ID,
+        revision: state.settings.revision,
+        values: structuredClone(state.settings.values),
+      })
+      // Like the hub, tells the open devices only when a commit changed something.
+      const announce = (before: number) => {
+        if (state.settings.revision !== before) emit({ type: 'settings.updated', settings: snapshot() })
+      }
+      try {
+        if (method === 'GET' && path === '/api/settings') {
+          await respond({ settings: snapshot() })
+          return
+        }
+        if (method === 'POST' && path === '/api/settings/import') {
+          const input = request.postDataJSON() as { deviceId?: string; values: Record<string, unknown> }
+          const before = state.settings.revision
+          state.settings = applySettingsImport(
+            state.settings, validateSettingsImport(input.values), input.deviceId,
+          )
+          announce(before)
+          await respond({ settings: snapshot() })
+          return
+        }
+        if (method === 'PATCH' && path === '/api/settings') {
+          const input = request.postDataJSON() as { deviceId?: string; changes: Record<string, unknown> }
+          const before = state.settings.revision
+          const result = applySettingsChanges(
+            state.settings, validateSettingsChanges(input.changes), input.deviceId,
+          )
+          state.settings = result.record
+          announce(before)
+          await respond({ settings: snapshot(), conflicts: result.conflicts } satisfies SettingsUpdateResult)
+          return
+        }
+      } catch (caught) {
+        if (!(caught instanceof SettingsRequestError)) throw caught
+        failures.push(`Refused settings request: ${caught.message}`)
+        await respond({ error: caught.message }, caught.statusCode)
+        return
+      }
+    }
+    // A current hub with voice switched off, so Conversation mode stays hidden.
+    if (method === 'GET' && path === '/api/oracle-voice/capabilities') {
+      await respond({
+        protocol: ORACLE_VOICE_PROTOCOL,
+        available: false,
+        computerId: 'fixture-hub',
+        computerName: 'Hub',
+        sampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        playbackSampleRate: ORACLE_VOICE_SAMPLE_RATE,
+        languages: [],
+        sttProfile: '',
+        ttsVoice: '',
+        resourceClass: 'low',
+        limits: { maxFrameBytes: 32 * 1024, maxQueueBytes: 384_000, maxUtteranceMs: 30_000 },
+        reason: 'Oracle voice is disabled (AGENTIC_REMOTE_ORACLE_VOICE=on to enable).',
+      } satisfies VoiceCapabilities)
+      return
+    }
     if (method === 'GET' && path === '/api/sessions') {
       await respond({
         sessions,
@@ -758,6 +870,7 @@ export async function setupWorkspaceFixture(
         state.sessionOrder = {
           revision: state.sessionOrder.revision + 1,
           bootstrapped: true,
+          showSuspended: state.sessionOrder.showSuspended,
           order: structuredClone(input.order),
         }
         emit({ type: 'session.order.updated', order: state.sessionOrder })

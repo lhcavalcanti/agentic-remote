@@ -532,7 +532,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   to latest** over the conversation's bottom right; returning to the end,
   Scroll to latest, or sending a message, typed or spoken in this tab's
   Conversation, follows again. A newly pending confirmation MUST come into
-  view, since it needs an answer.
+  view, since it needs an answer, while a reader who had scrolled up stays
+  paused so later text leaves it in view.
 - Oracle's non-empty message draft and queued-message edit MUST be saved in
   versioned browser storage independently of whether the panel is open,
   docked, overlaid, or moved by a responsive layout. A remount or reload MUST

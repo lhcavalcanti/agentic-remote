@@ -1737,6 +1737,33 @@ describe('ManagerAssistant', () => {
       expect(list.scrollTop).toBe(600)
     })
 
+    it('keeps a reader it brought to a new confirmation paused, so later text leaves it in view', async () => {
+      const { emit } = setup(conversation)
+      await openPanel()
+      const list = screen.getByRole('list', { name: 'Oracle conversation' })
+      scrollTo(list, 600)
+      emit({
+        type: 'manager.message',
+        message: {
+          id: 'c1', role: 'activity', content: 'Close "Docs"? Its PR merged.', createdAt: 't', tool: 'close_session', sessionRefs: [docs],
+          confirmation: { kind: 'close-session', ...docs, state: 'pending' },
+        },
+      })
+      expect(list.scrollTop).toBe(2000)
+      // The browser reports the scroll that bringing it into view caused.
+      fireEvent.scroll(list)
+
+      measure(list, 2400, 2000)
+      emit({ type: 'manager.delta', messageId: 'r2', content: 'Meanwhile' })
+      expect(list.scrollTop).toBe(2000)
+      expect(screen.getByRole('button', { name: 'Scroll to latest' })).toBeInTheDocument()
+
+      scrollTo(list, 2000, 2400)
+      measure(list, 2600, 2000)
+      emit({ type: 'manager.delta', messageId: 'r2', content: 'Meanwhile, more' })
+      expect(list.scrollTop).toBe(2600)
+    })
+
     it('keeps a following reader at the end as a queued message starts and Oracle starts thinking', async () => {
       const queued: ManagerMessage = { id: 'u3', role: 'user', content: 'And the tests?', createdAt: 't', state: 'queued' }
       const { emit } = setup({ ...conversation, status: 'idle', messages: [...conversation.messages, queued] })

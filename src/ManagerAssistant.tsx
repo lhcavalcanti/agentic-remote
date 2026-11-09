@@ -667,6 +667,17 @@ export function ManagerAssistant({
     const list = listRef.current
     if (list) list.scrollTop = list.scrollHeight
   }, [setFollowing])
+  // Where bringing the end into view moved a reader who had scrolled up. The
+  // scroll that causes is not the reader returning to the end.
+  const revealedAtRef = useRef<number | undefined>(undefined)
+  /** Brings the end into view once, leaving a reader who scrolled up paused. */
+  const revealLatest = useCallback(() => {
+    const list = listRef.current
+    if (!list) return
+    const from = list.scrollTop
+    list.scrollTop = list.scrollHeight
+    revealedAtRef.current = !followingRef.current && list.scrollTop !== from ? list.scrollTop : undefined
+  }, [])
   // A transcript that appears, as Oracle opens or a conversation starts,
   // starts at its end.
   const transcriptRef = useCallback((list: HTMLOListElement | null) => {
@@ -863,12 +874,13 @@ export function ManagerAssistant({
   }, [snapshot])
 
   // A confirmation needs an answer, so a new one comes into view even for a
-  // reader further up. Answering one leaves the others where they were.
+  // reader further up, who stays paused so later text leaves it in view.
+  // Answering one leaves the others where they were.
   const pendingConfirmations = snapshot?.messages
     .filter((message) => message.confirmation?.state === 'pending')
     .map((message) => message.id)
     .join('\n') ?? ''
-  useOnNewId(pendingConfirmations, followLatest)
+  useOnNewId(pendingConfirmations, revealLatest)
   // The hub sends what you say in Conversation, so a new spoken prompt follows
   // like a typed send. One spoken on another device leaves this reader alone.
   const spokenPrompts = snapshot?.messages
@@ -995,6 +1007,9 @@ export function ManagerAssistant({
   function transcriptScrolled() {
     const list = listRef.current
     if (!list) return
+    const revealedAt = revealedAtRef.current
+    revealedAtRef.current = undefined
+    if (revealedAt !== undefined && Math.abs(list.scrollTop - revealedAt) < 1) return
     // Scrolling up stops following the conversation, and back to its end takes it up again.
     setFollowing(list.scrollHeight - list.scrollTop - list.clientHeight <= followThreshold)
   }

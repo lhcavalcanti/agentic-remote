@@ -685,7 +685,7 @@ describe('agentic-remote-gate', () => {
     await waitFor(f.env.SLEEP_MARK as string)
     const second = await gate(f, [f.prSha, '--repo', REPO, '--no-wait'])
     expect(second.code).not.toBe(0)
-    expect(second.output).toMatch(/another gate is already running/i)
+    expect(second.output).toMatch(/another gate or a promotion validation is already running/i)
     expect((await first.done).code).toBe(0)
     const list = await statuses(f)
     expect(list.some((s) => s.endpoint.endsWith(f.prSha))).toBe(false)

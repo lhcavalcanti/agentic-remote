@@ -341,7 +341,8 @@ and must still change on every build.
    Use `Refs #11` for a partial slice that should leave the issue open.
 5. **Gate the exact final head.** Run `bin/agentic-remote-gate <PR>` once the
    head is final. It clones that SHA afresh, runs `pnpm check` and
-   `NODE_ENV=production pnpm check` serially under a host-wide lock inside a
+   `NODE_ENV=production pnpm check` serially under a host-wide lock (promotion
+   validation takes it too, so a gate can queue behind one) inside a
    credentialless `bwrap` sandbox, with `bwrap` itself started from the
    scrubbed environment (it fails rather than run unsandboxed). The sandbox
    has no host network: install (`--ignore-scripts`) and `pnpm rebuild` reach

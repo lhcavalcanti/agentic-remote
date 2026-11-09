@@ -2353,11 +2353,14 @@ describe('DreamerService', () => {
   it('fences an in-flight plan after disable and keeps the previous plan', async () => {
     const directory = await root()
     let release: (() => void) | undefined
+    let started: (() => void) | undefined
     const blocked = new Promise<void>((resolve) => { release = resolve })
+    const plannerStarted = new Promise<void>((resolve) => { started = resolve })
     const service = new DreamerService(directory, options(
       () => new Date('2026-10-29T04:00:00.000Z'),
       {
         planner: async (input) => {
+          started?.()
           await blocked
           return input.defaultPlan
         },
@@ -2366,9 +2369,10 @@ describe('DreamerService', () => {
     await service.start()
     const initial = service.snapshot()
     const enabling = service.updateSettings({ revision: initial.revision, enabled: true, timeZone: 'UTC' })
-    await vi.waitFor(() => {
-      expect(service.snapshot().settings.enabled).toBe(true)
-    })
+    // Enabling commits twice: the settings, then the claimed run. Only once the
+    // planner is running is the revision the disable must name settled.
+    await plannerStarted
+    expect(service.snapshot().settings.enabled).toBe(true)
 
     const beforeDisable = service.snapshot()
     const disabling = service.updateSettings({
@@ -2387,11 +2391,14 @@ describe('DreamerService', () => {
   it('does not wait indefinitely for a fenced planner when disabling', async () => {
     const directory = await root()
     let release: (() => void) | undefined
+    let started: (() => void) | undefined
     const blocked = new Promise<void>((resolve) => { release = resolve })
+    const plannerStarted = new Promise<void>((resolve) => { started = resolve })
     const service = new DreamerService(directory, options(
       () => new Date('2026-10-29T04:00:00.000Z'),
       {
         planner: async (input) => {
+          started?.()
           await blocked
           return input.defaultPlan
         },
@@ -2404,7 +2411,8 @@ describe('DreamerService', () => {
       enabled: true,
       timeZone: 'UTC',
     })
-    await vi.waitFor(() => expect(service.snapshot().settings.enabled).toBe(true))
+    await plannerStarted
+    expect(service.snapshot().settings.enabled).toBe(true)
     const disabling = service.updateSettings({
       revision: service.snapshot().revision,
       enabled: false,

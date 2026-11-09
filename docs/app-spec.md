@@ -508,7 +508,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   IME composition.
 - On desktop, Oracle opens as a non-modal overlay by default and MAY be pinned
   beside the working session with the visible **Dock Oracle** control in its
-  header; the same control becomes **Undock Oracle** while pinned.
+  header; the same control becomes **Undock Oracle** while pinned. Pinned, it
+  is exactly the window's height: its transcript scrolls inside the panel, and
+  neither its composer nor the session's leaves the window.
   `Ctrl+Alt+P` on Windows/Linux and `Cmd+Alt+P` on Apple keyboards toggles
   that choice while Oracle is open. App settings MUST NOT expose a second
   placement control. Both placements are resizable from the panel's left edge
@@ -875,6 +877,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   MUST remain distinct and actionable. Background Tasks is the live provider
   task surface; the morning plan is durable review state. Review edits affect
   only the latter, while both participate in the same authoritative refresh.
+  A hub without Dreamer answers 503; that MUST count as its answer, not a
+  failed refresh. Only the session list's own failure MAY report sessions as
+  failed to load; a failure reading the selected session, Oracle, or Dreamer
+  MUST only mark the data stale.
 - A journal-derived plan item is a suggestion only. It MUST say that Oracle has
   not investigated or assigned the work, MUST NOT expose a generic completion
   action, and MUST NOT be treated as execution evidence. Asking Oracle to

@@ -699,7 +699,7 @@
     "server/remote-voice-client.test.ts": "16e8c31f055a519f64cd0760e8c5c979113dc344c4d7435630211a92ed3f7856",
     "server/remote-voice-client.ts": "a240dec15c9d4778373260b2025a5a2b77629fa26615019ee3da59e9a96ebfc4",
     "server/safe-area.test.ts": "528bbfad9c5cf4dca776d0e5e35933790d0a283de02acbc3cb7e88ffcbdf325c",
-    "server/send-matrix.integration.test.ts": "94bf974b75f3b3d41a0cb4d9c53d6998306407d78cd9a000313b7887aa0e459d",
+    "server/send-matrix.integration.test.ts": "4b6d0757c7a79db06d78525afd2cd1a88c801f45500e548e00d0844ee7a1b781",
     "server/service-unit.test.ts": "7b78bab1401fe1ebeec3cedee090e354c4c28b0adabd92c7c1f5e9e9a1803601",
     "server/service-worker.test.ts": "c3dbf4bc25609a9b92360c3e6abc6e298cf7f808bf3434215dac525c50abb997",
     "server/session-admission-lifecycle.test.ts": "3deed16f7b5b8874417103f0bf5b93fa22b6717f4e4b0ae6fc91ee09fe6a07ac",
@@ -1031,16 +1031,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "bf7d35c50d1d2991065ecf4fa2ebb6cd6352d05263b2708bac5c08c5090732f1",
+    "GRAPH_REPORT.md": "c48cf49c99b78a30e7565ad623e838d2e6246117fa572956b382f9005484d0fa",
     "communities.json": "e1c1c36b3947d4ab7c83d53486ea8727e0cf62c147ff479d576d5f4967c1816a",
-    "graph.html": "4cc37c8e352c719c6999a082bc01262c1a36d6fd2fb5d1f0b45c3853045b8878",
-    "graph.json": "52bf50d3030c5e6df87d2893c41e9966066fa423c09fc909f42ea523d964c7e8"
+    "graph.html": "09f53ef6fafd81c8eb911d9ac7bcf7873c9ef82a24b089015f785969d73b97e8",
+    "graph.json": "96bd441373c65252c9ff5a260dae53eb3aacc73c0dbcd347046d0a0694059df6"
   },
   "schema_version": 1,
-  "source_commit": "18aaed8270b985c0ae24f70cb44614af3ee7cbed",
-  "source_fingerprint": "d3a3476075f431b2f6e4ddb948609717346cd395ebb4e690bdeca87a9612e1ff",
+  "source_commit": "2507a363ef9a9674082b9a484fc1ac46fa78e0fe",
+  "source_fingerprint": "a97ab10610c42bc8b8a2e754972fcb6ebed6d3f6a1c947a03200df9cf63bfde6",
   "working_tree_changes": [
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts"
+    "server/send-matrix.integration.test.ts"
   ]
 }

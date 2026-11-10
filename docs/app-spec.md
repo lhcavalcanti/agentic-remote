@@ -996,6 +996,13 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   Agent messages or raw JSON chat output.
 - Streaming content MUST update in place and finish without an empty permanent
   typing indicator.
+- The timeline MUST open at its latest message and keep its end in view
+  through any change to the session (messages, the agent's activity, cards,
+  the queue, or a sent message waiting in its terminal) while the reader is
+  within 48px of that end. Content moving under a reader who did not scroll
+  MUST NOT stop following. Scrolling up stops following and offers **Scroll
+  to latest**; returning to the end, Scroll to latest, or sending a message
+  follows again.
 
 ## 5. Questions and permissions
 

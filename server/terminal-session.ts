@@ -3896,10 +3896,11 @@ export function isTerminalOverlay(pane: string): boolean {
 // The CLI only offers to interrupt while the agent is working, so this marks
 // the frames whose new lines belong to a turn rather than to a command. Just
 // after a prompt is sent, Copilot 1.0.98 offers to edit it instead. Copilot
-// 1.0.106 offers Ctrl+C, and can cut its word away.
+// 1.0.106 offers Ctrl+C, which counts only on the busy row its grammar knows:
+// at a prompt that is not working, Ctrl+C clears it or starts quitting.
 export function isTerminalAgentWorking(pane: string): boolean {
   const controls = terminalControlLines(pane).slice(-6)
-  return /esc\s+(?:interrupt|edit\s+prompt)|(?:^|\s)ctrl\+c\s+interrupt\b/i.test(controls.join(' ')) ||
+  return /esc\s+(?:interrupt|edit\s+prompt)/i.test(controls.join(' ')) ||
     controls.some((line) => copilotBusyRow(line) === 'working')
 }
 

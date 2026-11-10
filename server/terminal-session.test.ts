@@ -612,6 +612,24 @@ describe('TmuxTerminalSessionController', () => {
     }
   }, 15_000)
 
+  // Ctrl+C at a prompt that is not working clears it, or starts quitting.
+  it('presses nothing for a question that offers Ctrl+C while no turn is open', async () => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture()
+    await showPane(controller, sessionId, replacementPath, [
+      ' /work/project                                      Session: 0 AIC used',
+      '────────────────────────────────────────────────────────────',
+      '❯',
+      '────────────────────────────────────────────────────────────',
+      ' Autopilot · Allow All · ◉ Delete the folder? ctrl+c interrupt   Claude Opus 5.5 · Max · (58%)',
+    ].join('\n'))
+    const turnOpen = vi.fn(async () => false)
+
+    await expect(controller.cancel(sessionId, { turnOpen })).resolves.toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('')
+    expect(turnOpen).toHaveBeenCalledTimes(1)
+  }, 15_000)
+
   async function probeFixture(script: string) {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-probe-'))
     directories.push(directory)
@@ -1231,6 +1249,8 @@ process.stdin.on('data', () => undefined)
       ' ◉ Waiting for background agents ctrl+c stop agents   Delete the folder? · y/n',
     ])('refuses a row that only resembles it: %s', (footer) => {
       expect(terminalInputReady(pane(footer), true)).toBe(false)
+      // Nor does it read as work, which Stop would answer with Ctrl+C.
+      expect(isTerminalAgentWorking(pane(footer))).toBe(false)
     })
 
     // The idle row cuts the model hint the same way.

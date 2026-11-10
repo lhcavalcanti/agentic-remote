@@ -1221,7 +1221,9 @@ Questions and permissions are the highest-priority UI state.
   key mid-word or drops them, and drops the hints. On this row and the idle
   one, a cut model hint ends with `…`.
   - `ctrl+c interrupt` is work. The composer MUST stay live, so a steer is
-    typed at once rather than waiting for the turn to end.
+    typed at once rather than waiting for the turn to end. Only this row
+    advertises it: a question or other row that also offers `ctrl+c
+    interrupt` MUST NOT lead Stop to press Ctrl+C.
   - `ctrl+c stop agents` is the background state above, and MUST be live and
     idle.
   - Ctrl+C offered to clear the prompt or leave shell mode, unknown or

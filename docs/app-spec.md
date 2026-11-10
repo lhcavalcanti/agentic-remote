@@ -518,8 +518,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   and width are remembered on this device. Widening stops where the
   conversation would have less than 360px beside the sessions list; the panel
   is never narrower than 340px, so a window without room for both falls back
-  to the overlay without changing the saved desktop preference. At 960px or
-  narrower it is always a full-height overlay sheet. A hub with
+  to the overlay without changing the saved desktop preference. In a window
+  960px or narrower, Oracle is always a full-height overlay sheet. However
+  narrow the panel leaves the conversation, the conversation MUST keep its
+  controls in view: at 640px or narrower its header actions show only their
+  icons, and at 960px or narrower its status line wraps rather than hiding
+  items past its edge. A hub with
   `AGENTIC_REMOTE_MANAGER=off` shows no button.
 - Oracle's message field reads "Ask me anything" and is labelled "Message
   Oracle". While Oracle is answering, a line above it says that anything sent
@@ -1003,6 +1007,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   MUST NOT stop following. Scrolling up stops following and offers **Scroll
   to latest**; returning to the end, Scroll to latest, or sending a message
   follows again.
+- A Markdown table wider than its message, in the timeline or in Oracle's
+  answers, MUST scroll sideways within the message with each word kept whole,
+  rather than squeeze its columns to single letters.
 
 ## 5. Questions and permissions
 

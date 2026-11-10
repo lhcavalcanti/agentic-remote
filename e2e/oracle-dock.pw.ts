@@ -22,6 +22,41 @@ function longConversation(): ManagerSnapshot {
   }
 }
 
+// The kind of status table Oracle answers with: one-word cells and full SHAs.
+function tableAnswer(): ManagerSnapshot {
+  const sha = '4b49f552accc8adba70bb585b4f4bc9758ec6148'
+  const createdAt = new Date(Date.parse(FIXTURE_NOW) - 5 * 60_000).toISOString()
+  return {
+    available: true,
+    status: 'idle',
+    messages: [
+      { id: 'table-question', role: 'user', content: 'Where are the open pull requests?', createdAt },
+      {
+        id: 'table-answer',
+        role: 'assistant',
+        content: [
+          '| PR | Head | Review | Gate | Version |',
+          '|---|---|---|---|---|',
+          ...[7, 8, 9].map((pr) => `| #54${pr} | \`${sha}\` | APPROVE | success | 1.46.1${pr - 7} |`),
+        ].join('\n'),
+        createdAt,
+      },
+    ],
+    queued: 0,
+    managedSessions: [],
+  }
+}
+
+async function openDockedOracle(page: Page) {
+  await page
+    .locator('main')
+    .getByRole('button', { name: /^Oracle/ })
+    .first()
+    .click()
+  await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
+  await expect(page.locator('#oracle-panel')).toHaveAttribute('data-placement', 'docked')
+}
+
 async function expectDockedInsideWindow(
   page: Page,
   viewport: { width: number; height: number },
@@ -62,12 +97,7 @@ for (const viewport of [
     })
     try {
       await page.goto('/')
-      await page
-        .locator('main')
-        .getByRole('button', { name: /^Oracle/ })
-        .first()
-        .click()
-      await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
+      await openDockedOracle(page)
       await expectDockedInsideWindow(page, viewport)
 
       // Opening straight into the docked panel is where the page used to scroll.
@@ -78,3 +108,87 @@ for (const viewport of [
     }
   })
 }
+
+// The panel takes its width from the conversation, which can be left as
+// narrow as 360px; its header and status line must still fit in that column.
+for (const viewport of [
+  { name: 'at its narrowest', width: 1100, height: 800 },
+  { name: 'beside the default panel', width: 1280, height: 800 },
+] as const) {
+  test(`fits the conversation beside docked Oracle ${viewport.name}`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height })
+    const fixture = await setupWorkspaceFixture(page, {
+      baseUrl: testInfo.project.use.baseURL!,
+      knowledgeMode: 'hidden',
+      manager: longConversation(),
+      preserveStorageOnReload: true,
+    })
+    try {
+      await page.goto('/')
+      await openDockedOracle(page)
+      const conversation = page.locator('main.conversation')
+      const knowledge = conversation.getByRole('button', {
+        name: 'Session knowledge',
+        exact: true,
+      })
+      await expect(knowledge).toBeVisible()
+      await expect(knowledge.locator('.header-action-label')).toBeHidden()
+
+      const statusline = page.getByTestId('web-statusline')
+      expect(
+        await statusline.evaluate((line) => line.scrollWidth <= line.clientWidth),
+      ).toBe(true)
+      const lineBox = await statusline.boundingBox()
+      const tasksBox = await statusline
+        .getByRole('button', { name: 'View background tasks' })
+        .boundingBox()
+      expect(tasksBox!.x + tasksBox!.width).toBeLessThanOrEqual(lineBox!.x + lineBox!.width)
+    } finally {
+      fixture.assertHealthy()
+    }
+  })
+}
+
+test('scrolls a wide table in a docked Oracle answer without breaking its words', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  const fixture = await setupWorkspaceFixture(page, {
+    baseUrl: testInfo.project.use.baseURL!,
+    knowledgeMode: 'hidden',
+    manager: tableAnswer(),
+    preserveStorageOnReload: true,
+  })
+  try {
+    await page.goto('/')
+    await openDockedOracle(page)
+    const panel = page.locator('#oracle-panel')
+    const table = panel.locator('.manager-message--assistant table')
+    await expect(table).toBeVisible()
+    expect(await table.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true)
+    expect(
+      await panel
+        .locator('.manager-transcript')
+        .evaluate((list) => list.scrollWidth <= list.clientWidth),
+    ).toBe(true)
+
+    const brokenWords = await table.evaluate((element) => {
+      const broken: string[] = []
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const word = node.textContent?.trim() ?? ''
+        if (!word || /\s/.test(word)) continue
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        const lines = new Set([...range.getClientRects()].map((rect) => Math.round(rect.top)))
+        if (lines.size > 1) broken.push(word)
+      }
+      return broken
+    })
+    expect(brokenWords).toEqual([])
+  } finally {
+    fixture.assertHealthy()
+  }
+})

@@ -23,6 +23,7 @@ const disk = await vi.importActual<typeof import('node:fs/promises')>(
 )
 const fixtures: { directory: string; store: SessionStore }[] = []
 const releases: (() => void)[] = []
+const services: { stop(): Promise<void> }[] = []
 
 async function holdOtherWrite(store: SessionStore, source = store.get('session')!) {
   await store.create({ ...source, id: 'other' })
@@ -122,6 +123,7 @@ function copilot(
     workspaceReader,
     workspaceVersion,
   )
+  services.push(service)
   return { service, client, terminal, resumeSession, workspaceReader, workspaceVersion }
 }
 
@@ -214,6 +216,7 @@ function claude(store: SessionStore) {
     sdk,
     async () => ({ loggedIn: true }),
   )
+  services.push(service)
   return { service, query, deleteSession: sdk.deleteSession }
 }
 
@@ -225,6 +228,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   releases.splice(0).forEach((release) => release())
+  // A service can still be draining a woken queue after the test returns, and
+  // a write it lands mid-removal fails the recursive rm with ENOTEMPTY.
+  await Promise.allSettled(services.splice(0).map((service) => service.stop()))
   await Promise.allSettled(fixtures.map(({ store }) => store.flush()))
   await Promise.all(
     fixtures.splice(0).map(({ directory }) =>

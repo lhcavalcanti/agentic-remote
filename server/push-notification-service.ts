@@ -1,10 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import webPush, {
-  type PushSubscription,
-  type RequestOptions,
-  type SendResult,
-} from 'web-push'
+import type { PushSubscription, RequestOptions, SendResult } from 'web-push'
+import * as webPush from 'web-push'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
 import {

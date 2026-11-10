@@ -253,6 +253,12 @@ interface PendingSdkElicitation {
   resolve: (response: ElicitationResult) => void
 }
 
+// Unlike the SDK's ElicitationResult, an accepted reply comes from a validated
+// form, so none of its values is undefined; this is the shape a reply persists.
+type ElicitationReply = Omit<ElicitationResult, 'content'> & {
+  content?: Record<string, UserInputFieldValue>
+}
+
 type SdkReplyChoice =
   | { kind: 'permission'; optionId: string }
   | {
@@ -260,7 +266,7 @@ type SdkReplyChoice =
       action: NonNullable<UserInputReplyInput['action']>
       response: UserInputResponse
     }
-  | { kind: 'elicitation'; response: ElicitationResult }
+  | { kind: 'elicitation'; response: ElicitationReply }
 
 interface AcceptedSdkReply {
   sessionId: string

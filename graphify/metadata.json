@@ -415,9 +415,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 211,
+  "communities": 215,
   "community_algorithm": "louvain-seed-42",
-  "edges": 20106,
+  "edges": 20107,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -737,7 +737,7 @@
     "server/session-retention.ts": "30c36ad2384c744c1d4aab69b833ab5df3502ef334eab198ede50c158c3fdc08",
     "server/session-service.ts": "91bf40938b03f8b339ab160ae9984c0e82d3ec462fdd7c709e77738f379c9354",
     "server/session-store-durability.test.ts": "61f8511139f922a90ebb5738d51080877e6f085626cb2c17a946683a8defd74f",
-    "server/session-store-providers.test.ts": "f3e93cd595d627d35ab89e645f5c74812e7649cdfb7c56004e9825f4a1a640be",
+    "server/session-store-providers.test.ts": "0d70ec1612a2b902542db8ce49f51dbb7bae64065b8e223bc7b8218e6aa6497a",
     "server/session-store-serialization.test.ts": "71282d420e93f3c58082becfd38e0f5b7698f303412db76eb9c65a2b5853016c",
     "server/session-store.test.ts": "26c9df3689f07001878d5be00b63d4926ae0652620614d12279b8266db6c91f9",
     "server/session-store.ts": "c934caaa5b6d0dc93ea25735fc67f64156dcbf85b35992ba05b24c33e1c9009e",
@@ -935,7 +935,7 @@
     "vite.config.ts": "0713031ddabc3c3152463d4b15bde29578cbcfc2b597b752a07bab890861fe15"
   },
   "mode": "local-ast-only",
-  "nodes": 7243,
+  "nodes": 7244,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1037,19 +1037,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "8e6f46d014aad2630ac7add2e8d476edbd0ae272b6d32b7f55ea67141d68d060",
-    "communities.json": "13ad644f2589d803d0321ec47031fabf351896589e9db03dfad8d51d3ecdb307",
-    "graph.html": "0be91638fc360fabc22793ddddcdd780c106e1a5c3dbd53a32eae1540b8edb3b",
-    "graph.json": "d65ddf784193852ef055b8d69525e91bd10bfb6801d06d324d04a8f82df8a1e0"
+    "GRAPH_REPORT.md": "f3bd0a8451ca16f7c3f86e3b3611966ca0dc3d7de136e86949cb4c754a3df46c",
+    "communities.json": "01846dbc4c6e2a4d3262866c19439b16002612f064bc342ef94f3377f6350477",
+    "graph.html": "f61c84d98d03e06a248014418d5c3ad028984fed6f222013336d1eb5299a8cd8",
+    "graph.json": "2aff60e2abad8594cffc22a3ea6c5f868a768f2bfc33a8c5e5de08b0921fc918"
   },
   "schema_version": 1,
-  "source_commit": "ecc3d983e1658b9ce944694a2d2092321f1c61df",
-  "source_fingerprint": "e162a531330f26cbeaa7dcb878cbe61df8cd86fa964573622c740eb3c7f76909",
+  "source_commit": "546a976a11442843d032ddac18c545805599d419",
+  "source_fingerprint": "ae508529c2e54081417015e0cf8cf2c838d234177b3d5b61f31e52123c457fa6",
   "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/session-store-providers.test.ts"
   ]
 }

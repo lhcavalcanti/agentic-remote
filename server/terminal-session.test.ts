@@ -3776,6 +3776,66 @@ Permission request (1 remaining)
     expect(cleared).toBe(true)
   }, 20_000)
 
+  it('starts a relaunched Copilot only after the one it replaces has exited', async () => {
+    // Copilot holds its session until it has finished shutting down, and one
+    // started on a session still held asks whether to resume a session "in
+    // use by another CLI or application". A relaunch that started the new
+    // Copilot as it hung up on the old one asked that about its own
+    // predecessor, and the session sat waiting on a card nobody expected.
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
+    directories.push(directory)
+    const events = path.join(directory, 'events.log')
+    const executable = path.join(directory, 'copilot-slow-exit')
+    await writeFile(
+      executable,
+      [
+        '#!/usr/bin/env bash',
+        `log="${events}"`,
+        'echo "start $$" >>"$log"',
+        'finish() { kill "$child" 2>/dev/null; sleep 1; echo "exit $$" >>"$log"; exit 0; }',
+        'trap finish HUP TERM',
+        "printf '╻▄▄▄▄\\n┃\\n╹▀▀▀▀\\n'",
+        'sleep 60 & child=$!',
+        'wait "$child"',
+      ].join('\n'),
+    )
+    await chmod(executable, 0o755)
+    const tmuxSession = `relaunch-order-${process.pid}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxSession, 'sleep', '60'])
+    vi.stubEnv('AGENTIC_REMOTE_TMUX_SESSION', tmuxSession)
+    vi.stubEnv('COPILOT_BIN', executable)
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await execFileAsync('tmux', ['set-environment', '-t', tmuxSession, 'COPILOT_HOME', copilotHome])
+    const sessionId = randomUUID()
+    const controller = new TmuxTerminalSessionController()
+    await controller.create(sessionId, directory, 'Relaunch order', true)
+    const lines = (count: number) =>
+      eventually(
+        async () => (await readFile(events, 'utf8').catch(() => '')).trim().split('\n'),
+        (read) => read.length >= count,
+      )
+    const [first] = await lines(1)
+
+    expect(await controller.restart(sessionId, directory)).toBe(true)
+    const restarted = await lines(3)
+    expect(restarted.slice(0, 2)).toEqual([first, `exit ${first.split(' ')[1]}`])
+    expect(restarted[2]).toMatch(/^start \d+$/)
+
+    expect(
+      await controller.configure(sessionId, directory, {
+        model: 'fixture-next',
+        reasoningEffort: 'high',
+        contextTier: 'default',
+        mode: 'interactive',
+      }),
+    ).toBe(true)
+    const configured = await lines(5)
+    expect(configured[3]).toBe(`exit ${restarted[2].split(' ')[1]}`)
+    expect(configured[4]).toMatch(/^start \d+$/)
+  }, 30_000)
+
   it('reopens a saved Copilot session with explicit resume semantics', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-session-test-'))
     directories.push(directory)

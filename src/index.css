@@ -2191,6 +2191,14 @@ button {
   display: none;
 }
 
+/* A docked Oracle can leave the conversation phone-narrow; its actions then
+   keep only their icons and leave the room to the session's title. */
+@container conversation (max-width: 640px) {
+  .header-action-label {
+    display: none;
+  }
+}
+
 .session-actions {
   position: relative;
   flex: 0 0 auto;
@@ -2832,6 +2840,8 @@ button {
   -webkit-overflow-scrolling: touch;
 }
 
+/* Messages break long words anywhere, which would let a wide table squeeze
+   every column down to a letter instead of scrolling. Cells keep words whole. */
 .message__content th,
 .message__content td,
 .markdown-body th,
@@ -2839,6 +2849,7 @@ button {
   padding: 6px 8px;
   border: 1px solid var(--border);
   text-align: left;
+  overflow-wrap: normal;
 }
 
 .message__content img,
@@ -3523,6 +3534,18 @@ button {
   font-size: 9px;
   white-space: nowrap;
   overflow-x: auto;
+}
+
+/* Beside a docked panel the line wraps as it does on a phone rather than
+   hiding its later items, and the tasks button, past the conversation's edge.
+   It still reads as one line wherever it fits. */
+@container conversation (max-width: 960px) {
+  .web-statusline {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    white-space: normal;
+    overflow-x: hidden;
+  }
 }
 
 .composer-runtime {

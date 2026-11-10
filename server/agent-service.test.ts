@@ -11823,6 +11823,64 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('explains a refused startup from the screen it ended on', async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), 'agent-service-startup-in-use-'),
+    )
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    // A relaunched Copilot draws nothing until it starts, and only then can it
+    // find the session in use.
+    let currentPane = ''
+    const terminal = {
+      has: vi.fn(async () => true),
+      send: vi.fn(async () => true),
+      cancel: vi.fn(async () => true),
+      capture: vi.fn(async () => currentPane),
+      ownsStartupPrompt: vi.fn(() => true),
+      resolveStartupPrompt: vi.fn(async () => {
+        currentPane = [
+          'Session in use',
+          'This session appears to be in use by another CLI or application.',
+          '❯ 1. Resume anyway',
+          '  2. Go back (Esc)',
+          '↑/↓ to navigate · enter to select · esc to cancel',
+        ].join('\n')
+        return false
+      }),
+    }
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [
+        {
+          id: client.session.sessionId,
+          cwd: directory,
+          title: 'Restarted session',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      async () => undefined,
+      async () => [],
+      async () => 'events-1',
+      terminal,
+    )
+    await service.start()
+    try {
+      await expect(
+        service.sendMessage(client.session.sessionId, 'Continue the work'),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: expect.stringContaining('Choose Resume anyway or Go back'),
+      })
+      expect(terminal.resolveStartupPrompt).toHaveBeenCalledTimes(1)
+      expect(terminal.send).not.toHaveBeenCalled()
+    } finally {
+      await service.stop()
+    }
+  })
+
   async function startupFifoFixture(startup = true) {
     const directory = await mkdtemp(
       path.join(tmpdir(), 'agent-service-startup-fifo-'),

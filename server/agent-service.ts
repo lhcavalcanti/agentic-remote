@@ -5582,14 +5582,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           // Carries a status so the reason reaches the reader: an unclassified
           // failure is reported as a generic server error, which would leave
           // them no better off than the silent loss this replaces.
-          throw Object.assign(
-            new Error(
-              pane && isTerminalSessionInUseConflict(pane)
-                ? sessionInUseConflictMessage(pane)
-                : 'The terminal is showing a full-screen view. Close it there, then send this again.',
-            ),
-            { statusCode: 409, uncertainDelivery: false },
-          )
+          throw await this.startupRefusal(sessionId, pane, 'send this again')
         }
         const currentPane = await this.terminalController.capture?.(sessionId)
         if (!currentPane || isTerminalOverlay(currentPane)) {
@@ -7124,6 +7117,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
+  /**
+   * Explains refused startup input from the screen startup ended on as well as
+   * the one captured before it: a relaunched Copilot draws nothing until it
+   * finds its session in use, and that card has its own way out.
+   */
+  private async startupRefusal(
+    sessionId: string,
+    captured: string | undefined,
+    retry: string,
+  ): Promise<Error> {
+    const settled = await this.terminalController.capture?.(sessionId)
+    const inUse = [settled, captured].find(
+      (pane): pane is string =>
+        pane !== undefined && isTerminalSessionInUseConflict(pane),
+    )
+    return Object.assign(
+      new Error(
+        inUse
+          ? sessionInUseConflictMessage(inUse)
+          : `The terminal is showing a full-screen view. Close it there, then ${retry}.`,
+      ),
+      { statusCode: 409, uncertainDelivery: false },
+    )
+  }
+
   private async prepareTerminalCommandAdmission(
     sessionId: string,
     enqueue: boolean,
@@ -7157,13 +7175,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ((await this.terminalController.resolveStartupPrompt?.(sessionId)) ??
           false)
       if (!resolved) {
-        throw Object.assign(
-          new Error(
-            isTerminalSessionInUseConflict(currentPane)
-              ? sessionInUseConflictMessage(currentPane)
-              : 'The terminal is showing a full-screen view. Close it there, then run this command again.',
-          ),
-          { statusCode: 409, uncertainDelivery: false },
+        throw await this.startupRefusal(
+          sessionId,
+          currentPane,
+          'run this command again',
         )
       }
       const refreshed = await this.terminalController.capture?.(sessionId)

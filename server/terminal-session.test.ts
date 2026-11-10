@@ -31,6 +31,7 @@ import {
   parseTerminalUserInput,
   terminalCommandOutput,
   terminalFormShowsFields,
+  terminalInputReady,
   TmuxTerminalSessionController,
   waitForTerminalStartup,
 } from './terminal-session.js'
@@ -611,6 +612,24 @@ describe('TmuxTerminalSessionController', () => {
     }
   }, 15_000)
 
+  // Ctrl+C at a prompt that is not working clears it, or starts quitting.
+  it('presses nothing for a question that offers Ctrl+C while no turn is open', async () => {
+    const { controller, sessionId, output, replacementPath } = await ownedStartupFixture()
+    await showPane(controller, sessionId, replacementPath, [
+      ' /work/project                                      Session: 0 AIC used',
+      '────────────────────────────────────────────────────────────',
+      '❯',
+      '────────────────────────────────────────────────────────────',
+      ' Autopilot · Allow All · ◉ Delete the folder? ctrl+c interrupt   Claude Opus 5.5 · Max · (58%)',
+    ].join('\n'))
+    const turnOpen = vi.fn(async () => false)
+
+    await expect(controller.cancel(sessionId, { turnOpen })).resolves.toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(JSON.parse(await readFile(output, 'utf8')).keys).toBe('')
+    expect(turnOpen).toHaveBeenCalledTimes(1)
+  }, 15_000)
+
   async function probeFixture(script: string) {
     const directory = await mkdtemp(path.join(tmpdir(), 'terminal-probe-'))
     directories.push(directory)
@@ -1153,6 +1172,170 @@ process.stdin.on('data', () => undefined)
     }
   }, 15_000)
 
+  // Copilot 1.0.106 names Ctrl+C as its interrupt key. To fit the row it
+  // shrinks the status to its spinner or to nothing, wraps the key's word and
+  // the queue key away or cuts them mid-word, drops the hints at the narrowest
+  // widths, and ends a cut model hint with an ellipsis. These rows are as
+  // Copilot 1.0.107 drew them at widths from 60 to 160 columns.
+  describe('the Copilot 1.0.106 busy row', () => {
+    const rule = '─'.repeat(60)
+    const pane = (footer: string) => [
+      ' /work/project                                      Session: 0 AIC used',
+      rule, '❯', rule, footer,
+    ].join('\n')
+
+    it.each([
+      ' ◉ Working · 83 B ctrl+c interrupt',
+      ' ◉ Running bash · 26s · 8 ctrl+c interrupt · ctrl+q enqueue',
+      ' ● Running bash · 27s · 83 B ctrl+c interrupt · ctrl+q enqueue',
+      ' Autopilot · Allow All · ◉ Wor ctrl+c    Claude Sonnet 5.5 · High · 936K conte…',
+      ' Autopilot · Allow All · ◎ Run ctrl+c    Claude Sonnet 5.5 · High · 936K conte…',
+      ' Autopilot · Allow All ·  ctrl+c       · Claude Sonnet 5.5 · High · 936K conte…',
+      ' Autopilot · Allow All ·  ctrl+c interrupt ·  Claude Sonnet 5.5 · High · 936K context (4…',
+      ' Autopilot · Allow All · ◉ Running    ctrl+c interrupt Claude Sonnet 5.5 · High · 936K context (4%)',
+      ' Autopilot · Allow All ·  ctrl+c interrupt · ctrl+q en Claude Sonnet 5.5 · High · 936K context (4%)',
+      ' Autopilot · Allow All · ○ Running bash · 16s · 83 B ctrl+c interrupt      Claude Sonnet 5.5 · High · 936K context (4%)',
+      ' Autopilot · Allow All · ◉ Running bash  ctrl+c interrupt · ctrl+q enqueue Claude Sonnet 5.5 · High · 936K context (4%)',
+      ' Autopilot · Allow All · ◉ Running bash · 33s · 83 B ctrl+c interrupt · ctrl+q enqueue          Claude Sonnet 5.5 · High · 936K context (4%)',
+      ' Autopilot · Allow All · ◉       ctrl+c interrupt Claude Opus 5.5 · Max · (58%)',
+      // Under the Kitty keyboard protocol the queue key is Ctrl+Enter.
+      ' Plan · Allow All · ◉ Running bash  ctrl+c interrupt · ctrl+enter enqueue GPT-5.6 Sol Fast (Internal…',
+      // Background shells still running after the turn keep the key's word.
+      ' ← open sidebar · Interactive · Manual Approval · ● Waiting for background shells ctrl+c interrupt GPT-5 mini · Low · (19%)',
+    ])('reads a turn at work, whose prompt takes a steer: %s', (footer) => {
+      const busy = pane(footer)
+      expect(isTerminalAgentWorking(busy)).toBe(true)
+      expect(isTerminalVisiblyIdle(busy)).toBe(false)
+      expect(terminalInputReady(busy)).toBe(false)
+      expect(terminalInputReady(busy, true)).toBe(true)
+    })
+
+    // With only background agents left the key offers to stop them, and a
+    // message sent then starts a new turn.
+    it.each([
+      ' ◉ Waiting for background agents ctrl+c stop agents',
+      ' Autopilot · Allow All · ● Waiting for background agents · 273 B ctrl+c stop agents GPT-6.1 Sol · High · (9%)',
+      ' Autopilot · Allow All · ◎ Waiting for backgr ctrl+c stop agents  Claude Opus 5.5 · Max · (58%)',
+      ' Autopilot · Allow All · ○ Waiting for background agents ctrl+c stop ag Claude Sonnet 5.5 · High · 936K conte…',
+    ])('reads a prompt left to background agents as idle: %s', (footer) => {
+      const idle = pane(footer)
+      expect(isTerminalAgentWorking(idle)).toBe(false)
+      expect(isTerminalVisiblyIdle(idle)).toBe(true)
+      expect(terminalInputReady(idle)).toBe(true)
+    })
+
+    it.each([
+      // Shell mode runs what is typed as a command.
+      ' Shell · Allow All · ◉ Working ctrl+c interrupt   Claude Opus 5.5 · Max · (58%)',
+      ' Shell · Allow All ·  ctrl+c       · Claude Sonnet 5.5 · High · 936K conte…',
+      ' ◉ Working ctrl+c exit shell mode',
+      // Offered only while the prompt holds text.
+      ' Autopilot · Allow All · ◉ Waiting for background agents ctrl+c clear input · ctrl+q enqueue',
+      // Escape armed, or a turn to recall.
+      ' Autopilot · Allow All · ◉ Working esc again to interrupt   Claude Opus 5.5 · Max · (58%)',
+      ' Autopilot · Allow All · ◉ Delete the folder? ctrl+c interrupt   Claude Opus 5.5 · Max · (58%)',
+      ' ◉ Overwrite [y/n] ctrl+c interrupt',
+      ' ◉ Working ctrl+c interrupt · enter to approve   Claude Opus 5.5 · Max · (58%)',
+      ' ◉ Working ctrl+c interrupt   Delete the folder? · y/n',
+      ' ◉ Working ctrl+c interrupt   GPT- · High · (9%)',
+      ' ◉ Working ctrl+c interrupt now   Claude Opus 5.5 · Max · (58%)',
+      ' ◉ Working ctrl+c to interrupt   Claude Opus 5.5 · Max · (58%)',
+      ' ◉ Working ctrl+c interrupt · ctrl+q enqueue · ctrl+q enqueue',
+      ' ◉ Working ctrl+c interrupt   Claude Opus 5.5 · Max… · (58%)',
+      ' ◉ Working ctrl+c interrupt   Claude Opus 5.5 · Max · (58%) · enter…',
+      ' Autopilot · Allow All · Working ctrl+c interrupt   Claude Opus 5.5 · Max · (58%)',
+      ' Allow All · Autopilot · ◉ Working ctrl+c interrupt   Claude Opus 5.5 · Max · (58%)',
+      ' ◉ Working ctrl+c stop agents · enter to confirm',
+      ' ◉ Waiting for background agents ctrl+c stop agents   Delete the folder? · y/n',
+    ])('refuses a row that only resembles it: %s', (footer) => {
+      expect(terminalInputReady(pane(footer), true)).toBe(false)
+      // Nor does it read as work, which Stop would answer with Ctrl+C.
+      expect(isTerminalAgentWorking(pane(footer))).toBe(false)
+    })
+
+    // The idle row cuts the model hint the same way.
+    it.each([
+      ' Autopilot · Allow All · / commands      Claude Sonnet 5.5 · High · 936K conte…',
+      ' Autopilot · Allow All · / commands      Claude Sonnet 5.5 · High · 936K context (4…',
+      ' Autopilot · Allow All · / commands      GPT-5.6 Sol Fast (Internal only) · Hi…',
+      ' Autopilot · Allow All · / commands      GPT-5.6 Sol Fast (Internal…',
+      ' Autopilot · Allow All · / commands      Claude Opus 5.5 · Max · …',
+    ])('reads an idle row whose model hint was cut: %s', (footer) => {
+      const idle = pane(footer)
+      expect(isTerminalVisiblyIdle(idle)).toBe(true)
+      expect(terminalInputReady(idle)).toBe(true)
+    })
+
+    it.each([
+      ' ◉ Working · 83 B ctrl+c interrupt',
+      ' Autopilot · Allow All · ◉ Wor ctrl+c    Claude Sonnet 5.5 · High · 936K conte…',
+      ' Autopilot · Allow All · ◉       ctrl+c interrupt Claude Opus 5.5 · Max · (58%)',
+    ])('types a steer into the turn at once: %s', async (footer) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      try {
+        const { controller, sessionId, output } = await deliveryFixture(
+          false, undefined, undefined, footer, '', 'flat',
+          undefined, undefined, undefined, undefined, 'bare',
+        )
+        expect(await controller.inputReady(sessionId)).toBe(false)
+        expect(await controller.send(
+          sessionId, 'Steer during 1.0.106 work', false, { allowDuringAgentExecution: true },
+        )).toBe(true)
+        const received = await eventually(
+          () => readFile(output, 'utf8'),
+          (value) => Boolean(value && JSON.parse(value).submits.length),
+        )
+        expect(JSON.parse(received)).toEqual({
+          pastes: ['Steer during 1.0.106 work'], submits: ['enter'],
+        })
+        expect(warn).not.toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
+    }, 15_000)
+
+    it('sends a new prompt while only background agents run', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      try {
+        const { controller, sessionId, output } = await deliveryFixture(
+          false, undefined, undefined,
+          ' Autopilot · Allow All · ◉ Waiting for background agents ctrl+c stop agents  Claude Opus 5.5 · Max · (58%)',
+          '', 'flat', undefined, undefined, undefined, undefined, 'bare',
+        )
+        expect(await controller.inputReady(sessionId)).toBe(true)
+        expect(await controller.send(sessionId, 'New prompt beside background agents', false)).toBe(true)
+        const received = await eventually(
+          () => readFile(output, 'utf8'),
+          (value) => Boolean(value && JSON.parse(value).submits.length),
+        )
+        expect(JSON.parse(received)).toEqual({
+          pastes: ['New prompt beside background agents'], submits: ['enter'],
+        })
+        expect(warn).not.toHaveBeenCalled()
+      } finally {
+        warn.mockRestore()
+      }
+    }, 15_000)
+
+    it('still refuses a steer under a look-alike row', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      try {
+        const footer = ' ◉ Working ctrl+c interrupt · enter to approve   Claude Opus 5.5 · Max · (58%)'
+        const { controller, sessionId, output } = await deliveryFixture(
+          false, pane(footer), undefined, '', '', 'flat',
+        )
+        expect(await controller.send(sessionId, 'Known footer first', false)).toBe(true)
+        await eventually(() => controller.capture(sessionId), (current) => Boolean(current?.includes(footer.trim())))
+        await expect(controller.send(
+          sessionId, 'Must not be typed', false, { allowDuringAgentExecution: true },
+        )).rejects.toMatchObject({ statusCode: 409 })
+        expect(JSON.parse(await readFile(output, 'utf8')).pastes).toEqual(['Known footer first'])
+      } finally {
+        warn.mockRestore()
+      }
+    }, 15_000)
+  })
+
   it.each([
     ' Interactive · Allow All · / commands       ctrl+t show reasoning · GPT-6.1 Sol',
     ' Plan · Allow All · / commands              ctrl+t show reasoning · GPT-6.1 Sol',
@@ -1309,6 +1492,10 @@ process.stdin.on('data', () => undefined)
       ['a block character in place of a marker', ['════════════', '▌ a draft', '════════════', ...newFooter]],
       ['a line character in place of a marker', ['════════════', '│ ', '════════════', ...newFooter]],
       ['a side on the first row only', ['════════════', '│ Name', '  more', '════════════', ...newFooter]],
+      // Copilot's shell mode marks its prompt with `!`, and Enter there runs
+      // the text as a command, even while a turn runs.
+      ['shell mode', [edge, '! ', edge, ...newFooter]],
+      ['shell mode while a turn runs', [edge, '! Execute shell command', edge, ' ◉ Working · 83 B ctrl+c interrupt']],
       ['a dialog field', [
         '╭──────────────────────────╮',
         '│ › new name               │',

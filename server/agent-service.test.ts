@@ -14256,4 +14256,112 @@ describe('statusFromEvents', () => {
       ]),
     ).toBe('waiting')
   })
+
+  describe('after a turn that returned nothing', () => {
+    // A steer typed over a foreground command makes Copilot move the command
+    // to the background and tell the model to wait for it, so the turn that
+    // reads the steer often ends without a word and Copilot logs this notice.
+    // Shapes as recorded from Copilot CLI 1.0.107.
+    const emptyReply = 'No response was returned. Send your message again to retry.'
+    let sequence = 0
+    const logged = (
+      type: string,
+      data: Record<string, unknown> = {},
+      agentId?: string,
+    ): SessionEvent =>
+      ({
+        id: `event-${(sequence += 1)}`,
+        timestamp: new Date(Date.UTC(2026, 10, 10, 15, 13, sequence)).toISOString(),
+        type,
+        ...(agentId ? { agentId } : {}),
+        data,
+      }) as unknown as SessionEvent
+    const failed = (message = emptyReply, errorType = 'query') =>
+      logged('session.error', { errorType, message })
+    const silentTurn = () => [
+      logged('assistant.turn_start'),
+      logged('user.message', { content: 'steer' }),
+      logged('assistant.message', { content: '' }),
+      logged('assistant.turn_end'),
+    ]
+    const shellMovedByASteer = () => [
+      logged('assistant.turn_start'),
+      logged('tool.execution_start', {
+        toolCallId: 'call-1',
+        toolName: 'bash',
+        arguments: { command: 'sleep 40', mode: 'sync' },
+      }),
+      logged('tool.execution_complete', {
+        toolCallId: 'call-1',
+        success: true,
+        result: {
+          content:
+            '<command with shellId: 0 moved to background by the user. You will be automatically notified when it completes.>',
+          structuredContent: { shellId: '0' },
+        },
+      }),
+      logged('assistant.turn_end'),
+      ...silentTurn(),
+    ]
+    const shellCompleted = () =>
+      logged('system.notification', {
+        kind: { type: 'shell_completed', shellId: '0', exitCode: 0 },
+      })
+
+    it('is not an error while the command it is waiting on still runs', () => {
+      // Shown as an error until the command finished, when its completion
+      // starts the turn that answers the steer. Retrying, as the notice says,
+      // would send the steer twice.
+      expect(statusFromEvents([...shellMovedByASteer(), failed()])).toBe('idle')
+    })
+
+    it('does not turn into an error when that command finishes', () => {
+      const events = [...shellMovedByASteer(), failed(), shellCompleted()]
+
+      expect(statusFromEvents(events)).toBe('idle')
+      expect(statusFromEvents([...events, logged('assistant.turn_start')])).toBe('running')
+    })
+
+    it('stays running while a background agent works', () => {
+      expect(
+        statusFromEvents([
+          logged('assistant.turn_start'),
+          logged('subagent.started', {}, 'agent-1'),
+          logged('assistant.turn_end'),
+          ...silentTurn(),
+          failed(),
+        ]),
+      ).toBe('running')
+    })
+
+    it('is an error when nothing is left running to answer it', () => {
+      expect(statusFromEvents([...silentTurn(), failed()])).toBe('error')
+      expect(
+        statusFromEvents([
+          ...shellMovedByASteer(),
+          failed(),
+          shellCompleted(),
+          ...silentTurn(),
+          failed(),
+        ]),
+      ).toBe('error')
+    })
+
+    it.each([
+      [
+        'a prompt too large for the model',
+        "No response was returned because static system messages and tool definitions exceed this model's context budget.",
+        'query',
+      ],
+      [
+        'another notice with the same opening',
+        'No response was returned. The model is unavailable.',
+        'query',
+      ],
+      ['another failure', 'Follow-up disconnected', 'runtime'],
+      ['the same words from another source', emptyReply, 'runtime'],
+    ])('still reports %s while background work runs', (_name, message, errorType) => {
+      expect(statusFromEvents([...shellMovedByASteer(), failed(message, errorType)])).toBe('error')
+    })
+  })
 })

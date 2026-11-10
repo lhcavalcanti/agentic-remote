@@ -1551,15 +1551,30 @@ function isBackgroundTaskEvent(event: SessionEvent): boolean {
   ].includes(stringValue(kind.type) || '')
 }
 
+// Copilot's notice for a turn that ended without a word, matched in full so
+// any other error, including the longer "No response was returned because
+// ... exceed this model's context budget", stays visible.
+const EMPTY_RESPONSE_NOTICE = 'No response was returned. Send your message again to retry.'
+
+function isEmptyResponseNotice(event: SessionEvent): boolean {
+  if (event.type !== 'session.error') return false
+  const data = recordValue(event.data)
+  return data.errorType === 'query' && data.message === EMPTY_RESPONSE_NOTICE
+}
+
 export function statusFromEvents(events: SessionEvent[]): SessionStatus {
   let status: SessionStatus = 'idle'
   // Work a turn handed to background agents outlives the turn itself, so the
   // agents still running are tracked separately from it.
   const workingAgents = new Set<string>()
-  for (const event of events) {
+  // Set while the latest foreground event is Copilot's empty-response notice:
+  // where it is, and whether background agents were working when it came.
+  let emptyResponse: { index: number; agentsWorking: boolean } | undefined
+  for (const [index, event] of events.entries()) {
     if (event.type === 'session.start' || event.type === 'session.resume') {
       workingAgents.clear()
       status = 'idle'
+      emptyResponse = undefined
       continue
     }
     if (!isForegroundLifecycleEvent(event)) {
@@ -1579,6 +1594,9 @@ export function statusFromEvents(events: SessionEvent[]): SessionStatus {
       }
       continue
     }
+    emptyResponse = isEmptyResponseNotice(event)
+      ? { index, agentsWorking: workingAgents.size > 0 }
+      : undefined
     switch (event.type) {
       case 'assistant.turn_start':
         status = 'running'
@@ -1604,6 +1622,23 @@ export function statusFromEvents(events: SessionEvent[]): SessionStatus {
         status = 'idle'
         break
     }
+  }
+  if (
+    status === 'error' &&
+    emptyResponse &&
+    (emptyResponse.agentsWorking ||
+      backgroundTasksFromEvents(events.slice(0, emptyResponse.index + 1), {
+        assumeBackground: true,
+      }).some((task) => task.status === 'running' || task.status === 'queued'))
+  ) {
+    // A steer typed over a foreground command makes Copilot move the command
+    // to the background and tell the model to wait for it, so the turn that
+    // reads the steer often returns nothing. The work it waits on finishing
+    // starts the turn that answers, so this is the session waiting on its
+    // background work, as when the turn says so in words. Decided as of the
+    // notice: judged afresh, it would flash back to an error in the moment
+    // between that work finishing and the next turn starting.
+    status = 'idle'
   }
   // A turn that handed its work to background agents and then ended has not
   // finished it. Reporting the session as idle offers it for the next prompt

@@ -1551,18 +1551,15 @@ function isBackgroundTaskEvent(event: SessionEvent): boolean {
   ].includes(stringValue(kind.type) || '')
 }
 
-// Copilot's notice for a turn that ended without a word. The longer variant,
-// "No response was returned because ... exceed this model's context budget",
-// is a real failure and does not match.
-const EMPTY_RESPONSE_NOTICE = /^No response was returned\.(?:\s|$)/
+// Copilot's notice for a turn that ended without a word, matched in full so
+// any other error, including the longer "No response was returned because
+// ... exceed this model's context budget", stays visible.
+const EMPTY_RESPONSE_NOTICE = 'No response was returned. Send your message again to retry.'
 
 function isEmptyResponseNotice(event: SessionEvent): boolean {
   if (event.type !== 'session.error') return false
   const data = recordValue(event.data)
-  return (
-    data.errorType === 'query' &&
-    EMPTY_RESPONSE_NOTICE.test(stringValue(data.message) || '')
-  )
+  return data.errorType === 'query' && data.message === EMPTY_RESPONSE_NOTICE
 }
 
 export function statusFromEvents(events: SessionEvent[]): SessionStatus {

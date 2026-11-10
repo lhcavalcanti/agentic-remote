@@ -237,12 +237,12 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   activity time. An idle foreground with running background tasks MUST still
   show Tasks; attention, suspension, and offline states retain their existing
   precedence.
-- A Copilot turn that ends with `No response was returned. Send your message
-  again to retry.` while background work is in flight, as after a steer moves
-  a foreground command to the background, MUST read as idle with that work
-  rather than as an error; the turn its completion starts answers. With
-  nothing left running, that notice and every other session error MUST still
-  show an error.
+- A Copilot turn that ends with exactly `No response was returned. Send your
+  message again to retry.` while background work is in flight, as after a
+  steer moves a foreground command to the background, MUST read as idle with
+  that work rather than as an error; the turn its completion starts answers.
+  With nothing left running, that notice and every other session error MUST
+  still show an error.
 - A running SDK background agent MUST make the session row read as active even
   when no foreground turn is open. The composer MUST keep immediate Send
   available and MUST offer Queue; queued text waits for the tracked background

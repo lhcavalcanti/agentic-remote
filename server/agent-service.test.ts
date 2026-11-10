@@ -14295,6 +14295,11 @@ describe('statusFromEvents', () => {
         "No response was returned because static system messages and tool definitions exceed this model's context budget.",
         'query',
       ],
+      [
+        'another notice with the same opening',
+        'No response was returned. The model is unavailable.',
+        'query',
+      ],
       ['another failure', 'Follow-up disconnected', 'runtime'],
       ['the same words from another source', emptyReply, 'runtime'],
     ])('still reports %s while background work runs', (_name, message, errorType) => {

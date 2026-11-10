@@ -416,9 +416,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 231,
+  "communities": 234,
   "community_algorithm": "louvain-seed-42",
-  "edges": 20133,
+  "edges": 20132,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -457,7 +457,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "1db3b4c60a9197c0860b742d3db1fa0cd7b36fa6b4549db7c23e586d32edfd3b",
+    "docs/app-spec.md": "199f7ee54878f8a4539a905a0f0ded172f8e0974e27e4e25ba69d7e16d282cf7",
     "docs/architecture.md": "a0b949d5e752b96d53f064e96944a7d0590f0ecb34982e95007a993298927cb0",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -558,8 +558,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "283c05844eede60df88dbefd2a7ce87824f69c8f10cd872796e54edfe898686d",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "306f104ed790ce9df6c3f3a66242789a1c3dd9f3a117f4ab870353b95311fb5d",
-    "server/agent-service.ts": "adf3358db10547af4fdeddbf23dab9dcb6d5c6aff5e9a995b943c18844b9b10b",
+    "server/agent-service.test.ts": "16b2cca00e26acb80dc8d8cf41c8f20407f678f65d407f4ba1d1568af6e66f90",
+    "server/agent-service.ts": "3ee2cbb286168560c8ce19f9256cece44a963e923d491087d683029d992b7aa8",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -1039,22 +1039,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "4e4a0f988c2ebf6c8b0064622775b628df43edd867160496094116fbfeaadf5a",
-    "communities.json": "c615b404a41ab9cb22b0fff5d33c147d885a7a3e96e90ead620992bea270c758",
-    "graph.html": "8a9c7750e81757dc28fe49535025d17993f171b3e74cb0625a4ef599983a4d50",
-    "graph.json": "8f92a3ce89536aed9a0bb9234388582a1b9d3fef47b17894d91814e87528d182"
+    "GRAPH_REPORT.md": "39d40b94192ac59d21f3df3eb7a735897a5cb9a66ab96300581c7c107c2125e3",
+    "communities.json": "106b637b462fc5991c29be073b4f169c0353e83930f13490956ff565b9c02a75",
+    "graph.html": "223d71e3a36e2e86cc6288e84e49b66cd528d973383c4f3b14061c749f8af868",
+    "graph.json": "4e330cf4835903031aaa090349ac1c6c265cb49b52ab2eeeb3e7b682a9ab31ac"
   },
   "schema_version": 1,
-  "source_commit": "12e32b8f15f9be59983a1e608b0a36e2ce729ac2",
-  "source_fingerprint": "bbc05f74998c185831a484540ff20eb08fc4c5bf79680252fa2af961a8d50286",
+  "source_commit": "3e4a7a35e08187edda50942d40104cf986ae66e1",
+  "source_fingerprint": "81570e780ae2c39d4161d5a532c8403f3dc4817e2f28cffc5ba17d113aa708e9",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "package.json",
     "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/agent-service.ts"
   ]
 }

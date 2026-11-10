@@ -526,7 +526,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "606d200b33fc8510ae78a66113788baaa88408cc704adf0c0adad2b3162ee3b3",
+    "package.json": "4fb7cd90907219853dc20c214635f78f10990f909132504dfed651ff36ed1053",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "3fd03facc1f69300d8a98a951f6d2d7d74146d0ed2228a258f8a411e36069274",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -1037,19 +1037,21 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "df5ed86a7fd392de38e52a532c8137df6bc4dae8dd60c943b19646e9ec50db66",
+    "GRAPH_REPORT.md": "0c25567c4c05d7dc136b0288c183ef6c24f5befd314a6d9a59b32a00c899d4b2",
     "communities.json": "476a3560ebf5e3186a792a2eb4964c4e7cd994ae31615b70ed9d7b0506f722ea",
-    "graph.html": "6fae843136c742201ca17d93d687b953054dde9c880c1869161f7da7a3688354",
-    "graph.json": "84ecc1dc36a35c37b87bf482ab1740db796b754f8e559214d3fa6fc2ba8cad7d"
+    "graph.html": "20b9d06f3604261689ccd2ec2499b5f6e2f5f0e22e52fdf7c3a4da51c621afa8",
+    "graph.json": "67f15453d53271b78426ea84720712c2b793cac4f74f5dc9c51c58f501ac397a"
   },
   "schema_version": 1,
-  "source_commit": "1e395ffb08e012f3c431b28c5641db1fe98dfb97",
-  "source_fingerprint": "b2c00550a7ea30bbcdad63060c9751f0430e1ed7445f35b277c53b3c7168b511",
+  "source_commit": "d81220091b7186094234cbb099ae6e0534fea84a",
+  "source_fingerprint": "c6c3b2f7644d39285388fc97922f3e1c7a6ebb75d2b4d8517a28b65ddc84fc3f",
   "working_tree_changes": [
+    ".github/dependabot.yml",
     ".github/skills/agentic-remote-navigation/SKILL.md",
     "e2e/fixtures/fake-vad.ts",
     "e2e/fixtures/fake-voice.ts",
     "e2e/workspace-fixtures.ts",
+    "package.json",
     "scripts/oracle-voice-benchmark.test.ts",
     "scripts/oracle-voice-benchmark.ts",
     "server/remote-node-client.ts",
@@ -1057,6 +1059,10 @@
     "server/tmux-test-helpers.integration.test.ts",
     "server/tmux-test-helpers.test.ts",
     "server/tmux-test-helpers.ts",
+    "shell/README.md",
+    "shell/package.json",
+    "shell/src-tauri/Cargo.toml",
+    "shell/src-tauri/tauri.conf.json",
     "tsconfig.e2e.json",
     "tsconfig.json",
     "vite.config.ts"

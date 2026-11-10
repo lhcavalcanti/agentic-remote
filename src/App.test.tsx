@@ -15898,6 +15898,88 @@ describe('App', () => {
     await waitFor(() => expect(timeline.scrollTop).toBe(1_000))
   })
 
+  it('keeps a reader who sent a message at the end as the timeline grows under them', async () => {
+    vi.mocked(sendMessage).mockResolvedValueOnce({
+      ...session,
+      status: 'running',
+      activity: 'Thinking',
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await screen.findByText('Ready.')
+
+    // A layout of a sort: older history, then 100px for each row the timeline
+    // shows, in a 500px view whose scroll stops at the end as a browser's does.
+    const timeline = document.querySelector<HTMLElement>('.timeline')!
+    let grown = 1_000
+    let top = 0
+    const height = () =>
+      grown + 100 * timeline.querySelectorAll('.message-stack > *, .activity-line').length
+    Object.defineProperties(timeline, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: { configurable: true, get: height },
+      scrollTop: {
+        configurable: true,
+        get: () => top,
+        set: (value: number) => {
+          top = Math.max(0, Math.min(value, height() - 500))
+        },
+      },
+    })
+    const fromEnd = () =>
+      timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight
+    timeline.scrollTop = timeline.scrollHeight
+    fireEvent.scroll(timeline)
+
+    fireEvent.change(textarea, { target: { value: 'Run the checks again' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    // The message waits in the terminal and the agent starts working: both
+    // land below where the reader was, and both stay in view.
+    expect(await screen.findByText('Pending in terminal')).toBeInTheDocument()
+    expect(await screen.findByText('Thinking')).toBeInTheDocument()
+    expect(fromEnd()).toBe(0)
+
+    // Content that grows on its own, a diagram rendering say, then any scroll
+    // read after it is not the reader leaving.
+    grown += 300
+    fireEvent.scroll(timeline)
+    expect(
+      screen.queryByRole('button', { name: 'Scroll to latest' }),
+    ).not.toBeInTheDocument()
+    expect(fromEnd()).toBe(0)
+
+    // Scrolling up is, and later text leaves them where they are.
+    timeline.scrollTop = 100
+    fireEvent.scroll(timeline)
+    expect(
+      await screen.findByRole('button', { name: 'Scroll to latest' }),
+    ).toBeInTheDocument()
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: {
+            ...session,
+            status: 'running',
+            activity: 'Running the checks',
+            messages: [
+              ...session.messages,
+              {
+                id: 'checks-started',
+                role: 'assistant',
+                content: 'Starting the checks',
+                createdAt: '2026-07-22T00:00:05.000Z',
+              },
+            ],
+          },
+        }),
+      } as MessageEvent)
+    })
+    expect(await screen.findByText('Starting the checks')).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+    expect(timeline.scrollTop).toBe(100)
+  })
+
   it('offers a way back to the latest only once the reader has left it', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],

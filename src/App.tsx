@@ -7808,6 +7808,9 @@ function App() {
   const autoScrollSessionRef = useRef<string | undefined>(undefined)
   const previousPendingActionRef = useRef<string | undefined>(undefined)
   const requiredActionScrollRef = useRef(false)
+  // Where the view last put the timeline's end. A scroll read there is the
+  // content moving under a reader who stayed put, not the reader leaving.
+  const pinnedScrollTopRef = useRef<number | undefined>(undefined)
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const attachmentQueueRef = useRef<Promise<void> | undefined>(undefined)
@@ -11050,6 +11053,8 @@ function App() {
         releaseFrame = window.requestAnimationFrame(() => {
           requiredActionScrollRef.current = false
         })
+      } else {
+        pinTimeline()
       }
     })
     return () => {
@@ -11066,6 +11071,16 @@ function App() {
     pendingActionId,
   ])
 
+  // Whatever changes the open session -- the agent's activity, a card, the
+  // queue under the conversation -- or a sent message waiting in its terminal
+  // keeps a reader who is following at the end. Done before the browser
+  // paints, so the new end never shows below the fold first.
+  useLayoutEffect(() => {
+    if (autoScrollRef.current) {
+      pinTimeline()
+    }
+  }, [selected, selectedPendingEchoes])
+
   function timelineScrolled() {
     const timeline = timelineRef.current
     if (!timeline) {
@@ -11075,11 +11090,32 @@ function App() {
       setFollowsLatest(false)
       return
     }
+    // Still where the view last put the end: the content grew or moved under
+    // the reader, who did not go anywhere.
+    const pinnedAt = pinnedScrollTopRef.current
+    if (pinnedAt !== undefined && Math.abs(timeline.scrollTop - pinnedAt) < 1) {
+      if (autoScrollRef.current) {
+        pinTimeline()
+      }
+      return
+    }
     const distanceFromBottom =
       timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight
     // Scrolling up stops the view following the conversation, and scrolling
     // back to the end takes it up again.
-    setFollowsLatest(distanceFromBottom <= timelineBottomThreshold)
+    const following = distanceFromBottom <= timelineBottomThreshold
+    pinnedScrollTopRef.current = following ? timeline.scrollTop : undefined
+    setFollowsLatest(following)
+  }
+
+  /** Puts the timeline's end in view and remembers where that left it. */
+  function pinTimeline() {
+    const timeline = timelineRef.current
+    if (!timeline) {
+      return
+    }
+    timeline.scrollTop = timeline.scrollHeight
+    pinnedScrollTopRef.current = timeline.scrollTop
   }
 
   function setFollowsLatest(following: boolean) {
@@ -11093,6 +11129,7 @@ function App() {
   function followLatest() {
     setFollowsLatest(true)
     bottomRef.current?.scrollIntoView({ block: 'end' })
+    pinTimeline()
   }
 
   useLayoutEffect(() => {
@@ -11114,10 +11151,7 @@ function App() {
     // newest message out of sight without the reader having gone anywhere.
     // Done here, before the browser paints, so the view does not jump.
     if (autoScrollRef.current) {
-      const timeline = timelineRef.current
-      if (timeline) {
-        timeline.scrollTop = timeline.scrollHeight
-      }
+      pinTimeline()
     }
   }, [composer, sideQuestionDraft, viewportHeight])
 

@@ -528,7 +528,7 @@
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
     "package.json": "628b0e82904f6073fb912f5a61e8e210ce0ede9ae60f00811aee7d180277f5ec",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
-    "playwright.config.ts": "3fd03facc1f69300d8a98a951f6d2d7d74146d0ed2228a258f8a411e36069274",
+    "playwright.config.ts": "9a0249fb977ecff39695b090b5ba6bf4f6ec114b786636b52573a0c5cc087fb1",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
     "public/fonts/MonaSans.woff2": "62e40f6e14e5bbb97132b4513a4d97319ab6aaa46996cf46c7a9f357edadb662",
     "public/fonts/OFL.txt": "1eb33139d205c43cdfa3f5c8debc87275ca2ab5fff20fe05039a23e0e85111ed",
@@ -1037,22 +1037,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "84ea536ef2d8070ebe455421ff9cdd332fcda9629cb59238ea16c5e8a124ed64",
+    "GRAPH_REPORT.md": "25495750f7d3f5416617324a69682c501113f3d70363609df97666f5b8220fa8",
     "communities.json": "f34deaae332a08eea8125040b67a06b019bf61e15dca5a5dc8f5cb4e19cb7e40",
-    "graph.html": "e528df46f2236937b37e01e0745db9de146a8154571cc39e0e716c2271c6a0fd",
-    "graph.json": "b6ef967a78de26fd3e94a024f73080d7a2a1f4381d4b0964154701b4b999719f"
+    "graph.html": "addd82d333ef8656c2372ba45416ece3808c076db370d77b7b41a29d5d9b99d8",
+    "graph.json": "17888e22218ee69fbc34d5fdbdd6d052b408f3d5ce2137eb588e97a99dc09d4d"
   },
   "schema_version": 1,
-  "source_commit": "63920a30f3f4fd8f819f39a3f6693339cab2a6d8",
-  "source_fingerprint": "e841fedcc1df1bbe745d56d2eebcf975e826d11f129e57b8eaa8bc566517939c",
+  "source_commit": "517f47a0dff6670c64ff1ee488dbac8169c510c4",
+  "source_fingerprint": "56fe520338b554aba7b71db0b0036b25d973b9edc6209da0e2cb52bafd0f5f3e",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "e2e/oracle-dock.pw.ts",
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/index.css"
+    "playwright.config.ts"
   ]
 }

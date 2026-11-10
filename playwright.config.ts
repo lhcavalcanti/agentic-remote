@@ -18,7 +18,7 @@ export default defineConfig({
     },
     {
       name: 'webkit',
-      testMatch: '**/oracle-conversation.test.ts',
+      testMatch: ['**/oracle-conversation.test.ts', '**/oracle-dock.pw.ts'],
       use: { ...devices['Desktop Safari'], hasTouch: true },
     },
   ],

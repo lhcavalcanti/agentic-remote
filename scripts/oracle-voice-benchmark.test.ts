@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatBenchmarkMarkdown,
   measureSttPass,
+  measureTts,
   normalizeTranscript,
   parsePcm16Wave,
   wordErrorRate,
@@ -216,6 +217,73 @@ describe('Oracle voice benchmark', () => {
     expect(result.firstPartialMs).toBe(105)
     expect(result.latencyMode).toBe('real-time-paced')
   })
+
+  it.each(['accept', 'end'] as const)(
+    'fails the STT pass when the engine reports a fatal error during %s',
+    async (stage) => {
+      const listeners = new Set<(event: VoiceEngineEvent) => void>()
+      let accepts = 0
+      const crash = () => {
+        for (const listener of listeners) {
+          listener({ type: 'fatal_error', message: 'Voice worker exited' })
+        }
+      }
+      const session = {
+        stt: {
+          start: async () => undefined,
+          accept: async () => {
+            accepts += 1
+            if (stage === 'accept') crash()
+          },
+          end: async () => {
+            if (stage === 'end') crash()
+          },
+        },
+        onEvent(listener: (event: VoiceEngineEvent) => void) {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+      } as unknown as VoiceEngineSession
+      const samples = new Int16Array(3_000)
+
+      await expect(measureSttPass(
+        session,
+        'stream',
+        1,
+        'utterance',
+        'en',
+        {
+          channels: 1,
+          sampleRate: 16_000,
+          samples,
+          durationMs: samples.length / 16,
+        },
+        { paced: false },
+      )).rejects.toThrow('Voice worker exited')
+      expect(accepts).toBe(stage === 'accept' ? 1 : 3)
+    },
+    5_000,
+  )
+
+  it('fails the TTS measurement when the engine reports a fatal error', async () => {
+    const listeners = new Set<(event: VoiceEngineEvent) => void>()
+    const session = {
+      tts: {
+        synthesize: async () => {
+          for (const listener of listeners) {
+            listener({ type: 'fatal_error', message: 'Voice worker exited' })
+          }
+        },
+      },
+      onEvent(listener: (event: VoiceEngineEvent) => void) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    } as unknown as VoiceEngineSession
+
+    await expect(measureTts(session, 'stream', 1, 'segment', 'Hello.', 22_050))
+      .rejects.toThrow('Voice worker exited')
+  }, 5_000)
 
   it('labels measured, derived, and missing values in Markdown', () => {
     const report: VoiceBenchmarkReport = {

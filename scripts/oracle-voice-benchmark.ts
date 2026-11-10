@@ -513,7 +513,14 @@ export async function measureSttPass(
   let activeFinalRecorded = false
   let endpointCount = 0
   let sequence = 0
+  let fatalError: Error | undefined
   const unsubscribe = session.onEvent((event: VoiceEngineEvent) => {
+    // A fatal error ends the whole engine, so it names no stream or generation.
+    if (event.type === 'fatal_error') {
+      fatalError ??= new Error(event.message)
+      activeFinal.reject(fatalError)
+      return
+    }
     if (
       !('generation' in event)
       || event.streamId !== streamId
@@ -527,8 +534,6 @@ export async function measureSttPass(
     } else if (event.type === 'final' && event.utteranceId === activeUtteranceId) {
       completedFinal = { text: event.text, at: now() }
       activeFinal.resolve(completedFinal)
-    } else if (event.type === 'fatal_error') {
-      activeFinal.reject(new Error(event.message))
     }
   })
   const startEndpoint = async () => {
@@ -561,6 +566,7 @@ export async function measureSttPass(
     await startEndpoint()
     let consumedSamples = 0
     for (let offset = 0; offset < wave.samples.length;) {
+      if (fatalError) throw fatalError
       const end = Math.min(wave.samples.length, offset + FRAME_SAMPLES)
       if (options.paced) {
         const targetAt = startedAt + end / wave.sampleRate * 1_000
@@ -589,6 +595,7 @@ export async function measureSttPass(
     if (!activeFinalRecorded) {
       lastAudioAt = now()
       if (!completedFinal) {
+        if (fatalError) throw fatalError
         await session.stt.end({
           streamId,
           generation,
@@ -643,7 +650,7 @@ export async function measureSttPass(
   }
 }
 
-async function measureTts(
+export async function measureTts(
   session: VoiceEngineSession,
   streamId: string,
   generation: number,
@@ -659,6 +666,10 @@ async function measureTts(
   let firstAudioMs: number | undefined
   let sampleCount = 0
   const unsubscribe = session.onEvent((event: VoiceEngineEvent) => {
+    if (event.type === 'fatal_error') {
+      audioEnd.reject(new Error(event.message))
+      return
+    }
     if (
       !('generation' in event)
       || event.streamId !== streamId
@@ -673,8 +684,6 @@ async function measureTts(
       sampleCount += event.samples.length
     } else if (event.type === 'audio_end' && event.segmentId === segmentId) {
       audioEnd.resolve(undefined)
-    } else if (event.type === 'fatal_error') {
-      audioEnd.reject(new Error(event.message))
     }
   })
   try {
@@ -924,6 +933,9 @@ function deferred<T>(): {
     resolve = resolvePromise
     reject = rejectPromise
   })
+  // An engine failure can reject this before anything awaits it, and the pass
+  // then fails elsewhere; awaiting it still throws.
+  promise.catch(() => undefined)
   return { promise, resolve, reject }
 }
 

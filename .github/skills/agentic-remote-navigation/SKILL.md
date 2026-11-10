@@ -245,6 +245,11 @@ bin/agentic-remote-gate <PR>    # merge gate: both checks on the exact head
   `pnpm test` still runs each file once, serially. Add a new real-tmux file to
   `canaryTests` or `tmuxTests` in `vite.config.ts`; otherwise it lands in
   `fast`, which must pass without tmux, Copilot, or Claude.
+- `tsconfig.e2e.json` type-checks `e2e/` with the DOM and the server its
+  fixtures boot, so `tsc -b` catches fixture drift. The fixtures' own unit
+  tests run in `fast`; Playwright specs (`*.pw.ts`,
+  `e2e/oracle-conversation*.test.ts`) stay out of Vitest, and neither the gate
+  nor hosted CI runs `pnpm test:e2e` (#538).
 - `.github/workflows/light-check.yml` is an advisory hosted check on ready pull
   request heads, on Node 22 (the `engines` floor): install, lint, `tsc -b`,
   `vite build`, and `pnpm test:quick`, sized to one billed minute (about
@@ -477,4 +482,9 @@ than repeatedly rerunning the promotion gate until it passes.
 `createIsolatedTmuxRoot()` (tmux 3.4+) starts a fixture-owned server that stays
 up with no sessions, so teardown retires that exact process instead of proving
 absence host-wide, which any tmux in another mount namespace leaves
-indeterminate.
+indeterminate. A detached watchdog, armed before the server starts and told its
+identity over a pipe, retires the namespace, panes included, when its creating
+process ends without teardown (a throwing or timed-out `afterEach` skips the
+rest of that test's hooks; a killed run skips all of them). It verifies the
+server as teardown does; on any doubt it kills nothing and keeps the root, with
+the reason in `abandoned-retirement-failed`.

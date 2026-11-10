@@ -214,10 +214,16 @@ export class FakeManager extends EventEmitter<{ event: [event: ManagerEvent] }>
     this.emit('event', { type: 'manager.reset', snapshot: this.snapshot() })
   }
 
-  async retry() { throw Object.assign(new Error('Not used by E2E'), { statusCode: 409 }) }
-  async removeQueued() { throw Object.assign(new Error('Not used by E2E'), { statusCode: 409 }) }
-  async editQueued() { throw Object.assign(new Error('Not used by E2E'), { statusCode: 409 }) }
-  async resolveConfirmation() {
+  async retry(): Promise<ManagerMessage> {
+    throw Object.assign(new Error('Not used by E2E'), { statusCode: 409 })
+  }
+  async removeQueued(): Promise<ManagerMessage> {
+    throw Object.assign(new Error('Not used by E2E'), { statusCode: 409 })
+  }
+  async editQueued(): Promise<ManagerMessage> {
+    throw Object.assign(new Error('Not used by E2E'), { statusCode: 409 })
+  }
+  async resolveConfirmation(): Promise<ManagerMessage> {
     throw Object.assign(new Error('Not used by E2E'), { statusCode: 409 })
   }
   async updateSettings(

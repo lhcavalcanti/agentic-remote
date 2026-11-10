@@ -1,4 +1,4 @@
-interface FakeVadWindow extends Window {
+interface FakeVadWindow {
   __oracleVoiceE2E?: {
     vadFrameDelayMs?: number
     vad?: {

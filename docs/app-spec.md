@@ -1214,6 +1214,19 @@ Questions and permissions are the highest-priority UI state.
   new prompt, which Copilot answers while the agents keep running, rather
   than refusing it as not ready. Anything else after the stop key MUST refuse
   input, and the session stays running until the agents finish.
+- Copilot 1.0.106 offers Ctrl+C on that row instead: the hints, a spinner and
+  status, `ctrl+c` and its word, the queue key while the prompt holds text
+  (`ctrl+q enqueue`, or `ctrl+enter enqueue`), then the model hint. To fit, it
+  shrinks the status to its spinner or to nothing, cuts the word and the queue
+  key mid-word or drops them, and drops the hints. On this row and the idle
+  one, a cut model hint ends with `…`.
+  - `ctrl+c interrupt` is work. The composer MUST stay live, so a steer is
+    typed at once rather than waiting for the turn to end.
+  - `ctrl+c stop agents` is the background state above, and MUST be live and
+    idle.
+  - Ctrl+C offered to clear the prompt or leave shell mode, unknown or
+    reordered hints, a status without its spinner, and anything else after
+    the key MUST refuse input.
 - A footer that a newer Copilot draws differently MUST NOT stop tmux sessions
   from starting or taking input. Copilot shows the terminal cursor on its
   prompt row only while the prompt has the keyboard, and hides it while a form
@@ -1245,6 +1258,8 @@ Questions and permissions are the highest-priority UI state.
   rule, one opening every row inside is a side, and a marker is any other
   single character that is not a letter or digit. A side MUST never be read
   as a marker, or any box with the cursor in it would count as a prompt.
+  Neither may `!`, Copilot's shell-mode prompt, where Enter runs the text as
+  a shell command.
 
   That marker MUST read as the prompt marker, so an empty composer is not
   mistaken for a draft. Each such frame shape MUST be logged once, like an

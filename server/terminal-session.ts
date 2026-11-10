@@ -3152,10 +3152,13 @@ const FOOTER_CONTEXT_CUT =
 /**
  * Copilot 1.0.98's model hint: the model, then its reasoning effort and the
  * context in use, in that order, each at most once, either later one left out,
- * and only the last cell cut short when the row is narrow.
+ * and only the last cell cut short when the row is narrow. Copilot 1.0.106
+ * ends a hint it cut with an ellipsis.
  */
 function isFooterModelHint(text: string): boolean {
-  const cells = text.trim().replace(/\s+/gu, ' ').split(' · ')
+  let hint = text.trim().replace(/\s+/gu, ' ')
+  if (hint.endsWith('…')) hint = hint.slice(0, -1).trimEnd().replace(/\s*·$/u, '')
+  const cells = hint.split(' · ')
   if (cells.length > 3 || !isFooterModelCell(cells[0], cells.length === 1)) return false
   let slot = 0
   for (const [index, cell] of cells.entries()) {
@@ -3383,6 +3386,48 @@ function isTerminalComposerFooter(lines: string[], tolerateUnknown = false): boo
   })
 }
 
+// A question or a choice in a status is something waiting for an answer, not
+// work going on.
+const FOOTER_QUESTION = /\?|\[[^\]]*\/[^\]]*\]|\([^)]*\/[^)]*\)|\b(?:y|yes)\s*\/\s*(?:n|no)\b/iu
+const FOOTER_QUEUE_KEYS = ['ctrl+q enqueue', 'ctrl+enter enqueue']
+
+/**
+ * What Copilot 1.0.106's busy row offers Ctrl+C for: `working` while a turn
+ * runs, `background` once only background agents are left and a message
+ * starts a new turn, or undefined for any other row.
+ *
+ * The row is the hints, a spinner and status, Ctrl+C and its word, the queue
+ * key while the prompt holds text, then the model hint. To fit, Copilot
+ * shrinks the status to its spinner or to nothing, wraps the word and the
+ * queue key away or cuts them mid-word, and drops the hints. Ctrl+C clearing
+ * the prompt or leaving shell mode is not this row.
+ */
+function copilotBusyRow(line: string): 'working' | 'background' | undefined {
+  const row = line.trim().replace(/\s+/gu, ' ')
+  if (!row || row.length > 240) return undefined
+  const key = [...row.matchAll(/(?:^|\s)ctrl\+c(?=\s|$)/gu)].at(-1)
+  if (!key) return undefined
+  const head = row.slice(0, key.index).trim()
+  const spinner = head.search(/[●○◉◎]/u)
+  const hints = spinner < 0 ? head : head.slice(0, spinner).trim()
+  if (hints && !(hints.endsWith('·') && isFooterHintSequence(hints.slice(0, -1), true))) {
+    return undefined
+  }
+  if (spinner >= 0 && FOOTER_QUESTION.test(head.slice(spinner + 1))) return undefined
+  const words = row.slice(key.index + key[0].length).split(' ').filter(Boolean)
+  for (let at = 0; at <= words.length; at += 1) {
+    const model = words.slice(at).join(' ')
+    if (model && !isFooterModelHint(model) && !isFooterReasoningModel(model)) continue
+    const [action, queue, ...more] = words.slice(0, at).join(' ').split(/\s*·\s*/u)
+    if (more.length || (queue && !FOOTER_QUEUE_KEYS.some((hint) => hint.startsWith(queue)))) {
+      continue
+    }
+    if (!action || 'interrupt'.startsWith(action)) return 'working'
+    if ('stop agents'.startsWith(action)) return 'background'
+  }
+  return undefined
+}
+
 function isKnownTerminalFooterRow(
   lines: string[],
   index: number,
@@ -3401,11 +3446,8 @@ function isKnownTerminalFooterRow(
   // its queue key while the prompt holds text, and draws its own model hint.
   const working = /^(.*?)\besc\s+(?:interrupt|edit\s+prompt)\b(.*)$/iu.exec(line)
   if (working) {
-    // The status ahead of the key says what the agent is doing. A question or
-    // a choice there is something waiting for an answer, not work going on.
-    if (/\?|\[[^\]]*\/[^\]]*\]|\([^)]*\/[^)]*\)|\b(?:y|yes)\s*\/\s*(?:n|no)\b/iu.test(working[1])) {
-      return false
-    }
+    // The status ahead of the key says what the agent is doing.
+    if (FOOTER_QUESTION.test(working[1])) return false
     const rest = working[2].trim().replace(/\s+/gu, ' ')
       .replace(/^·\s*ctrl\+q\s+enqueue(?:\s|$)/u, '').trim()
     return !rest || isFooterReasoningModel(rest) || isFooterModelHint(rest)
@@ -3419,6 +3461,8 @@ function isKnownTerminalFooterRow(
     const rest = background[1].trim().replace(/\s+/gu, ' ')
     return !rest || isFooterReasoningModel(rest) || isFooterModelHint(rest)
   }
+  // Copilot 1.0.106 names Ctrl+C instead, for either.
+  if (copilotBusyRow(line)) return true
   // Hint rows are judged by the hint grammar alone rather than by the looser
   // patterns below, so reordered or unknown cells refuse input.
   if (isTerminalHintRow(line)) {
@@ -3608,6 +3652,9 @@ function cursorComposerFrame(lines: string[]): TerminalComposerFrame | undefined
     const flat = !inner.every((line) => COMPOSER_SIDE_BAR.test(line.trim()))
     const text = composerFrameText(lines, { top, bottom, flat, marker: '' })
     const marker = COMPOSER_MARKER.exec(text)?.[1]
+    // Copilot's shell mode marks its prompt with `!`; Enter there runs the
+    // text as a shell command.
+    if (marker === '!') return undefined
     if (marker) return { top, bottom, flat, marker }
     if (COMPOSER_PLACEHOLDERS.some((placeholder) => placeholder.test(text))) {
       return { top, bottom, flat, marker: '' }
@@ -3848,9 +3895,12 @@ export function isTerminalOverlay(pane: string): boolean {
 
 // The CLI only offers to interrupt while the agent is working, so this marks
 // the frames whose new lines belong to a turn rather than to a command. Just
-// after a prompt is sent, Copilot 1.0.98 offers to edit it instead.
+// after a prompt is sent, Copilot 1.0.98 offers to edit it instead. Copilot
+// 1.0.106 offers Ctrl+C, and can cut its word away.
 export function isTerminalAgentWorking(pane: string): boolean {
-  return /esc\s+(?:interrupt|edit\s+prompt)/i.test(terminalControlLines(pane).slice(-6).join(' '))
+  const controls = terminalControlLines(pane).slice(-6)
+  return /esc\s+(?:interrupt|edit\s+prompt)|(?:^|\s)ctrl\+c\s+interrupt\b/i.test(controls.join(' ')) ||
+    controls.some((line) => copilotBusyRow(line) === 'working')
 }
 
 /**

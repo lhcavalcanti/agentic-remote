@@ -415,9 +415,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 215,
+  "communities": 223,
   "community_algorithm": "louvain-seed-42",
-  "edges": 20107,
+  "edges": 20115,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -456,7 +456,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "086f711de6bf7fb0f812fc7513cb03d1bfe4aec0260fbcdc624fbadaf609670d",
+    "docs/app-spec.md": "89db629db4b4b19943184141c78f59e68f44cbea83f83c3cb879a3fc67f4d2a8",
     "docs/architecture.md": "a0b949d5e752b96d53f064e96944a7d0590f0ecb34982e95007a993298927cb0",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -526,7 +526,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "9045d9f14dec19740b34c6a6006d6be54957a08d4d4816bcb4736f026848d446",
+    "package.json": "5dab09d47313c34a02758f5e66c6f4246b0355dbc6440c3f7b471dd7f6142fd8",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "3fd03facc1f69300d8a98a951f6d2d7d74146d0ed2228a258f8a411e36069274",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -756,8 +756,8 @@
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "7c597c675a0ed20d24e9cdc152b9bee38bad9a8297b163b3a32a48d0bf23d5c3",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "074562e5c425aac9f6215272d97c59bfc5f158d9c6183fe32400a07c503f83c0",
-    "server/terminal-session.ts": "c41bfcdab84d0a04505b9fd88307bc22b889d9eb90268d77a0cb85eb1189674a",
+    "server/terminal-session.test.ts": "95474aabe1e8b7aba1b3c16aa33065d84c921bd0df567e0786533563467a82e9",
+    "server/terminal-session.ts": "95302f790a3ec3b3b91e58757e34412afbad674856b5c7b184f48383b2cd48ac",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "e8094768a188587c3e34f731f03e6c246c24776c8bf983b7be6716068e81419f",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -798,10 +798,10 @@
     "shared/side-question.ts": "026d2e3fae18f5348da782057d669400bb67ed91b7623fe3975c1f2d788ea855",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "bd5349be04323dbd6ce05e9559852e85815b4aa2426dec7cfef7a8fe6ce1be03",
+    "shell/README.md": "61a07b62ca0c6634c68be7c162c2854970da939e013ec85e779863348a5cc3bd",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "478c0132ee378e5df62522c58f1af69e8bdbf28972c6db7b557a8c03ce7ceba3",
-    "shell/src-tauri/Cargo.toml": "fe96ecfc60ab4dfa474008a500f27de0db80685361f700e3db20f92e2979845e",
+    "shell/package.json": "5b63683755242dbd557c3644da0ae5c6c4e9643ae4a80f0dfaf435627a123761",
+    "shell/src-tauri/Cargo.toml": "5dfbe2a8cf9cee145a035e87ffb6eaf25f4b1aaa7d8e0ba0331f5e7a22c84e6c",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -809,7 +809,7 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "8561de11f9c0d50aa47019f71bc6f1de24e8e8e148e98952c83dd2f2280bb09e",
+    "shell/src-tauri/tauri.conf.json": "4b6e435b016996f1ac63e6e3f8139e676d647e2af8223402f14375243f12c082",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
@@ -935,7 +935,7 @@
     "vite.config.ts": "0713031ddabc3c3152463d4b15bde29578cbcfc2b597b752a07bab890861fe15"
   },
   "mode": "local-ast-only",
-  "nodes": 7244,
+  "nodes": 7246,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1037,15 +1037,22 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "f3bd0a8451ca16f7c3f86e3b3611966ca0dc3d7de136e86949cb4c754a3df46c",
-    "communities.json": "01846dbc4c6e2a4d3262866c19439b16002612f064bc342ef94f3377f6350477",
-    "graph.html": "f61c84d98d03e06a248014418d5c3ad028984fed6f222013336d1eb5299a8cd8",
-    "graph.json": "2aff60e2abad8594cffc22a3ea6c5f868a768f2bfc33a8c5e5de08b0921fc918"
+    "GRAPH_REPORT.md": "8e8f8aed612dbd0d5ec089e797d850ccac9718f6a305d0847327f691763a404d",
+    "communities.json": "b2d8792359472c6d6b4b364b379e61287bdf0a940916d6da07e4d9e3d719d0cf",
+    "graph.html": "1e2496930646e436bc814ab9eaa7c6c215ba2e72a2821ab51a40cd4541478967",
+    "graph.json": "09e2bffcde35210cbd9e1e49416d8fdaeced759f42800913bffe6483be5db515"
   },
   "schema_version": 1,
-  "source_commit": "546a976a11442843d032ddac18c545805599d419",
-  "source_fingerprint": "ae508529c2e54081417015e0cf8cf2c838d234177b3d5b61f31e52123c457fa6",
+  "source_commit": "63920a30f3f4fd8f819f39a3f6693339cab2a6d8",
+  "source_fingerprint": "4825774db1cc4104552d5f64bae816e665004e06cbe6ee6784421bccd4c8bd52",
   "working_tree_changes": [
-    "server/session-store-providers.test.ts"
+    "docs/app-spec.md",
+    "package.json",
+    "server/terminal-session.test.ts",
+    "server/terminal-session.ts",
+    "shell/README.md",
+    "shell/package.json",
+    "shell/src-tauri/Cargo.toml",
+    "shell/src-tauri/tauri.conf.json"
   ]
 }

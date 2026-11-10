@@ -416,9 +416,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 233,
+  "communities": 214,
   "community_algorithm": "louvain-seed-42",
-  "edges": 20118,
+  "edges": 20126,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -457,7 +457,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "3ae4541356197a806d104bf96fbea20eaecbef7ebc3ee10e6ac12a652675b05a",
+    "docs/app-spec.md": "79e8aaae5dc08be8a48a761d1f1c6777cae16afc9dcbead06609056ae3f1a73b",
     "docs/architecture.md": "a0b949d5e752b96d53f064e96944a7d0590f0ecb34982e95007a993298927cb0",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -758,8 +758,8 @@
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-queue-delivery.test.ts": "7c597c675a0ed20d24e9cdc152b9bee38bad9a8297b163b3a32a48d0bf23d5c3",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "074562e5c425aac9f6215272d97c59bfc5f158d9c6183fe32400a07c503f83c0",
-    "server/terminal-session.ts": "c41bfcdab84d0a04505b9fd88307bc22b889d9eb90268d77a0cb85eb1189674a",
+    "server/terminal-session.test.ts": "ec8f9e81db02bfbf2061ac79e49ad7e6b52e6cd97627926f1d86828b29f4a1e2",
+    "server/terminal-session.ts": "ea6129cf979c2899601f8287a8a1389fe31589257905ac3d01d9b015a2c92db5",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "e8094768a188587c3e34f731f03e6c246c24776c8bf983b7be6716068e81419f",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -937,7 +937,7 @@
     "vite.config.ts": "0713031ddabc3c3152463d4b15bde29578cbcfc2b597b752a07bab890861fe15"
   },
   "mode": "local-ast-only",
-  "nodes": 7247,
+  "nodes": 7249,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1039,23 +1039,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "88ecc5b5a830a91e31aab23e7b41383237468d158f8154f9ff192925b42c307d",
-    "communities.json": "e165ae454c4c6c7e08262b2a4b4e2720ac9288bd45cd73a287c1e2a59bfbebf6",
-    "graph.html": "aeaa015d784230fa429ae9a62313203acdb908bb2c00324f049fa4e46cc62278",
-    "graph.json": "89f3304af9260d21ce76bb31061d0b98069f34b565b2ba9fb786753d417cfe5c"
+    "GRAPH_REPORT.md": "06248704f816fac8475e05989640e21a283346ec341a582f055bdf4c8424832e",
+    "communities.json": "236e48d90c71b05ce4487b61954fbabdb915f520c4da845330e7692407ca21a0",
+    "graph.html": "d7a35566d588a3fc38f1c4a0c214d4bfb23075df35fac57866f47bdbea9ff855",
+    "graph.json": "f5baf65d01868b8d9514b08d9c3e4cd1568bea085efe34bbdab1ae0e0e19e586"
   },
   "schema_version": 1,
-  "source_commit": "63920a30f3f4fd8f819f39a3f6693339cab2a6d8",
-  "source_fingerprint": "4d68f4d102af939979540fdfa8663bf604bd1bf45cf4c15a3ca62827d43b578a",
+  "source_commit": "4b49f552accc8adba70bb585b4f4bc9758ec6148",
+  "source_fingerprint": "6be92bd864c33800e7ec7b5ac440b9b92638dbb34afeb2666a51c0155b8c9b63",
   "working_tree_changes": [
     "docs/app-spec.md",
-    "e2e/session-follow.pw.ts",
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.test.tsx",
-    "src/App.tsx"
+    "server/terminal-session.test.ts",
+    "server/terminal-session.ts"
   ]
 }

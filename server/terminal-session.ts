@@ -314,6 +314,17 @@ const FORM_VIEWPORT_BASE_TIMEOUT_MS = 15_000
 const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
 const REPLACEMENT_COMPOSER_TIMEOUT_MS = 30_000
+// Copilot holds its session until it has finished shutting down, a second or
+// two after it is hung up on, and a Copilot started on a session still held
+// asks whether to resume one "in use by another CLI or application".
+// `respawn-pane -k` hangs up on the old process and starts the new one at the
+// same moment, so a relaunch raced its predecessor's shutdown and could stop
+// on that question about itself. The new command waits in the pane until the
+// processes it replaces are gone; if one outlasts the wait, the new Copilot
+// starts anyway and its own question guards the session.
+const RELAUNCH_LABEL = 'agentic-remote-relaunch'
+const RELAUNCH_EXIT_POLLS = 200
+const RELAUNCH_EXIT_POLL_SECONDS = '0.05'
 const REPLACEMENT_READY_FRAMES = 30
 // A Copilot running this long is past the dialogs it opens as it starts, so a
 // first message to it only needs its prompt seen steady once.
@@ -652,15 +663,7 @@ export class TmuxTerminalSessionController
       this.inputReadySessions.delete(sessionId)
       this.automaticStartupSessions.delete(sessionId)
       try {
-        await execFileAsync('tmux', [
-          'respawn-pane',
-          '-k',
-          '-t',
-          owner.target,
-          '-c',
-          resolvedCwd,
-          ...command,
-        ])
+        await this.relaunch(owner.target, resolvedCwd, command, [owner.pid])
         const nextOwner = await this.waitForNewOwner(
           sessionId,
           owner.pid,
@@ -673,15 +676,12 @@ export class TmuxTerminalSessionController
         })
       } catch (error) {
         try {
-          await execFileAsync('tmux', [
-            'respawn-pane',
-            '-k',
-            '-t',
+          await this.relaunch(
             owner.target,
-            '-c',
             originalCwd,
-            ...originalCommand,
-          ])
+            originalCommand,
+            await this.rollbackReplaced(owner),
+          )
           const restoredOwner = await this.waitForNewOwner(
             sessionId,
             owner.pid,
@@ -728,15 +728,7 @@ export class TmuxTerminalSessionController
       this.automaticStartupSessions.delete(sessionId)
       this.automaticStartupSessions.delete(replacementId)
       try {
-        await execFileAsync('tmux', [
-          'respawn-pane',
-          '-k',
-          '-t',
-          owner.target,
-          '-c',
-          resolvedCwd,
-          ...command,
-        ])
+        await this.relaunch(owner.target, resolvedCwd, command, [owner.pid])
         const nextOwner = await this.waitForNewOwner(
           replacementId,
           owner.pid,
@@ -754,15 +746,12 @@ export class TmuxTerminalSessionController
         this.inputReadySessions.delete(replacementId)
         this.automaticStartupSessions.delete(replacementId)
         try {
-          await execFileAsync('tmux', [
-            'respawn-pane',
-            '-k',
-            '-t',
+          await this.relaunch(
             owner.target,
-            '-c',
             originalCwd,
-            ...originalCommand,
-          ])
+            originalCommand,
+            await this.rollbackReplaced(owner),
+          )
           const restoredOwner = await this.waitForNewOwner(
             sessionId,
             owner.pid,
@@ -897,15 +886,7 @@ export class TmuxTerminalSessionController
       const command = await processCommand(owner.pid)
       this.inputReadySessions.delete(sessionId)
       this.automaticStartupSessions.delete(sessionId)
-      await execFileAsync('tmux', [
-        'respawn-pane',
-        '-k',
-        '-t',
-        owner.target,
-        '-c',
-        cwd,
-        ...command,
-      ])
+      await this.relaunch(owner.target, cwd, command, [owner.pid])
       const nextOwner = await this.waitForNewOwner(
         sessionId,
         owner.pid,
@@ -2524,12 +2505,53 @@ export class TmuxTerminalSessionController
   ): Promise<TerminalOwner> {
     for (let attempt = 0; attempt < 150; attempt += 1) {
       const owner = await this.owner(sessionId, expectedTarget)
-      if (owner && owner.pid !== previousPid) {
+      // The wait in front of a relaunch carries the command it becomes, so
+      // discovery can find it first. It is the owner once it has become it.
+      if (
+        owner &&
+        owner.pid !== previousPid &&
+        !(await awaitingRelaunch(owner.pid))
+      ) {
         return owner
       }
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
     throw new Error('Copilot did not restart in the tmux pane')
+  }
+
+  /** Replaces what `target` runs with `command` once `replaced` have exited. */
+  private async relaunch(
+    target: string,
+    cwd: string,
+    command: string[],
+    replaced: number[],
+  ): Promise<void> {
+    await execFileAsync('tmux', [
+      'respawn-pane',
+      '-k',
+      '-t',
+      target,
+      '-c',
+      cwd,
+      ...afterExit(replaced, command),
+    ])
+  }
+
+  /** The owner and whatever a failed relaunch left running in its pane. */
+  private async rollbackReplaced(owner: TerminalOwner): Promise<number[]> {
+    try {
+      const { stdout } = await execFileAsync('tmux', [
+        'display-message',
+        '-p',
+        '-t',
+        owner.target,
+        '#{pane_pid}',
+      ])
+      const root = Number.parseInt(stdout.trim(), 10)
+      return Number.isInteger(root) && root > 0 ? [owner.pid, root] : [owner.pid]
+    } catch {
+      return [owner.pid]
+    }
   }
 
   private async createWindow(
@@ -4760,6 +4782,27 @@ function safeWindowName(title: string): string {
     .join('')
     .trim()
   return (sanitized || 'copilot').slice(0, 80)
+}
+
+/** Runs `command` in a respawned pane once every process in `replaced` has exited. */
+function afterExit(replaced: number[], command: string[]): string[] {
+  return [
+    '/bin/sh',
+    '-c',
+    `i=0; while [ "$i" -lt ${RELAUNCH_EXIT_POLLS} ]; do alive=; for pid in $1; do kill -0 "$pid" 2>/dev/null && alive=1; done; [ -z "$alive" ] && break; i=$((i + 1)); sleep ${RELAUNCH_EXIT_POLL_SECONDS}; done; shift; exec "$@"`,
+    RELAUNCH_LABEL,
+    [...new Set(replaced)].join(' '),
+    ...command,
+  ]
+}
+
+/** Whether `pid` is still the wait in front of a relaunched command. */
+async function awaitingRelaunch(pid: number): Promise<boolean> {
+  try {
+    return (await processCommand(pid))[3] === RELAUNCH_LABEL
+  } catch {
+    return true
+  }
 }
 
 async function processCommand(pid: number): Promise<string[]> {

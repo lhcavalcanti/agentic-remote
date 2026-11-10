@@ -298,6 +298,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   supported.
 - Restart MUST preserve session ID, title, working folder, transcript, queue,
   runtime settings, and tmux window.
+- Restart, runtime changes, and conversation clears that relaunch Copilot in its
+  pane MUST start the replacement only after the process it replaces has
+  exited, for up to about ten seconds, so it does not find its own session in
+  use. Past that bound Copilot's own **Session in use** card remains the guard,
+  and input refused there MUST name that card rather than a full-screen view.
 - Restart MUST remain available for an online session in `error` state. Error
   recovery MUST NOT require a direct API call.
 - Copilot sessions MUST offer **Recover conversation** in session actions when

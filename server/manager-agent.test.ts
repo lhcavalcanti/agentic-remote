@@ -274,6 +274,40 @@ describe('ManagerAgent', () => {
     expect(hub.sendMessage).not.toHaveBeenCalled()
   })
 
+  it('refuses Retry after Remove deletes attachments, including after restart, but retries removed text-only messages', async () => {
+    const files = [
+      await store.uploadFile('notes.md', Buffer.from('original notes')),
+      await store.uploadFile('chart.png', Buffer.from('image bytes')),
+    ]
+    agent = new ManagerAgent({
+      store, hub, recorder: new JournalRecorder(store), clientFactory: sdk.factory,
+    })
+    const sent = await agent.send('Read these files.', undefined, { attachmentIds: files.map((file) => file.id) })
+    const removed = await agent.removeQueued(sent.id)
+    expect(removed).toMatchObject({
+      state: 'cancelled', removedAttachmentNames: ['notes.md', 'chart.png'],
+    })
+    expect(removed.attachments).toBeUndefined()
+    await expect(store.attachmentReferences(files.map((file) => file.id))).rejects.toMatchObject({ statusCode: 404 })
+    await expect(agent.retry(sent.id)).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('attachments were removed') })
+    await expect(agent.editQueued(sent.id, 'Try again without the files')).rejects.toMatchObject({ statusCode: 409 })
+
+    const text = await agent.send('Text only.')
+    await agent.removeQueued(text.id)
+    expect(await agent.retry(text.id)).toMatchObject({ state: 'queued' })
+    await agent.stop()
+    agent = undefined
+    store = await openStore()
+    await start()
+    await settled()
+
+    expect(store.message(sent.id)).toMatchObject({ state: 'cancelled', removedAttachmentNames: ['notes.md', 'chart.png'] })
+    await expect(agent!.retry(sent.id)).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('send it again with the files') })
+    expect(sdk.sends).toHaveLength(1)
+    expect(sdk.sends[0].prompt).toContain('<user_message>\nText only.\n</user_message>')
+    expect(sdk.sends[0].attachments).toBeUndefined()
+  })
+
   it('reuses uploaded references across edit, all recovery rungs, Retry and hub restart', async () => {
     const text = await store.uploadFile('note.txt', Buffer.from('reusable'))
     agent = new ManagerAgent({
@@ -282,6 +316,9 @@ describe('ManagerAgent', () => {
     })
     const sent = await agent.send('Before edit', undefined, { attachmentIds: [text.id] })
     await agent.editQueued(sent.id, 'After edit')
+    expect(store.message(sent.id)?.attachments).toEqual([text])
+    await agent.cancelMessage(sent.id)
+    await agent.retry(sent.id)
     expect(store.message(sent.id)?.attachments).toEqual([text])
     sdk.behaviors.push(...Array.from({ length: 4 }, () => fail('try again')))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -1877,12 +1914,15 @@ describe('ManagerAgent', () => {
 
   it('starts a new conversation on reset and keeps memory', async () => {
     await store.memory.write('MEMORY.md', '# Kept')
+    const file = await store.uploadFile('reset.txt', Buffer.from('removed on Start over'))
     await start()
-    await agent!.send('hello')
+    const sent = await agent!.send('hello', undefined, { attachmentIds: [file.id] })
     await settled()
     await agent!.reset()
     expect(agent!.snapshot().messages).toEqual([])
     expect(events.at(-1)).toMatchObject({ type: 'manager.reset' })
+    await expect(agent!.retry(sent.id)).rejects.toMatchObject({ statusCode: 404 })
+    await expect(store.attachmentReferences([file.id])).rejects.toMatchObject({ statusCode: 404 })
     await agent!.send('again')
     await settled()
     expect(store.state().sdkSessionId).toBe('sdk-2')

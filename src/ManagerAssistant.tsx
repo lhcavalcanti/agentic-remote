@@ -30,7 +30,7 @@ import type {
   ManagerSnapshot,
   ManagerStatus,
 } from '../shared/manager'
-import { MANAGER_MESSAGE_MAX_LENGTH } from '../shared/manager'
+import { MANAGER_MESSAGE_MAX_LENGTH, MANAGER_REMOVED_ATTACHMENTS_REASON } from '../shared/manager'
 import {
   cancelManager,
   editQueuedManagerMessage,
@@ -315,7 +315,8 @@ function UserMessage({
   onRetry: (message: ManagerMessage) => void
   retrying: boolean
 }) {
-  const retryable = message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled'
+  const retryable = !message.removedAttachmentNames?.length
+    && (message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled')
   const long = message.content.length > 600 || message.content.split('\n').length > 12
   const [expanded, setExpanded] = useState(false)
   return (
@@ -329,6 +330,11 @@ function UserMessage({
         </button>
       ) : null}
       <OracleMessageAttachments files={message.attachments} />
+      {message.removedAttachmentNames?.length ? (
+        <p className="manager-message__error" role="note">
+          Files removed: {message.removedAttachmentNames.join(', ')}. {MANAGER_REMOVED_ATTACHMENTS_REASON}
+        </p>
+      ) : null}
       <div className="manager-message__meta">
         <MessageTime value={message.createdAt} />
         {message.answerOnly ? <span className="manager-message__state">Ask</span> : null}

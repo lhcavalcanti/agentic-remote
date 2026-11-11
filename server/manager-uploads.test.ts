@@ -97,12 +97,50 @@ describe('Oracle uploads', () => {
     await store.upsertMessage({ ...store.message('one')!, state: 'cancelled', attachments: undefined })
     await expect(store.attachmentReferences([one.id])).rejects.toMatchObject({ statusCode: 404 })
     const two = await store.uploadFile('two.txt', Buffer.from('two'))
-    await store.upsertMessage({ id: 'two', role: 'user', content: 'two', createdAt: now.toISOString(), attachments: [two] })
+    const historical = { id: 'two', role: 'user' as const, content: 'two', createdAt: now.toISOString(), attachments: [two] }
+    await store.upsertMessage(historical)
     for (const id of ['three', 'four']) await store.upsertMessage({ id, role: 'assistant', content: id, createdAt: now.toISOString() })
     await expect(store.attachmentReferences([two.id])).rejects.toMatchObject({ statusCode: 404 })
+    expect(store.message('two')).toBeUndefined()
+    await expect(store.upsertMessage(historical)).rejects.toMatchObject({ statusCode: 404 })
     await store.uploadFile('unsent.txt', Buffer.from('unsent'))
     await store.resetConversation()
+    expect(store.messages()).toEqual([])
     expect(await readdir(path.join(store.directory, 'uploads'))).toEqual([])
+  })
+
+  it('keeps released-attachment metadata terminal across stale updates and log recovery', async () => {
+    const file = await store.uploadFile('removed.txt', Buffer.from('removed data'))
+    const original = {
+      id: 'removed', role: 'user' as const, content: 'Keep my files with my message.',
+      state: 'queued' as const, createdAt: now.toISOString(), attachments: [file],
+    }
+    await store.upsertMessage(original)
+    await store.upsertMessage({ ...original, state: 'cancelled', attachments: undefined })
+    expect(store.message(original.id)).toMatchObject({
+      state: 'cancelled', removedAttachmentNames: ['removed.txt'],
+    })
+    await expect(store.attachmentReferences([file.id])).rejects.toMatchObject({ statusCode: 404 })
+
+    await store.upsertMessage(original)
+    const recovered = new ManagerStore(store.directory)
+    await recovered.initialize()
+    expect(recovered.message(original.id)).toMatchObject({
+      state: 'cancelled', removedAttachmentNames: ['removed.txt'],
+    })
+    expect(recovered.message(original.id)?.attachments).toBeUndefined()
+    expect(JSON.stringify(recovered.message(original.id))).not.toContain(file.id)
+
+    await writeFile(path.join(store.directory, 'conversation.jsonl'), [
+      original,
+      { ...original, state: 'cancelled', attachments: undefined },
+    ].map((message) => JSON.stringify(message)).join('\n') + '\n')
+    const legacy = new ManagerStore(store.directory)
+    await legacy.initialize()
+    expect(legacy.message(original.id)).toMatchObject({
+      state: 'cancelled', removedAttachmentNames: ['removed.txt'],
+    })
+    expect(legacy.message(original.id)?.attachments).toBeUndefined()
   })
 
   it('rejects external paths and duplicate references', async () => {

@@ -124,8 +124,19 @@ function storedMessage(
 ): ManagerMessage {
   const stored = structuredClone(message)
   if (stored.role !== 'user') return stored
+  // Deletion stays terminal when an old queue row is replayed or recovered.
+  const removedAttachmentNames = previous?.removedAttachmentNames
+    ?? stored.removedAttachmentNames
+    ?? (previous?.attachments?.length && !stored.attachments?.length
+      ? previous.attachments.map((file) => file.name)
+      : undefined)
   return {
     ...stored,
+    ...(removedAttachmentNames?.length ? {
+      removedAttachmentNames: [...removedAttachmentNames],
+      attachments: undefined,
+      state: 'cancelled' as const,
+    } : {}),
     source: previous?.role === 'user'
       ? messageSource(previous.source)
       : messageSource(stored.source),

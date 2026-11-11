@@ -75,7 +75,12 @@ describe('manager routes', () => {
     const used = await app.inject({ method: 'DELETE', url: `/api/manager/files/${file.id}`, headers: trusted })
     expect(used.statusCode).toBe(409)
     expect(await readFile(path.join(directory, 'manager', 'uploads', `${file.id}-${file.name}`), 'utf8')).toBe('shared text')
-    await app.inject({ method: 'POST', url: `/api/manager/messages/${message.id}/remove`, headers: trusted })
+    const removed = await app.inject({ method: 'POST', url: `/api/manager/messages/${message.id}/remove`, headers: trusted })
+    expect(removed.json().message).toMatchObject({ state: 'cancelled', removedAttachmentNames: ['report.md'] })
+    expect(removed.json().message.attachments).toBeUndefined()
+    const retry = await app.inject({ method: 'POST', url: `/api/manager/messages/${message.id}/retry`, headers: trusted })
+    expect(retry.statusCode).toBe(409)
+    expect(retry.json().error).toContain('attachments were removed')
     expect(await readFile(path.join(directory, 'manager', 'conversation.jsonl'), 'utf8')).toContain(file.id)
     const missing = await app.inject({
       method: 'POST', url: '/api/manager/messages', headers: trusted,

@@ -1640,6 +1640,32 @@ describe('ManagerAssistant', () => {
     expect(await screen.findByRole('region', { name: 'Queued for Oracle' })).toHaveTextContent('hi')
   })
 
+  it('explains removed attachments without Retry while keeping Retry for a text-only removed message', async () => {
+    vi.mocked(retryManagerMessage).mockResolvedValue({
+      id: 'text-only', role: 'user', content: 'Removed text only', createdAt: 't', state: 'queued',
+    })
+    setup({
+      ...empty,
+      messages: [
+        {
+          id: 'files-removed', role: 'user', content: 'Removed with files', createdAt: 't',
+          state: 'cancelled', removedAttachmentNames: ['notes.md', 'chart.png'],
+        },
+        { id: 'text-only', role: 'user', content: 'Removed text only', createdAt: 't', state: 'cancelled' },
+      ],
+    })
+    await openPanel()
+    const removed = screen.getByText('Removed with files').closest('li')!
+    expect(within(removed).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    expect(within(removed).getByRole('note')).toHaveTextContent('notes.md')
+    expect(within(removed).getByRole('note')).toHaveTextContent('chart.png')
+    expect(within(removed).getByRole('note')).toHaveTextContent('send it again with the files')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(retryManagerMessage).toHaveBeenCalledWith('text-only'))
+    expect(retryManagerMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('opens sessions from activity and from links in a reply', async () => {
     const { onOpenSession } = setup({
       ...empty,

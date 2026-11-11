@@ -558,13 +558,15 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   sanitized UUID-prefixed 0600 files, exclusive creation, and no symlink reuse.
   Only opaque references cross the client API; turn admission sends text as
   MIME base64 SDK blobs and PDF/images as SDK file attachments, never upload
-  paths or file contents in the prompt. References survive queue edits,
-  retries, runtime recovery, and hub restarts. Queue removal, Start over, and
-  eviction from the 1,000-message history release owned files; unsent uploads
-  expire after 24 hours, checked at startup and hourly. Attached content MUST
-  be framed as user-shared data, not instructions or authorization to act
-  without an explicit user request. Voice, proactive, and task turns do not
-  accept attachments; session attachments are unchanged.
+  paths or file contents in the prompt. References survive queue edits, Stop,
+  failed turns, retries, runtime recovery, and hub restarts. Queue removal,
+  Start over, and eviction from the 1,000-message history release owned files;
+  unsent uploads expire after 24 hours, checked at startup and hourly. Removing
+  an attached queued message MUST keep only the filenames with an explanation, hide Retry,
+  and refuse API retries with 409; a text-only removed message stays retryable.
+  Attached content MUST be framed as user-shared data, not instructions or
+  authorization to act without an explicit user request. Voice, proactive, and
+  task turns do not accept attachments; session attachments are unchanged.
 - Oracle's conversation opens at its latest message and keeps its end in view
   as the conversation changes only while the reader is within 48px of that end,
   as a session's timeline does. Scrolling up stops following and offers **Scroll

@@ -19,6 +19,7 @@ import type {
 import type { NewSessionRuntimesSetting, OracleResponseStyle } from '../shared/settings-profile.js'
 import {
   MANAGER_MESSAGE_MAX_LENGTH,
+  MANAGER_REMOVED_ATTACHMENTS_REASON,
   MANAGER_SNAPSHOT_MESSAGES,
   type ManagerInternalSubmission,
   type ManagerClientDefaults,
@@ -824,7 +825,15 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           { statusCode: 409 },
         )
       }
-      const next: ManagerMessage = { ...message, attachments: undefined, state: 'cancelled', updatedAt: this.now().toISOString() }
+      const next: ManagerMessage = {
+        ...message,
+        ...(message.attachments?.length
+          ? { removedAttachmentNames: message.attachments.map((file) => file.name) }
+          : {}),
+        attachments: undefined,
+        state: 'cancelled',
+        updatedAt: this.now().toISOString(),
+      }
       await this.updateMessage(next)
       this.messageDefaults.delete(messageId)
       this.publishStatus()
@@ -914,6 +923,9 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         new Error('Durable task messages must be retried from the task card.'),
         { statusCode: 409 },
       )
+    }
+    if (message.removedAttachmentNames?.length) {
+      throw Object.assign(new Error(MANAGER_REMOVED_ATTACHMENTS_REASON), { statusCode: 409 })
     }
     if (message.state === 'queued' || message.state === 'running') return message
     const timestamp = this.now().toISOString()

@@ -427,7 +427,7 @@ export function recoveryBrief(input: { memoryIndex?: string; messages: ManagerMe
   const excludedMessageIds = new Set(input.messages
     .filter((message) =>
       message.role === 'user' &&
-      (message.source === 'voice' || message.source === 'proactive')
+      (message.source === 'voice' || message.source === 'proactive' || Boolean(message.removedAttachmentNames?.length))
     )
     .map((message) => message.id))
   for (const message of input.messages) {

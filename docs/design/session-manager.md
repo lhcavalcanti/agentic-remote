@@ -135,7 +135,8 @@ the unchanged user text. The turn context marks files as untrusted shared data;
 their contents cannot grant structured-memory intent. Unowned files can be
 removed through `DELETE /api/manager/files/:id`; conversation ownership drives
 retention and cleanup. Removing a reference already owned by a message detaches
-only the draft.
+only the draft. Name-only release tombstones prevent Retry, stale store
+updates, or recovery briefs from resurrecting a removed attached message.
 
 ## Prompt composition
 

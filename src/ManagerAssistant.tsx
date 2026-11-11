@@ -631,7 +631,6 @@ export function ManagerAssistant({
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
   const snapshotRef = useRef<ManagerSnapshot | undefined>(undefined)
   const [draft, setDraft] = useState(storedDraft.value.draft)
-  const attachments = useOracleAttachments(storedDraft.value.attachments)
   const attachmentInputRef = useRef<HTMLInputElement>(null)
   const [answerOnly, setAnswerOnly] = useState(readAnswerOnly)
   const [sending, setSending] = useState(false)
@@ -655,6 +654,16 @@ export function ManagerAssistant({
   const [recoveredEdit, setRecoveredEdit] = useState(Boolean(storedDraft.value.editing))
   const draftStorageBlockedRef = useRef(Boolean(storedDraft.error))
   const draftRef = useRef(draft)
+  const editingRef = useRef(editing)
+  const persistDetachedAttachments = useCallback((files: ManagerAttachment[]) => {
+    if (draftStorageBlockedRef.current) return
+    const error = storeOracleDraft(draftRef.current, editingRef.current, files)
+    if (error) {
+      draftStorageBlockedRef.current = true
+      setDraftStorageError(error)
+    }
+  }, [])
+  const attachments = useOracleAttachments(storedDraft.value.attachments, persistDetachedAttachments)
   const managerRefreshGeneration = useRef(0)
   const replaceSnapshot = useCallback((next: ManagerSnapshot) => {
     managerRefreshGeneration.current += 1
@@ -747,7 +756,8 @@ export function ManagerAssistant({
 
   useEffect(() => {
     draftRef.current = draft
-  }, [draft])
+    editingRef.current = editing
+  }, [draft, editing])
 
   useEffect(() => {
     if (draftStorageBlockedRef.current) return
@@ -1041,11 +1051,12 @@ export function ManagerAssistant({
 
   async function send(content = draft, onlyOracle = answerOnly) {
     const text = content.trim()
-    if (!text || sending || draftStorageError || attachments.blocked) return
+    const files = attachments.forSubmission()
+    if (!text || sending || draftStorageError || files === undefined) return
     setSending(true)
     setSendError(undefined)
     try {
-      await sendText(content, onlyOracle, attachments.uploaded.map((file) => file.id))
+      await sendText(content, onlyOracle, files.map((file) => file.id))
       setDraft((current) => {
         const next = current === content ? '' : current
         const storageError = storeOracleDraft(next, editing)

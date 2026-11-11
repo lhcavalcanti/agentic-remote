@@ -7,13 +7,24 @@ interface DraftAttachment {
   key: number
   name: string
   size: number
-  state: 'uploading' | 'uploaded' | 'failed'
+  state: 'uploading' | 'uploaded' | 'failed' | 'removing'
   file?: File
   reference?: ManagerAttachment
   error?: string
 }
 
-export function useOracleAttachments(initial: ManagerAttachment[] = []) {
+function uploadedReferences(files: DraftAttachment[]): ManagerAttachment[] {
+  return files.flatMap((file) => file.state === 'uploaded' && !file.error && file.reference ? [file.reference] : [])
+}
+
+function hasBlockingAttachments(files: DraftAttachment[]): boolean {
+  return files.some((file) => file.state !== 'uploaded' || Boolean(file.error))
+}
+
+export function useOracleAttachments(
+  initial: ManagerAttachment[] = [],
+  onDetach?: (remaining: ManagerAttachment[]) => void,
+) {
   const [files, setFiles] = useState<DraftAttachment[]>(() => initial.map((reference, key) => ({
     key, name: reference.name, size: reference.size, state: 'uploaded', reference,
   })))
@@ -35,10 +46,10 @@ export function useOracleAttachments(initial: ManagerAttachment[] = []) {
   function drain() {
     while (mounted.current && active.current < 2 && pending.current.length) {
       const item = pending.current.shift()!
-      if (!current.current.some((file) => file.key === item.key)) continue
+      if (!current.current.some((file) => file.key === item.key && file.state === 'uploading')) continue
       active.current += 1
       void uploadManagerFile(item.file!).then(async (reference) => {
-        if (!mounted.current || !current.current.some((file) => file.key === item.key)) {
+        if (!mounted.current || !current.current.some((file) => file.key === item.key && file.state === 'uploading')) {
           await removeManagerFile(reference.id).catch(() => undefined)
           return
         }
@@ -68,7 +79,7 @@ export function useOracleAttachments(initial: ManagerAttachment[] = []) {
 
   function retry(key: number) {
     const item = current.current.find((file) => file.key === key)
-    if (!item?.file) return
+    if (!item?.file || item.state !== 'failed') return
     if (current.current.length > 20) return
     const error = managerFileValidationError(item.file)
     if (error) return
@@ -79,8 +90,10 @@ export function useOracleAttachments(initial: ManagerAttachment[] = []) {
 
   async function remove(key: number) {
     const item = current.current.find((file) => file.key === key)
-    if (!item) return
+    if (!item || item.state === 'removing') return
     if (item.reference) {
+      update((files) => files.map((file) => file.key === key ? { ...file, state: 'removing', error: undefined } : file))
+      onDetach?.(uploadedReferences(current.current))
       try {
         await removeManagerFile(item.reference.id)
       } catch (error) {
@@ -91,17 +104,19 @@ export function useOracleAttachments(initial: ManagerAttachment[] = []) {
           return
         }
         update((files) => files.map((file) => file.key === key
-          ? { ...file, error: 'Could not remove the upload. Try Remove again.' } : file))
+          ? { ...file, state: 'uploaded', error: 'Could not remove the upload. Try Remove again.' } : file))
         return
       }
     }
     update((files) => files.filter((file) => file.key !== key))
+    if (!item.reference) onDetach?.(uploadedReferences(current.current))
   }
 
   return {
     files,
-    uploaded: useMemo(() => files.flatMap((file) => file.reference ? [file.reference] : []), [files]),
-    blocked: files.some((file) => file.state !== 'uploaded' || file.error),
+    uploaded: useMemo(() => uploadedReferences(files), [files]),
+    blocked: hasBlockingAttachments(files),
+    forSubmission: () => hasBlockingAttachments(current.current) ? undefined : uploadedReferences(current.current),
     intake, retry, remove,
     clear: () => { pending.current = []; update(() => []) },
   }

@@ -559,8 +559,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Oracle's typed composer MUST accept files through its picker, paste, and
   drop, keeping source order without sending automatically. Chips MUST show
   name, size, upload state, Retry for a failed upload, and Remove. Send waits
-  for successful uploads and requires message text, with at most 20 files per
-  message. Text-like UTF-8 files
+  for successful uploads and completed removals, requires message text, and
+  accepts at most 20 files per message. Text-like UTF-8 files
   (including Markdown, JSON/YAML, CSV/TSV, and code) are limited to 1 MiB;
   PDF and supported images to 25 MiB. Unsupported binaries MUST be refused.
   The hub stores uploads under `<data>/manager/uploads/` with 0700 directories,
@@ -573,6 +573,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   unsent uploads expire after 24 hours, checked at startup and hourly. Removing
   an attached queued message MUST keep only the filenames with an explanation, hide Retry,
   and refuse API retries with 409; a text-only removed message stays retryable.
+  Removing a draft file MUST detach it from submission and durable draft
+  storage before deletion starts. A genuine deletion failure restores an
+  errored chip and blocks Send; pending removals MUST NOT reappear on reload.
   Attached content MUST be framed as user-shared data, not instructions or
   authorization to act without an explicit user request. Voice, proactive, and
   task turns do not accept attachments; session attachments are unchanged.

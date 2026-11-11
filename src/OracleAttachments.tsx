@@ -18,19 +18,23 @@ export function OracleAttachmentChips({ attachments, disabled = false }: {
     <ul aria-label="Oracle attachments to send" className="composer-attachments oracle-attachments" aria-live="polite">
       {attachments.files.map((file) => (
         <li className={`composer-attachment composer-attachment--${file.state}`} key={file.key}>
-          {file.state === 'uploading'
+          {file.state === 'uploading' || file.state === 'removing'
             ? <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={16} />
             : <FileText aria-hidden="true" size={16} />}
           <div className="composer-attachment__details">
             <strong title={file.name}>{file.name}</strong>
-            <small title={file.error}>{attachmentSize(file.size)} · {file.error ?? (file.state === 'uploaded' ? 'Uploaded' : 'Uploading…')}</small>
+            <small title={file.error}>
+              {attachmentSize(file.size)} · {file.error ?? (
+                file.state === 'uploaded' ? 'Uploaded' : file.state === 'removing' ? 'Removing…' : 'Uploading…'
+              )}
+            </small>
           </div>
           {file.state === 'failed' && file.file && !managerFileValidationError(file.file) ? (
             <button aria-label={`Retry ${file.name}`} className="composer-attachment__action" disabled={disabled} onClick={() => attachments.retry(file.key)} type="button">
               <RotateCcw aria-hidden="true" size={16} />
             </button>
           ) : null}
-          <button aria-label={`Remove ${file.name}`} className="composer-attachment__action" disabled={disabled} onClick={() => void attachments.remove(file.key)} type="button">
+          <button aria-label={`Remove ${file.name}`} className="composer-attachment__action" disabled={disabled || file.state === 'removing'} onClick={() => void attachments.remove(file.key)} type="button">
             <X aria-hidden="true" size={16} />
           </button>
         </li>

@@ -106,10 +106,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   lifecycle controls. Close MUST use the same confirmed, permanently deleting
   close lifecycle and owning-computer route as **Close session**; Pause and
   Resume retain their existing suspend lifecycle, availability, and labels.
+  While a session closes, only its own Close waits and its row is dimmed;
+  every other session MUST remain closable, since the owning computer
+  serializes lifecycle work per session.
 - Pause MUST be unavailable, with a title naming the reason, while the session
   is busy (not idle, or holding a question or permission), owns queued or
-  running background tasks, is interrupted or archived, or another suspend or
-  resume is pending. The owning computer MUST enforce the same rules and refuse
+  running background tasks, is interrupted or archived, or its own suspend or
+  resume is pending. Another session's pending suspend or resume MUST NOT
+  block it. The owning computer MUST enforce the same rules and refuse
   with a 409 naming the reason (501 where it cannot suspend terminal sessions),
   never a generic server error; suspending a suspended session returns it
   unchanged.

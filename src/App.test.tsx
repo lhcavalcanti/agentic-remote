@@ -12131,6 +12131,46 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  it('suspends another session while the first is still suspending', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    let finishFirst: (value: typeof session) => void = () => {}
+    vi.mocked(suspendSession)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishFirst = resolve
+          }),
+      )
+      .mockResolvedValueOnce({ ...secondSession, suspended: true })
+
+    render(<App />)
+    await screen.findAllByText('Second chat')
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
+    await waitFor(() =>
+      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+    expect(screen.getByRole('button', { name: 'Suspend Project chat' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Suspend Second chat' }))
+    await waitFor(() =>
+      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+    )
+    expect(
+      await screen.findByRole('button', { name: 'Resume Second chat' }),
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      finishFirst({ ...session, suspended: true })
+    })
+    expect(
+      await screen.findByRole('button', { name: 'Resume Project chat' }),
+    ).toBeInTheDocument()
+    expect(suspendSession).toHaveBeenCalledTimes(2)
+  })
+
   it('renders the owning computer refusal when suspension fails', async () => {
     vi.mocked(suspendSession).mockRejectedValueOnce(
       new Error('Session can only be suspended while idle'),
@@ -16895,6 +16935,148 @@ describe('App', () => {
         .toHaveAttribute('aria-current', 'page'),
     )
     expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument()
+  })
+
+  it('closes another session while the first is still closing', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    let finishFirst: (() => void) | undefined
+    vi.mocked(deleteSession).mockReturnValueOnce(new Promise<void>((resolve) => {
+      finishFirst = resolve
+    }))
+    render(<App />)
+    await screen.findAllByText('Second chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Project chat' }))
+    await waitFor(() =>
+      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+    )
+    // Only the session being closed waits for its close.
+    expect(screen.getByRole('button', { name: 'Close Project chat' })).toBeDisabled()
+    expect(sessionAction('Close session')).toBeDisabled()
+    const closeSecond = screen.getByRole('button', { name: 'Close Second chat' })
+    expect(closeSecond).toBeEnabled()
+
+    fireEvent.click(closeSecond)
+    await waitFor(() =>
+      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+    )
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Second chat,/ })).not.toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: /^Project chat,/ })).toBeInTheDocument()
+
+    await act(async () => {
+      finishFirst?.()
+      await Promise.resolve()
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+    )
+    expect(deleteSession).toHaveBeenCalledTimes(2)
+    expect(window.confirm).toHaveBeenCalledTimes(2)
+  })
+
+  it('moves a reader off a closed session past one that is still closing', async () => {
+    const thirdSession: ManagedSession = {
+      ...session,
+      id: 'session-3',
+      title: 'Third chat',
+      cwd: '/home/tester/src/third',
+      messages: [],
+    }
+    const listed = [session, secondSession, thirdSession]
+    vi.mocked(listSessions).mockResolvedValue(listed)
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      listed.find((entry) => entry.id === sessionId) || session,
+    )
+    vi.mocked(deleteSession).mockImplementation((_computerId, sessionId) =>
+      sessionId === secondSession.id
+        ? new Promise<void>(() => {})
+        : Promise.resolve(),
+    )
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
+    await waitFor(() =>
+      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+    )
+    fireEvent.click(sessionAction('Close session'))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: /^Third chat,/ }))
+      .toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: /^Second chat,/ }))
+      .not.toHaveAttribute('aria-current')
+  })
+
+  it('leaves nothing selected when every other session is closing too', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    vi.mocked(deleteSession).mockImplementation((_computerId, sessionId) =>
+      sessionId === secondSession.id
+        ? new Promise<void>(() => {})
+        : Promise.resolve(),
+    )
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
+    await waitFor(() =>
+      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+    )
+    fireEvent.click(sessionAction('Close session'))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: /^Second chat,/ }))
+      .not.toHaveAttribute('aria-current')
+  })
+
+  it('keeps nothing selected through a refresh while the rest are closing', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    vi.mocked(deleteSession).mockImplementation((_computerId, sessionId) =>
+      sessionId === secondSession.id
+        ? new Promise<void>(() => {})
+        : Promise.resolve(),
+    )
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
+    await waitFor(() =>
+      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+    )
+    fireEvent.click(sessionAction('Close session'))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+    )
+
+    // The owning computer now lists only the session that is still closing.
+    vi.mocked(listSessions).mockResolvedValue([secondSession])
+    const calls = vi.mocked(listSessionListing).mock.calls.length
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+    })
+    await waitFor(() =>
+      expect(listSessionListing).toHaveBeenCalledTimes(calls + 1),
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('button', { name: /^Second chat,/ }))
+      .not.toHaveAttribute('aria-current')
   })
 
   it('clears Copilot and UI history from the header and slash command', async () => {

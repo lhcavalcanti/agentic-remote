@@ -44,8 +44,10 @@ type SessionActions = {
   onOpenSessionTasks: (session: ManagedSession) => void
   onCloseSession: (session: ManagedSession) => void
   onToggleSessionSuspended: (session: ManagedSession) => void
-  deleting: boolean
-  suspending: boolean
+  /** `computerId:sessionId` of the sessions whose close is in flight. */
+  closingSessions: ReadonlySet<string>
+  /** `computerId:sessionId` of the sessions whose suspend or resume is in flight. */
+  suspendingSessions: ReadonlySet<string>
 }
 
 export function SessionState({ presentation }: {
@@ -129,8 +131,8 @@ function SortableSessionItem({
   onOpenSessionTasks,
   onCloseSession,
   onToggleSessionSuspended,
-  deleting,
-  suspending,
+  closingSessions,
+  suspendingSessions,
   managedSessions,
 }: SessionActions & {
   session: ManagedSession
@@ -155,7 +157,11 @@ function SortableSessionItem({
   const presentation = sessionPresentation(session, backgroundTasks, online)
   const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
-  const closeUnavailable = !online || deleting
+  // Each session waits only for its own close or suspend; the owning computer
+  // serializes lifecycle work per session, so others can go at the same time.
+  const closing = closingSessions.has(sessionKey(session))
+  const suspending = suspendingSessions.has(sessionKey(session))
+  const closeUnavailable = !online || closing
   // The owning computer refuses on any of these, so offering the button only
   // led to an error. Queued work counts although runningCount leaves it out.
   const retained = Boolean(session.interruption || session.archivedAt)
@@ -172,7 +178,7 @@ function SortableSessionItem({
         session.suspended ? 'session-item--suspended' : ''
       } ${presentation.needsAttention ? 'session-item--attention' : ''} ${
         selected ? 'session-item--active' : ''
-      } ${isDragging ? 'sortable-dragging' : ''}`}
+      } ${closing ? 'session-item--closing' : ''} ${isDragging ? 'sortable-dragging' : ''}`}
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
     >
@@ -263,8 +269,8 @@ function SortableSessionItem({
           title={
             !online
               ? `Reconnect ${computerName} to manage this session`
-              : deleting
-                ? 'Wait for the session to finish closing'
+              : closing
+                ? 'Closing this session'
                 : 'Permanently delete this session and its history'
           }
           type="button"
@@ -285,7 +291,7 @@ function SortableSessionItem({
             !online
               ? `Reconnect ${computerName} to manage this session`
               : suspending
-              ? 'Wait for the current suspend or resume to finish'
+              ? 'Wait for this suspend or resume to finish'
               : session.suspended
               ? 'Start this session up again'
               : retained

@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
+import { hubSignInExpired, subscribeHubSignIn } from '../hub-sign-in'
+import { SignInExpiredNotice } from '../SignInExpiredNotice'
+import { innermostDialogFrame, openDialogFrame, subscribeDialogFrames } from './dialog-stack'
 
 const dialogFocusable =
   'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])'
@@ -28,6 +31,10 @@ export function DialogFrame({
       ? document.activeElement
       : null,
   )
+  const [frame] = useState(() => Symbol('dialog frame'))
+  useLayoutEffect(() => openDialogFrame(frame), [frame])
+  const innermost = useSyncExternalStore(subscribeDialogFrames, innermostDialogFrame) === frame
+  const signedOut = useSyncExternalStore(subscribeHubSignIn, hubSignInExpired)
 
   useEffect(() => {
     // The frame says `aria-modal`, which tells a reader the page behind it is
@@ -152,6 +159,7 @@ export function DialogFrame({
             <X size={20} />
           </button>
         </div>
+        {signedOut && innermost ? <SignInExpiredNotice placement="inline" /> : null}
         {children}
       </section>
     </div>

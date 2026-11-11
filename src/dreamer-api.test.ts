@@ -7,8 +7,12 @@ import {
   saveDreamerSettings,
   updateDreamerPlan,
 } from './dreamer-api'
+import { HubSignInExpiredError, hubSignInExpired, setHubSignInExpired } from './hub-sign-in'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  setHubSignInExpired(false)
+})
 
 const snapshot = { available: true, revision: 1, settings: { enabled: false, timeZone: 'UTC' } }
 
@@ -65,6 +69,15 @@ describe('Dreamer API', () => {
     await expect(getDreamer()).rejects.toMatchObject({ status: 409 })
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('private failure text', { status: 500 })))
     await expect(getDreamer()).rejects.toThrow('Dreamer is unavailable. Try refreshing later.')
+  })
+
+  it('reports a sign-in gateway challenge as an expired sign-in, not an unavailable Dreamer', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, {
+      status: 401,
+      headers: { 'www-authenticate': 'Cloudflare-Access resource_metadata="https://hub.example/"' },
+    })))
+    await expect(getDreamer()).rejects.toBeInstanceOf(HubSignInExpiredError)
+    expect(hubSignInExpired()).toBe(true)
   })
 
   it('rejects unsupported hub responses rather than displaying a fake empty plan', async () => {

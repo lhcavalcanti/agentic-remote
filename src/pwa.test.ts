@@ -10,6 +10,7 @@ import {
   PWA_UPDATE_EVENT,
   registerPwa,
 } from './pwa'
+import { HubSignInExpiredError, hubSignInExpired, setHubSignInExpired } from './hub-sign-in'
 
 describe('PWA updates', () => {
   afterEach(() => {
@@ -184,7 +185,7 @@ describe('PWA updates', () => {
     })
 
     await expect(checkForPwaUpdate()).resolves.toBeUndefined()
-    expect(fetch).toHaveBeenCalledWith('/api/version', { cache: 'no-store' })
+    expect(fetch).toHaveBeenCalledWith('/api/version', expect.objectContaining({ cache: 'no-store' }))
     expect(serviceWorker.register).toHaveBeenCalledWith(
       `/sw.js?v=${__APP_BUILD_ID__}`,
       { scope: '/', updateViaCache: 'none' },
@@ -284,6 +285,20 @@ describe('PWA updates', () => {
 
     await expect(checkForPwaUpdate()).rejects.toThrow('invalid app')
     expect(serviceWorker.register).not.toHaveBeenCalled()
+  })
+
+  it('reports an expired hub sign-in from the update check', async () => {
+    const { fetch } = mockUpdateCheck({})
+    fetch.mockResolvedValueOnce(new Response(null, {
+      status: 401,
+      headers: { 'www-authenticate': 'Cloudflare-Access resource_metadata="https://hub.example/"' },
+    }))
+    try {
+      await expect(checkForPwaUpdate()).rejects.toBeInstanceOf(HubSignInExpiredError)
+      expect(hubSignInExpired()).toBe(true)
+    } finally {
+      setHubSignInExpired(false)
+    }
   })
 
   it('surfaces HTTP and worker registration failures', async () => {

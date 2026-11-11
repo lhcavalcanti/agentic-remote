@@ -1,4 +1,5 @@
 import type { DreamerPlanItem, DreamerSnapshot } from '../shared/dreamer'
+import { hubFetch } from './hub-sign-in'
 
 export class DreamerApiError extends Error {
   readonly status: number
@@ -74,7 +75,7 @@ async function request(
     | DreamerTaskDisposition,
   method: 'PUT' | 'POST' = 'PUT',
 ): Promise<DreamerSnapshot> {
-  const response = await fetch(`/api/manager/dreamer${path}`, {
+  const response = await hubFetch(`/api/manager/dreamer${path}`, {
     cache: 'no-store',
     ...(input ? {
       method,

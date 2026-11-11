@@ -445,6 +445,7 @@ export function SessionNavigation({
   onRefresh,
   refreshState = 'fresh',
   refreshMessage,
+  signInExpired,
   ...actions
 }: SessionActions & {
   view: SessionNavigationView
@@ -465,6 +466,11 @@ export function SessionNavigation({
   onRefresh?: () => void
   refreshState?: 'fresh' | 'refreshing' | 'stale'
   refreshMessage?: string
+  /**
+   * Set while the sign-in gateway refuses requests, which every connection and
+   * refresh failure would then only repeat.
+   */
+  signInExpired?: boolean
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
   onShowSuspendedChange: (show: boolean) => void
@@ -498,7 +504,9 @@ export function SessionNavigation({
           <div className="session-list__title">
             <h2>Sessions <span>{counts.all}</span></h2>
             <small>
-            {loading
+            {signInExpired
+              ? 'Sign-in expired'
+              : loading
               ? 'Connecting...'
               : loadingError
                 ? 'Connection failed'
@@ -624,7 +632,7 @@ export function SessionNavigation({
             </button>
           </div>
         ) : null}
-        {onRefresh && refreshState !== 'fresh' ? (
+        {onRefresh && refreshState !== 'fresh' && !signInExpired ? (
           <p
             aria-label="Session data freshness"
             className={`session-list__freshness session-list__freshness--${refreshState}`}

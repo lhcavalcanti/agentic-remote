@@ -416,9 +416,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 227,
+  "communities": 214,
   "community_algorithm": "louvain-seed-42",
-  "edges": 20161,
+  "edges": 20172,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -451,7 +451,7 @@
     "README.md": "2718b6545afc623f8fa32201ecaa1f0035e32ca45384e35a0a739d98e7651cb7",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "19359d888276fda1ba423b8f5118e37232f2ba7c63299b9f075142c9df7e4340",
-    "bin/agentic-remote-gate": "2265ec7587f26b8e9e0032db99a32b38539c088cdf8542f67aa3a0f1724b76c6",
+    "bin/agentic-remote-gate": "a6e8d2b46bf441c15a4b698a68e9ccfef0c359a346e63d8d5e18e511e1a040bf",
     "bin/agentic-remote-promotion-monitor": "e3b0ccc2e8c99b5e725cc5e85f3b422aac901ce386f8f8ca21023d867497d881",
     "bin/agentic-remote-promotion-setup": "a98d649946727ac53fe1df94ceea5a8dfe3bae83a0ea1f30da343e0699e220aa",
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
@@ -463,7 +463,7 @@
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
     "docs/background-tasks.md": "e71788f93d17d437cbf6b2c65e9450b37baf221ca369f6c550466e9b8b580976",
-    "docs/deployment-promotion.md": "1ee6e77539c2142dfdc8e0b97ceff7d97d558bcb923195f0cec1da12360a71dd",
+    "docs/deployment-promotion.md": "fa6d031aaa820a7cae627439eb3d44f2d7d69af993143bdd6e1acd4c54e4f6e0",
     "docs/design/agent-workspace.md": "300d9ebda9e419ddd55103b7627ec53f29f2175f530a1de36141cd5d766a6d0a",
     "docs/design/oracle-conversation-mode.md": "2e57dfa4c540302fb9a04a5bb18b058935db26fa6ed28cbc6851e737d93db249",
     "docs/design/oracle-dreamer.md": "c641c69c99e492eb0f15f9b93888a2d3cabf1d92d95d4be2ed75c1578f1844e4",
@@ -605,7 +605,7 @@
     "server/event-log.ts": "c5fc6997c675fda84e89c7b0994dea55ee57b2ddc16c01bcacea01dc6df6c378",
     "server/file-upload-routes.test.ts": "c9714330279f98c3942fe8e5e26a6d9c89bd80ac05c7929eef758b956f073d2b",
     "server/file-upload-routes.ts": "cf922309a2f3bba0c83e2448f39bc292b983c9f3830ccffe0adbab241d3aa7a9",
-    "server/full-gate.test.ts": "b03df471868a15f53607fab880267889c741472de88edbe0945c43a9e78e0cbc",
+    "server/full-gate.test.ts": "0d5ee37c73e959ccb0a3a80203e2785c1a225339824d43eaa99ef94131d3db5a",
     "server/history-projection.test.ts": "09f9da54f6c63562199a088f798f437e180a64cdd38a551d3f857b3d9da43979",
     "server/hub-routes.test.ts": "34e7345239d24539d6b3700c32f78c712e2397e7c6ae98526cbf98085cb97c79",
     "server/hub-routes.ts": "b34228247975314e056b0fcfac9ee28a56450f4a4ea530725042a6d59f755d9f",
@@ -937,7 +937,7 @@
     "vite.config.ts": "0713031ddabc3c3152463d4b15bde29578cbcfc2b597b752a07bab890861fe15"
   },
   "mode": "local-ast-only",
-  "nodes": 7262,
+  "nodes": 7265,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1039,16 +1039,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "f7f1239e6e60c734f5a9a3f15a5de94138c63bebac335e24edf49675c317cbb0",
-    "communities.json": "d095bb47b0afd59dcad864b0f3638dfe0cc9e86d3905a715926b06fef155a67b",
-    "graph.html": "05c381e54c3c6fc0bdb58a77067b1add6f877ea1a9045759b14f4ae8ec893d08",
-    "graph.json": "7f8b5c183f78992b30546b4f4f21619d229597454f1f8dd3a6b15316609bb13f"
+    "GRAPH_REPORT.md": "44ea8f32ecdd0b84cd92fa9a4998ad5a2f794c55c88412b1a9c3930c736e7683",
+    "communities.json": "79ee5255dfbb769e4a603efd2983f825a61d2a9829d7b915ab699d0177d0c6fb",
+    "graph.html": "ca264756ce337a415cc7ed697732ad550a4bdd6e8d5ede3953ce198c601aeedc",
+    "graph.json": "8430852321d4158f05d5ce53c285fca5ba328a42307d8b7bc16d9c1184f6aca0"
   },
   "schema_version": 1,
-  "source_commit": "c37179080dbc19805212c30aaf922c36c16f7aa8",
-  "source_fingerprint": "7bc19b1c866f9ae916dacb1e616260974b597acf6432d59e65cfa19e4ed4ef77",
+  "source_commit": "21f294403f98dcb6229d512ed9d902f551e7e424",
+  "source_fingerprint": "2829b39b931f8b0d0e9e79a492268215c3a042faa0882bb95147cbe93adc069b",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
     "bin/agentic-remote-gate",
     "docs/deployment-promotion.md",
     "server/full-gate.test.ts"

@@ -31,6 +31,9 @@ readonly CLONE_BASE="${AGENTIC_REMOTE_GATE_CLONE_BASE:-https://github.com}"
 # Seconds an interrupted check may take to exit before it is killed outright.
 readonly STOP_GRACE="${AGENTIC_REMOTE_GATE_STOP_GRACE:-30}"
 readonly REAL_HOME="${HOME:-}"
+# The home as resolved too: a symlinked HOME must not let a bind of its target
+# pass for something other than the home.
+readonly REAL_HOME_RESOLVED="$(realpath -e -- "${REAL_HOME:-/nonexistent}" 2>/dev/null || true)"
 # Playwright's browsers, and an optional directory of shared libraries Chromium
 # links against but the host lacks (a minimal server has no libasound.so.2),
 # both bound read-only into the browser check only.
@@ -409,7 +412,7 @@ prepare_sandbox() {
   SANDBOX_TOOLCHAIN_DIRS=("$node_bin")
   [[ ! -d "$prefix/lib/node_modules" ]] || SANDBOX_TOOLCHAIN_DIRS+=("$prefix/lib/node_modules")
   for dir in "${SANDBOX_TOOLCHAIN_DIRS[@]}"; do
-    [[ -z "$REAL_HOME" || "${REAL_HOME%/}/" != "${dir%/}/"* ]] || return 1
+    ! contains_home "$dir" || return 1
   done
   IFS=: read -ra entries <<<"$PATH"
   for entry in "${entries[@]}"; do
@@ -476,14 +479,24 @@ in_system_dir() {
   return 1
 }
 
+# True when DIR is the home directory or one of its ancestors, by the home as
+# given or as resolved, so binding DIR would expose the home.
+contains_home() {
+  local home
+  for home in "$REAL_HOME" "$REAL_HOME_RESOLVED"; do
+    [[ -n "$home" && "${home%/}/" == "${1%/}/"* ]] && return 0
+  done
+  return 1
+}
+
 # Prints the resolved DIR when it can be bound read-only into the sandbox: an
-# existing absolute directory that is neither the home directory nor one of
-# its ancestors, so the home stays hidden as it is for the Node toolchain.
+# existing absolute directory that does not expose the home, which stays
+# hidden as it is for the Node toolchain.
 bindable_host_dir() {
   local dir
   [[ "$1" == /* ]] || return 1
   dir="$(realpath -e -- "$1" 2>/dev/null)" && [[ -d "$dir" ]] || return 1
-  [[ -z "$REAL_HOME" || "${REAL_HOME%/}/" != "${dir%/}/"* ]] || return 1
+  ! contains_home "$dir" || return 1
   printf '%s\n' "$dir"
 }
 
@@ -528,11 +541,40 @@ run_check() {
   fi
 }
 
+# Checks, in seconds and before the hour-long checks, that the host has the
+# Chromium build this commit's Playwright needs: every install location its
+# dry run names must be a completed install. Only its exit status counts.
+IFS= read -r -d '' BROWSER_PREFLIGHT <<'SH' || true
+output="$("$@")" || { printf '%s\n' "$output"; exit 1; }
+printf '%s\n' "$output"
+locations="$(printf '%s\n' "$output" | sed -n 's/^[[:space:]]*Install location:[[:space:]]*//p')"
+[[ -n "$locations" ]] || exit 1
+while IFS= read -r location; do
+  [[ -f "$location/INSTALLATION_COMPLETE" ]] || { printf 'not installed: %s\n' "$location"; exit 1; }
+done <<<"$locations"
+SH
+readonly BROWSER_PREFLIGHT
+
+run_browser_preflight() {
+  local log_file="$GATE_DIR/browser-preflight.log" status=0
+  PHASE="browser preflight"
+  log "checking for this commit's Playwright Chromium (log: $log_file)"
+  run_phase --ro "$BROWSERS" "$log_file" PLAYWRIGHT_BROWSERS_PATH="$BROWSERS" \
+    bash -c "$BROWSER_PREFLIGHT" browser-preflight \
+    corepack "$PNPM" --dir "$CLONE" exec playwright install --dry-run --only-shell chromium ||
+    status=$?
+  record browser_preflight_exit "$status"
+  ((status == 0)) ||
+    fail "browser check unavailable: this host lacks the Playwright Chromium this commit needs ($(elapsed))"
+  assert_tree "browser preflight"
+}
+
 # The hermetic Chromium specs, Playwright's chromium project. They build the
 # app and serve it from a fixture on the sandbox's own loopback, so they need
 # no network; the browsers come read-only from the host. Leaves the counts in
 # BROWSER_COUNTS. Failure descriptions are fixed text: the log is the pull
-# request's output, so it only chooses among them.
+# request's output, so it only chooses among them. A focused spec (`.only`)
+# fails rather than quietly skipping the rest.
 run_browser_check() {
   local log_file="$GATE_DIR/browser-check.log" started status=0
   local -a mounts=(--ro "$BROWSERS") assignments=(PLAYWRIGHT_BROWSERS_PATH="$BROWSERS")
@@ -544,7 +586,7 @@ run_browser_check() {
   log "running browser check (log: $log_file)"
   started="$(date +%s)"
   run_phase "${mounts[@]}" "$log_file" "${assignments[@]}" \
-    corepack "$PNPM" --dir "$CLONE" exec playwright test --project=chromium --reporter=line ||
+    corepack "$PNPM" --dir "$CLONE" exec playwright test --project=chromium --forbid-only --reporter=line ||
     status=$?
   record browser_check_exit "$status"
   record browser_check_seconds "$(($(date +%s) - started))"
@@ -677,7 +719,8 @@ GATE_DIR="$STATE_ROOT/$SHA"
 mkdir -p "$GATE_DIR"
 rm -f -- "$GATE_DIR/summary" "$GATE_DIR/clone.log" "$GATE_DIR/install.log" \
   "$GATE_DIR/rebuild.log" "$GATE_DIR/check.log" "$GATE_DIR/production-check.log" \
-  "$GATE_DIR/browser-check.log" "$GATE_DIR/sandbox.log" "$GATE_DIR/egress.log"
+  "$GATE_DIR/browser-preflight.log" "$GATE_DIR/browser-check.log" \
+  "$GATE_DIR/sandbox.log" "$GATE_DIR/egress.log"
 record sha "$SHA"
 record repo "$REPO"
 record started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -696,10 +739,11 @@ PYTHON="$(command -v python3)"
 in_system_dir "$PYTHON" && in_system_dir "$(realpath -e -- "$PYTHON")" ||
   fail "sandbox unavailable: python3 is not in a system directory"
 # Checked now, so a host that cannot run the browser check fails in seconds
-# rather than after both hour-long checks.
+# rather than after both hour-long checks. A library directory named
+# explicitly has to exist; the default one is optional.
 BROWSERS="$(bindable_host_dir "$BROWSERS_DIR")" ||
-  fail "browser check unavailable: no Playwright browsers on this host"
-if [[ -e "$BROWSER_LIBS_DIR" ]]; then
+  fail "browser check unavailable: no usable Playwright browser directory"
+if [[ -n "${AGENTIC_REMOTE_GATE_BROWSER_LIBS:-}" || -e "$BROWSER_LIBS_DIR" ]]; then
   BROWSER_LIBS="$(bindable_host_dir "$BROWSER_LIBS_DIR")" ||
     fail "browser check unavailable: the browser library directory is unusable"
 fi
@@ -768,6 +812,7 @@ record rebuild_seconds "$(($(date +%s) - started))"
 ((status == 0)) || fail "dependency build failed ($(elapsed))"
 assert_tree "dependency build"
 stop_egress
+run_browser_preflight
 
 # Both checks share one clone: the production run guards the inherited
 # NODE_ENV regression, not a different dependency set, so reinstalling would

@@ -427,9 +427,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 219,
+  "communities": 220,
   "community_algorithm": "louvain-seed-42",
-  "edges": 20439,
+  "edges": 20440,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -526,7 +526,7 @@
     "e2e/screenshot-stability.ts": "7f52b64902d7dc77c02cd11a69682dd46f3c6028d19221098794ef31d2c7e16a",
     "e2e/session-follow.pw.ts": "f9105d041e1eab6a81dbfc9faeb4858e70b70dc2cf012a7a0853a3647a5ef135",
     "e2e/session-patch-browser.ts": "c311e0dabbcd4d4e14e75ae707d9098ad7403889fe5ed6e1f22d4b6b96ea7985",
-    "e2e/sign-in-expired.pw.ts": "1de9f6ce6a9e2f3651423106dfe44b9800d88379501a8fbea1c8cefac24129bf",
+    "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
     "e2e/workspace-fixtures.test.ts": "0070254f6007f78263f935a343df98cf7ea9daf31f17df1853ecb95a5f661eba",
     "e2e/workspace-fixtures.ts": "db493cdc692f7dd83df83b6bef0c76ce94f686d4f112031c32498802dbbf8073",
     "fixtures/voice/README.md": "c85318f655ee28bee3957558d215a36526cb93f8f9826d3dc05fe4019e59345e",
@@ -894,7 +894,7 @@
     "src/features/prompts/PromptCards.tsx": "6d23f53748d6c60de9e4f47f0b6c36c1776586f69009ad3c53ec3680547fcafd",
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
     "src/hub-sign-in.ts": "bb68abb53da257f7c544d3824934d97768e110009412ea3d1a91d9202580d976",
-    "src/index.css": "de939116f2aff26ad28c0d834e2325c672228dcf27042fea0bdedd2ee8e03c70",
+    "src/index.css": "06db732f05971fd205ea4d609670bb9e0950e870677f7bc6338f7a99a8afd6f8",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -959,7 +959,7 @@
     "vite.config.ts": "0713031ddabc3c3152463d4b15bde29578cbcfc2b597b752a07bab890861fe15"
   },
   "mode": "local-ast-only",
-  "nodes": 7345,
+  "nodes": 7346,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1061,14 +1061,14 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "befa77061097b7a6129f23717c9d3d74bf2829c06c9bf335bcf258153c2ee14e",
-    "communities.json": "4f150d5adaedd5277cef702ae3a531c3fef4db1697376f98851bd5de18b1e31d",
-    "graph.html": "9906549fa6bab6ebf42c26bca09a55b45b79c46b56bfe8c420507053ba5ecfd4",
-    "graph.json": "9dab08e3280b1d00e3f216351b8b6f7b9840bfb13d33883366551568e8295adf"
+    "GRAPH_REPORT.md": "2264fc78565cef65d147b77ec7785870042252c4e8ed792b8315c7d6c20ceae2",
+    "communities.json": "6909ab84bd67e7a5c18483d8bccc95699e6b6a5001157394acc5d507a51d50ef",
+    "graph.html": "8fe339b88660d76624d5042fe334ca8a1525035163d838375876dad0f9cf6760",
+    "graph.json": "d020ca2ae1d52aef1105efef7d10bbc3fdd96961d23981b8de5fb59b7c36b30a"
   },
   "schema_version": 1,
-  "source_commit": "9c54b2e345bec7f0a7a9cb4d60fc7553eb582e79",
-  "source_fingerprint": "4d4af93aabcef131cce228150c53f2574003853fffe5fdf4c4759dcf8a07fdde",
+  "source_commit": "88bae95fa981e19fd42010388accc489fe1b4287",
+  "source_fingerprint": "45afa3f1f220d00c579417fdb1190a8155382c323f1570ec15c75e85bb7aa0d8",
   "working_tree_changes": [
     "e2e/sign-in-expired.pw.ts",
     "src/index.css"

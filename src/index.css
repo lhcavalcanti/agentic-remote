@@ -8220,11 +8220,27 @@ button {
   margin-top: 6px;
 }
 
+/* When the panel is short of room for all of it, as under a phone keyboard
+   with the sign-in band showing, only the attachments give way and scroll:
+   the message field and its controls stay in the window. */
 .manager-composer {
+  display: flex;
+  min-height: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
   padding: 10px max(12px, env(safe-area-inset-right))
     max(12px, env(safe-area-inset-bottom))
     max(12px, env(safe-area-inset-left));
   border-top: 1px solid var(--border);
+}
+
+.manager-composer > * {
+  flex: none;
+}
+
+.manager-composer > .oracle-attachments {
+  min-height: 0;
+  flex: 0 1 auto;
 }
 
 .manager-composer__error {

@@ -59,13 +59,7 @@ const layouts: Layout[] = [
   { name: 'over a phone conversation', ...phone, knowledge: 'hidden' },
   { name: 'over a phone conversation while typing', ...phone, knowledge: 'hidden', open: async (page) => {
     await page.getByLabel('Message', { exact: true }).focus()
-    // The on-screen keyboard shrinks the visual viewport.
-    await page.evaluate(() => {
-      const viewport = window.visualViewport!
-      Object.defineProperty(viewport, 'height', { configurable: true, get: () => window.innerHeight - 340 })
-      viewport.dispatchEvent(new Event('resize'))
-    })
-    await expect(page.locator('.app-shell')).toHaveClass(/app-shell--keyboard-open/)
+    await openKeyboard(page)
   } },
   { name: 'over docked Knowledge on a phone', ...phone, knowledge: 'docked' },
   { name: 'over Oracle on a phone', ...phone, knowledge: 'hidden', open: openOracle, check: oracleInsideWindow },
@@ -76,6 +70,23 @@ const layouts: Layout[] = [
     await oracleInsideWindow(page)
     await expect(page.locator('#oracle-panel').getByRole('button', { name: 'Send message', exact: true }))
       .toBeInViewport({ ratio: 1 })
+  } },
+  { name: 'over Oracle with attachments while typing on a phone', ...phone, knowledge: 'hidden', open: async (page) => {
+    await openOracle(page)
+    await attachThreeFiles(page)
+    await page.locator('#oracle-panel').getByRole('textbox', { name: 'Message Oracle', exact: true }).focus()
+    await openKeyboard(page)
+  }, check: async (page) => {
+    // Playwright's viewport is the layout one; the keyboard leaves only the visual one.
+    const visible = await page.evaluate(() => window.visualViewport!.height)
+    for (const control of [
+      page.locator('#oracle-panel').getByRole('textbox', { name: 'Message Oracle', exact: true }),
+      page.locator('#oracle-panel').getByRole('button', { name: 'Send message', exact: true }),
+    ]) {
+      const box = await control.boundingBox()
+      expect(box).not.toBeNull()
+      expect(box!.y + box!.height).toBeLessThanOrEqual(visible)
+    }
   } },
   { name: 'over a desktop conversation', ...desktop, knowledge: 'hidden' },
   { name: 'over expanded Knowledge', width: 1280, height: 800, knowledge: 'expanded' },
@@ -95,6 +106,16 @@ async function oracleInsideWindow(page: Page) {
   expect(panel).not.toBeNull()
   expect(panel!.y + panel!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
   await expect(page.locator('#oracle-panel .manager-composer')).toBeInViewport({ ratio: 1 })
+}
+
+// The on-screen keyboard shrinks the visual viewport.
+async function openKeyboard(page: Page) {
+  await page.evaluate(() => {
+    const viewport = window.visualViewport!
+    Object.defineProperty(viewport, 'height', { configurable: true, get: () => window.innerHeight - 340 })
+    viewport.dispatchEvent(new Event('resize'))
+  })
+  await expect(page.locator('.app-shell')).toHaveClass(/app-shell--keyboard-open/)
 }
 
 // Three chips make the composer tall enough that the band must come out of

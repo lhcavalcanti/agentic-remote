@@ -238,7 +238,7 @@ pnpm test:canary                # real-tmux send/readiness subset, ~1 min
 pnpm test:fast                  # every file needing no host tmux/Copilot/Claude
 pnpm test:quick                 # fast minus slowTests; the hosted check's tests
 NODE_ENV=production pnpm check  # guards the inherited-env regression
-bin/agentic-remote-gate <PR>    # merge gate: both checks on the exact head
+bin/agentic-remote-gate <PR>    # merge gate: both checks + Chromium specs on the exact head
 ```
 
 - Vitest projects `fast`, `canary`, and `tmux` partition the files, so
@@ -248,8 +248,8 @@ bin/agentic-remote-gate <PR>    # merge gate: both checks on the exact head
 - `tsconfig.e2e.json` type-checks `e2e/` with the DOM and the server its
   fixtures boot, so `tsc -b` catches fixture drift. The fixtures' own unit
   tests run in `fast`; Playwright specs (`*.pw.ts`,
-  `e2e/oracle-conversation*.test.ts`) stay out of Vitest, and neither the gate
-  nor hosted CI runs `pnpm test:e2e` (#538).
+  `e2e/oracle-conversation*.test.ts`) stay out of Vitest. The full gate runs
+  their `chromium` project after both checks; hosted CI runs no browser.
 - `.github/workflows/light-check.yml` is an advisory hosted check on ready pull
   request heads, on Node 22 (the `engines` floor): install, lint, `tsc -b`,
   `vite build`, and `pnpm test:quick`, sized to one billed minute (about
@@ -345,8 +345,9 @@ and must still change on every build.
 
    Use `Refs #11` for a partial slice that should leave the issue open.
 5. **Gate the exact final head.** Run `bin/agentic-remote-gate <PR>` once the
-   head is final. It clones that SHA afresh, runs `pnpm check` and
-   `NODE_ENV=production pnpm check` serially under a host-wide lock (promotion
+   head is final. It clones that SHA afresh, runs `pnpm check`,
+   `NODE_ENV=production pnpm check`, and then Playwright's `chromium` specs
+   serially under a host-wide lock (promotion
    validation takes it too, so a gate can queue behind one) inside a
    credentialless `bwrap` sandbox, with `bwrap` itself started from the
    scrubbed environment (it fails rather than run unsandboxed). The sandbox
@@ -355,7 +356,8 @@ and must still change on every build.
    offline. The clone's git directory stays read-only and outside the sandbox's
    one writable mount, `/tmp` is a fresh tmpfs per phase, and nothing inside
    that mount is ever a mount source or followed by the gate. It posts the `agentic-remote/full-gate` commit status; success needs passed
-   and zero failed Vitest counts from both runs. A new push needs a new gate.
+   and zero failed Vitest counts from both runs and passing Chromium specs. A
+   new push needs a new gate.
 6. **Merge only when the exact head is eligible** under Owned work
    follow-through in `.github/copilot-instructions.md`: Supervisor `APPROVE`,
    every required check, an `agentic-remote/full-gate` `success`, and clean

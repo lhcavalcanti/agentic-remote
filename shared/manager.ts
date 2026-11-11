@@ -93,6 +93,8 @@ export interface ManagerMessage {
   id: string
   role: ManagerMessageRole
   content: string
+  /** Hub-owned uploads; no local filesystem paths cross the client contract. */
+  attachments?: ManagerAttachment[]
   createdAt: string
   updatedAt?: string
   /** Set on the messages you send. */
@@ -155,6 +157,14 @@ export type ManagerSubmissionSource = ManagerMessageSource
 export interface ManagerSubmissionOptions {
   answerOnly?: boolean
   source?: ManagerSubmissionSource
+  attachmentIds?: string[]
+}
+
+export interface ManagerAttachment {
+  id: string
+  name: string
+  size: number
+  mimeType: string
 }
 
 export interface ManagerInternalSubmission {
@@ -229,6 +239,7 @@ export interface ResolveManagerConfirmationInput {
 
 export interface SendManagerMessageInput {
   content: string
+  attachmentIds?: string[]
   defaults?: ManagerClientDefaults
   /** Answer it without starting or steering any session. */
   answerOnly?: boolean

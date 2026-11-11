@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { EventEmitter } from 'node:events'
 import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
+import type { MessageOptions } from '@github/copilot-sdk'
 import type {
   AgentProvider,
   BackgroundTaskSnapshot,
@@ -114,7 +115,7 @@ export interface ManagerSdkSession {
   /** Set by the SDK once the runtime connection is gone. */
   readonly disconnected?: boolean
   on(handler: (event: ManagerSdkEvent) => void): () => void
-  send(options: { prompt: string }): Promise<string>
+  send(options: Pick<MessageOptions, 'prompt' | 'attachments'>): Promise<string>
   abort(): Promise<void>
   disconnect(): Promise<void>
   rpc?: {
@@ -663,8 +664,14 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     options: ManagerSubmissionOptions = {},
   ): Promise<ManagerMessage> {
     checkContent(content)
-    // Read before any await, so an overlapping send cannot change them first.
+    // Capture before any await, so an overlapping send cannot change them first.
     const sentWith = defaults ?? this.store.state().defaults
+    if (options.attachmentIds?.length && options.source && options.source !== 'typed') {
+      throw Object.assign(new Error('Only typed Oracle messages accept attachments.'), { statusCode: 400 })
+    }
+    const attachments = options.attachmentIds?.length
+      ? await this.store.attachmentReferences(options.attachmentIds)
+      : []
     if (defaults) {
       await this.store.updateState((state) => {
         state.defaults = defaults
@@ -682,6 +689,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       state: 'queued',
       ...(answerOnly ? { answerOnly: true } : {}),
       source,
+      ...(attachments.length ? { attachments } : {}),
     }
     if (this.structuredMemoryEnabled()) {
       this.messageDefaults.set(message.id, sentWith)
@@ -816,7 +824,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           { statusCode: 409 },
         )
       }
-      const next: ManagerMessage = { ...message, state: 'cancelled', updatedAt: this.now().toISOString() }
+      const next: ManagerMessage = { ...message, attachments: undefined, state: 'cancelled', updatedAt: this.now().toISOString() }
       await this.updateMessage(next)
       this.messageDefaults.delete(messageId)
       this.publishStatus()
@@ -1466,7 +1474,10 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         const acknowledgement = this.pendingAcknowledgement
         if (!current()) return this.leave()
         if (cancelled()) return this.finishCancelled(message, current)
-        turn = { text: await this.runTurn(prompt), acknowledgement }
+        const attachments = message.source === undefined || message.source === 'typed'
+          ? await this.store.resolveAttachments(message.attachments ?? [])
+          : []
+        turn = { text: await this.runTurn(prompt, attachments), acknowledgement }
         break
       } catch (error) {
         performed.push(...this.attemptActivities)
@@ -1646,6 +1657,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       sessionClosePolicy: this.sessionClosePolicy(),
       ...(showIndex && !this.needsBrief ? { memoryIndex: index } : {}),
       notes,
+      hasAttachments: Boolean(message.attachments?.length),
       // A preference must never stop an answer; unreadable answers Balanced.
       responseStyle: (() => {
         try {
@@ -1705,7 +1717,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     )
   }
 
-  private async runTurn(prompt: string): Promise<string> {
+  private async runTurn(prompt: string, attachments: MessageOptions['attachments'] = []): Promise<string> {
     const session = this.session
     const client = this.client
     if (!session) throw new TurnError('The manager runtime is not ready', 'runtime')
@@ -1819,7 +1831,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     try {
       await Promise.race([
         outcome,
-        withTimeout(session.send({ prompt }), this.operationTimeoutMs, 'the runtime did not accept the message')
+        withTimeout(session.send({ prompt, ...(attachments.length ? { attachments } : {}) }), this.operationTimeoutMs, 'the runtime did not accept the message')
           .catch((error: unknown) => {
             if (error instanceof TurnError) throw error
             // The message never reached the runtime: its connection is gone.

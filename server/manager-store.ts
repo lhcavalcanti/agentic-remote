@@ -4,11 +4,13 @@ import path from 'node:path'
 import type { AgentProvider, SessionStatus } from '../shared/contracts.js'
 import type {
   ManagerClientDefaults,
+  ManagerAttachment,
   ManagerMessage,
   ManagerMessageSource,
   ManagerSettings,
 } from '../shared/manager.js'
 import { ManagerMemory } from './manager-memory.js'
+import { ManagerUploads } from './manager-uploads.js'
 
 export type SessionOrigin = 'manager' | 'user' | 'discovered'
 
@@ -147,6 +149,7 @@ export function registryKey(computerId: string, sessionId: string): string {
  */
 export class ManagerStore {
   readonly memory: ManagerMemory
+  private readonly uploads: ManagerUploads
   private readonly now: () => Date
   private readonly conversationKeep: number
   private readonly journalLimit: number
@@ -169,6 +172,7 @@ export class ManagerStore {
     this.tombstoneMs = (options.tombstoneDays ?? 30) * 24 * 60 * 60 * 1000
     this.tombstoneMax = options.tombstoneMax ?? 500
     this.memory = new ManagerMemory(path.join(directory, 'memory'))
+    this.uploads = new ManagerUploads(directory, this.now)
   }
 
   async initialize(): Promise<void> {
@@ -192,7 +196,9 @@ export class ManagerStore {
         )
       }
     }
+    const previousAttachments = this.ownedUploads()
     this.trimConversation()
+    await this.uploadsWork(() => this.uploads.cleanup(this.ownedUploads(), previousAttachments))
 
     this.journal = (await this.readLines<JournalEntry>('journal.jsonl'))
       .filter((entry) => Number.isInteger(entry?.seq))
@@ -227,6 +233,9 @@ export class ManagerStore {
     return this.serialized(async () => {
       const conversation = new Map(this.conversation)
       const stored = storedMessage(message, conversation.get(message.id))
+      if (stored.attachments?.length && !conversation.has(stored.id)) {
+        stored.attachments = await this.uploadsWork(() => this.uploads.references(stored.attachments!.map((file) => file.id)))
+      }
       conversation.set(stored.id, stored)
       const excess = conversation.size - this.conversationKeep
       if (excess > 0) {
@@ -239,8 +248,10 @@ export class ManagerStore {
         : `${JSON.stringify(stored)}\n`
       if (compact) await this.writeAtomic('conversation.jsonl', lines)
       else await appendFile(path.join(this.directory, 'conversation.jsonl'), lines, 'utf8')
+      const previousAttachments = this.ownedUploads()
       this.conversation = conversation
       this.conversationLines = compact ? conversation.size : conversationLines
+      await this.uploadsWork(() => this.uploads.cleanup(this.ownedUploads(), previousAttachments))
     })
   }
 
@@ -256,7 +267,48 @@ export class ManagerStore {
       })
       this.conversation = new Map()
       this.conversationLines = 0
+      await this.uploadsWork(() => this.uploads.cleanup(new Set(), new Set(), true))
     })
+  }
+
+  uploadFile(filename: string, data: Buffer): Promise<ManagerAttachment> {
+    return this.serialized(() => this.uploadsWork(() => this.uploads.upload(filename, data)))
+  }
+
+  attachmentReferences(ids: string[]): Promise<ManagerAttachment[]> {
+    return this.serialized(() => this.uploadsWork(() => this.uploads.references(ids)))
+  }
+
+  resolveAttachments(files: ManagerAttachment[]) {
+    return this.serialized(() => this.uploadsWork(() => this.uploads.resolve(files)))
+  }
+
+  removeUpload(id: string): Promise<void> {
+    return this.serialized(async () => {
+      if (this.ownedUploads().has(id)) {
+        throw Object.assign(new Error('This attachment belongs to an Oracle message.'), { statusCode: 409 })
+      }
+      await this.uploadsWork(async () => {
+        await this.uploads.references([id])
+        await this.uploads.cleanup(this.ownedUploads(), new Set([id]))
+      })
+    })
+  }
+
+  cleanupUploads(): Promise<void> {
+    return this.serialized(() => this.uploadsWork(() => this.uploads.cleanup(this.ownedUploads())))
+  }
+
+  private uploadsWork<T>(operation: () => Promise<T>): Promise<T> {
+    return operation().catch((error: unknown) => {
+      if (error instanceof Error && typeof Reflect.get(error, 'statusCode') === 'number') throw error
+      throw Object.assign(new Error('Oracle attachment storage is unavailable. Try again.'), { statusCode: 503 })
+    })
+  }
+
+  private ownedUploads(): Set<string> {
+    return new Set([...this.conversation.values()]
+      .flatMap((message) => (message.attachments ?? []).map((file) => file.id)))
   }
 
   appendJournal(drafts: JournalDraft[]): Promise<JournalEntry[]> {

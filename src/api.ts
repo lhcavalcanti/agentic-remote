@@ -40,6 +40,7 @@ import type {
 } from '../shared/contracts'
 import type {
   ManagerClientDefaults,
+  ManagerAttachment,
   ManagerMessage,
   ManagerSettingsSnapshot,
   ManagerSnapshot,
@@ -1149,10 +1150,21 @@ export function getManager(): Promise<ManagerSnapshot> {
   return request<ManagerSnapshot>('/api/manager')
 }
 
+export async function uploadManagerFile(file: File): Promise<ManagerAttachment> {
+  const body = new FormData()
+  body.append('file', file, file.name)
+  const response = await request<{ file: ManagerAttachment }>('/api/manager/files', { method: 'POST', body })
+  return response.file
+}
+
+export function removeManagerFile(id: string): Promise<void> {
+  return request<void>(`/api/manager/files/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 export async function sendManagerMessage(
   content: string,
   defaults?: ManagerClientDefaults,
-  options: { answerOnly?: boolean } = {},
+  options: { answerOnly?: boolean; attachmentIds?: string[] } = {},
 ): Promise<ManagerMessage> {
   const response = await request<{ message: ManagerMessage }>('/api/manager/messages', {
     method: 'POST',
@@ -1160,6 +1172,7 @@ export async function sendManagerMessage(
       content,
       ...(defaults ? { defaults } : {}),
       ...(options.answerOnly ? { answerOnly: true } : {}),
+      ...(options.attachmentIds?.length ? { attachmentIds: options.attachmentIds } : {}),
     } satisfies SendManagerMessageInput),
   })
   return response.message

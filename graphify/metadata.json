@@ -870,7 +870,7 @@
     "src/SideQuestions.tsx": "496d17c43d17f9a6e1ce2c1d6dc2b01a9efcaaecb6aa32f7b48f195232b479b9",
     "src/SignInExpiredNotice.tsx": "0bb73f7ea6fde27601fcaf9b6b93cc3be74437c1fa49a754b923eaed2f138213",
     "src/WorkspaceFileIcon.tsx": "db618b1c32aa836c6dcfc6f8676a1b9071b558aa10a3801023cbde601596a3f1",
-    "src/api.test.ts": "6d9d91eb88276ae6f151fa0b21d23cb30b805d004a9653a51008d2bf45a77732",
+    "src/api.test.ts": "e7dd6cafd09dfa0f2135a728526a3c1305e07f5fbbba4fd241193b6b078c0bf2",
     "src/api.ts": "bb65a5d9964247004587f12fd9769d307b5154aa761e2afc1a4fdf8d4300c9fc",
     "src/app-icon-design.ts": "5552b141efaf5d8ab5cd06efa5d6115d9b1c805c31864f629099c93f79a53891",
     "src/app-shortcuts.test.ts": "5232ca1642cc887529dd31285c70ea969b31be150254ce9d9c9dc8fa00179754",
@@ -1061,34 +1061,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "8e6864b73d475bcdf7b95d689fb7d24a31c33724ced8e591cd8bd57c74da5427",
+    "GRAPH_REPORT.md": "14cd392321c0722b2955e1cb19f87cc53c3c6952647b1f4b9729c5efa88e92f2",
     "communities.json": "73af09cf0d904990b46c35e9627500bd643684ec44755caa7d6695a61a120cc6",
-    "graph.html": "4539f7e8ccd3538e4cad031adf22cc6903944009c0abc3b5b2c1584346ee901d",
-    "graph.json": "66f4f3139b2de285e67928146fea737cf5395859ea9fd730090e4e1eb18eccbc"
+    "graph.html": "dc30ea0c423d31ce36fb45f287b93c3497128de59aa4e9e53b13c77ac52becd5",
+    "graph.json": "17b9de674f4f9eb19e1d5aa0e0edaa114cf16dcc9b0a0bd45920a06da6380a79"
   },
   "schema_version": 1,
-  "source_commit": "bb14f51c560e2e6df86ed4b7be091fc3b3db47b6",
-  "source_fingerprint": "a554d64aaf06502b3b90267f8dcf7d0fa0892d032f96211373da064c0bb50909",
+  "source_commit": "6e370a7134957b5c1db5065069001f70e34d2152",
+  "source_fingerprint": "2e14643493367c6012a434f945fa5ae3df06d35f837e5f01287ee509ba0b7ab3",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/architecture.md",
-    "e2e/sign-in-expired.pw.ts",
-    "src/App.test.tsx",
-    "src/App.tsx",
-    "src/SessionNavigation.tsx",
-    "src/SignInExpiredNotice.tsx",
-    "src/api.test.ts",
-    "src/api.ts",
-    "src/components/DialogFrame.tsx",
-    "src/components/dialog-stack.ts",
-    "src/dreamer-api.test.ts",
-    "src/dreamer-api.ts",
-    "src/hub-sign-in.ts",
-    "src/index.css",
-    "src/oracle-voice/client.test.ts",
-    "src/oracle-voice/client.ts",
-    "src/pwa.test.ts",
-    "src/pwa.ts",
-    "src/session-knowledge-api.test.ts"
+    "src/api.test.ts"
   ]
 }

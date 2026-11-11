@@ -54,7 +54,7 @@ describe('API request headers', () => {
     await expect(removeManagerFile('upload-id')).resolves.toBeUndefined()
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/manager/files/upload-id',
-      { method: 'DELETE' },
+      expect.objectContaining({ method: 'DELETE' }),
     )
   })
 

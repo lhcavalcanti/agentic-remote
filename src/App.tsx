@@ -7575,8 +7575,6 @@ function App() {
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarView, setSidebarView] = useState<'sessions' | 'knowledge'>('sessions')
-  // An open session list covers the conversation on narrow screens.
-  const signInNoticeInSessionList = sidebarOpen && sidebarView === 'sessions'
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
   const [resizingSidebar, setResizingSidebar] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
@@ -16130,7 +16128,7 @@ function App() {
     <div
       className={`app-shell ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
-      } ${
+      } ${signInExpired ? 'app-shell--signed-out' : ''} ${
         oracleOpen &&
         oracleIndicator.available &&
         effectiveOraclePlacement === 'docked'
@@ -16259,9 +16257,7 @@ function App() {
                     ? sessionCreationError
                     : undefined
                 }
-                signInExpired={signInExpired
-                  ? signInNoticeInSessionList ? 'notice' : 'quiet'
-                  : undefined}
+                signInExpired={signInExpired}
                 loadingError={sessionLoadError}
                 onDismissCreationError={() => setSessionCreationError(undefined)}
                 onNewSession={openNewSession}
@@ -16785,10 +16781,6 @@ function App() {
           ) : null}
         </header>
 
-        {signInExpired && !signInNoticeInSessionList ? (
-          // Everything else would fail the same way, so this stands alone.
-          <SignInExpiredNotice />
-        ) : null}
         {sessionLoadError && !signInExpired ? (
           <div className="error-banner" role="alert">
             <span>{sessionLoadError}</span>
@@ -17726,7 +17718,7 @@ function App() {
             <X size={16} />
           </button>
         </header>
-        {error ? (
+        {error && !signInExpired ? (
           <div className="error-banner knowledge-panel__error">
             <span>{error}</span>
             <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
@@ -18017,6 +18009,10 @@ function App() {
             }}
           />
         </DialogFrame>
+      ) : null}
+      {signInExpired ? (
+        // Everything else would fail the same way, so this stands alone.
+        <SignInExpiredNotice />
       ) : null}
       {settingsNotice(settingsProfile) && !(updateRegistration && !updateToastDismissed) ? (
         <div className="update-toast settings-toast" role="status">

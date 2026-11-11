@@ -3955,20 +3955,26 @@ describe('App', () => {
     expect(within(sessions).queryByText('Connection failed')).not.toBeInTheDocument()
   })
 
-  it('shows the sign-in notice in the session list while that list covers the conversation', async () => {
+  it('keeps the sign-in notice outside every pane that can hide the conversation', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    localStorage.setItem('agentic-remote:knowledge-mode', JSON.stringify('expanded'))
     render(<App />)
     await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    act(() => setHubSignInExpired(true))
+    vi.mocked(listSessionListing).mockImplementationOnce(async () => {
+      setHubSignInExpired(true)
+      throw new HubSignInExpiredError()
+    })
+    fireEvent(document, new Event('visibilitychange'))
 
-    const sessions = screen.getByRole('navigation', { name: 'Sessions' })
-    expect(screen.getAllByRole('link', { name: 'Sign in again' }))
-      .toEqual([within(sessions).getByRole('link', { name: 'Sign in again' })])
-
-    // The list's own close button and the scrim behind it close it alike.
-    fireEvent.click(screen.getAllByRole('button', { name: 'Close sessions' })[0])
-    expect(screen.getAllByRole('link', { name: 'Sign in again' }))
-      .toEqual([within(screen.getByRole('main')).getByRole('link', { name: 'Sign in again' })])
+    // Expanded Knowledge hides the conversation, and on a phone an open session
+    // list or docked Knowledge covers it.
+    const signIn = await screen.findByRole('link', { name: 'Sign in again' })
+    expect(signIn.closest('main, aside, nav, [hidden]')).toBeNull()
+    expect(screen.getAllByRole('link', { name: 'Sign in again' })).toEqual([signIn])
+    // Knowledge shows the app's errors as well, and this one only repeats the notice.
+    await waitFor(() => expect(screen.queryByText('Your sign-in has expired; sign in again to reconnect'))
+      .not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument()
   })
 
   it('stops reconnecting while the sign-in has expired and reconnects once it is back', async () => {

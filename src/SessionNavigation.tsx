@@ -25,7 +25,6 @@ import {
 } from './session-presentation'
 import type { SessionPresentation, SessionSort } from './session-presentation'
 import type { SessionFilter, SessionNavigationView } from './session-navigation-view'
-import { SignInExpiredNotice } from './SignInExpiredNotice'
 
 export type PendingSessionCreation = Pick<
   ManagedSession,
@@ -469,9 +468,9 @@ export function SessionNavigation({
   refreshMessage?: string
   /**
    * Set while the sign-in gateway refuses requests, which every connection and
-   * refresh failure would then only repeat; `notice` puts its notice here.
+   * refresh failure would then only repeat.
    */
-  signInExpired?: 'notice' | 'quiet'
+  signInExpired?: boolean
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
   onShowSuspendedChange: (show: boolean) => void
@@ -644,7 +643,6 @@ export function SessionNavigation({
           </p>
         ) : null}
       </div>
-      {signInExpired === 'notice' ? <SignInExpiredNotice className="session-list__error" /> : null}
       {creationError ? (
         <div className="error-banner session-list__error" role="alert">
           <span>{creationError}</span>

@@ -235,6 +235,7 @@ import {
   cancelBackgroundTask,
   askSession,
   cancelSession,
+  checkHubSignIn,
   clearConversation,
   recoverConversation,
   configureRuntime,
@@ -287,6 +288,11 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import {
+  HUB_SIGN_IN_EXPIRED_MESSAGE,
+  hubSignInExpired,
+  subscribeHubSignIn,
+} from './hub-sign-in'
 import {
   currentSessionEventSequence,
   nextSessionEventSequence,
@@ -7768,6 +7774,13 @@ function App() {
   }, [appearance])
   const brandIcon = '/icon.svg'
   const [error, setError] = useState<string>()
+  const signInExpired = useSyncExternalStore(subscribeHubSignIn, hubSignInExpired)
+  useEffect(() => {
+    // A refusal the gateway has stopped making is no longer an error.
+    if (!signInExpired) {
+      setError((current) => current === HUB_SIGN_IN_EXPIRED_MESSAGE ? undefined : current)
+    }
+  }, [signInExpired])
   // Computers this profile has not placed yet follow in pairing order, which
   // is derived here rather than written back: only a drag is a choice.
   const computerOrder = useMemo(() => {
@@ -10376,6 +10389,8 @@ function App() {
     let socket: WebSocket | undefined
     let retry: number | undefined
     let stopped = false
+    // Set while reconnects wait for the sign-in to be renewed.
+    let paused = false
     let reconnectDelay = 1_000
 
     const refreshSnapshot = async (
@@ -10748,6 +10763,11 @@ function App() {
     }
 
     const connect = () => {
+      // The gateway would turn every attempt away until the sign-in is renewed.
+      if (hubSignInExpired()) {
+        paused = true
+        return
+      }
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       // Asks to be sent what changed in a session rather than all of it. Its
       // patches only apply to what this socket was itself sent, so every new
@@ -11016,6 +11036,8 @@ function App() {
       socket.onclose = () => {
         if (eventSocketRef.current === current) eventSocketRef.current = undefined
         if (!stopped) {
+          // A WebSocket the gateway refused fails without saying why.
+          void checkHubSignIn()
           const delay = reconnectDelay
           reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
           retry = window.setTimeout(connect, delay)
@@ -11028,6 +11050,18 @@ function App() {
         void refreshAllAuthoritativeState(setError).catch(() => undefined)
       }
     }
+    // Renewed, perhaps in another tab: catch up on what was refused meanwhile.
+    const handleSignIn = () => {
+      if (stopped || hubSignInExpired()) return
+      if (paused) {
+        paused = false
+        reconnectDelay = 1_000
+        connect()
+      } else {
+        void refreshAllAuthoritativeState(setError).catch(() => undefined)
+      }
+    }
+    const unsubscribeSignIn = subscribeHubSignIn(handleSignIn)
 
     connect()
     window.addEventListener(
@@ -11045,6 +11079,7 @@ function App() {
         handleCoordinatedAuthoritativeRefresh,
       )
       document.removeEventListener('visibilitychange', handleVisibility)
+      unsubscribeSignIn()
       if (retry !== undefined) {
         window.clearTimeout(retry)
       }
@@ -16744,7 +16779,14 @@ function App() {
           ) : null}
         </header>
 
-        {sessionLoadError ? (
+        {signInExpired ? (
+          // Everything else would fail the same way, so this stands alone.
+          <div className="error-banner" role="alert">
+            <span>Your sign-in has expired. Sign in again to reconnect; drafts stay on this device.</span>
+            <a className="error-banner__retry" href="/">Sign in again</a>
+          </div>
+        ) : null}
+        {sessionLoadError && !signInExpired ? (
           <div className="error-banner" role="alert">
             <span>{sessionLoadError}</span>
             <button
@@ -16761,7 +16803,7 @@ function App() {
             </button>
           </div>
         ) : null}
-        {selected?.restartRecovery?.state === 'recovering' ? (
+        {signInExpired ? null : selected?.restartRecovery?.state === 'recovering' ? (
           <div className="error-banner error-banner--recovery" role="status">
             <span>{selected.restartRecovery.message || 'Recovering the SDK session. Queued work will wait until recovery finishes.'}</span>
           </div>
@@ -16782,7 +16824,7 @@ function App() {
             </button>
           </div>
         ) : null}
-        {error ? (
+        {error && !signInExpired ? (
           <div className="error-banner" role="alert">
             <span>{error}</span>
             <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
@@ -16791,6 +16833,7 @@ function App() {
           </div>
         ) : null}
         {sessionCreationError &&
+        !signInExpired &&
         !newSessionOpen &&
         (!sidebarOpen || sidebarView !== 'sessions') ? (
           <div className="error-banner" role="alert">

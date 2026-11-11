@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cancelBackgroundTask,
+  checkHubSignIn,
   createOracleVoiceTicket,
   dispatchQueuedPrompt,
   fetchSettingsProfile,
@@ -9,6 +10,7 @@ import {
   saveSettingsChanges,
   getProviderRuntimeOptions,
   getSession,
+  getSessionKnowledgeRoot,
   getRuntimeOptions,
   HUB_SNAPSHOT_TIMEOUT_MS,
   listBackgroundTasks,
@@ -18,6 +20,7 @@ import {
   listSessionListing,
   listSessionMcpServers,
   listSessionSkills,
+  removeComputer,
   removeQueuedPrompt,
   readKnowledgeFile,
   sendMessage,
@@ -26,6 +29,11 @@ import {
   uploadSessionFile,
   validateSessionDirectory,
 } from './api'
+import {
+  HubSignInExpiredError,
+  hubSignInExpired,
+  setHubSignInExpired,
+} from './hub-sign-in'
 import {
   currentSessionEventSequence,
   nextSessionEventSequence,
@@ -742,5 +750,78 @@ describe('settings profile requests', () => {
       Response.json({ error: 'Setting accent is not a known accent' }, { status: 400 })))
     await expect(saveSettingsChanges({ accent: { value: 'x', baseRevision: 0 } }))
       .rejects.toMatchObject({ statusCode: 400, message: 'Setting accent is not a known accent' })
+  })
+})
+
+describe('Hub sign-in', () => {
+  // Cloudflare Access's answer to an app request after its session lapsed.
+  const gatewayChallenge = () => new Response(null, {
+    status: 401,
+    headers: {
+      'www-authenticate': 'Cloudflare-Access resource_metadata="https://hub.example/.well-known/cloudflare-access-protected-resource/api/computers"',
+    },
+  })
+  // What `fetch` resolves with when a `redirect: 'manual'` request is redirected.
+  const redirected = () =>
+    ({ type: 'opaqueredirect', status: 0, ok: false, headers: new Headers() }) as Response
+
+  afterEach(() => setHubSignInExpired(false))
+
+  it.each([
+    ['a JSON request', () => listComputers()],
+    ['a bodyless request', () => removeComputer('computer')],
+    ['a Knowledge-root request', () => getSessionKnowledgeRoot('computer', 'session')],
+    ['a queued-prompt dispatch', () => dispatchQueuedPrompt('computer', 'session', 'queued', 'edit me')],
+  ])('reports a gateway challenge to %s as an expired sign-in that delivered nothing', async (_name, call) => {
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => gatewayChallenge())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const caught = await call().then(() => undefined, (error: unknown) => error)
+
+    const init = fetchMock.mock.calls[0]?.[1]
+    // Access answers an app request with a readable 401 instead of a
+    // cross-origin login redirect that `fetch` can only report as a failure.
+    expect(new Headers(init?.headers).get('x-requested-with')).toBe('XMLHttpRequest')
+    expect(init?.redirect).toBe('manual')
+    expect(caught).toBeInstanceOf(HubSignInExpiredError)
+    expect(caught).not.toHaveProperty('uncertainDelivery', true)
+    expect(hubSignInExpired()).toBe(true)
+  })
+
+  it('reports a redirected request as an expired sign-in', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => redirected()))
+
+    await expect(sendMessage('computer', 'session', { content: 'hello' }))
+      .rejects.toBeInstanceOf(HubSignInExpiredError)
+    expect(hubSignInExpired()).toBe(true)
+  })
+
+  it('leaves the hub\'s own 401 an ordinary error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(
+      { error: 'Oracle voice ticket is invalid or expired' },
+      { status: 401 },
+    )))
+
+    await expect(listComputers()).rejects.toThrow('Oracle voice ticket is invalid or expired')
+    expect(hubSignInExpired()).toBe(false)
+  })
+
+  it('clears an expired sign-in once the gateway lets a request through, even one the hub fails', async () => {
+    setHubSignInExpired(true)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('upstream unavailable', { status: 502 })))
+
+    await expect(listComputers()).rejects.toMatchObject({ statusCode: 502 })
+    expect(hubSignInExpired()).toBe(false)
+  })
+
+  it('checks the sign-in without failing on the answer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => gatewayChallenge()))
+    await expect(checkHubSignIn()).resolves.toBeUndefined()
+    expect(hubSignInExpired()).toBe(true)
+
+    // An unreachable hub says nothing about the sign-in either way.
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    await expect(checkHubSignIn()).resolves.toBeUndefined()
+    expect(hubSignInExpired()).toBe(true)
   })
 })

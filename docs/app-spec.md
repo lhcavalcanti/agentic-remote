@@ -96,6 +96,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   state. Manual refresh, reconnect, and visibility return MUST preserve the
   last usable snapshots and every composer draft, show loading or stale-error
   state with retry, and MUST NOT send, queue, resume, replay, or confirm work.
+- When the hub's sign-in gateway refuses requests because its session lapsed,
+  the app MUST say the sign-in expired in place of the errors that refusal
+  causes, and offer **Sign in again**, a navigation through the gateway's login
+  that keeps every draft. Event-stream reconnects MUST pause until a request
+  gets through again, which MUST resume them and refresh authoritative state.
 - Clearing a session replaces its identity, and the replacement MUST take the
   predecessor's exact position in the custom order. Deleting a session MUST
   remove it, and removing a computer MUST remove its lane; a partial or offline

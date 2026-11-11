@@ -39,6 +39,7 @@ import {
   type SettingsProfileValues,
 } from '../shared/settings-profile'
 import {
+  checkHubSignIn,
   getManager,
   sendManagerMessage,
   activateSession,
@@ -100,6 +101,7 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import { HubSignInExpiredError, setHubSignInExpired } from './hub-sign-in'
 import { composerMaximumHeight } from './composer-sizing'
 import { DreamerApiError, getDreamer } from './dreamer-api'
 import { PWA_UPDATE_EVENT } from './pwa'
@@ -193,6 +195,7 @@ vi.mock('./dreamer-api', async (importOriginal) => ({
 
 vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
+  checkHubSignIn: vi.fn(async () => undefined),
   getManager: vi.fn(),
   getOracleVoiceCapabilities: vi.fn(async () => ({
     protocol: 2,
@@ -2362,6 +2365,7 @@ describe('App', () => {
 
   afterEach(() => {
     cleanup()
+    setHubSignInExpired(false)
   })
 
   function resourceSession(overrides: Partial<ManagedSession> = {}) {
@@ -3908,6 +3912,55 @@ describe('App', () => {
     fireEvent(document, new Event('visibilitychange'))
     expect((await screen.findAllByText('The hub stopped answering'))[0]).toBeVisible()
     expect(screen.getAllByRole('button', { name: 'Dismiss error' })).not.toHaveLength(0)
+  })
+
+  it('asks to sign in again instead of reporting what the expired sign-in broke', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    vi.mocked(listSessionListing).mockImplementationOnce(async () => {
+      setHubSignInExpired(true)
+      throw new HubSignInExpiredError()
+    })
+    fireEvent(document, new Event('visibilitychange'))
+
+    // A navigation, not a fetch, is what the gateway's login can answer.
+    const signIn = await screen.findByRole('link', { name: 'Sign in again' })
+    expect(signIn).toHaveAttribute('href', '/')
+    expect(signIn.closest('[role="alert"]')).toHaveTextContent('drafts stay on this device')
+    expect(screen.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument()
+
+    // Signed in again elsewhere: the next answer that gets through resynchronizes.
+    const listingBeforeRecovery = vi.mocked(listSessionListing).mock.calls.length
+    act(() => setHubSignInExpired(false))
+    expect(screen.queryByRole('link', { name: 'Sign in again' })).not.toBeInTheDocument()
+    await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeRecovery + 1))
+    await waitFor(() => expect(screen.queryByText(/sign-in has expired/)).not.toBeInTheDocument())
+  })
+
+  it('stops reconnecting while the sign-in has expired and reconnects once it is back', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const sockets = MockWebSocket.instances.length
+
+    vi.useFakeTimers()
+    try {
+      // A refused WebSocket fails without saying why, so the close asks.
+      vi.mocked(checkHubSignIn).mockImplementationOnce(async () => setHubSignInExpired(true))
+      await act(async () => { MockWebSocket.instances.at(-1)?.onclose?.() })
+      expect(checkHubSignIn).toHaveBeenCalledOnce()
+      await act(async () => { vi.advanceTimersByTime(120_000) })
+      expect(MockWebSocket.instances).toHaveLength(sockets)
+
+      act(() => setHubSignInExpired(false))
+      expect(MockWebSocket.instances).toHaveLength(sockets + 1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('restores session search and filter context after a remount', async () => {

@@ -17041,6 +17041,44 @@ describe('App', () => {
       .not.toHaveAttribute('aria-current')
   })
 
+  it('keeps nothing selected through a refresh while the rest are closing', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : session,
+    )
+    vi.mocked(deleteSession).mockImplementation((_computerId, sessionId) =>
+      sessionId === secondSession.id
+        ? new Promise<void>(() => {})
+        : Promise.resolve(),
+    )
+    render(<App />)
+    await screen.findByText('Hello agent')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
+    await waitFor(() =>
+      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+    )
+    fireEvent.click(sessionAction('Close session'))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
+    )
+
+    // The owning computer now lists only the session that is still closing.
+    vi.mocked(listSessions).mockResolvedValue([secondSession])
+    const calls = vi.mocked(listSessionListing).mock.calls.length
+    await act(async () => {
+      MockWebSocket.instances[0]?.onopen?.()
+    })
+    await waitFor(() =>
+      expect(listSessionListing).toHaveBeenCalledTimes(calls + 1),
+    )
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('button', { name: /^Second chat,/ }))
+      .not.toHaveAttribute('aria-current')
+  })
+
   it('clears Copilot and UI history from the header and slash command', async () => {
     render(<App />)
     await screen.findByText('Hello agent')

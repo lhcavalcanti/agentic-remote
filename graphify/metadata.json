@@ -816,8 +816,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "2be8bc2a08285532f0493272b1ba5fcd6b29627a68097aa8467a5cc8ba40b658",
-    "src/App.tsx": "3dcc3fff889716aaa15d475a5c05092106aa9d830ee5f773dc6889c36c8871ca",
+    "src/App.test.tsx": "89f334b9a0e7f7773467c72f7ba628a180ecdc3993fd092585bb6ab2d0c77e84",
+    "src/App.tsx": "bc0786adba9884e5adeecc28cc3390fc8ae35832e4de0c732364e0f74e937d61",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -1039,14 +1039,14 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "94db604714800844d2bd9401e22edce448d26985ba15b94668e6f3a7b03d406c",
+    "GRAPH_REPORT.md": "bb324cf1c6d4c9be63f6f10b5eb67fce179e8a1680fa87c91d671eed4d52a1cb",
     "communities.json": "67ad7674eccfdf0793459855ba040524d43a03d8bbe337ad47e9444f49941c42",
-    "graph.html": "075070e81a074b407a898653fa44306a565ffe21bc116b89cbc7ed42dab01129",
-    "graph.json": "d0e1bbbd9ff2904732de93cbbc26ecfead7ef7b83c4bddd690504a943cc04909"
+    "graph.html": "80758daf51a32b651d3d619563b06a10f7a78b981c7ab185172e2e98f37dc370",
+    "graph.json": "2d5c0ba4c450b323648831bfd74ac00692d23b20a1e52f00974405e9c7d5f562"
   },
   "schema_version": 1,
-  "source_commit": "d8e8f9be0a85e4da812e97568c40519ef85574bd",
-  "source_fingerprint": "83320b21efbb10d7f723b88fc997070c3fde6042e053bdd112f8775638fd2e4c",
+  "source_commit": "58e6712a62641246647c241369e9a069f1b7fa89",
+  "source_fingerprint": "60f18f6f4d6b09eb0e7bd4660d59c01dc8992c92512015a77d6ea7ae21f9944a",
   "working_tree_changes": [
     "src/App.test.tsx",
     "src/App.tsx"

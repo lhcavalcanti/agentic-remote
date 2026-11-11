@@ -7969,9 +7969,7 @@ function App() {
             : requestedKey &&
                 (pendingReplacements.current.has(requestedKey) || unanswered)
               ? requestedKey
-              : loaded[0]
-                ? sessionKey(loaded[0])
-                : undefined),
+              : fallbackSessionKey(loaded, closingSessionsRef.current)),
       )
     },
     [],
@@ -10662,7 +10660,9 @@ function App() {
           removedSessions.current.add(goneKey)
           setSessions((current) => current.filter((session) => sessionKey(session) !== goneKey))
           if (selectedRef.current && sessionKey(selectedRef.current) === goneKey) {
-            setSelectedKey(snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined)
+            setSelectedKey(
+              fallbackSessionKey(snapshotSessions, closingSessionsRef.current),
+            )
           }
           return reconciledForClaim.filter((session) => sessionKey(session) !== goneKey)
         }
@@ -10697,7 +10697,7 @@ function App() {
         )
       ) {
         setSelectedKey(
-          snapshotSessions[0] ? sessionKey(snapshotSessions[0]) : undefined,
+          fallbackSessionKey(snapshotSessions, closingSessionsRef.current),
         )
       }
       return reconciledForClaim

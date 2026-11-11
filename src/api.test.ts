@@ -814,7 +814,7 @@ describe('Hub sign-in', () => {
     expect(hubSignInExpired()).toBe(false)
   })
 
-  it('lets only a request sent after the latest refusal clear it', async () => {
+  it('ignores a late answer to a request sent before the latest refused one', async () => {
     let answerEarlier: (response: Response) => void = () => undefined
     vi.stubGlobal('fetch', vi.fn()
       .mockImplementationOnce(() => new Promise<Response>((resolve) => { answerEarlier = resolve }))
@@ -829,6 +829,23 @@ describe('Hub sign-in', () => {
     expect(hubSignInExpired()).toBe(true)
 
     await listComputers()
+    expect(hubSignInExpired()).toBe(false)
+  })
+
+  it('lets a request sent after a refused one clear it, whichever is answered first', async () => {
+    let refuseEarlier: (response: Response) => void = () => undefined
+    let answerLater: (response: Response) => void = () => undefined
+    vi.stubGlobal('fetch', vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { refuseEarlier = resolve }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { answerLater = resolve })))
+
+    const earlier = listComputers().catch((error: unknown) => error)
+    const later = listComputers()
+    refuseEarlier(gatewayChallenge())
+    expect(await earlier).toBeInstanceOf(HubSignInExpiredError)
+    answerLater(Response.json({ computers: [] }))
+    await later
+    // Sent after the refused one, its answer is the newer word on the sign-in.
     expect(hubSignInExpired()).toBe(false)
   })
 

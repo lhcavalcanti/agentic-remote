@@ -7105,6 +7105,17 @@ function WorkspaceDialog({
   )
 }
 
+/**
+ * The session to show when the selection names none that exists: the first
+ * listed, passing over any whose close is in flight, or none when every one is.
+ */
+function fallbackSessionKey(
+  sessions: readonly ManagedSession[],
+  closing: ReadonlySet<string>,
+): string | undefined {
+  const fallback = sessions.find((session) => !closing.has(sessionKey(session)))
+  return fallback ? sessionKey(fallback) : undefined
+}
 
 function App() {
   const initialLocationSelection = useRef(readSelectionFromLocation())
@@ -10205,9 +10216,7 @@ function App() {
         ) || 0) < latestListing.current &&
           !removedSessions.current.has(current)))
         ? current
-        : sessionsRef.current[0]
-          ? sessionKey(sessionsRef.current[0])
-          : undefined,
+        : fallbackSessionKey(sessionsRef.current, closingSessionsRef.current),
     )
     // `selectedKey` is a dependency because history can name a session that
     // has since been deleted, and that has to fall back to a real one.
@@ -15905,17 +15914,13 @@ function App() {
       const remaining = withoutClosed(sessionsRef.current)
       sessionsRef.current = remaining
       setSessions(withoutClosed)
-      // Only a reader still on the closed session is moved, and not onto
-      // another session that is closing too. One who picked another session
-      // while it closed stays where they chose.
-      const next =
-        remaining.find(
-          (session) => !closingSessionsRef.current.has(sessionKey(session)),
-        ) ?? remaining[0]
+      // Only a reader still on the closed session is moved, and never onto
+      // another session that is closing too; with none left, nothing is
+      // selected. One who picked another session while it closed stays where
+      // they chose.
+      const next = fallbackSessionKey(remaining, closingSessionsRef.current)
       setSelectedKey((current) =>
-        current === closedKey
-          ? next ? sessionKey(next) : undefined
-          : current,
+        current === closedKey ? next : current,
       )
     } catch (caught) {
       if (sessionKey(target) !== selectedKey) {

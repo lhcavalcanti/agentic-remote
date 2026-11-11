@@ -397,26 +397,29 @@ bin/agentic-remote-gate <PR-number|full-sha> [--repo owner/name] [--no-status] [
    detaches to it, and refuses to continue unless `HEAD` equals the SHA.
 3. It runs `pnpm install --frozen-lockfile --ignore-scripts
    --ignore-pnpmfile`, `pnpm rebuild` (the dependency build scripts the
-   lockfile allows), `pnpm check`, then `NODE_ENV=production pnpm check` in the
-   same clone, through the Corepack pnpm the `packageManager` field pins to a
-   plain release version (anything else fails). The tree, untracked files
+   lockfile allows), `pnpm check`, `NODE_ENV=production pnpm check`, then the
+   hermetic browser specs (`pnpm exec playwright test --project=chromium`) in
+   the same clone, through the Corepack pnpm the `packageManager` field pins to
+   a plain release version (anything else fails). The tree, untracked files
    included, must stay clean and on the SHA after each step.
-4. It posts `success` with the Vitest counts and total duration, for example
-   `normal+production: 5099 passed, 1 skipped (58m)`, only when both checks
-   exit cleanly and each reports passed tests and no failed ones. Any failure,
+4. It posts `success` with the test counts and total duration, for example
+   `normal+production: 5099 passed, 1 skipped; browser: 9 passed (58m)`, only
+   when both checks exit cleanly and each reports passed tests and no failed
+   ones, and the browser specs pass with none failed. Any failure,
    including install failure, a `HEAD` mismatch, a dirty tree, a missing or
-   unparseable test summary, an unusable sandbox, or an interrupt, posts
-   `failure`; so does the exit path when the final status cannot be posted.
+   unparseable test summary, an unusable sandbox, missing Playwright browsers,
+   or an interrupt, posts `failure`; so does the exit path when the final
+   status cannot be posted.
    Descriptions carry counts and durations only, never paths, output, or
    secrets. `--no-status` posts nothing.
 5. Logs and a `summary` stay in
    `${XDG_STATE_HOME:-~/.local/state}/agentic-remote/gates/<sha>/`
    (`clone.log`, `sandbox.log`, `install.log`, `rebuild.log`, `egress.log`,
-   `check.log`, `production-check.log`). The temporary clone is removed however the gate
-   ends.
+   `check.log`, `production-check.log`, `browser-check.log`). The temporary
+   clone is removed however the gate ends.
 
-Install, dependency build, and both checks run pull-request code, so they run
-in a [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox
+Install, dependency build, both checks, and the browser specs run
+pull-request code, so they run in a [bubblewrap](https://github.com/containers/bubblewrap) (`bwrap`) sandbox
 that the gate requires. The sandbox gets every namespace unshared, including
 the network, a cleared environment (`PATH`, `LANG`, `TERM`, `CI=1`, `TMPDIR`, and
 `NODE_ENV` for the production run) that `bwrap` itself is also started with,
@@ -436,6 +439,20 @@ Corepack caches are per gate. Only the gate itself, outside the sandbox, calls
   outside the sandbox. It allows `CONNECT` to port 443 of globally routable
   addresses only, so host, private, link-local, and tailnet addresses stay
   unreachable even there, and logs refusals to `egress.log`.
+- **Browsers.** The browser specs build the app and serve it from a fixture on
+  the sandbox's loopback. They use the host's Playwright browsers, bound
+  read-only from `PLAYWRIGHT_BROWSERS_PATH` (default `~/.cache/ms-playwright`;
+  fill it with `pnpm exec playwright install chromium`), and get
+  `PLAYWRIGHT_BROWSERS_PATH` in their environment. Chromium also needs its
+  system libraries (`sudo pnpm exec playwright install-deps chromium`). On a
+  host without sudo, put the missing ones in
+  `~/.local/share/agentic-remote/gate-browser-libs` (or
+  `AGENTIC_REMOTE_GATE_BROWSER_LIBS`), which is then bound read-only and set as
+  `LD_LIBRARY_PATH`; for example, for `libasound.so.2`:
+  `apt-get download libasound2t64 && dpkg-deb -x libasound2t64_*.deb pkg &&
+  cp -a pkg/usr/lib/*/libasound.so.2* ~/.local/share/agentic-remote/gate-browser-libs/`.
+  Neither directory may be the home directory or contain it. A host without
+  the browsers fails the gate before installing anything.
 - **Git.** The clone's git directory sits outside the writable directory and is
   mounted read-only. The gate's own git commands after each phase name it
   explicitly with the clone as the work tree, ignore system and global
@@ -453,7 +470,8 @@ When `bwrap` is missing or cannot start (for example where unprivileged user
 namespaces are blocked), the gate posts `failure` and never runs the checks
 unsandboxed.
 
-Each check takes about half an hour, and suites on one host interfere through
+Each check takes about half an hour (the browser specs under a minute), and
+suites on one host interfere through
 real tmux, so gates hold a host-wide test lock: a second gate waits for the
 first, or fails at once with `--no-wait`. The promotion monitor takes the same
 lock for validation and its local canary (step 5 of

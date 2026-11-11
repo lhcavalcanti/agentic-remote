@@ -76,6 +76,8 @@ interface Fixture {
   knobs: string
   sandboxCalls: string
   pwned: string
+  browsers: string
+  browserLibs: string
   env: NodeJS.ProcessEnv
 }
 
@@ -112,9 +114,13 @@ async function fixture(): Promise<Fixture> {
   const knobs = path.join(root, 'knobs')
   const sleepMark = path.join(root, 'sleeping')
   const pwned = path.join(root, 'pwned')
+  // Playwright's browsers on the host, outside the operator's home. The
+  // library directory is absent unless a test creates it.
+  const browsers = path.join(root, 'browsers')
+  const browserLibs = path.join(root, 'browser-libs')
   await mkdir(path.dirname(origin), { recursive: true })
   await Promise.all(
-    [bin, temp, state, home, sandboxBin, sandboxCalls].map((dir) =>
+    [bin, temp, state, home, sandboxBin, sandboxCalls, browsers].map((dir) =>
       mkdir(dir, { recursive: true }),
     ),
   )
@@ -221,6 +227,12 @@ async function fixture(): Promise<Fixture> {
       '  echo "building dependencies"',
       '  exit "${REBUILD_EXIT:-0}"',
       'fi',
+      'if [[ " $* " == *" playwright "* ]]; then',
+      '  printf "browser-begin %s PLAYWRIGHT_BROWSERS_PATH=%s LD_LIBRARY_PATH=%s\\n" "$head" "${PLAYWRIGHT_BROWSERS_PATH-unset}" "${LD_LIBRARY_PATH-unset}" >>"$CALL_LOG"',
+      '  [[ "${BROWSER_DIRTY:-}" != 1 ]] || touch "$dir/stray-browser-output"',
+      '  printf "%b\\n" "${BROWSER_OUTPUT:-Running 9 tests using 1 worker\\n  9 passed (24.5s)}"',
+      '  exit "${BROWSER_EXIT:-0}"',
+      'fi',
       'printf "check-begin %s\\n" "$head" >>"$CALL_LOG"',
       'if [[ "$phase" == "${SLEEP_PHASE:-}" ]]; then',
       '  printf "%s\\n%s\\n" "$dir" "$$" >"$SLEEP_MARK"',
@@ -304,6 +316,8 @@ async function fixture(): Promise<Fixture> {
     knobs,
     sandboxCalls,
     pwned,
+    browsers,
+    browserLibs,
     env: {
       ...operatorEnv,
       PATH: `${bin}:${sandboxBin}:${process.env.PATH ?? ''}`,
@@ -315,6 +329,8 @@ async function fixture(): Promise<Fixture> {
       STATUS_LOG: statusLog,
       PR_SHA: prSha,
       SLEEP_MARK: sleepMark,
+      PLAYWRIGHT_BROWSERS_PATH: browsers,
+      AGENTIC_REMOTE_GATE_BROWSER_LIBS: browserLibs,
       // file:// forces a real transfer, so objects only refs/pull reaches are
       // absent until the gate fetches the SHA itself.
       AGENTIC_REMOTE_GATE_CLONE_BASE: `file://${remotes}`,
@@ -439,7 +455,7 @@ describe('agentic-remote-gate', () => {
       expect(status.endpoint).toBe(`repos/${REPO}/statuses/${f.mainSha}`)
     }
     expect(list[1].description).toMatch(
-      /^normal\+production: 5099 passed, 1 skipped \(\d+[sm]\)$/,
+      /^normal\+production: 5099 passed, 1 skipped; browser: 9 passed \(\d+[sm]\)$/,
     )
 
     const log = await calls(f)
@@ -451,6 +467,9 @@ describe('agentic-remote-gate', () => {
       expect.stringMatching(/^corepack NODE_ENV=unset pnpm@10\.34\.5 --dir \S+ rebuild$/),
       expect.stringMatching(/^corepack NODE_ENV=unset pnpm@10\.34\.5 --dir \S+ check$/),
       expect.stringMatching(/^corepack NODE_ENV=production pnpm@10\.34\.5 --dir \S+ check$/),
+      expect.stringMatching(
+        /^corepack NODE_ENV=unset pnpm@10\.34\.5 --dir \S+ exec playwright test --project=chromium --reporter=line$/,
+      ),
     ])
     for (const line of log.filter((entry) => entry.startsWith('checkout '))) {
       expect(line).toMatch(new RegExp(` ${f.mainSha} 700$`))
@@ -459,6 +478,7 @@ describe('agentic-remote-gate', () => {
     const dir = path.join(f.gates, f.mainSha)
     expect((await readdir(dir)).sort()).toEqual(
       expect.arrayContaining([
+        'browser-check.log',
         'check.log',
         'install.log',
         'production-check.log',
@@ -470,10 +490,12 @@ describe('agentic-remote-gate', () => {
     expect(summary).toContain('result=success')
     expect(summary).toContain('normal_tests=5099 passed, 1 skipped')
     expect(summary).toContain('production_tests=5099 passed, 1 skipped')
+    expect(summary).toContain('browser_tests=9 passed')
     expect(summary).toMatch(/install_seconds=\d+/)
     expect(summary).toMatch(/rebuild_seconds=\d+/)
     expect(summary).toMatch(/normal_check_seconds=\d+/)
     expect(summary).toMatch(/production_check_seconds=\d+/)
+    expect(summary).toMatch(/browser_check_seconds=\d+/)
     expect(await readFile(path.join(dir, 'check.log'), 'utf8')).toContain('Tests  5099 passed')
     await expectNoClone(f)
   })
@@ -491,7 +513,7 @@ describe('agentic-remote-gate', () => {
     ])
     expect(list.at(-1)?.state).toBe('success')
     const checkouts = (await calls(f)).filter((line) => line.startsWith('checkout '))
-    expect(checkouts).toHaveLength(4)
+    expect(checkouts).toHaveLength(5)
     for (const line of checkouts) expect(line).toContain(` ${f.prSha} `)
     await expectNoClone(f)
   })
@@ -616,6 +638,110 @@ describe('agentic-remote-gate', () => {
     await expectNoClone(f)
   })
 
+  it('runs the Chromium specs last, with the host browsers read-only and no network', async () => {
+    const f = await fixture()
+    const result = await gate(f, [f.mainSha, '--repo', REPO])
+    expect(result.code, result.output).toBe(0)
+
+    const browsers = realpathSync(f.browsers)
+    const commands = await sandboxCommands(f)
+    const browser = commands.at(-1)!
+    expect(browser.command.slice(browser.command.indexOf('corepack') + 4)).toEqual([
+      'exec', 'playwright', 'test', '--project=chromium', '--reporter=line',
+    ])
+    expect(hasSequence(browser.options, '--ro-bind', browsers, browsers)).toBe(true)
+    expect(browser.command).not.toContain('egress')
+    const environment = clearedEnvironment(browser.command)
+    expect(environment.PLAYWRIGHT_BROWSERS_PATH).toBe(browsers)
+    expect(environment.LD_LIBRARY_PATH).toBeUndefined()
+    // Only the browser check sees the browsers.
+    for (const { options } of commands.slice(0, -1)) expect(options).not.toContain(browsers)
+    expect(await calls(f)).toContain(
+      `browser-begin ${f.mainSha} PLAYWRIGHT_BROWSERS_PATH=${browsers} LD_LIBRARY_PATH=unset`,
+    )
+  })
+
+  it('lends Chromium a host library directory when one exists', async () => {
+    const f = await fixture()
+    await mkdir(f.browserLibs)
+    const result = await gate(f, [f.mainSha, '--repo', REPO])
+    expect(result.code, result.output).toBe(0)
+
+    const libraries = realpathSync(f.browserLibs)
+    const browser = (await sandboxCommands(f)).at(-1)!
+    expect(hasSequence(browser.options, '--ro-bind', libraries, libraries)).toBe(true)
+    expect(clearedEnvironment(browser.command).LD_LIBRARY_PATH).toBe(libraries)
+  })
+
+  it('records failure when a Chromium spec fails', async () => {
+    const f = await fixture()
+    const result = await gate(f, [f.mainSha, '--repo', REPO], {
+      BROWSER_EXIT: '1',
+      BROWSER_OUTPUT: 'Running 9 tests using 1 worker\\n  1 failed\\n    [chromium] › e2e/oracle-dock.pw.ts:88:3 › fits\\n  8 passed (31.0s)',
+    })
+    expect(result.code).not.toBe(0)
+
+    const list = await statuses(f)
+    expectSafe(f, list)
+    expect(list.map((s) => s.state)).toEqual(['pending', 'failure'])
+    expect(list[1].description).toMatch(/^browser check failed: 1 failed, 8 passed \(\d+[sm]\)$/)
+    expect(await readFile(path.join(f.gates, f.mainSha, 'summary'), 'utf8')).toContain(
+      'browser_tests=1 failed, 8 passed',
+    )
+    await expectNoClone(f)
+  })
+
+  it('says when Chromium is missing a system library, without quoting its output', async () => {
+    const f = await fixture()
+    const result = await gate(f, [f.mainSha, '--repo', REPO], {
+      BROWSER_EXIT: '1',
+      BROWSER_OUTPUT: 'Error: browserType.launch: chrome-headless-shell: error while loading shared libraries: libasound.so.2: cannot open shared object file',
+    })
+    expect(result.code).not.toBe(0)
+
+    const list = await statuses(f)
+    expectSafe(f, list)
+    expect(list.at(-1)?.description).toMatch(
+      /^browser check failed: Chromium is missing a system library \(\d+[sm]\)$/,
+    )
+  })
+
+  it('records failure when the browser check reports no passed tests', async () => {
+    const f = await fixture()
+    const result = await gate(f, [f.mainSha, '--repo', REPO], {
+      BROWSER_OUTPUT: 'Running 0 tests using 1 worker',
+    })
+    expect(result.code).not.toBe(0)
+    expect((await statuses(f)).at(-1)?.description).toMatch(
+      /^browser check reported no passed tests/,
+    )
+  })
+
+  it('records failure when the browser check leaves the tree dirty', async () => {
+    const f = await fixture()
+    const result = await gate(f, [f.mainSha, '--repo', REPO], { BROWSER_DIRTY: '1' })
+    expect(result.code).not.toBe(0)
+    expect((await statuses(f)).at(-1)?.description).toMatch(
+      /tree changed during browser check/,
+    )
+  })
+
+  it('fails before installing anything on a host without Playwright browsers', async () => {
+    const f = await fixture()
+    await rm(f.browsers, { recursive: true })
+    const result = await gate(f, [f.mainSha, '--repo', REPO])
+    expect(result.code).not.toBe(0)
+
+    const list = await statuses(f)
+    expectSafe(f, list)
+    expect(list.map((s) => s.state)).toEqual(['pending', 'failure'])
+    expect(list[1].description).toMatch(
+      /^browser check unavailable: no Playwright browsers on this host/,
+    )
+    expect((await calls(f)).filter((line) => line.startsWith('corepack '))).toEqual([])
+    await expectNoClone(f)
+  })
+
   it.each(['SIGINT', 'SIGTERM'] as const)(
     'records failure, stops the check, and removes the clone on %s',
     async (signal) => {
@@ -713,8 +839,20 @@ describe('agentic-remote-gate', () => {
       ['rebuild'],
       ['check'],
       ['check'],
+      ['exec', 'playwright', 'test', '--project=chromium', '--reporter=line'],
     ])
-    const allowed = ['CI', 'COREPACK_ENABLE_DOWNLOAD_PROMPT', 'HOME', 'LANG', 'NODE_ENV', 'PATH', 'TERM', 'TMPDIR']
+    const allowed = [
+      'CI',
+      'COREPACK_ENABLE_DOWNLOAD_PROMPT',
+      'HOME',
+      'LANG',
+      'LD_LIBRARY_PATH',
+      'NODE_ENV',
+      'PATH',
+      'PLAYWRIGHT_BROWSERS_PATH',
+      'TERM',
+      'TMPDIR',
+    ]
     for (const { options, command } of commands) {
       for (const flag of ['--unshare-all', '--die-with-parent', '--new-session']) {
         expect(options).toContain(flag)
@@ -754,7 +892,9 @@ describe('agentic-remote-gate', () => {
       // Bash adds PWD, SHLVL, and _ to the stub's own environment.
       const names = launch.split('\0').slice(0, -1).map((entry) => entry.slice(0, entry.indexOf('=')))
       expect(names.filter((name) => !['PWD', 'SHLVL', '_'].includes(name)).sort()).toEqual(
-        allowed.filter((name) => name !== 'NODE_ENV'),
+        allowed.filter(
+          (name) => !['LD_LIBRARY_PATH', 'NODE_ENV', 'PLAYWRIGHT_BROWSERS_PATH'].includes(name),
+        ),
       )
       expect(launch).not.toContain('secret')
       expect(launch).not.toContain(`=${f.home}\0`)
@@ -784,14 +924,14 @@ describe('agentic-remote-gate', () => {
     }
     // Only installing and building dependencies get network, and only
     // through the egress proxy, whose socket directory is read-only.
-    const [install, rebuild, normal, production] = corepack
+    const [install, rebuild, normal, production, browser] = corepack
     const egressDir = path.join(path.dirname(path.dirname(install.command[install.command.indexOf('--dir') + 1])), 'egress')
     for (const { options, command } of [install, rebuild]) {
       expect(hasSequence(options, '--ro-bind', egressDir, egressDir)).toBe(true)
       expect(command.indexOf('egress')).toBeGreaterThan(-1)
       expect(command.indexOf('egress')).toBeLessThan(command.indexOf('corepack'))
     }
-    for (const { options, command } of [normal, production]) {
+    for (const { options, command } of [normal, production, browser]) {
       expect(options).not.toContain(egressDir)
       expect(command).not.toContain('egress')
     }
@@ -811,9 +951,10 @@ describe('agentic-remote-gate', () => {
     expect(clearedEnvironment(corepack[1].command).NODE_ENV).toBeUndefined()
     expect(clearedEnvironment(corepack[2].command).NODE_ENV).toBeUndefined()
     expect(clearedEnvironment(corepack[3].command).NODE_ENV).toBe('production')
+    expect(clearedEnvironment(corepack[4].command).NODE_ENV).toBeUndefined()
 
     const proxied = ['install.log', 'rebuild.log']
-    for (const name of [...proxied, 'check.log', 'production-check.log']) {
+    for (const name of [...proxied, 'check.log', 'production-check.log', 'browser-check.log']) {
       const log = await readFile(path.join(f.gates, f.mainSha, name), 'utf8')
       expect(/^HTTPS_PROXY=http:\/\/127\.0\.0\.1:\d+$/m.test(log)).toBe(proxied.includes(name))
       const seen = log.slice(log.indexOf('ENVIRONMENT BEGIN'), log.indexOf('ENVIRONMENT END'))
@@ -1095,6 +1236,7 @@ describe('agentic-remote-gate', () => {
             '  done',
             'fi',
             'echo "      Tests  1 passed (1)"',
+            'echo "  1 passed (0.1s)"',
           ].join('\n'),
         )
         const result = await gate(f, [f.mainSha, '--repo', REPO], {
@@ -1103,7 +1245,7 @@ describe('agentic-remote-gate', () => {
         expect(result.code, result.output).toBe(0)
 
         const proxied = ['install.log', 'rebuild.log']
-        for (const name of [...proxied, 'check.log', 'production-check.log']) {
+        for (const name of [...proxied, 'check.log', 'production-check.log', 'browser-check.log']) {
           const log = await readFile(path.join(f.gates, f.mainSha, name), 'utf8')
           for (const address of addresses) {
             expect(log, name).toContain(`BLOCKED ${address}`)
@@ -1154,13 +1296,14 @@ describe('agentic-remote-gate', () => {
           'fi',
           'touch -d @1 package.json',
           'echo "      Tests  1 passed (1)"',
+          'echo "  1 passed (0.1s)"',
         ].join('\n'),
       )
       const result = await gate(f, [f.mainSha, '--repo', REPO], {
         PATH: `${toolchain}:${f.bin}:/usr/bin:/bin`,
       })
       await expect(stat(f.pwned)).rejects.toThrow()
-      for (const name of ['rebuild.log', 'check.log', 'production-check.log']) {
+      for (const name of ['rebuild.log', 'check.log', 'production-check.log', 'browser-check.log']) {
         const log = await readFile(path.join(f.gates, f.mainSha, name), 'utf8')
         expect(log, name).not.toContain('TMP IS GITDIR')
       }
@@ -1196,6 +1339,7 @@ describe('agentic-remote-gate', () => {
           '  tr "\\0" "\\n" <"$file" 2>/dev/null || true',
           'done',
           'echo "      Tests  1 passed (1)"',
+          'echo "  1 passed (0.1s)"',
         ].join('\n'),
       )
       const result = await gate(f, [f.mainSha, '--repo', REPO], {
@@ -1206,7 +1350,7 @@ describe('agentic-remote-gate', () => {
       })
       expect(result.code, result.output).toBe(0)
 
-      for (const name of ['install.log', 'check.log', 'production-check.log']) {
+      for (const name of ['install.log', 'check.log', 'production-check.log', 'browser-check.log']) {
         const log = await readFile(path.join(f.gates, f.mainSha, name), 'utf8')
         expect(log).toMatch(/^== \/proc\/1\/environ\nPATH=/m)
         expect(log).toMatch(/^== \/proc\/self\/environ\n/m)

@@ -5,8 +5,9 @@
 #
 # The hosted light check is advisory, so merge readiness rests on this gate: a
 # fresh clone of the exact SHA, `pnpm check`, then `NODE_ENV=production pnpm
-# check`, with the tree still clean after each. Gates on one host run one at a
-# time, because the suites interfere with each other through real tmux.
+# check`, then the hermetic Chromium specs, with the tree still clean after
+# each. Gates on one host run one at a time, because the suites interfere with
+# each other through real tmux.
 #
 # Everything the pull request controls (install, lint, tests, build) runs in a
 # bubblewrap sandbox with a cleared environment, a private HOME and /tmp, its
@@ -30,6 +31,11 @@ readonly CLONE_BASE="${AGENTIC_REMOTE_GATE_CLONE_BASE:-https://github.com}"
 # Seconds an interrupted check may take to exit before it is killed outright.
 readonly STOP_GRACE="${AGENTIC_REMOTE_GATE_STOP_GRACE:-30}"
 readonly REAL_HOME="${HOME:-}"
+# Playwright's browsers, and an optional directory of shared libraries Chromium
+# links against but the host lacks (a minimal server has no libasound.so.2),
+# both bound read-only into the browser check only.
+readonly BROWSERS_DIR="${PLAYWRIGHT_BROWSERS_PATH:-${XDG_CACHE_HOME:-$REAL_HOME/.cache}/ms-playwright}"
+readonly BROWSER_LIBS_DIR="${AGENTIC_REMOTE_GATE_BROWSER_LIBS:-${XDG_DATA_HOME:-$REAL_HOME/.local/share}/agentic-remote/gate-browser-libs}"
 # Host directories the sandbox sees, read-only. Home directories, /tmp, /run,
 # and /var stay out, which keeps credentials and sockets out of reach.
 readonly SANDBOX_SYSTEM_DIRS=(/usr /bin /sbin /lib /lib32 /lib64 /libx32 /etc /opt /sys)
@@ -226,6 +232,13 @@ test_counts() {
     sed 's/,/, /g' || true
 }
 
+# "1 failed, 8 passed" from the closing summary of Playwright's line reporter.
+browser_counts() {
+  sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' "$1" 2>/dev/null |
+    grep -oE '^[[:space:]]+[0-9]+ (passed|failed|flaky|skipped|interrupted|did not run)\b' |
+    sed -E 's/^[[:space:]]+//' | paste -sd, - | sed 's/,/, /g' || true
+}
+
 record() {
   printf '%s=%s\n' "$1" "$2" >>"$GATE_DIR/summary"
 }
@@ -267,16 +280,21 @@ fail() {
 # environment too: it stays inside the sandbox's PID namespace as PID 1, where
 # the pull request could read its environment from /proc.
 # With --egress the phase reaches public addresses through the egress proxy;
-# otherwise it has no network at all.
-#   run_phase [--egress] LOG_FILE [NAME=value...] COMMAND...
+# otherwise it has no network at all. Each --ro DIR is bound read-only.
+#   run_phase [--egress] [--ro DIR]... LOG_FILE [NAME=value...] COMMAND...
 run_phase() {
   local -a options=("${SANDBOX_OPTIONS[@]}") assignments=()
   local egress=0
-  if [[ "$1" == --egress ]]; then
-    egress=1
-    shift
-    options+=(--ro-bind "$EGRESS_DIR" "$EGRESS_DIR")
-  fi
+  while [[ "$1" == --egress || "$1" == --ro ]]; do
+    if [[ "$1" == --egress ]]; then
+      egress=1
+      options+=(--ro-bind "$EGRESS_DIR" "$EGRESS_DIR")
+      shift
+    else
+      options+=(--ro-bind "$2" "$2")
+      shift 2
+    fi
+  done
   local log_file="$1" status=0
   shift
   while (($#)) && [[ "$1" == [A-Za-z_]*=* ]]; do
@@ -458,6 +476,17 @@ in_system_dir() {
   return 1
 }
 
+# Prints the resolved DIR when it can be bound read-only into the sandbox: an
+# existing absolute directory that is neither the home directory nor one of
+# its ancestors, so the home stays hidden as it is for the Node toolchain.
+bindable_host_dir() {
+  local dir
+  [[ "$1" == /* ]] || return 1
+  dir="$(realpath -e -- "$1" 2>/dev/null)" && [[ -d "$dir" ]] || return 1
+  [[ -z "$REAL_HOME" || "${REAL_HOME%/}/" != "${dir%/}/"* ]] || return 1
+  printf '%s\n' "$dir"
+}
+
 # Clean and still on the gated commit; anything else fails the gate.
 # Untracked files count whatever status.showUntrackedFiles says.
 assert_tree() {
@@ -496,6 +525,46 @@ run_check() {
   fi
   if [[ "$CHECK_COUNTS" =~ (^|, )([0-9]+)\ failed ]] && ((10#${BASH_REMATCH[2]} > 0)); then
     fail "$label reported failed tests: $CHECK_COUNTS ($(elapsed))"
+  fi
+}
+
+# The hermetic Chromium specs, Playwright's chromium project. They build the
+# app and serve it from a fixture on the sandbox's own loopback, so they need
+# no network; the browsers come read-only from the host. Leaves the counts in
+# BROWSER_COUNTS. Failure descriptions are fixed text: the log is the pull
+# request's output, so it only chooses among them.
+run_browser_check() {
+  local log_file="$GATE_DIR/browser-check.log" started status=0
+  local -a mounts=(--ro "$BROWSERS") assignments=(PLAYWRIGHT_BROWSERS_PATH="$BROWSERS")
+  if [[ -n "$BROWSER_LIBS" ]]; then
+    mounts+=(--ro "$BROWSER_LIBS")
+    assignments+=(LD_LIBRARY_PATH="$BROWSER_LIBS")
+  fi
+  PHASE="browser check"
+  log "running browser check (log: $log_file)"
+  started="$(date +%s)"
+  run_phase "${mounts[@]}" "$log_file" "${assignments[@]}" \
+    corepack "$PNPM" --dir "$CLONE" exec playwright test --project=chromium --reporter=line ||
+    status=$?
+  record browser_check_exit "$status"
+  record browser_check_seconds "$(($(date +%s) - started))"
+  BROWSER_COUNTS="$(browser_counts "$log_file")"
+  record browser_tests "$BROWSER_COUNTS"
+  if ((status != 0)); then
+    if grep -qE 'error while loading shared libraries|missing dependencies to run browsers' "$log_file"; then
+      fail "browser check failed: Chromium is missing a system library ($(elapsed))"
+    fi
+    if grep -qF "Executable doesn't exist" "$log_file"; then
+      fail "browser check failed: this host lacks the Playwright browser it needs ($(elapsed))"
+    fi
+    fail "browser check failed${BROWSER_COUNTS:+: $BROWSER_COUNTS} ($(elapsed))"
+  fi
+  assert_tree "browser check"
+  if ! [[ "$BROWSER_COUNTS" =~ (^|, )([0-9]+)\ passed ]] || ((10#${BASH_REMATCH[2]} == 0)); then
+    fail "browser check reported no passed tests${BROWSER_COUNTS:+: $BROWSER_COUNTS} ($(elapsed))"
+  fi
+  if [[ "$BROWSER_COUNTS" =~ (^|, )[0-9]+\ (failed|flaky|interrupted|did\ not\ run) ]]; then
+    fail "browser check reported failed tests: $BROWSER_COUNTS ($(elapsed))"
   fi
 }
 
@@ -578,6 +647,9 @@ SANDBOX_PATH=""
 SANDBOX_TOOLCHAIN_DIRS=()
 SANDBOX_OPTIONS=()
 SANDBOX_ENV=()
+BROWSERS=""
+BROWSER_LIBS=""
+BROWSER_COUNTS=""
 GATE_STARTED="$(date +%s)"
 
 mkdir -p "$STATE_ROOT"
@@ -605,7 +677,7 @@ GATE_DIR="$STATE_ROOT/$SHA"
 mkdir -p "$GATE_DIR"
 rm -f -- "$GATE_DIR/summary" "$GATE_DIR/clone.log" "$GATE_DIR/install.log" \
   "$GATE_DIR/rebuild.log" "$GATE_DIR/check.log" "$GATE_DIR/production-check.log" \
-  "$GATE_DIR/sandbox.log" "$GATE_DIR/egress.log"
+  "$GATE_DIR/browser-check.log" "$GATE_DIR/sandbox.log" "$GATE_DIR/egress.log"
 record sha "$SHA"
 record repo "$REPO"
 record started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -623,6 +695,14 @@ prepare_sandbox || fail "sandbox unavailable: no Node toolchain it can expose"
 PYTHON="$(command -v python3)"
 in_system_dir "$PYTHON" && in_system_dir "$(realpath -e -- "$PYTHON")" ||
   fail "sandbox unavailable: python3 is not in a system directory"
+# Checked now, so a host that cannot run the browser check fails in seconds
+# rather than after both hour-long checks.
+BROWSERS="$(bindable_host_dir "$BROWSERS_DIR")" ||
+  fail "browser check unavailable: no Playwright browsers on this host"
+if [[ -e "$BROWSER_LIBS_DIR" ]]; then
+  BROWSER_LIBS="$(bindable_host_dir "$BROWSER_LIBS_DIR")" ||
+    fail "browser check unavailable: the browser library directory is unusable"
+fi
 
 WORK_DIR="$(mktemp -d)"
 chmod 700 "$WORK_DIR"
@@ -698,10 +778,11 @@ normal_counts="$CHECK_COUNTS"
 run_check "production check" production "$GATE_DIR/production-check.log" \
   NODE_ENV=production corepack "$PNPM" --dir "$CLONE" check
 production_counts="$CHECK_COUNTS"
+run_browser_check
 
 PHASE="reporting"
 if [[ "$normal_counts" == "$production_counts" ]]; then
-  conclude success "normal+production: $normal_counts ($(elapsed))"
+  conclude success "normal+production: $normal_counts; browser: $BROWSER_COUNTS ($(elapsed))"
 else
-  conclude success "normal: $normal_counts; production: $production_counts ($(elapsed))"
+  conclude success "normal: $normal_counts; production: $production_counts; browser: $BROWSER_COUNTS ($(elapsed))"
 fi

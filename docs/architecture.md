@@ -88,6 +88,14 @@ WebSocket upgrade must remain behind TLS and a deny-by-default upstream access
 layer such as Cloudflare Access. Node REST and WebSocket routes retain a
 separate random pairing token and must not be publicly reachable.
 
+The app marks its hub API requests with `X-Requested-With: XMLHttpRequest` and
+does not follow their redirects. When the Access session lapses, Access then
+answers with a readable `401` challenge rather than a login redirect that
+`fetch` can report only as "Failed to fetch", and the app asks the user to sign
+in again. A WebSocket upgrade cannot carry that header, so a closed event
+stream is followed by one such request. The Access application's session
+duration decides how often that happens.
+
 Pairing credentials are generated locally and displayed only by explicit
 management commands. Use Cloudflare Access, an encrypted overlay, or TLS before
 exposing the hub outside the trusted network.

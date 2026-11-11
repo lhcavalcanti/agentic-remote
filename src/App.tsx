@@ -235,6 +235,7 @@ import {
   cancelBackgroundTask,
   askSession,
   cancelSession,
+  checkHubSignIn,
   clearConversation,
   recoverConversation,
   configureRuntime,
@@ -287,6 +288,13 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import {
+  HUB_SIGN_IN_EXPIRED_MESSAGE,
+  hubSignInExpired,
+  subscribeHubSignIn,
+} from './hub-sign-in'
+import { SignInExpiredNotice } from './SignInExpiredNotice'
+import { innermostDialogFrame, subscribeDialogFrames } from './components/dialog-stack'
 import {
   currentSessionEventSequence,
   nextSessionEventSequence,
@@ -7768,6 +7776,18 @@ function App() {
   }, [appearance])
   const brandIcon = '/icon.svg'
   const [error, setError] = useState<string>()
+  const signInExpired = useSyncExternalStore(subscribeHubSignIn, hubSignInExpired)
+  // An open modal carries the notice itself.
+  const modalOpen = useSyncExternalStore(
+    subscribeDialogFrames,
+    () => innermostDialogFrame() !== undefined,
+  )
+  useEffect(() => {
+    // A refusal the gateway has stopped making is no longer an error.
+    if (!signInExpired) {
+      setError((current) => current === HUB_SIGN_IN_EXPIRED_MESSAGE ? undefined : current)
+    }
+  }, [signInExpired])
   // Computers this profile has not placed yet follow in pairing order, which
   // is derived here rather than written back: only a drag is a choice.
   const computerOrder = useMemo(() => {
@@ -10376,6 +10396,8 @@ function App() {
     let socket: WebSocket | undefined
     let retry: number | undefined
     let stopped = false
+    // Set while reconnects wait for the sign-in to be renewed.
+    let paused = false
     let reconnectDelay = 1_000
 
     const refreshSnapshot = async (
@@ -10748,6 +10770,11 @@ function App() {
     }
 
     const connect = () => {
+      // The gateway would turn every attempt away until the sign-in is renewed.
+      if (hubSignInExpired()) {
+        paused = true
+        return
+      }
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       // Asks to be sent what changed in a session rather than all of it. Its
       // patches only apply to what this socket was itself sent, so every new
@@ -11016,6 +11043,8 @@ function App() {
       socket.onclose = () => {
         if (eventSocketRef.current === current) eventSocketRef.current = undefined
         if (!stopped) {
+          // A WebSocket the gateway refused fails without saying why.
+          void checkHubSignIn()
           const delay = reconnectDelay
           reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
           retry = window.setTimeout(connect, delay)
@@ -11028,6 +11057,18 @@ function App() {
         void refreshAllAuthoritativeState(setError).catch(() => undefined)
       }
     }
+    // Renewed, perhaps in another tab: catch up on what was refused meanwhile.
+    const handleSignIn = () => {
+      if (stopped || hubSignInExpired()) return
+      if (paused) {
+        paused = false
+        reconnectDelay = 1_000
+        connect()
+      } else {
+        void refreshAllAuthoritativeState(setError).catch(() => undefined)
+      }
+    }
+    const unsubscribeSignIn = subscribeHubSignIn(handleSignIn)
 
     connect()
     window.addEventListener(
@@ -11045,6 +11086,7 @@ function App() {
         handleCoordinatedAuthoritativeRefresh,
       )
       document.removeEventListener('visibilitychange', handleVisibility)
+      unsubscribeSignIn()
       if (retry !== undefined) {
         window.clearTimeout(retry)
       }
@@ -16092,7 +16134,7 @@ function App() {
     <div
       className={`app-shell ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
-      } ${
+      } ${signInExpired ? 'app-shell--signed-out' : ''} ${
         oracleOpen &&
         oracleIndicator.available &&
         effectiveOraclePlacement === 'docked'
@@ -16217,10 +16259,11 @@ function App() {
                 refreshMessage={refreshMessage}
                 refreshState={refreshState}
                 creationError={
-                  !newSessionOpen && sidebarOpen && sidebarView === 'sessions'
+                  !signInExpired && !newSessionOpen && sidebarOpen && sidebarView === 'sessions'
                     ? sessionCreationError
                     : undefined
                 }
+                signInExpired={signInExpired}
                 loadingError={sessionLoadError}
                 onDismissCreationError={() => setSessionCreationError(undefined)}
                 onNewSession={openNewSession}
@@ -16744,7 +16787,7 @@ function App() {
           ) : null}
         </header>
 
-        {sessionLoadError ? (
+        {sessionLoadError && !signInExpired ? (
           <div className="error-banner" role="alert">
             <span>{sessionLoadError}</span>
             <button
@@ -16761,7 +16804,7 @@ function App() {
             </button>
           </div>
         ) : null}
-        {selected?.restartRecovery?.state === 'recovering' ? (
+        {signInExpired ? null : selected?.restartRecovery?.state === 'recovering' ? (
           <div className="error-banner error-banner--recovery" role="status">
             <span>{selected.restartRecovery.message || 'Recovering the SDK session. Queued work will wait until recovery finishes.'}</span>
           </div>
@@ -16782,7 +16825,7 @@ function App() {
             </button>
           </div>
         ) : null}
-        {error ? (
+        {error && !signInExpired ? (
           <div className="error-banner" role="alert">
             <span>{error}</span>
             <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
@@ -16791,6 +16834,7 @@ function App() {
           </div>
         ) : null}
         {sessionCreationError &&
+        !signInExpired &&
         !newSessionOpen &&
         (!sidebarOpen || sidebarView !== 'sessions') ? (
           <div className="error-banner" role="alert">
@@ -17680,7 +17724,7 @@ function App() {
             <X size={16} />
           </button>
         </header>
-        {error ? (
+        {error && !signInExpired ? (
           <div className="error-banner knowledge-panel__error">
             <span>{error}</span>
             <button aria-label="Dismiss error" onClick={() => setError(undefined)}>
@@ -17971,6 +18015,10 @@ function App() {
             }}
           />
         </DialogFrame>
+      ) : null}
+      {signInExpired && !modalOpen ? (
+        // Everything else would fail the same way, so this stands alone.
+        <SignInExpiredNotice placement="floating" />
       ) : null}
       {settingsNotice(settingsProfile) && !(updateRegistration && !updateToastDismissed) ? (
         <div className="update-toast settings-toast" role="status">

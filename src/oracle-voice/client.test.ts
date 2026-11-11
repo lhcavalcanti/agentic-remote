@@ -17,6 +17,11 @@ import {
   type OracleVoiceSocket,
 } from './client'
 import type { VoicePlaybackOptions } from './playback'
+import {
+  HUB_SIGN_IN_EXPIRED_MESSAGE,
+  hubSignInExpired,
+  setHubSignInExpired,
+} from '../hub-sign-in'
 
 const capabilities: VoiceCapabilities = {
   protocol: ORACLE_VOICE_PROTOCOL,
@@ -37,6 +42,26 @@ const capabilities: VoiceCapabilities = {
 }
 
 describe('OracleVoiceClient', () => {
+  it('reports an expired hub sign-in instead of an unreachable hub', async () => {
+    const gatewayFetch = vi.fn(async (_input: string, _init?: RequestInit) => new Response(null, {
+      status: 401,
+      headers: { 'www-authenticate': 'Cloudflare-Access resource_metadata="https://hub.test/"' },
+    }))
+    vi.stubGlobal('fetch', gatewayFetch)
+    try {
+      const client = harness({ defaultFetch: true })
+      await expect(client.instance.start()).rejects.toThrow(HUB_SIGN_IN_EXPIRED_MESSAGE)
+
+      expect(new Headers(gatewayFetch.mock.calls[0]?.[1]?.headers).get('x-requested-with'))
+        .toBe('XMLHttpRequest')
+      expect(hubSignInExpired()).toBe(true)
+      expect(client.errors().map((error) => error.message)).toEqual([HUB_SIGN_IN_EXPIRED_MESSAGE])
+    } finally {
+      vi.unstubAllGlobals()
+      setHubSignInExpired(false)
+    }
+  })
+
   it('fetches capability and a ticket, validates hello, then starts capture', async () => {
     const client = harness()
     const starting = client.instance.start()
@@ -771,11 +796,14 @@ function harness({
   captureStartError,
   deferCapabilities = false,
   deferCaptureStart = false,
+  defaultFetch = false,
 }: {
   ticketStatus?: number
   captureStartError?: VoiceCaptureError
   deferCapabilities?: boolean
   deferCaptureStart?: boolean
+  // Leaves the client's own hub transport in place.
+  defaultFetch?: boolean
 } = {}) {
   const sockets: FakeSocket[] = []
   const captures: FakeCapture[] = []
@@ -860,7 +888,7 @@ function harness({
     language: 'en',
     defaults: {} satisfies ManagerClientDefaults,
     answerOnly: false,
-    dependencies,
+    dependencies: defaultFetch ? { ...dependencies, fetch: undefined } : dependencies,
     onError: (error) => errors.push(error),
     onPartial: (event) => partials.push(event),
     onFinal: (event) => finals.push(event),

@@ -17,33 +17,39 @@ const binding: SessionKnowledgeBinding = {
 
 afterEach(() => vi.unstubAllGlobals())
 
+const url = '/api/computers/computer%2Fid/sessions/session%2Fid/knowledge-root'
+
+// The request as the hub sees it, apart from how it passes the sign-in gateway.
+function sent(fetchMock: { mock: { calls: Array<[string, RequestInit?]> } }) {
+  expect(fetchMock.mock.calls).toHaveLength(1)
+  const [path, init = {}] = fetchMock.mock.calls[0]
+  const { headers, redirect: _redirect, ...rest } = init
+  const contentType = new Headers(headers).get('content-type')
+  return { path, ...rest, ...(contentType ? { contentType } : {}) }
+}
+
 describe('session Knowledge API', () => {
   it('reads the encoded session identity without caching or changing it', async () => {
-    const fetchMock = vi.fn(async () => Response.json({ binding }))
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => Response.json({ binding }))
     vi.stubGlobal('fetch', fetchMock)
     await expect(getSessionKnowledgeRoot('computer/id', 'session/id')).resolves.toEqual(binding)
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
-      '/api/computers/computer%2Fid/sessions/session%2Fid/knowledge-root',
-      { cache: 'no-store' },
-    )
+    expect(sent(fetchMock)).toEqual({ path: url, cache: 'no-store' })
   })
 
   it.each(['root-id', null])('conditionally saves the explicit %s choice', async (rootId) => {
     const saved = { ...binding, rootId, revision: 3 }
-    const fetchMock = vi.fn(async () => Response.json({ binding: saved }))
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => Response.json({ binding: saved }))
     vi.stubGlobal('fetch', fetchMock)
     await expect(updateSessionKnowledgeRoot('computer/id', 'session/id', {
       rootId, expectedRevision: 2,
     })).resolves.toEqual(saved)
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
-      '/api/computers/computer%2Fid/sessions/session%2Fid/knowledge-root',
-      {
-        cache: 'no-store',
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ rootId, expectedRevision: 2 }),
-      },
-    )
+    expect(sent(fetchMock)).toEqual({
+      path: url,
+      cache: 'no-store',
+      method: 'PUT',
+      contentType: 'application/json',
+      body: JSON.stringify({ rootId, expectedRevision: 2 }),
+    })
   })
 
   it('creates a dedicated session Knowledge base by relative path', async () => {
@@ -53,7 +59,7 @@ describe('session Knowledge API', () => {
       knowledgeBasePath: '/srv/project/knowledge',
       revision: 3,
     }
-    const fetchMock = vi.fn(async () => Response.json({ binding: saved }))
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => Response.json({ binding: saved }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(updateSessionKnowledgeRoot('computer/id', 'session/id', {
@@ -61,19 +67,17 @@ describe('session Knowledge API', () => {
       create: true,
       expectedRevision: 2,
     })).resolves.toEqual(saved)
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
-      '/api/computers/computer%2Fid/sessions/session%2Fid/knowledge-root',
-      {
-        cache: 'no-store',
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          knowledgeBasePath: 'knowledge',
-          create: true,
-          expectedRevision: 2,
-        }),
-      },
-    )
+    expect(sent(fetchMock)).toEqual({
+      path: url,
+      cache: 'no-store',
+      method: 'PUT',
+      contentType: 'application/json',
+      body: JSON.stringify({
+        knowledgeBasePath: 'knowledge',
+        create: true,
+        expectedRevision: 2,
+      }),
+    })
   })
 
   it('exposes conflict status and the latest binding without retrying a stale save', async () => {

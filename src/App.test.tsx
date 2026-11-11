@@ -39,6 +39,7 @@ import {
   type SettingsProfileValues,
 } from '../shared/settings-profile'
 import {
+  checkHubSignIn,
   getManager,
   sendManagerMessage,
   activateSession,
@@ -100,6 +101,7 @@ import {
   transcribeAudio,
   uploadSessionFile,
 } from './api'
+import { HubSignInExpiredError, setHubSignInExpired } from './hub-sign-in'
 import { composerMaximumHeight } from './composer-sizing'
 import { DreamerApiError, getDreamer } from './dreamer-api'
 import { PWA_UPDATE_EVENT } from './pwa'
@@ -193,6 +195,7 @@ vi.mock('./dreamer-api', async (importOriginal) => ({
 
 vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
+  checkHubSignIn: vi.fn(async () => undefined),
   getManager: vi.fn(),
   getOracleVoiceCapabilities: vi.fn(async () => ({
     protocol: 2,
@@ -2362,6 +2365,7 @@ describe('App', () => {
 
   afterEach(() => {
     cleanup()
+    setHubSignInExpired(false)
   })
 
   function resourceSession(overrides: Partial<ManagedSession> = {}) {
@@ -3908,6 +3912,90 @@ describe('App', () => {
     fireEvent(document, new Event('visibilitychange'))
     expect((await screen.findAllByText('The hub stopped answering'))[0]).toBeVisible()
     expect(screen.getAllByRole('button', { name: 'Dismiss error' })).not.toHaveLength(0)
+  })
+
+  it('asks to sign in again instead of reporting what the expired sign-in broke', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    const refuse = async (): Promise<never> => {
+      setHubSignInExpired(true)
+      throw new HubSignInExpiredError()
+    }
+    const listingBeforeExpiry = vi.mocked(listSessionListing).mock.calls.length
+    vi.mocked(listSessionListing).mockImplementationOnce(refuse).mockImplementationOnce(refuse)
+    // A reconnect and a return to the tab each report a failed refresh their own way.
+    await act(async () => { MockWebSocket.instances.at(-1)?.onopen?.() })
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeExpiry + 2))
+
+    // A navigation, not a fetch, is what the gateway's login can answer.
+    const signIn = await screen.findByRole('link', { name: 'Sign in again' })
+    expect(signIn).toHaveAttribute('href', '/')
+    expect(signIn.closest('[role="alert"]')).toHaveTextContent('drafts stay on this device')
+    expect(screen.getAllByRole('link', { name: 'Sign in again' })).toEqual([signIn])
+    expect(screen.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry loading sessions' })).not.toBeInTheDocument()
+    const sessions = screen.getByRole('navigation', { name: 'Sessions' })
+    expect(within(sessions).getByText('Sign-in expired')).toBeInTheDocument()
+    expect(within(sessions).queryByText('Connection failed')).not.toBeInTheDocument()
+    expect(within(sessions).queryByText(/Data may be stale/)).not.toBeInTheDocument()
+
+    // Signed in again elsewhere: the next answer that gets through resynchronizes.
+    const listingBeforeRecovery = vi.mocked(listSessionListing).mock.calls.length
+    act(() => setHubSignInExpired(false))
+    expect(screen.queryByRole('link', { name: 'Sign in again' })).not.toBeInTheDocument()
+    await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeRecovery + 1))
+    await waitFor(() => expect(screen.queryByText(/sign-in has expired/)).not.toBeInTheDocument())
+    await waitFor(() => expect(within(sessions).queryByText('Sign-in expired')).not.toBeInTheDocument())
+    expect(within(sessions).queryByText('Connection failed')).not.toBeInTheDocument()
+  })
+
+  it('keeps the sign-in notice outside every pane that can hide the conversation', async () => {
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    localStorage.setItem('agentic-remote:knowledge-mode', JSON.stringify('expanded'))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    vi.mocked(listSessionListing).mockImplementationOnce(async () => {
+      setHubSignInExpired(true)
+      throw new HubSignInExpiredError()
+    })
+    fireEvent(document, new Event('visibilitychange'))
+
+    // Expanded Knowledge hides the conversation, and on a phone an open session
+    // list or docked Knowledge covers it.
+    const signIn = await screen.findByRole('link', { name: 'Sign in again' })
+    expect(signIn.closest('main, aside, nav, [hidden]')).toBeNull()
+    expect(screen.getAllByRole('link', { name: 'Sign in again' })).toEqual([signIn])
+    // Knowledge shows the app's errors as well, and this one only repeats the notice.
+    await waitFor(() => expect(screen.queryByText('Your sign-in has expired; sign in again to reconnect'))
+      .not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Dismiss error' })).not.toBeInTheDocument()
+  })
+
+  it('stops reconnecting while the sign-in has expired and reconnects once it is back', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const sockets = MockWebSocket.instances.length
+
+    vi.useFakeTimers()
+    try {
+      // A refused WebSocket fails without saying why, so the close asks.
+      vi.mocked(checkHubSignIn).mockImplementationOnce(async () => setHubSignInExpired(true))
+      await act(async () => { MockWebSocket.instances.at(-1)?.onclose?.() })
+      expect(checkHubSignIn).toHaveBeenCalledOnce()
+      await act(async () => { vi.advanceTimersByTime(120_000) })
+      expect(MockWebSocket.instances).toHaveLength(sockets)
+
+      act(() => setHubSignInExpired(false))
+      expect(MockWebSocket.instances).toHaveLength(sockets + 1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('restores session search and filter context after a remount', async () => {
@@ -8168,6 +8256,36 @@ describe('App', () => {
 
     await waitFor(() => expect(textarea).toHaveValue('[Paste #1 - 21 lines]'))
     expect(screen.getAllByText(message).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
+  })
+
+  it('moves the sign-in notice into an open dialog, which keeps focus inside itself', async () => {
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    act(() => setHubSignInExpired(true))
+
+    expect(screen.getAllByRole('link', { name: 'Sign in again' }))
+      .toEqual([within(dialog).getByRole('link', { name: 'Sign in again' })])
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App settings' })).not.toBeInTheDocument())
+    expect(screen.getByRole('link', { name: 'Sign in again' }).closest('[role="dialog"]')).toBeNull()
+  })
+
+  it('restores a send the sign-in gateway refused without an uncertainty warning', async () => {
+    vi.mocked(sendMessage).mockImplementationOnce(async () => {
+      setHubSignInExpired(true)
+      throw new HubSignInExpiredError()
+    })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'kept for later' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+    await waitFor(() => expect(textarea).toHaveValue('kept for later'))
+    expect(await screen.findByRole('link', { name: 'Sign in again' })).toBeInTheDocument()
     expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
   })
 
@@ -14334,6 +14452,25 @@ describe('App', () => {
     expect(stored.deliveryUncertain).toBeUndefined()
     expect(localStorage.getItem('agentic-remote:queued-dispatch-pending')).toBeNull()
     expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('restores a queued rewrite the sign-in gateway refused without locking it', async () => {
+    const { textarea, key } = await openTargetedQueueEditor()
+    fireEvent.change(textarea, { target: { value: 'refused at the gateway' } })
+    vi.mocked(dispatchQueuedPrompt).mockImplementationOnce(async () => {
+      setHubSignInExpired(true)
+      throw new HubSignInExpiredError()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+    await waitFor(() => expect(textarea).toHaveValue('refused at the gateway'))
+
+    act(() => setHubSignInExpired(false))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send edited message' })).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Save to queue' })).toBeEnabled()
+    const stored = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')[key]
+    expect(stored.queuedEdit).toEqual({ promptId: 'q2' })
+    expect(stored.deliveryUncertain).toBeUndefined()
+    expect(localStorage.getItem('agentic-remote:queued-dispatch-pending')).toBeNull()
   })
 
   it('keeps an unconfirmed queued rewrite locked across reload and an empty idle queue', async () => {

@@ -11,6 +11,7 @@ import {
   type VoiceClientControl,
   type VoiceServerControl,
 } from '../../shared/oracle-voice'
+import { hubFetch } from '../hub-sign-in'
 import {
   VoiceCapture,
   VoiceCaptureError,
@@ -110,7 +111,7 @@ interface OracleVoicePlayback {
 }
 
 export interface OracleVoiceClientDependencies {
-  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>
+  fetch(input: string, init?: RequestInit): Promise<Response>
   createSocket(url: string): OracleVoiceSocket
   createCapture(options: VoiceCaptureOptions): OracleVoiceCapture
   createPlayback(options: VoicePlaybackOptions): OracleVoicePlayback
@@ -182,7 +183,7 @@ export class OracleVoiceClient {
     this.defaults = structuredClone(options.defaults)
     this.answerOnly = options.answerOnly
     this.dependencies = {
-      fetch: options.dependencies?.fetch ?? globalThis.fetch.bind(globalThis),
+      fetch: options.dependencies?.fetch ?? hubFetch,
       createSocket: options.dependencies?.createSocket
         ?? ((url) => new WebSocket(url)),
       createCapture: options.dependencies?.createCapture

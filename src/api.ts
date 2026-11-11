@@ -61,6 +61,7 @@ import type {
   SettingsProfileValues,
   SettingsUpdateResult,
 } from '../shared/settings-profile'
+import { HubSignInExpiredError, hubFetch } from './hub-sign-in'
 import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
 
 async function responseError(
@@ -135,7 +136,7 @@ async function request<TResult>(
   ) {
     headers.set('content-type', 'application/json')
   }
-  const response = await fetch(path, {
+  const response = await hubFetch(path, {
     ...init,
     headers,
   })
@@ -175,7 +176,7 @@ async function hubSnapshotRequest<TResult>(path: string): Promise<TResult> {
 }
 
 async function requestVoid(path: string, init: RequestInit): Promise<void> {
-  const response = await fetch(path, init)
+  const response = await hubFetch(path, init)
   if (!response.ok) {
     throw await responseError(response)
   }
@@ -392,6 +393,11 @@ export async function bootstrapSessionOrder(
   return response.sessionOrder
 }
 
+/** Asks the hub something cheap only to learn whether the gateway still lets requests through. */
+export async function checkHubSignIn(): Promise<void> {
+  await hubFetch('/api/version', { cache: 'no-store' }).catch(() => undefined)
+}
+
 export async function listComputers(): Promise<ComputerSummary[]> {
   const response = await hubSnapshotRequest<{ computers: ComputerSummary[] }>(
     '/api/computers',
@@ -498,7 +504,7 @@ async function requestSessionKnowledgeRoot(
   sessionId: string,
   input?: SessionKnowledgeRootMutationInput,
 ): Promise<SessionKnowledgeBinding> {
-  const response = await fetch(`${sessionPath(computerId, sessionId)}/knowledge-root`, {
+  const response = await hubFetch(`${sessionPath(computerId, sessionId)}/knowledge-root`, {
     cache: 'no-store',
     ...(input === undefined
       ? {}
@@ -715,7 +721,7 @@ export async function dispatchQueuedPrompt(
 ): Promise<ManagedQueuedPromptDispatchResult> {
   let response: Response
   try {
-    response = await fetch(
+    response = await hubFetch(
       `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}/dispatch`,
       {
         method: 'POST',
@@ -724,7 +730,9 @@ export async function dispatchQueuedPrompt(
         signal: AbortSignal.timeout(35_000),
       },
     )
-  } catch {
+  } catch (caught) {
+    // The gateway refused it before anything reached the hub.
+    if (caught instanceof HubSignInExpiredError) throw caught
     throw Object.assign(new Error(
       'Dispatch could not be confirmed. Your rewrite is still here; check the queue and provider before trying again.',
     ), { uncertainDelivery: true })

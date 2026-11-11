@@ -23,6 +23,9 @@ export class HubSignInExpiredError extends Error {
 }
 
 let expired = false
+// Refusals so far. A request sent before the latest one cannot speak for the
+// sign-in since, however it is answered.
+let refusals = 0
 const listeners = new Set<() => void>()
 
 export function hubSignInExpired(): boolean {
@@ -54,11 +57,13 @@ function gatewayRefused(response: Response): boolean {
 export async function hubFetch(input: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers)
   headers.set('x-requested-with', 'XMLHttpRequest')
+  const refusalsBefore = refusals
   const response = await fetch(input, { ...init, headers, redirect: 'manual' })
   if (gatewayRefused(response)) {
+    refusals += 1
     setHubSignInExpired(true)
     throw new HubSignInExpiredError()
   }
-  setHubSignInExpired(false)
+  if (refusals === refusalsBefore) setHubSignInExpired(false)
   return response
 }

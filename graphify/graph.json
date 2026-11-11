@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "56c75dff4de47c6bd370745e544b6a1c50de0cda",
+  "built_at_commit": "1d79628b9063df3b513dcdbe906bb60d95e943bb",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -212863,7 +212863,7 @@
       "relation": "contains",
       "source": "src_hub_sign_in",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L45",
+      "source_location": "L48",
       "target": "src_hub_sign_in_gatewayrefused",
       "weight": 1.0
     },
@@ -212885,7 +212885,7 @@
       "relation": "contains",
       "source": "src_hub_sign_in",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L54",
+      "source_location": "L57",
       "target": "src_hub_sign_in_hubfetch",
       "weight": 1.0
     },
@@ -212896,7 +212896,7 @@
       "relation": "contains",
       "source": "src_hub_sign_in",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L28",
+      "source_location": "L31",
       "target": "src_hub_sign_in_hubsigninexpired",
       "weight": 1.0
     },
@@ -212918,7 +212918,7 @@
       "relation": "contains",
       "source": "src_hub_sign_in",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L26",
+      "source_location": "L29",
       "target": "src_hub_sign_in_listeners",
       "weight": 1.0
     },
@@ -212929,7 +212929,7 @@
       "relation": "contains",
       "source": "src_hub_sign_in",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L32",
+      "source_location": "L35",
       "target": "src_hub_sign_in_sethubsigninexpired",
       "weight": 1.0
     },
@@ -212940,7 +212940,7 @@
       "relation": "contains",
       "source": "src_hub_sign_in",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L38",
+      "source_location": "L41",
       "target": "src_hub_sign_in_subscribehubsignin",
       "weight": 1.0
     },
@@ -212952,7 +212952,7 @@
       "relation": "calls",
       "source": "src_hub_sign_in_hubfetch",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L58",
+      "source_location": "L62",
       "target": "src_hub_sign_in_gatewayrefused",
       "weight": 1.0
     },
@@ -212964,7 +212964,7 @@
       "relation": "calls",
       "source": "src_hub_sign_in_hubfetch",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L60",
+      "source_location": "L65",
       "target": "src_hub_sign_in_hubsigninexpirederror",
       "weight": 1.0
     },
@@ -212976,7 +212976,7 @@
       "relation": "calls",
       "source": "src_hub_sign_in_hubfetch",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L59",
+      "source_location": "L64",
       "target": "src_hub_sign_in_sethubsigninexpired",
       "weight": 1.0
     },
@@ -313482,7 +313482,7 @@
       "label": "gatewayRefused()",
       "norm_label": "gatewayrefused()",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L45"
+      "source_location": "L48"
     },
     {
       "_origin": "ast",
@@ -313505,7 +313505,7 @@
       "label": "hubFetch()",
       "norm_label": "hubfetch()",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L54"
+      "source_location": "L57"
     },
     {
       "_callable": true,
@@ -313517,7 +313517,7 @@
       "label": "hubSignInExpired()",
       "norm_label": "hubsigninexpired()",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L28"
+      "source_location": "L31"
     },
     {
       "_callable": true,
@@ -313553,7 +313553,7 @@
       "label": "listeners",
       "norm_label": "listeners",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L26"
+      "source_location": "L29"
     },
     {
       "_callable": true,
@@ -313565,7 +313565,7 @@
       "label": "setHubSignInExpired()",
       "norm_label": "sethubsigninexpired()",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L32"
+      "source_location": "L35"
     },
     {
       "_callable": true,
@@ -313577,7 +313577,7 @@
       "label": "subscribeHubSignIn()",
       "norm_label": "subscribehubsignin()",
       "source_file": "src/hub-sign-in.ts",
-      "source_location": "L38"
+      "source_location": "L41"
     },
     {
       "_origin": "ast",

@@ -814,6 +814,24 @@ describe('Hub sign-in', () => {
     expect(hubSignInExpired()).toBe(false)
   })
 
+  it('lets only a request sent after the latest refusal clear it', async () => {
+    let answerEarlier: (response: Response) => void = () => undefined
+    vi.stubGlobal('fetch', vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { answerEarlier = resolve }))
+      .mockImplementationOnce(async () => gatewayChallenge())
+      .mockImplementationOnce(async () => Response.json({ computers: [] })))
+
+    const earlier = listComputers()
+    await expect(listComputers()).rejects.toBeInstanceOf(HubSignInExpiredError)
+    answerEarlier(Response.json({ computers: [] }))
+    await earlier
+    // Sent before the refusal, its answer says nothing about the sign-in since.
+    expect(hubSignInExpired()).toBe(true)
+
+    await listComputers()
+    expect(hubSignInExpired()).toBe(false)
+  })
+
   it('checks the sign-in without failing on the answer', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => gatewayChallenge()))
     await expect(checkHubSignIn()).resolves.toBeUndefined()

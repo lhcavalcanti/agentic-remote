@@ -574,8 +574,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   an attached queued message MUST keep only the filenames with an explanation, hide Retry,
   and refuse API retries with 409; a text-only removed message stays retryable.
   Removing a draft file MUST detach it from submission and durable draft
-  storage before deletion starts. A genuine deletion failure restores an
-  errored chip and blocks Send; pending removals MUST NOT reappear on reload.
+  storage before deletion starts; failed persistence MUST prevent deletion
+  and keep the attachment with a visible error. Deletion requests MUST be
+  bounded to 15 seconds. A timeout, sign-in expiry, or other deletion failure
+  restores an errored chip with Remove enabled and blocks Send; pending
+  removals MUST NOT reappear on reload.
   Attached content MUST be framed as user-shared data, not instructions or
   authorization to act without an explicit user request. Voice, proactive, and
   task turns do not accept attachments; session attachments are unchanged.

@@ -25,6 +25,7 @@ import { authoritativeRefresh } from './OracleDreamer'
 import { useOracleConversation } from './use-oracle-conversation'
 import type { OracleConversation } from './use-oracle-conversation'
 import { useOracleAttachments } from './use-oracle-attachments'
+import { HubSignInExpiredError } from './hub-sign-in'
 
 vi.mock('./api', () => ({
   getManager: vi.fn(),
@@ -395,6 +396,92 @@ describe('ManagerAssistant', () => {
     await act(async () => pending.reject(Object.assign(new Error('Late removal failure'), { statusCode: 503 })))
     expect(screen.queryByText('removed.txt')).not.toBeInTheDocument()
     expect(localStorage.getItem('agentic-remote:oracle-draft-v1')).toBeNull()
+  })
+
+  it('makes a stalled or sign-in-expired removal actionable without reattaching it to Send', async () => {
+    const actual = await vi.importActual<typeof import('./api')>('./api')
+    vi.mocked(removeManagerFile).mockImplementation(actual.removeManagerFile)
+    localStorage.setItem('agentic-remote:oracle-draft-v1', JSON.stringify({
+      version: 1, draft: 'Keep my draft.',
+      attachments: [{ id: 'stalled', name: 'stalled.txt', size: 1, mimeType: 'text/plain' }],
+    }))
+    setup()
+    await openPanel()
+    vi.stubGlobal('fetch', vi.fn((_path: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    })))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove stalled.txt' }))
+      await act(async () => vi.advanceTimersByTimeAsync(15_000))
+      expect(screen.getByRole('button', { name: 'Remove stalled.txt' })).toBeEnabled()
+      expect(screen.queryByText(/Removing…/)).not.toBeInTheDocument()
+      expect(screen.getByText(/Could not remove the upload/)).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      expect(JSON.parse(localStorage.getItem('agentic-remote:oracle-draft-v1')!)).not.toHaveProperty('attachments')
+
+      vi.mocked(removeManagerFile).mockRejectedValueOnce(new HubSignInExpiredError())
+      fireEvent.click(screen.getByRole('button', { name: 'Remove stalled.txt' }))
+      await act(async () => undefined)
+      expect(screen.getByRole('button', { name: 'Remove stalled.txt' })).toBeEnabled()
+      expect(screen.queryByText(/Removing…/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      expect(sendManagerMessage).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not delete an uploaded file when durable detachment fails or storage is already blocked', async () => {
+    const key = 'agentic-remote:oracle-draft-v1'
+    localStorage.setItem(key, JSON.stringify({
+      version: 1, draft: 'Keep this file until removal is saved.',
+      attachments: [{ id: 'saved', name: 'saved.txt', size: 1, mimeType: 'text/plain' }],
+    }))
+    const first = setup()
+    await openPanel()
+    const saved = localStorage.getItem(key)
+    const originalSetItem = Storage.prototype.setItem
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, name: string, value: string) {
+      if (name === key) throw new Error('Storage is full')
+      return originalSetItem.call(this, name, value)
+    })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove saved.txt' }))
+      await act(async () => undefined)
+      expect(removeManagerFile).not.toHaveBeenCalled()
+      expect(screen.getByText('saved.txt')).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Remove saved.txt' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      expect(screen.getByRole('alert')).toHaveTextContent('Oracle could not save this draft')
+      expect(localStorage.getItem(key)).toBe(saved)
+      fireEvent.click(screen.getByRole('button', { name: 'Remove saved.txt' }))
+      expect(removeManagerFile).not.toHaveBeenCalled()
+    } finally {
+      setItem.mockRestore()
+    }
+
+    first.unmount()
+    setup()
+    await openPanel()
+    expect(screen.getByText('saved.txt')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove saved.txt' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove saved.txt' })).not.toBeInTheDocument())
+    expect(removeManagerFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the file and an actionable error when detachment acknowledgement throws', async () => {
+    const file = { id: 'saved', name: 'saved.txt', size: 1, mimeType: 'text/plain' }
+    const { result } = renderHook(() => useOracleAttachments([file], () => { throw new Error('Storage failed') }))
+    let failure: unknown
+    await act(async () => {
+      failure = await result.current.remove(result.current.files[0].key).catch((error: unknown) => error)
+    })
+    expect(failure).toBeUndefined()
+    expect(removeManagerFile).not.toHaveBeenCalled()
+    expect(result.current.files[0]).toMatchObject({ state: 'uploaded', reference: file, error: expect.any(String) })
+    expect(result.current.forSubmission()).toBeUndefined()
   })
 
   it('coalesces repeated upload Retry actions and discards completion after Remove', async () => {

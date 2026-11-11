@@ -1165,8 +1165,25 @@ export async function uploadManagerFile(file: File): Promise<ManagerAttachment> 
   return response.file
 }
 
-export function removeManagerFile(id: string): Promise<void> {
-  return requestVoid(`/api/manager/files/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export async function removeManagerFile(id: string): Promise<void> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, 15_000)
+  try {
+    await requestVoid(`/api/manager/files/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof HubSignInExpiredError) throw error
+    if (timedOut) throw new Error('Removing the upload timed out. Try Remove again.')
+    throw error
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
 }
 
 export async function sendManagerMessage(

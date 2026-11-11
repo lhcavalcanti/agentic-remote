@@ -656,12 +656,14 @@ export function ManagerAssistant({
   const draftRef = useRef(draft)
   const editingRef = useRef(editing)
   const persistDetachedAttachments = useCallback((files: ManagerAttachment[]) => {
-    if (draftStorageBlockedRef.current) return
+    if (draftStorageBlockedRef.current) return false
     const error = storeOracleDraft(draftRef.current, editingRef.current, files)
     if (error) {
       draftStorageBlockedRef.current = true
       setDraftStorageError(error)
+      return false
     }
+    return true
   }, [])
   const attachments = useOracleAttachments(storedDraft.value.attachments, persistDetachedAttachments)
   const managerRefreshGeneration = useRef(0)

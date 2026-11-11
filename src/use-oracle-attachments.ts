@@ -23,7 +23,7 @@ function hasBlockingAttachments(files: DraftAttachment[]): boolean {
 
 export function useOracleAttachments(
   initial: ManagerAttachment[] = [],
-  onDetach?: (remaining: ManagerAttachment[]) => void,
+  onDetach?: (remaining: ManagerAttachment[]) => boolean,
 ) {
   const [files, setFiles] = useState<DraftAttachment[]>(() => initial.map((reference, key) => ({
     key, name: reference.name, size: reference.size, state: 'uploaded', reference,
@@ -93,7 +93,17 @@ export function useOracleAttachments(
     if (!item || item.state === 'removing') return
     if (item.reference) {
       update((files) => files.map((file) => file.key === key ? { ...file, state: 'removing', error: undefined } : file))
-      onDetach?.(uploadedReferences(current.current))
+      let detached = false
+      try {
+        detached = onDetach?.(uploadedReferences(current.current)) === true
+      } catch {
+        detached = false
+      }
+      if (!detached) {
+        update((files) => files.map((file) => file.key === key
+          ? { ...item, error: 'Could not save this removal. Keep this page open and try again.' } : file))
+        return
+      }
       try {
         await removeManagerFile(item.reference.id)
       } catch (error) {

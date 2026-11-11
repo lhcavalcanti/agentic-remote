@@ -8175,13 +8175,28 @@ button {
   cursor: default;
 }
 
+/* Like the transcript, it gives up height and scrolls, so whatever else claims
+   room (a taller composer, a refresh notice, the sign-in band) never pushes
+   the composer out of the panel. */
 .manager-empty {
   display: flex;
+  min-height: 0;
   flex: 1;
   flex-direction: column;
-  justify-content: center;
   gap: 10px;
   padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Centered while it fits; from the top, rather than cut off above the
+   scroll, once it does not. */
+.manager-empty > :first-child {
+  margin-top: auto;
+}
+
+.manager-empty > :last-child {
+  margin-bottom: auto;
 }
 
 .manager-empty h3 {

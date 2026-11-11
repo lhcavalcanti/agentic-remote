@@ -7536,11 +7536,20 @@ function App() {
   // bare id left the next session in edit mode, and Enter, Send and Escape all
   // acted on a message that was not in front of the reader.
   const [queueActionId, setQueueActionId] = useState<string>()
-  const [deleting, setDeleting] = useState(false)
+  // Keyed by session: the owning computer serializes lifecycle work per
+  // session, so closing or suspending one never has to hold back another. The
+  // refs answer a second click before React has rendered the first one.
+  const [closingSessions, setClosingSessions] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+  const closingSessionsRef = useRef(new Set<string>())
   const [clearing, setClearing] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [restarting, setRestarting] = useState(false)
-  const [suspending, setSuspending] = useState(false)
+  const [suspendingSessions, setSuspendingSessions] = useState<
+    ReadonlySet<string>
+  >(() => new Set())
+  const suspendingSessionsRef = useRef(new Set<string>())
   const [retentionOpen, setRetentionOpen] = useState(false)
   const [reopening, setReopening] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
@@ -8689,6 +8698,10 @@ function App() {
   // An interrupted or archived record is read-only until it is reopened; the
   // server refuses these actions too.
   const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
+  const selectedClosing = Boolean(selected && closingSessions.has(sessionKey(selected)))
+  const selectedSuspending = Boolean(
+    selected && suspendingSessions.has(sessionKey(selected)),
+  )
   const selectedQueueHeadIsSteering = Boolean(
     selected?.status === 'running' &&
     selected.executionMode === 'tmux' &&
@@ -15453,16 +15466,21 @@ function App() {
     session?: ManagedSession,
   ) {
     const target = session || selected
-    if (!target || suspending) {
+    if (!target) {
+      return
+    }
+    const targetKey = sessionKey(target)
+    if (suspendingSessionsRef.current.has(targetKey)) {
       return
     }
     const wasSuspended = target.suspended === true
-    if (!wasSuspended && sessionKey(target) === selectedKey) {
+    if (!wasSuspended && targetKey === selectedKey) {
       // Synchronous before suspendSession's first await: any later selected
       // catalog rejection belongs to the runtime being put down.
       commandCatalogEpoch.current += 1
     }
-    setSuspending(true)
+    suspendingSessionsRef.current.add(targetKey)
+    setSuspendingSessions(new Set(suspendingSessionsRef.current))
     setError(undefined)
     try {
       const updated = wasSuspended
@@ -15478,14 +15496,15 @@ function App() {
       // So a failure, and only a failure, opens the session it is about. The
       // sidebar closes either way: a refusal for the session already open left
       // the drawer sitting over the very message explaining it.
-      if (sessionKey(target) !== selectedKey) {
+      if (targetKey !== selectedKey) {
         selectSession(target)
       } else {
         setSidebarOpen(false)
       }
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setSuspending(false)
+      suspendingSessionsRef.current.delete(targetKey)
+      setSuspendingSessions(new Set(suspendingSessionsRef.current))
     }
   }
 
@@ -15529,7 +15548,7 @@ function App() {
       selected.executionMode !== 'sdk' ||
       selected.status !== 'idle' ||
       selected.suspended === true ||
-      suspending ||
+      suspendingSessionsRef.current.has(sessionKey(selected)) ||
       !window.confirm(
         `Move "${selected.title}" to tmux?\n\nThe Copilot SDK process will disconnect and the same session will resume in a tmux window.`,
       )
@@ -15851,7 +15870,7 @@ function App() {
     const target = session || selected
     if (
       !target ||
-      deleting ||
+      closingSessionsRef.current.has(sessionKey(target)) ||
       !window.confirm(
         `Close "${target.title}" on ${target.computerName}?\n\nThis permanently deletes the ${providerName(target.provider)} session and its history from that computer.`,
       )
@@ -15860,7 +15879,8 @@ function App() {
     }
 
     const closedKey = sessionKey(target)
-    setDeleting(true)
+    closingSessionsRef.current.add(closedKey)
+    setClosingSessions(new Set(closingSessionsRef.current))
     setError(undefined)
     try {
       await deleteSession(target.computerId, target.id)
@@ -15885,11 +15905,16 @@ function App() {
       const remaining = withoutClosed(sessionsRef.current)
       sessionsRef.current = remaining
       setSessions(withoutClosed)
-      // Only a reader still on the closed session is moved. One who picked
-      // another session while it closed stays where they chose.
+      // Only a reader still on the closed session is moved, and not onto
+      // another session that is closing too. One who picked another session
+      // while it closed stays where they chose.
+      const next =
+        remaining.find(
+          (session) => !closingSessionsRef.current.has(sessionKey(session)),
+        ) ?? remaining[0]
       setSelectedKey((current) =>
         current === closedKey
-          ? remaining[0] ? sessionKey(remaining[0]) : undefined
+          ? next ? sessionKey(next) : undefined
           : current,
       )
     } catch (caught) {
@@ -15900,7 +15925,8 @@ function App() {
       }
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
-      setDeleting(false)
+      closingSessionsRef.current.delete(closedKey)
+      setClosingSessions(new Set(closingSessionsRef.current))
     }
   }
 
@@ -16206,8 +16232,8 @@ function App() {
                 selectedKey={selectedKey}
                 sort={sessionSort}
                 onSortChange={changeSessionSort}
-                deleting={deleting}
-                suspending={suspending}
+                closingSessions={closingSessions}
+                suspendingSessions={suspendingSessions}
               />
             </DndContext>
         </div>
@@ -16644,7 +16670,7 @@ function App() {
                   disabled={
                     movingToTmux ||
                     selectedLifecycleBlocked ||
-                    suspending
+                    selectedSuspending
                   }
                   onClick={() => void moveSelectedSessionToTmux()}
                   title={
@@ -16699,7 +16725,7 @@ function App() {
                 aria-describedby="close-session-description"
                 aria-label="Close session"
                 className="session-action session-action--danger"
-                disabled={deleting || !selectedComputerOnline}
+                disabled={selectedClosing || !selectedComputerOnline}
                 onClick={() => void closeSelectedSession()}
                 type="button"
               >

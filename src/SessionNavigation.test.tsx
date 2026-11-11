@@ -63,8 +63,8 @@ const actions = {
   onOpenSessionTasks: vi.fn(),
   onCloseSession: vi.fn(),
   onToggleSessionSuspended: vi.fn(),
-  deleting: false,
-  suspending: false,
+  closingSessions: new Set<string>(),
+  suspendingSessions: new Set<string>(),
   onSortChange: vi.fn(),
   onNewSession: vi.fn(),
 }
@@ -79,7 +79,8 @@ function NavigationHarness({
   initialShowSuspended = true,
   showSuspendedSaving = false,
   pendingCreations,
-  suspending = false,
+  closingSessions = new Set<string>(),
+  suspendingSessions = new Set<string>(),
 }: {
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
@@ -90,7 +91,8 @@ function NavigationHarness({
   initialShowSuspended?: boolean
   showSuspendedSaving?: boolean
   pendingCreations?: PendingSessionCreation[]
-  suspending?: boolean
+  closingSessions?: ReadonlySet<string>
+  suspendingSessions?: ReadonlySet<string>
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
@@ -99,7 +101,8 @@ function NavigationHarness({
     <DndContext>
       <SessionNavigation
         {...actions}
-        suspending={suspending}
+        closingSessions={closingSessions}
+        suspendingSessions={suspendingSessions}
         backgroundTasks={snapshots}
         view={sessionNavigationView(
           computerList,
@@ -569,14 +572,38 @@ describe('session navigation', () => {
 
     rerender(
       <NavigationHarness
-        sessions={new Map([['studio', [session]]])}
-        suspending
+        sessions={new Map([['studio', [session, waitingAgent]]])}
+        suspendingSessions={new Set(['studio:review'])}
       />,
     )
     expect(suspendTitle('Review the release')).toBeDisabled()
     expect(suspendTitle('Review the release')).toHaveAttribute(
-      'title', 'Wait for the current suspend or resume to finish',
+      'title', 'Wait for this suspend or resume to finish',
     )
+    // Another session's suspend or resume does not hold this one back.
+    expect(suspendTitle('Waiting agent')).toBeEnabled()
+  })
+
+  it('holds back only the session that is closing', () => {
+    const other: ManagedSession = { ...session, id: 'other', title: 'Other work' }
+    render(
+      <NavigationHarness
+        sessions={new Map([['studio', [session, other]]])}
+        closingSessions={new Set(['studio:review'])}
+      />,
+    )
+
+    const closing = screen.getByRole('button', { name: 'Close Review the release' })
+    expect(closing).toBeDisabled()
+    expect(closing).toHaveAttribute('title', 'Closing this session')
+    expect(closing.closest('.session-item')).toHaveClass('session-item--closing')
+    const open = screen.getByRole('button', { name: 'Close Other work' })
+    expect(open).toBeEnabled()
+    expect(open).toHaveAttribute(
+      'title',
+      'Permanently delete this session and its history',
+    )
+    expect(open.closest('.session-item')).not.toHaveClass('session-item--closing')
   })
 
   it('keeps empty computers and qualifies cached offline task status', () => {

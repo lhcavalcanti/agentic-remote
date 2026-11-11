@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { safeUploadName, writePrivateUpload } from './upload-storage.js'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type {
@@ -2762,7 +2763,7 @@ export class SessionStore {
     const name = safeUploadName(filename)
     const storedName = `${randomUUID()}-${name}`
     const filePath = path.join(uploads, storedName)
-    await writeFile(filePath, data, { flag: 'wx', mode: 0o600 })
+    await writePrivateUpload(filePath, data)
     return {
       name,
       path: filePath,
@@ -3313,16 +3314,4 @@ export class SessionStore {
   private async removeUploadOwners(sessionIds: string[]): Promise<void> {
     await Promise.all(sessionIds.map((sessionId) => this.removeUploads(sessionId)))
   }
-}
-
-function safeUploadName(filename: string): string {
-  const basename = path.basename(filename.trim()) || 'upload'
-  const normalized = basename
-    .normalize('NFKC')
-    .replace(/[^a-zA-Z0-9._ -]/g, '_')
-    .replace(/\s+/g, ' ')
-    .slice(0, 120)
-  return normalized && normalized !== '.' && normalized !== '..'
-    ? normalized
-    : 'upload'
 }

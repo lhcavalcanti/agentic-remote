@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -39,6 +39,86 @@ afterEach(async () => {
 })
 
 describe('manager routes', () => {
+  async function upload(name: string, content: Buffer = Buffer.from('shared text'), headers = trusted) {
+    const boundary = 'oracle-attachment-boundary'
+    return runtime!.app.inject({
+      method: 'POST', url: '/api/manager/files',
+      headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: Buffer.concat([
+        Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: application/octet-stream\r\n\r\n`),
+        content, Buffer.from(`\r\n--${boundary}--\r\n`),
+      ]),
+    })
+  }
+
+  it('uploads protected hub files and queues opaque references, retaining them on edit', async () => {
+    const { app, managerAgent } = await build()
+    await managerAgent!.stop()
+    const response = await upload('report.md')
+    expect(response.statusCode).toBe(201)
+    const { file } = response.json()
+    expect(file).toMatchObject({ name: 'report.md', size: 11, mimeType: 'text/markdown' })
+    expect(JSON.stringify(file)).not.toContain(directory)
+    const sent = await app.inject({
+      method: 'POST', url: '/api/manager/messages', headers: trusted,
+      payload: { content: 'Read this', attachmentIds: [file.id], source: 'task' },
+    })
+    expect(sent.statusCode).toBe(202)
+    const message = sent.json().message
+    expect(message.attachments).toEqual([file])
+    expect(message.source).toBe('typed')
+    const edit = await app.inject({
+      method: 'PUT', url: `/api/manager/messages/${message.id}`, headers: trusted,
+      payload: { content: 'Summarize this' },
+    })
+    expect(edit.json().message.attachments).toEqual([file])
+    const used = await app.inject({ method: 'DELETE', url: `/api/manager/files/${file.id}`, headers: trusted })
+    expect(used.statusCode).toBe(409)
+    expect(await readFile(path.join(directory, 'manager', 'uploads', `${file.id}-${file.name}`), 'utf8')).toBe('shared text')
+    const removed = await app.inject({ method: 'POST', url: `/api/manager/messages/${message.id}/remove`, headers: trusted })
+    expect(removed.json().message).toMatchObject({ state: 'cancelled', removedAttachmentNames: ['report.md'] })
+    expect(removed.json().message.attachments).toBeUndefined()
+    const retry = await app.inject({ method: 'POST', url: `/api/manager/messages/${message.id}/retry`, headers: trusted })
+    expect(retry.statusCode).toBe(409)
+    expect(retry.json().error).toContain('attachments were removed')
+    expect(await readFile(path.join(directory, 'manager', 'conversation.jsonl'), 'utf8')).toContain(file.id)
+    const missing = await app.inject({
+      method: 'POST', url: '/api/manager/messages', headers: trusted,
+      payload: { content: 'Missing file', attachmentIds: [file.id] },
+    })
+    expect(missing.statusCode).toBe(404)
+  })
+
+  it('rejects unsupported, empty and oversized Oracle uploads and untrusted origins', async () => {
+    await build()
+    expect((await upload('code.ts', Buffer.alloc(1024 * 1024 + 1, 65))).statusCode).toBe(413)
+    expect((await upload('image.png', Buffer.alloc(25 * 1024 * 1024 + 1))).statusCode).toBe(413)
+    expect((await upload('archive.zip')).statusCode).toBe(415)
+    expect((await upload('empty.txt', Buffer.alloc(0))).statusCode).toBe(400)
+    expect((await upload('note.txt', Buffer.from('data'), { host: trusted.host, origin: 'https://untrusted.test' })).statusCode).toBe(403)
+    expect((await runtime!.app.inject({
+      method: 'POST', url: '/api/manager/messages', headers: trusted,
+      payload: { content: 'No path imports', attachmentIds: ['/etc/passwd'] },
+    })).statusCode).toBe(400)
+    const file = (await upload('note.txt')).json().file
+    expect((await runtime!.app.inject({ method: 'DELETE', url: `/api/manager/files/${file.id}`, headers: trusted })).statusCode).toBe(204)
+  })
+
+  it('never exposes upload paths when private storage refuses a symlink', async () => {
+    const { app, managerAgent } = await build()
+    await managerAgent!.stop()
+    const file = (await upload('note.txt')).json().file
+    const location = path.join(directory, 'manager', 'uploads', `${file.id}-${file.name}`)
+    await rm(location)
+    await symlink(path.join(directory, 'private-target'), location)
+    const response = await app.inject({
+      method: 'POST', url: '/api/manager/messages', headers: trusted,
+      payload: { content: 'Read this', attachmentIds: [file.id] },
+    })
+    expect(response.statusCode).toBe(503)
+    expect(response.body).not.toContain(directory)
+    expect(response.body).not.toContain(file.id)
+  })
   it('serves the manager snapshot and keeps its files under the data folder', async () => {
     const { app } = await build()
     const response = await app.inject({ url: '/api/manager', headers: trusted })

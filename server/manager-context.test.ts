@@ -285,6 +285,20 @@ describe('manager turn context', () => {
     expect(brief).toContain('You: Started it.')
   })
 
+  it('does not replay a removed attached turn or its replies in a recovery brief', () => {
+    const brief = recoveryBrief({ messages: [
+      {
+        id: 'removed', role: 'user', content: 'Execute the work in the removed file.',
+        state: 'cancelled', createdAt: 't', removedAttachmentNames: ['removed.md'],
+      },
+      { id: 'removed-reply', role: 'assistant', content: 'Previous attached turn response.', replyTo: 'removed', createdAt: 't' },
+      { id: 'kept', role: 'user', content: 'Keep this typed request.', state: 'done', createdAt: 't' },
+    ] })
+    expect(brief).not.toContain('Execute the work in the removed file.')
+    expect(brief).not.toContain('Previous attached turn response.')
+    expect(brief).toContain('Keep this typed request.')
+  })
+
   it('excludes voice exchanges from recovery instructions while retaining typed conversation', () => {
     const brief = recoveryBrief({
       memoryIndex: '# Index',

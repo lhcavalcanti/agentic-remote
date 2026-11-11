@@ -1,0 +1,134 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ManagerAttachment } from '../shared/manager'
+import { managerFileValidationError } from '../shared/manager-files'
+import { removeManagerFile, uploadManagerFile } from './api'
+
+interface DraftAttachment {
+  key: number
+  name: string
+  size: number
+  state: 'uploading' | 'uploaded' | 'failed' | 'removing'
+  file?: File
+  reference?: ManagerAttachment
+  error?: string
+}
+
+function uploadedReferences(files: DraftAttachment[]): ManagerAttachment[] {
+  return files.flatMap((file) => file.state === 'uploaded' && !file.error && file.reference ? [file.reference] : [])
+}
+
+function hasBlockingAttachments(files: DraftAttachment[]): boolean {
+  return files.some((file) => file.state !== 'uploaded' || Boolean(file.error))
+}
+
+export function useOracleAttachments(
+  initial: ManagerAttachment[] = [],
+  onDetach?: (remaining: ManagerAttachment[]) => boolean,
+) {
+  const [files, setFiles] = useState<DraftAttachment[]>(() => initial.map((reference, key) => ({
+    key, name: reference.name, size: reference.size, state: 'uploaded', reference,
+  })))
+  const current = useRef(files)
+  const nextKey = useRef(initial.length)
+  const pending = useRef<DraftAttachment[]>([])
+  const active = useRef(0)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+
+  function update(change: (files: DraftAttachment[]) => DraftAttachment[]) {
+    current.current = change(current.current)
+    if (mounted.current) setFiles(current.current)
+  }
+
+  function drain() {
+    while (mounted.current && active.current < 2 && pending.current.length) {
+      const item = pending.current.shift()!
+      if (!current.current.some((file) => file.key === item.key && file.state === 'uploading')) continue
+      active.current += 1
+      void uploadManagerFile(item.file!).then(async (reference) => {
+        if (!mounted.current || !current.current.some((file) => file.key === item.key && file.state === 'uploading')) {
+          await removeManagerFile(reference.id).catch(() => undefined)
+          return
+        }
+        update((files) => files.map((file) => file.key === item.key
+          ? { ...file, state: 'uploaded', reference, error: undefined } : file))
+      }, (error: unknown) => {
+        update((files) => files.map((file) => file.key === item.key
+          ? { ...file, state: 'failed', error: error instanceof Error ? error.message : String(error) } : file))
+      }).finally(() => {
+        active.current -= 1
+        drain()
+      })
+    }
+  }
+
+  function intake(selected: File[]) {
+    const items: DraftAttachment[] = selected.map((file, index) => {
+      const error = current.current.length + index >= 20
+        ? 'Attach at most 20 files'
+        : managerFileValidationError(file)
+      return { key: nextKey.current++, name: file.name, size: file.size, file, state: error ? 'failed' : 'uploading', error }
+    })
+    update((files) => [...files, ...items])
+    pending.current.push(...items.filter((file) => file.state === 'uploading'))
+    drain()
+  }
+
+  function retry(key: number) {
+    const item = current.current.find((file) => file.key === key)
+    if (!item?.file || item.state !== 'failed') return
+    if (current.current.length > 20) return
+    const error = managerFileValidationError(item.file)
+    if (error) return
+    update((files) => files.map((file) => file.key === key ? { ...file, state: 'uploading', error: undefined } : file))
+    pending.current.push(item)
+    drain()
+  }
+
+  async function remove(key: number) {
+    const item = current.current.find((file) => file.key === key)
+    if (!item || item.state === 'removing') return
+    if (item.reference) {
+      update((files) => files.map((file) => file.key === key ? { ...file, state: 'removing', error: undefined } : file))
+      let detached = false
+      try {
+        detached = onDetach?.(uploadedReferences(current.current)) === true
+      } catch {
+        detached = false
+      }
+      if (!detached) {
+        update((files) => files.map((file) => file.key === key
+          ? { ...item, error: 'Could not save this removal. Keep this page open and try again.' } : file))
+        return
+      }
+      try {
+        await removeManagerFile(item.reference.id)
+      } catch (error) {
+        const statusCode = error instanceof Error ? Reflect.get(error, 'statusCode') : undefined
+        if (statusCode === 404 || statusCode === 409) {
+          // An owned upload stays with its accepted message; only detach this draft.
+          update((files) => files.filter((file) => file.key !== key))
+          return
+        }
+        update((files) => files.map((file) => file.key === key
+          ? { ...file, state: 'uploaded', error: 'Could not remove the upload. Try Remove again.' } : file))
+        return
+      }
+    }
+    update((files) => files.filter((file) => file.key !== key))
+    if (!item.reference) onDetach?.(uploadedReferences(current.current))
+  }
+
+  return {
+    files,
+    uploaded: useMemo(() => uploadedReferences(files), [files]),
+    blocked: hasBlockingAttachments(files),
+    forSubmission: () => hasBlockingAttachments(current.current) ? undefined : uploadedReferences(current.current),
+    intake, retry, remove,
+    clear: () => { pending.current = []; update(() => []) },
+  }
+}
+

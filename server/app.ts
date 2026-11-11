@@ -546,6 +546,7 @@ export async function buildApp(
       managerAgent,
       managerUnavailable,
       managerStructuredMemory,
+      managerStoreReady ? managerStore : undefined,
     )
     await registerDreamerRoutes(
       app,

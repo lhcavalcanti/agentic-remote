@@ -4977,6 +4977,34 @@ button {
   cursor: default;
 }
 
+.oracle-attachments {
+  max-height: 200px;
+  overflow: auto;
+  margin-bottom: 8px;
+}
+
+.oracle-message-attachments {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.oracle-message-attachments li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.manager-composer__attach {
+  width: 40px;
+  height: 40px;
+}
+
 /*
  * A pointer can hit a small target, so the actions sit inside the text panel
  * rather than occupying a second full-width bar of their own. Touch keeps the
@@ -8147,13 +8175,28 @@ button {
   cursor: default;
 }
 
+/* Like the transcript, it gives up height and scrolls, so whatever else claims
+   room (a taller composer, a refresh notice, the sign-in band) never pushes
+   the composer out of the panel. */
 .manager-empty {
   display: flex;
+  min-height: 0;
   flex: 1;
   flex-direction: column;
-  justify-content: center;
   gap: 10px;
   padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Centered while it fits; from the top, rather than cut off above the
+   scroll, once it does not. */
+.manager-empty > :first-child {
+  margin-top: auto;
+}
+
+.manager-empty > :last-child {
+  margin-bottom: auto;
 }
 
 .manager-empty h3 {
@@ -8177,11 +8220,27 @@ button {
   margin-top: 6px;
 }
 
+/* When the panel is short of room for all of it, as under a phone keyboard
+   with the sign-in band showing, only the attachments give way and scroll:
+   the message field and its controls stay in the window. */
 .manager-composer {
+  display: flex;
+  min-height: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
   padding: 10px max(12px, env(safe-area-inset-right))
     max(12px, env(safe-area-inset-bottom))
     max(12px, env(safe-area-inset-left));
   border-top: 1px solid var(--border);
+}
+
+.manager-composer > * {
+  flex: none;
+}
+
+.manager-composer > .oracle-attachments {
+  min-height: 0;
+  flex: 0 1 auto;
 }
 
 .manager-composer__error {
@@ -8207,6 +8266,7 @@ button {
 }
 
 .manager-composer textarea {
+  min-width: 0;
   min-height: 40px;
   max-height: 200px;
   flex: 1;

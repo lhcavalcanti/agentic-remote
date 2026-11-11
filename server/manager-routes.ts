@@ -12,6 +12,8 @@ import type {
   UpdateManagerSettingsInput,
 } from '../shared/manager.js'
 import type { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
+import type { ManagerStore } from './manager-store.js'
+import { MAX_MANAGER_FILE_BYTES, managerFileType } from '../shared/manager-files.js'
 
 /** What the routes need from the manager agent. */
 export interface ManagerRouteAgent {
@@ -47,6 +49,7 @@ const sendSchema = z.object({
   content: z.string().max(200_000),
   defaults: defaultsSchema.optional(),
   answerOnly: z.boolean().optional(),
+  attachmentIds: z.array(z.string().uuid()).max(20).optional(),
 })
 
 const settingsSchema = z.object({
@@ -108,11 +111,52 @@ export async function registerManagerRoutes(
   agent: ManagerRouteAgent | undefined,
   unavailableReason = 'Oracle is not available on this hub.',
   structuredMemory?: ManagerStructuredMemoryRuntime,
+  uploads?: Pick<ManagerStore, 'uploadFile' | 'removeUpload' | 'cleanupUploads'>,
 ): Promise<void> {
   const requireAgent = () => {
     if (!agent) throw Object.assign(new Error(unavailableReason), { statusCode: 503 })
     return agent
   }
+  const requireUploads = () => {
+    requireAgent()
+    if (!uploads) throw Object.assign(new Error('Oracle uploads are unavailable.'), { statusCode: 503 })
+    return uploads
+  }
+  if (uploads) {
+    const timer = setInterval(() => {
+      void uploads.cleanupUploads().catch((error: unknown) => app.log.error({ err: error }, 'Oracle upload cleanup failed'))
+    }, 60 * 60 * 1000)
+    timer.unref()
+    app.addHook('onClose', async () => { clearInterval(timer) })
+  }
+  let activeUploads = 0
+  app.post('/api/manager/files', async (request, reply) => {
+    const store = requireUploads()
+    if (activeUploads >= 2) throw Object.assign(new Error('Too many file uploads are in progress'), { statusCode: 429 })
+    activeUploads += 1
+    try {
+      const upload = await request.file({ limits: { fields: 0, files: 1, parts: 1, fileSize: MAX_MANAGER_FILE_BYTES } })
+      if (!upload) throw Object.assign(new Error('A file is required'), { statusCode: 400 })
+      const type = managerFileType(upload.filename)
+      if (!type) throw Object.assign(new Error('This file type is not supported'), { statusCode: 415 })
+      let size = 0
+      const chunks: Buffer[] = []
+      for await (const chunk of upload.file) {
+        size += chunk.length
+        if (size > type.limit) throw Object.assign(new Error(`The file exceeds the ${type.kind === 'blob' ? '1' : '25'} MiB limit`), { statusCode: 413 })
+        chunks.push(chunk)
+      }
+      if (upload.file.truncated) throw Object.assign(new Error('The file exceeds the 25 MiB limit'), { statusCode: 413 })
+      return reply.code(201).send({ file: await store.uploadFile(upload.filename, Buffer.concat(chunks, size)) })
+    } finally {
+      activeUploads -= 1
+    }
+  })
+  app.delete('/api/manager/files/:fileId', async (request, reply) => {
+    const { fileId } = z.object({ fileId: z.string().uuid() }).parse(request.params)
+    await requireUploads().removeUpload(fileId)
+    return reply.code(204).send()
+  })
   const structuredStatus = () =>
     structuredMemory?.status() ?? {
       mode: 'off' as const,
@@ -196,7 +240,10 @@ export async function registerManagerRoutes(
     const message = await requireAgent().send(
       input.content,
       input.defaults,
-      input.answerOnly ? { answerOnly: true } : {},
+      {
+        ...(input.answerOnly ? { answerOnly: true } : {}),
+        ...(input.attachmentIds?.length ? { attachmentIds: input.attachmentIds } : {}),
+      },
     )
     return reply.code(202).send({ message })
   })

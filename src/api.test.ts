@@ -22,6 +22,7 @@ import {
   listSessionSkills,
   removeComputer,
   removeQueuedPrompt,
+  removeManagerFile,
   readKnowledgeFile,
   sendMessage,
   sendTestPushNotification,
@@ -46,6 +47,42 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('removes an Oracle upload successfully with an empty 204 response', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(removeManagerFile('upload-id')).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/manager/files/upload-id',
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+  })
+
+  it('bounds a stalled Oracle upload DELETE while preserving sign-in expiry errors', async () => {
+    vi.useFakeTimers()
+    let signal: AbortSignal | undefined
+    const fetchMock = vi.fn((_path: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      signal = init?.signal ?? undefined
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const outcome = removeManagerFile('stalled').catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(signal?.aborted).toBe(true)
+    expect(await outcome).toMatchObject({ message: expect.stringMatching(/timed out/i) })
+    expect(vi.getTimerCount()).toBe(0)
+
+    fetchMock.mockResolvedValueOnce(new Response(null, {
+      status: 401, headers: { 'www-authenticate': 'Bearer' },
+    }))
+    try {
+      await expect(removeManagerFile('expired')).rejects.toBeInstanceOf(HubSignInExpiredError)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      setHubSignInExpired(false)
+    }
+  })
+
   it('requests passive session detail without activating it', async () => {
     const fetchMock = vi.fn(async () => Response.json({
       session: { id: 'session' },

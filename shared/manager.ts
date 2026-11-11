@@ -9,6 +9,8 @@ import type { AgentMode, AgentProvider, RuntimeReasoningEffort } from './contrac
 
 /** The longest message the manager accepts. Anything shorter is queued. */
 export const MANAGER_MESSAGE_MAX_LENGTH = 100_000
+export const MANAGER_REMOVED_ATTACHMENTS_REASON =
+  'Its attachments were removed with it; send it again with the files.'
 
 /** How many recent transcript messages a snapshot carries; every waiting one is added. */
 export const MANAGER_SNAPSHOT_MESSAGES = 200
@@ -93,6 +95,10 @@ export interface ManagerMessage {
   id: string
   role: ManagerMessageRole
   content: string
+  /** Hub-owned uploads; no local filesystem paths cross the client contract. */
+  attachments?: ManagerAttachment[]
+  /** Name-only tombstone after files are deleted; this message cannot run again. */
+  readonly removedAttachmentNames?: string[]
   createdAt: string
   updatedAt?: string
   /** Set on the messages you send. */
@@ -155,6 +161,14 @@ export type ManagerSubmissionSource = ManagerMessageSource
 export interface ManagerSubmissionOptions {
   answerOnly?: boolean
   source?: ManagerSubmissionSource
+  attachmentIds?: string[]
+}
+
+export interface ManagerAttachment {
+  id: string
+  name: string
+  size: number
+  mimeType: string
 }
 
 export interface ManagerInternalSubmission {
@@ -229,6 +243,7 @@ export interface ResolveManagerConfirmationInput {
 
 export interface SendManagerMessageInput {
   content: string
+  attachmentIds?: string[]
   defaults?: ManagerClientDefaults
   /** Answer it without starting or steering any session. */
   answerOnly?: boolean

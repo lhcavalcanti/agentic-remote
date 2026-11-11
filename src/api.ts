@@ -40,6 +40,7 @@ import type {
 } from '../shared/contracts'
 import type {
   ManagerClientDefaults,
+  ManagerAttachment,
   ManagerMessage,
   ManagerSettingsSnapshot,
   ManagerSnapshot,
@@ -1157,10 +1158,38 @@ export function getManager(): Promise<ManagerSnapshot> {
   return request<ManagerSnapshot>('/api/manager')
 }
 
+export async function uploadManagerFile(file: File): Promise<ManagerAttachment> {
+  const body = new FormData()
+  body.append('file', file, file.name)
+  const response = await request<{ file: ManagerAttachment }>('/api/manager/files', { method: 'POST', body })
+  return response.file
+}
+
+export async function removeManagerFile(id: string): Promise<void> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, 15_000)
+  try {
+    await requestVoid(`/api/manager/files/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof HubSignInExpiredError) throw error
+    if (timedOut) throw new Error('Removing the upload timed out. Try Remove again.')
+    throw error
+  } finally {
+    globalThis.clearTimeout(timeout)
+  }
+}
+
 export async function sendManagerMessage(
   content: string,
   defaults?: ManagerClientDefaults,
-  options: { answerOnly?: boolean } = {},
+  options: { answerOnly?: boolean; attachmentIds?: string[] } = {},
 ): Promise<ManagerMessage> {
   const response = await request<{ message: ManagerMessage }>('/api/manager/messages', {
     method: 'POST',
@@ -1168,6 +1197,7 @@ export async function sendManagerMessage(
       content,
       ...(defaults ? { defaults } : {}),
       ...(options.answerOnly ? { answerOnly: true } : {}),
+      ...(options.attachmentIds?.length ? { attachmentIds: options.attachmentIds } : {}),
     } satisfies SendManagerMessageInput),
   })
   return response.message

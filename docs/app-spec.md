@@ -556,6 +556,32 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   transcribe**; at most 15 minutes), transcribes on the hub as a session's
   recording does, and adds the words to the message rather than sending them.
   Closing the panel discards a recording in progress.
+- Oracle's typed composer MUST accept files through its picker, paste, and
+  drop, keeping source order without sending automatically. Chips MUST show
+  name, size, upload state, Retry for a failed upload, and Remove. Send waits
+  for successful uploads and completed removals, requires message text, and
+  accepts at most 20 files per message. Text-like UTF-8 files
+  (including Markdown, JSON/YAML, CSV/TSV, and code) are limited to 1 MiB;
+  PDF and supported images to 25 MiB. Unsupported binaries MUST be refused.
+  The hub stores uploads under `<data>/manager/uploads/` with 0700 directories,
+  sanitized UUID-prefixed 0600 files, exclusive creation, and no symlink reuse.
+  Only opaque references cross the client API; turn admission sends text as
+  MIME base64 SDK blobs and PDF/images as SDK file attachments, never upload
+  paths or file contents in the prompt. References survive queue edits, Stop,
+  failed turns, retries, runtime recovery, and hub restarts. Queue removal,
+  Start over, and eviction from the 1,000-message history release owned files;
+  unsent uploads expire after 24 hours, checked at startup and hourly. Removing
+  an attached queued message MUST keep only the filenames with an explanation, hide Retry,
+  and refuse API retries with 409; a text-only removed message stays retryable.
+  Removing a draft file MUST detach it from submission and durable draft
+  storage before deletion starts; failed persistence MUST prevent deletion
+  and keep the attachment with a visible error. Deletion requests MUST be
+  bounded to 15 seconds. A timeout, sign-in expiry, or other deletion failure
+  restores an errored chip with Remove enabled and blocks Send; pending
+  removals MUST NOT reappear on reload.
+  Attached content MUST be framed as user-shared data, not instructions or
+  authorization to act without an explicit user request. Voice, proactive, and
+  task turns do not accept attachments; session attachments are unchanged.
 - Oracle's conversation opens at its latest message and keeps its end in view
   as the conversation changes only while the reader is within 48px of that end,
   as a session's timeline does. Scrolling up stops following and offers **Scroll

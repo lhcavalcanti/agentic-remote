@@ -14,6 +14,7 @@ import {
   Orbit,
   PanelRightClose,
   PanelRightOpen,
+  Paperclip,
   Pencil,
   RotateCcw,
   SlidersHorizontal,
@@ -22,13 +23,14 @@ import {
 } from 'lucide-react'
 import type {
   ManagerClientDefaults,
+  ManagerAttachment,
   ManagerEvent,
   ManagerMessage,
   ManagerSessionRef,
   ManagerSnapshot,
   ManagerStatus,
 } from '../shared/manager'
-import { MANAGER_MESSAGE_MAX_LENGTH } from '../shared/manager'
+import { MANAGER_MESSAGE_MAX_LENGTH, MANAGER_REMOVED_ATTACHMENTS_REASON } from '../shared/manager'
 import {
   cancelManager,
   editQueuedManagerMessage,
@@ -42,6 +44,8 @@ import {
 import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
 import { MessageTime } from './MessageTime'
+import { OracleAttachmentChips, OracleMessageAttachments } from './OracleAttachments'
+import { useOracleAttachments } from './use-oracle-attachments'
 import { remarkSafeBreaks } from './remark-safe-breaks'
 import { useOracleConversation } from './use-oracle-conversation'
 import type { OracleConversation } from './use-oracle-conversation'
@@ -64,6 +68,7 @@ type StoredOracleDraft = {
   version: 1
   draft: string
   editing?: { id: string; text: string }
+  attachments?: ManagerAttachment[]
 }
 
 function readStoredOracleDraft(): {
@@ -100,6 +105,13 @@ function readStoredOracleDraft(): {
         version: 1,
         draft: Reflect.get(parsed, 'draft') as string,
         editing: editing as StoredOracleDraft['editing'],
+        attachments: Array.isArray(Reflect.get(parsed, 'attachments'))
+          ? (Reflect.get(parsed, 'attachments') as unknown[]).filter((value): value is ManagerAttachment => {
+              if (!value || typeof value !== 'object') return false
+              return ['id', 'name', 'mimeType'].every((key) => typeof Reflect.get(value, key) === 'string') &&
+                typeof Reflect.get(value, 'size') === 'number'
+            })
+          : undefined,
       },
     }
   } catch {
@@ -107,13 +119,14 @@ function readStoredOracleDraft(): {
   }
 }
 
-function storeOracleDraft(draft: string, editing?: StoredOracleDraft['editing']): string | undefined {
+function storeOracleDraft(draft: string, editing?: StoredOracleDraft['editing'], attachments?: ManagerAttachment[]): string | undefined {
   try {
-    if (!draft && !editing) window.localStorage.removeItem(oracleDraftStorageKey)
+    if (!draft && !editing && !attachments?.length) window.localStorage.removeItem(oracleDraftStorageKey)
     else window.localStorage.setItem(oracleDraftStorageKey, JSON.stringify({
       version: 1,
       draft,
       editing,
+      ...(attachments?.length ? { attachments } : {}),
     } satisfies StoredOracleDraft))
     return undefined
   } catch {
@@ -302,7 +315,8 @@ function UserMessage({
   onRetry: (message: ManagerMessage) => void
   retrying: boolean
 }) {
-  const retryable = message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled'
+  const retryable = !message.removedAttachmentNames?.length
+    && (message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled')
   const long = message.content.length > 600 || message.content.split('\n').length > 12
   const [expanded, setExpanded] = useState(false)
   return (
@@ -314,6 +328,12 @@ function UserMessage({
         <button className="manager-message__expand" onClick={() => setExpanded((value) => !value)} type="button">
           {expanded ? 'Show less' : 'Show all'}
         </button>
+      ) : null}
+      <OracleMessageAttachments files={message.attachments} />
+      {message.removedAttachmentNames?.length ? (
+        <p className="manager-message__error" role="note">
+          Files removed: {message.removedAttachmentNames.join(', ')}. {MANAGER_REMOVED_ATTACHMENTS_REASON}
+        </p>
       ) : null}
       <div className="manager-message__meta">
         <MessageTime value={message.createdAt} />
@@ -611,6 +631,7 @@ export function ManagerAssistant({
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
   const snapshotRef = useRef<ManagerSnapshot | undefined>(undefined)
   const [draft, setDraft] = useState(storedDraft.value.draft)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
   const [answerOnly, setAnswerOnly] = useState(readAnswerOnly)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string>()
@@ -633,6 +654,18 @@ export function ManagerAssistant({
   const [recoveredEdit, setRecoveredEdit] = useState(Boolean(storedDraft.value.editing))
   const draftStorageBlockedRef = useRef(Boolean(storedDraft.error))
   const draftRef = useRef(draft)
+  const editingRef = useRef(editing)
+  const persistDetachedAttachments = useCallback((files: ManagerAttachment[]) => {
+    if (draftStorageBlockedRef.current) return false
+    const error = storeOracleDraft(draftRef.current, editingRef.current, files)
+    if (error) {
+      draftStorageBlockedRef.current = true
+      setDraftStorageError(error)
+      return false
+    }
+    return true
+  }, [])
+  const attachments = useOracleAttachments(storedDraft.value.attachments, persistDetachedAttachments)
   const managerRefreshGeneration = useRef(0)
   const replaceSnapshot = useCallback((next: ManagerSnapshot) => {
     managerRefreshGeneration.current += 1
@@ -725,14 +758,15 @@ export function ManagerAssistant({
 
   useEffect(() => {
     draftRef.current = draft
-  }, [draft])
+    editingRef.current = editing
+  }, [draft, editing])
 
   useEffect(() => {
     if (draftStorageBlockedRef.current) return
-    const error = storeOracleDraft(draft, editing)
+    const error = storeOracleDraft(draft, editing, attachments.uploaded)
     if (error) draftStorageBlockedRef.current = true
     setDraftStorageError(error)
-  }, [draft, editing])
+  }, [draft, editing, attachments.uploaded])
 
   // A closed panel never keeps the microphone on.
   useEffect(() => {
@@ -965,10 +999,13 @@ export function ManagerAssistant({
     },
   }), [openSession])
 
-  const sendText = useCallback(async (content: string, onlyOracle: boolean) => {
+  const sendText = useCallback(async (content: string, onlyOracle: boolean, attachmentIds?: string[]) => {
     // Asking something follows the conversation again, to show the answer.
     followLatest()
-    const message = await sendManagerMessage(content, defaults, { answerOnly: onlyOracle })
+    const message = await sendManagerMessage(content, defaults, {
+      answerOnly: onlyOracle,
+      ...(attachmentIds?.length ? { attachmentIds } : {}),
+    })
     updateSnapshot((current) => withReturnedMessage(current, message))
   }, [defaults, followLatest, updateSnapshot])
 
@@ -1016,11 +1053,12 @@ export function ManagerAssistant({
 
   async function send(content = draft, onlyOracle = answerOnly) {
     const text = content.trim()
-    if (!text || sending || draftStorageError) return
+    const files = attachments.forSubmission()
+    if (!text || sending || draftStorageError || files === undefined) return
     setSending(true)
     setSendError(undefined)
     try {
-      await sendText(content, onlyOracle)
+      await sendText(content, onlyOracle, files.map((file) => file.id))
       setDraft((current) => {
         const next = current === content ? '' : current
         const storageError = storeOracleDraft(next, editing)
@@ -1028,6 +1066,7 @@ export function ManagerAssistant({
         return storageError ? current : next
       })
       setRecoveredDraft(false)
+      attachments.clear()
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -1052,6 +1091,7 @@ export function ManagerAssistant({
     setConfirmReset(false)
     try {
       replaceSnapshot(await resetManager())
+      attachments.clear()
     } catch (caught) {
       setSendError(caught instanceof Error ? caught.message : String(caught))
     }
@@ -1091,7 +1131,7 @@ export function ManagerAssistant({
     try {
       const next = await editQueuedManagerMessage(id, text)
       updateSnapshot((current) => withReturnedMessage(current, next))
-      const storageError = storeOracleDraft(draftRef.current, undefined)
+      const storageError = storeOracleDraft(draftRef.current, undefined, attachments.uploaded)
       if (storageError) {
         draftStorageBlockedRef.current = true
         setDraftStorageError(storageError)
@@ -1305,6 +1345,7 @@ export function ManagerAssistant({
                       {message.content}
                     </ReactMarkdown>
                   </div>
+                  <OracleMessageAttachments files={message.attachments} />
                   <MessageTime className="message__timestamp manager-message__time" value={message.createdAt} />
                 </li>
               )
@@ -1381,6 +1422,7 @@ export function ManagerAssistant({
                         rows={3}
                         value={rewriting.text}
                       />
+                      <OracleMessageAttachments files={message.attachments} />
                       {recoveredEdit ? (
                         <p className="manager-composer__status" role="status">Recovered saved edit</p>
                       ) : null}
@@ -1412,10 +1454,11 @@ export function ManagerAssistant({
                     </div>
                   ) : (
                     <>
-                      <p className="oracle-queue__text">
+                      <div className="oracle-queue__text">
                         <span className="visually-hidden">{`Number ${index + 1}: `}</span>
                         {message.content}
-                      </p>
+                        <OracleMessageAttachments files={message.attachments} />
+                      </div>
                       <MessageTime value={message.createdAt} />
                       {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
                       <button
@@ -1452,6 +1495,14 @@ export function ManagerAssistant({
       ) : null}
       <form
         className="manager-composer"
+        onDragOver={(event) => {
+          if (Array.from(event.dataTransfer.types).includes('Files')) event.preventDefault()
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.files.length) return
+          event.preventDefault()
+          if (!sending) attachments.intake(Array.from(event.dataTransfer.files))
+        }}
         onSubmit={(event) => {
           event.preventDefault()
           void send()
@@ -1543,9 +1594,14 @@ export function ManagerAssistant({
             </p>
           </div>
         ) : null}
+        <OracleAttachmentChips attachments={attachments} disabled={sending} />
         <div className={`manager-composer__row${answerOnly ? ' manager-composer__row--only' : ''}${
           conversationAvailable ? ' manager-composer__row--conversation' : ''
         }`}>
+          <input aria-label="Oracle attachments" hidden multiple onChange={(event) => {
+            if (!sending) attachments.intake(Array.from(event.target.files ?? []))
+            event.target.value = ''
+          }} ref={attachmentInputRef} type="file" />
           <textarea
             aria-label="Message Oracle"
             enterKeyHint={phoneEnterCreatesNewline() ? 'enter' : 'send'}
@@ -1554,6 +1610,15 @@ export function ManagerAssistant({
               setDraft(event.target.value)
             }}
             onKeyDown={onKeyDown}
+            onPaste={(event) => {
+              const files = Array.from(event.clipboardData.items).filter((item) => item.kind === 'file').flatMap((item) => {
+                const file = item.getAsFile()
+                return file ? [file] : []
+              })
+              if (!files.length) return
+              event.preventDefault()
+              if (!sending) attachments.intake(files)
+            }}
             placeholder="Ask me anything"
             ref={inputRef}
             rows={2}
@@ -1562,6 +1627,9 @@ export function ManagerAssistant({
           <div className={`manager-composer__actions${
             conversationAvailable ? ' manager-composer__actions--conversation' : ''
           }`}>
+            <button aria-label="Attach files to Oracle" className="icon-button manager-composer__attach" disabled={sending} onClick={() => attachmentInputRef.current?.click()} title="Attach files (text up to 1 MiB; PDF and images up to 25 MiB)" type="button">
+              <Paperclip aria-hidden="true" size={17} />
+            </button>
             {conversationAvailable && !conversation.ownsResources ? (
               <button
                 aria-label="Start conversation"
@@ -1602,7 +1670,7 @@ export function ManagerAssistant({
             <button
               aria-label={working ? 'Queue message' : 'Send message'}
               className="manager-composer__send"
-              disabled={!draft.trim() || sending || tooLong || Boolean(draftStorageError)}
+              disabled={!draft.trim() || sending || tooLong || Boolean(draftStorageError) || attachments.blocked}
               title={working ? 'Queue (answered after the current reply)' : 'Send'}
               type="submit"
             >

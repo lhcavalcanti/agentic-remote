@@ -45,6 +45,7 @@ Everything lives under `<data>/manager/`. `<data>` is
 |---|---|---|
 | `state.json` | App | Current SDK session ID, generation, retired SDK session IDs, acknowledged journal sequence, memory hash last shown to the model, and the last client defaults. |
 | `conversation.jsonl` | App | The chat transcript the UI shows. It survives SDK session replacement. |
+| `uploads/` | App | Private hub uploads referenced by typed conversation messages; see the Oracle attachment contract in [app-spec](../app-spec.md#37-oracle-session-manager). |
 | `journal.jsonl` | App | Append-only session lifecycle events with a sequence number: `created`, `status`, `renamed`, `replaced`, `removed`. Rewritten to the newest 2,000 entries once it holds 4,000. |
 | `sessions.json` | App | Registry keyed by `computerId:sessionId`: origin (`manager`, `user`, or `discovered`), task (the first prompt, truncated), first-seen time, last status, and removal tombstones. Tombstones are kept for 30 days, up to 500. |
 | `memory/**/*.md` | Agent | The agent's own notes, changed only through memory tools. Suggested layout: `MEMORY.md` as the index and durable preferences, `sessions/<id>.md` per session, `projects/<name>.md`. |
@@ -126,6 +127,16 @@ Response style (the user's setting): … (always last)
 ```
 
 The roster is capped at 80 open sessions, and each activity at 120 characters.
+
+Typed attachments are uploaded once through `POST /api/manager/files`; messages
+carry ordered opaque IDs and the transcript retains their metadata. Admission
+resolves stored bytes to SDK `blob` (text) or `file` (PDF/images) payloads beside
+the unchanged user text. The turn context marks files as untrusted shared data;
+their contents cannot grant structured-memory intent. Unowned files can be
+removed through `DELETE /api/manager/files/:id`; conversation ownership drives
+retention and cleanup. Removing a reference already owned by a message detaches
+only the draft. Name-only release tombstones prevent Retry, stale store
+updates, or recovery briefs from resurrecting a removed attached message.
 
 ## Prompt composition
 

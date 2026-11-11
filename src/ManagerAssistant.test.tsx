@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
 import { useRef, useState } from 'react'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ManagerEvent, ManagerMessage, ManagerSnapshot } from '../shared/manager'
+import type { ManagerAttachment, ManagerEvent, ManagerMessage, ManagerSnapshot } from '../shared/manager'
 import type { VoiceCapabilities } from '../shared/oracle-voice'
 import {
   cancelManager,
@@ -15,6 +15,8 @@ import {
   retryManagerMessage,
   sendManagerMessage,
   transcribeAudio,
+  uploadManagerFile,
+  removeManagerFile,
 } from './api'
 import { ManagerAssistant, OracleButton } from './ManagerAssistant'
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
@@ -22,6 +24,8 @@ import { sessionLinkTarget } from './manager-links'
 import { authoritativeRefresh } from './OracleDreamer'
 import { useOracleConversation } from './use-oracle-conversation'
 import type { OracleConversation } from './use-oracle-conversation'
+import { useOracleAttachments } from './use-oracle-attachments'
+import { HubSignInExpiredError } from './hub-sign-in'
 
 vi.mock('./api', () => ({
   getManager: vi.fn(),
@@ -33,6 +37,8 @@ vi.mock('./api', () => ({
   removeQueuedManagerMessage: vi.fn(),
   cancelManager: vi.fn(),
   resetManager: vi.fn(),
+  uploadManagerFile: vi.fn(),
+  removeManagerFile: vi.fn(),
 }))
 
 vi.mock('./use-oracle-conversation', () => ({
@@ -152,6 +158,13 @@ async function openPanel() {
   return screen.getByRole('dialog', { name: 'Oracle' })
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
+
 describe('ManagerAssistant', () => {
   afterEach(() => {
     cleanup()
@@ -159,6 +172,9 @@ describe('ManagerAssistant', () => {
 
   beforeEach(() => {
     vi.mocked(getManager).mockReset()
+    vi.mocked(uploadManagerFile).mockReset()
+    vi.mocked(removeManagerFile).mockReset()
+    vi.mocked(removeManagerFile).mockResolvedValue(undefined)
     vi.mocked(sendManagerMessage).mockReset()
     vi.mocked(retryManagerMessage).mockReset()
     vi.mocked(cancelManager).mockReset()
@@ -178,6 +194,365 @@ describe('ManagerAssistant', () => {
     await screen.findByRole('button', { name: 'Oracle' })
     await act(async () => undefined)
     expect(screen.getByRole('button', { name: 'Oracle' })).not.toHaveFocus()
+  })
+
+  it('keeps picker attachment order while uploads finish out of order and never auto-sends', async () => {
+    let finishFirst!: (file: { id: string; name: string; size: number; mimeType: string }) => void
+    vi.mocked(uploadManagerFile)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve }))
+      .mockResolvedValueOnce({ id: 'second', name: 'diagram.png', size: 3, mimeType: 'image/png' })
+    vi.mocked(sendManagerMessage).mockResolvedValue({ id: 'queued', role: 'user', content: 'Compare', state: 'queued', createdAt: 't' })
+    setup()
+    await openPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    fireEvent.change(screen.getByLabelText('Oracle attachments'), { target: { files: [
+      new File(['one'], 'notes.md'), new File(['two'], 'diagram.png'),
+    ] } })
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message Oracle' }), { target: { value: 'Compare' } })
+    expect(await screen.findByText('diagram.png')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+    fireEvent.submit(screen.getByRole('textbox', { name: 'Message Oracle' }).closest('form')!)
+    expect(sendManagerMessage).not.toHaveBeenCalled()
+    await act(async () => finishFirst({ id: 'first', name: 'notes.md', size: 3, mimeType: 'text/markdown' }))
+    const chips = within(screen.getByRole('list', { name: 'Oracle attachments to send' })).getAllByRole('listitem')
+    expect(chips.map((chip) => within(chip).getByRole('strong').textContent)).toEqual(['notes.md', 'diagram.png'])
+    expect(chips[0]).toHaveTextContent('3 B')
+    expect(chips[0]).toHaveTextContent('Uploaded')
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith('Compare', expect.anything(), { answerOnly: true, attachmentIds: ['first', 'second'] }))
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Oracle attachments to send' })).not.toBeInTheDocument())
+    expect(removeManagerFile).not.toHaveBeenCalled()
+  })
+
+  it('preserves paste and drop source order, retries failures and removes uploads', async () => {
+    vi.mocked(uploadManagerFile)
+      .mockRejectedValueOnce(new Error('Connection lost'))
+      .mockResolvedValueOnce({ id: 'second', name: 'second.txt', size: 1, mimeType: 'text/plain' })
+      .mockResolvedValueOnce({ id: 'third', name: 'third.txt', size: 1, mimeType: 'text/plain' })
+      .mockResolvedValueOnce({ id: 'first', name: 'first.txt', size: 1, mimeType: 'text/plain' })
+    setup()
+    await openPanel()
+    const first = new File(['1'], 'first.txt')
+    const second = new File(['2'], 'second.txt')
+    fireEvent.paste(screen.getByRole('textbox', { name: 'Message Oracle' }), {
+      clipboardData: { items: [first, second].map((file) => ({ kind: 'file', getAsFile: () => file })) },
+    })
+    fireEvent.drop(screen.getByRole('textbox', { name: 'Message Oracle' }), {
+      dataTransfer: { files: [new File(['3'], 'third.txt')] },
+    })
+    expect(await screen.findByText(/Connection lost/)).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry first.txt' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry first.txt' })).not.toBeInTheDocument())
+    const chips = within(screen.getByRole('list', { name: 'Oracle attachments to send' })).getAllByRole('listitem')
+    expect(chips.map((chip) => chip.querySelector('strong')?.textContent)).toEqual(['first.txt', 'second.txt', 'third.txt'])
+    fireEvent.click(screen.getByRole('button', { name: 'Remove second.txt' }))
+    await waitFor(() => expect(removeManagerFile).toHaveBeenCalledWith('second'))
+    expect(screen.queryByText('second.txt')).not.toBeInTheDocument()
+    expect(sendManagerMessage).not.toHaveBeenCalled()
+  })
+
+  it('rejects unsupported and oversized files locally and cleans late removed uploads', async () => {
+    let finish!: (file: { id: string; name: string; size: number; mimeType: string }) => void
+    vi.mocked(uploadManagerFile).mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    vi.mocked(sendManagerMessage).mockResolvedValue({
+      id: 'sent', role: 'user', content: 'Text only after removal.', state: 'queued', createdAt: 't',
+    })
+    setup()
+    await openPanel()
+    fireEvent.change(screen.getByLabelText('Oracle attachments'), { target: { files: [
+      new File(['binary'], 'archive.zip'),
+      new File([new Uint8Array(1024 * 1024 + 1)], 'big.ts'),
+      new File(['a'], 'pending.txt'),
+    ] } })
+    expect(await screen.findByText(/This file type is not supported/)).toBeVisible()
+    expect(screen.getByText(/The file exceeds the 1 MiB limit/)).toBeVisible()
+    expect(uploadManagerFile).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Remove archive.zip' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove big.ts' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove pending.txt' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Message Oracle' }), { target: { value: 'Text only after removal.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(sendManagerMessage).mock.calls[0][2]).not.toHaveProperty('attachmentIds')
+    await act(async () => finish({ id: 'late', name: 'pending.txt', size: 1, mimeType: 'text/plain' }))
+    await waitFor(() => expect(removeManagerFile).toHaveBeenCalledWith('late'))
+    expect(screen.queryByText('pending.txt')).not.toBeInTheDocument()
+    expect(sendManagerMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers uploaded references with the draft after remount without uploading again', async () => {
+    vi.mocked(uploadManagerFile).mockResolvedValue({ id: 'saved', name: 'note.txt', size: 3, mimeType: 'text/plain' })
+    const first = setup()
+    await openPanel()
+    fireEvent.change(screen.getByLabelText('Oracle attachments'), { target: { files: [new File(['abc'], 'note.txt')] } })
+    await screen.findByText(/Uploaded/)
+    first.unmount()
+    setup()
+    await openPanel()
+    expect(screen.getByText('note.txt')).toBeVisible()
+    expect(uploadManagerFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('detaches a restored draft chip on 409 while keeping the message-owned attachment', async () => {
+    const file = { id: 'owned', name: 'owned.txt', size: 3, mimeType: 'text/plain' }
+    localStorage.setItem('agentic-remote:oracle-draft-v1', JSON.stringify({
+      version: 1, draft: 'Accepted delivery whose response was lost', attachments: [file],
+    }))
+    vi.mocked(removeManagerFile).mockRejectedValue(Object.assign(new Error('This attachment belongs to an Oracle message.'), { statusCode: 409 }))
+    setup({ ...empty, messages: [{
+      id: 'accepted', role: 'user', content: 'Accepted delivery whose response was lost',
+      state: 'done', createdAt: 't', attachments: [file],
+    }] })
+    await openPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove owned.txt' }))
+
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Oracle attachments to send' })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
+    expect(screen.queryByText('Could not remove the upload. Try Remove again.')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('list', { name: 'Attached files' })).getByText('owned.txt')).toBeVisible()
+    expect(removeManagerFile).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(localStorage.getItem('agentic-remote:oracle-draft-v1')!)).not.toHaveProperty('attachments')
+  })
+
+  it.each([204, 404, 409, 503])('never submits a removing reference while DELETE %s is pending', async (statusCode) => {
+    const remove = { id: 'remove', name: 'remove.txt', size: 3, mimeType: 'text/plain' }
+    const keep = { id: 'keep', name: 'keep.txt', size: 3, mimeType: 'text/plain' }
+    const pending = deferred<void>()
+    let persistedAtDelete: unknown
+    localStorage.setItem('agentic-remote:oracle-draft-v1', JSON.stringify({
+      version: 1, draft: 'Only the remaining file.', attachments: [remove, keep],
+    }))
+    vi.mocked(removeManagerFile).mockImplementation(() => {
+      persistedAtDelete = JSON.parse(localStorage.getItem('agentic-remote:oracle-draft-v1')!)
+      return pending.promise
+    })
+    vi.mocked(sendManagerMessage).mockResolvedValue({
+      id: 'sent', role: 'user', content: 'Only the remaining file.', state: 'queued', createdAt: 't', attachments: [keep],
+    })
+    setup()
+    await openPanel()
+    const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove remove.txt' }))
+      fireEvent.submit(input.closest('form')!)
+    })
+
+    expect(sendManagerMessage).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Remove remove.txt' })).toBeDisabled()
+    expect(screen.getByText(/Removing…/)).toBeVisible()
+    expect(persistedAtDelete).toMatchObject({ attachments: [keep] })
+    fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+    expect(sendManagerMessage).not.toHaveBeenCalled()
+
+    await act(async () => {
+      if (statusCode === 204) pending.resolve(undefined)
+      else pending.reject(Object.assign(new Error('Removal failed'), { statusCode }))
+    })
+    if (statusCode === 503) {
+      expect(screen.getByText(/Could not remove the upload/)).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true })
+      expect(sendManagerMessage).not.toHaveBeenCalled()
+      expect(JSON.parse(localStorage.getItem('agentic-remote:oracle-draft-v1')!)).toMatchObject({ attachments: [keep] })
+      vi.mocked(removeManagerFile).mockResolvedValueOnce(undefined)
+      fireEvent.click(screen.getByRole('button', { name: 'Remove remove.txt' }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove remove.txt' })).not.toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith(
+        'Only the remaining file.', expect.anything(), expect.objectContaining({ attachmentIds: ['keep'] }),
+      ))
+    } else {
+      expect(screen.queryByRole('button', { name: 'Remove remove.txt' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledWith(
+        'Only the remaining file.', expect.anything(), expect.objectContaining({ attachmentIds: ['keep'] }),
+      ))
+    }
+  })
+
+  it('does not recover a removing reference or restore it after a remounted composer sends', async () => {
+    const pending = deferred<void>()
+    localStorage.setItem('agentic-remote:oracle-draft-v1', JSON.stringify({
+      version: 1, draft: 'Send without the removed file.',
+      attachments: [{ id: 'removed', name: 'removed.txt', size: 1, mimeType: 'text/plain' }],
+    }))
+    vi.mocked(removeManagerFile).mockReturnValue(pending.promise)
+    vi.mocked(sendManagerMessage).mockResolvedValue({
+      id: 'sent', role: 'user', content: 'Send without the removed file.', state: 'queued', createdAt: 't',
+    })
+    const first = setup()
+    await openPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove removed.txt' }))
+    first.unmount()
+    setup()
+    await openPanel()
+
+    expect(screen.queryByText('removed.txt')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendManagerMessage).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(sendManagerMessage).mock.calls[0][2]).not.toHaveProperty('attachmentIds')
+    await waitFor(() => expect(localStorage.getItem('agentic-remote:oracle-draft-v1')).toBeNull())
+    await act(async () => pending.reject(Object.assign(new Error('Late removal failure'), { statusCode: 503 })))
+    expect(screen.queryByText('removed.txt')).not.toBeInTheDocument()
+    expect(localStorage.getItem('agentic-remote:oracle-draft-v1')).toBeNull()
+  })
+
+  it('makes a stalled or sign-in-expired removal actionable without reattaching it to Send', async () => {
+    const actual = await vi.importActual<typeof import('./api')>('./api')
+    vi.mocked(removeManagerFile).mockImplementation(actual.removeManagerFile)
+    localStorage.setItem('agentic-remote:oracle-draft-v1', JSON.stringify({
+      version: 1, draft: 'Keep my draft.',
+      attachments: [{ id: 'stalled', name: 'stalled.txt', size: 1, mimeType: 'text/plain' }],
+    }))
+    setup()
+    await openPanel()
+    vi.stubGlobal('fetch', vi.fn((_path: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    })))
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove stalled.txt' }))
+      await act(async () => vi.advanceTimersByTimeAsync(15_000))
+      expect(screen.getByRole('button', { name: 'Remove stalled.txt' })).toBeEnabled()
+      expect(screen.queryByText(/Removing…/)).not.toBeInTheDocument()
+      expect(screen.getByText(/Could not remove the upload/)).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      expect(JSON.parse(localStorage.getItem('agentic-remote:oracle-draft-v1')!)).not.toHaveProperty('attachments')
+
+      vi.mocked(removeManagerFile).mockRejectedValueOnce(new HubSignInExpiredError())
+      fireEvent.click(screen.getByRole('button', { name: 'Remove stalled.txt' }))
+      await act(async () => undefined)
+      expect(screen.getByRole('button', { name: 'Remove stalled.txt' })).toBeEnabled()
+      expect(screen.queryByText(/Removing…/)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      expect(sendManagerMessage).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not delete an uploaded file when durable detachment fails or storage is already blocked', async () => {
+    const key = 'agentic-remote:oracle-draft-v1'
+    localStorage.setItem(key, JSON.stringify({
+      version: 1, draft: 'Keep this file until removal is saved.',
+      attachments: [{ id: 'saved', name: 'saved.txt', size: 1, mimeType: 'text/plain' }],
+    }))
+    const first = setup()
+    await openPanel()
+    const saved = localStorage.getItem(key)
+    const originalSetItem = Storage.prototype.setItem
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, name: string, value: string) {
+      if (name === key) throw new Error('Storage is full')
+      return originalSetItem.call(this, name, value)
+    })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove saved.txt' }))
+      await act(async () => undefined)
+      expect(removeManagerFile).not.toHaveBeenCalled()
+      expect(screen.getByText('saved.txt')).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Remove saved.txt' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled()
+      expect(screen.getByRole('alert')).toHaveTextContent('Oracle could not save this draft')
+      expect(localStorage.getItem(key)).toBe(saved)
+      fireEvent.click(screen.getByRole('button', { name: 'Remove saved.txt' }))
+      expect(removeManagerFile).not.toHaveBeenCalled()
+    } finally {
+      setItem.mockRestore()
+    }
+
+    first.unmount()
+    setup()
+    await openPanel()
+    expect(screen.getByText('saved.txt')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove saved.txt' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove saved.txt' })).not.toBeInTheDocument())
+    expect(removeManagerFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the file and an actionable error when detachment acknowledgement throws', async () => {
+    const file = { id: 'saved', name: 'saved.txt', size: 1, mimeType: 'text/plain' }
+    const { result } = renderHook(() => useOracleAttachments([file], () => { throw new Error('Storage failed') }))
+    let failure: unknown
+    await act(async () => {
+      failure = await result.current.remove(result.current.files[0].key).catch((error: unknown) => error)
+    })
+    expect(failure).toBeUndefined()
+    expect(removeManagerFile).not.toHaveBeenCalled()
+    expect(result.current.files[0]).toMatchObject({ state: 'uploaded', reference: file, error: expect.any(String) })
+    expect(result.current.forSubmission()).toBeUndefined()
+  })
+
+  it('coalesces repeated upload Retry actions and discards completion after Remove', async () => {
+    const pending = deferred<ManagerAttachment>()
+    vi.mocked(uploadManagerFile).mockRejectedValueOnce(new Error('Offline')).mockReturnValue(pending.promise)
+    const { result } = renderHook(() => useOracleAttachments())
+    act(() => result.current.intake([new File(['a'], 'retry.txt')]))
+    await waitFor(() => expect(result.current.files[0].state).toBe('failed'))
+    act(() => {
+      result.current.retry(result.current.files[0].key)
+      result.current.retry(result.current.files[0].key)
+    })
+    expect(uploadManagerFile).toHaveBeenCalledTimes(2)
+    act(() => { void result.current.remove(result.current.files[0].key) })
+    await act(async () => pending.resolve({ id: 'retried', name: 'retry.txt', size: 1, mimeType: 'text/plain' }))
+    expect(result.current.files).toEqual([])
+    expect(removeManagerFile).toHaveBeenCalledWith('retried')
+  })
+
+  it('shows stored attachments on queued edits and completed user messages', async () => {
+    const file = { id: 'stored', name: 'report.pdf', size: 2048, mimeType: 'application/pdf' }
+    setup({ ...empty, queued: 1, messages: [
+      { id: 'queued', role: 'user', content: 'Waiting', createdAt: 't', state: 'queued', attachments: [file] },
+      { id: 'done', role: 'user', content: 'Finished', createdAt: 't', state: 'done', attachments: [file] },
+    ] })
+    await openPanel()
+    expect(screen.getAllByText('report.pdf')).toHaveLength(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Edit queued message: Waiting' }))
+    expect(screen.getAllByText('report.pdf')).toHaveLength(2)
+  })
+
+  it('clears unsent attachments on Start over and cleans uploads that finish afterwards', async () => {
+    let finish!: (file: { id: string; name: string; size: number; mimeType: string }) => void
+    vi.mocked(uploadManagerFile).mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    vi.mocked(resetManager).mockResolvedValue(empty)
+    setup({ ...empty, messages: [{ id: 'old', role: 'assistant', content: 'Earlier', createdAt: 't' }] })
+    await openPanel()
+    fireEvent.change(screen.getByLabelText('Oracle attachments'), { target: { files: [new File(['a'], 'pending.txt')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Start a new conversation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start over' }))
+    await waitFor(() => expect(screen.queryByText('pending.txt')).not.toBeInTheDocument())
+    await act(async () => finish({ id: 'late', name: 'pending.txt', size: 1, mimeType: 'text/plain' }))
+    await waitFor(() => expect(removeManagerFile).toHaveBeenCalledWith('late'))
+  })
+
+  it('does not upload waiting files after unmount and retires only the in-flight uploads', async () => {
+    const finishes: Array<(file: { id: string; name: string; size: number; mimeType: string }) => void> = []
+    vi.mocked(uploadManagerFile).mockImplementation(() => new Promise((resolve) => { finishes.push(resolve) }))
+    const view = setup()
+    await openPanel()
+    fireEvent.change(screen.getByLabelText('Oracle attachments'), { target: { files: ['one', 'two', 'three'].map((name) => new File(['a'], `${name}.txt`)) } })
+    expect(uploadManagerFile).toHaveBeenCalledTimes(2)
+    view.unmount()
+    await act(async () => {
+      finishes[0]({ id: 'one', name: 'one.txt', size: 1, mimeType: 'text/plain' })
+      finishes[1]({ id: 'two', name: 'two.txt', size: 1, mimeType: 'text/plain' })
+    })
+    await waitFor(() => expect(removeManagerFile).toHaveBeenCalledTimes(2))
+    expect(uploadManagerFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the file-count limit enforced when a rejected chip is retried', async () => {
+    vi.mocked(uploadManagerFile).mockImplementation(async (file) => ({ id: file.name, name: file.name, size: file.size, mimeType: 'text/plain' }))
+    setup()
+    await openPanel()
+    fireEvent.change(screen.getByLabelText('Oracle attachments'), { target: { files: Array.from({ length: 21 }, (_, index) => new File(['a'], `${index}.txt`)) } })
+    await waitFor(() => expect(uploadManagerFile).toHaveBeenCalledTimes(20))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry 20.txt' }))
+    await act(async () => undefined)
+    expect(uploadManagerFile).toHaveBeenCalledTimes(20)
+    expect(screen.getByText(/Attach at most 20 files/)).toBeVisible()
   })
 
   it('offers no Oracle button when the hub has no Oracle', async () => {
@@ -1470,6 +1845,32 @@ describe('ManagerAssistant', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(retryManagerMessage).toHaveBeenCalledWith('u1'))
     expect(await screen.findByRole('region', { name: 'Queued for Oracle' })).toHaveTextContent('hi')
+  })
+
+  it('explains removed attachments without Retry while keeping Retry for a text-only removed message', async () => {
+    vi.mocked(retryManagerMessage).mockResolvedValue({
+      id: 'text-only', role: 'user', content: 'Removed text only', createdAt: 't', state: 'queued',
+    })
+    setup({
+      ...empty,
+      messages: [
+        {
+          id: 'files-removed', role: 'user', content: 'Removed with files', createdAt: 't',
+          state: 'cancelled', removedAttachmentNames: ['notes.md', 'chart.png'],
+        },
+        { id: 'text-only', role: 'user', content: 'Removed text only', createdAt: 't', state: 'cancelled' },
+      ],
+    })
+    await openPanel()
+    const removed = screen.getByText('Removed with files').closest('li')!
+    expect(within(removed).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    expect(within(removed).getByRole('note')).toHaveTextContent('notes.md')
+    expect(within(removed).getByRole('note')).toHaveTextContent('chart.png')
+    expect(within(removed).getByRole('note')).toHaveTextContent('send it again with the files')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(retryManagerMessage).toHaveBeenCalledWith('text-only'))
+    expect(retryManagerMessage).toHaveBeenCalledTimes(1)
   })
 
   it('opens sessions from activity and from links in a reply', async () => {

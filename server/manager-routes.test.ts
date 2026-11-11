@@ -74,6 +74,7 @@ describe('manager routes', () => {
     expect(edit.json().message.attachments).toEqual([file])
     const used = await app.inject({ method: 'DELETE', url: `/api/manager/files/${file.id}`, headers: trusted })
     expect(used.statusCode).toBe(409)
+    expect(await readFile(path.join(directory, 'manager', 'uploads', `${file.id}-${file.name}`), 'utf8')).toBe('shared text')
     await app.inject({ method: 'POST', url: `/api/manager/messages/${message.id}/remove`, headers: trusted })
     expect(await readFile(path.join(directory, 'manager', 'conversation.jsonl'), 'utf8')).toContain(file.id)
     const missing = await app.inject({

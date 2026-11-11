@@ -84,7 +84,9 @@ export function useOracleAttachments(initial: ManagerAttachment[] = []) {
       try {
         await removeManagerFile(item.reference.id)
       } catch (error) {
-        if (error instanceof Error && Reflect.get(error, 'statusCode') === 404) {
+        const statusCode = error instanceof Error ? Reflect.get(error, 'statusCode') : undefined
+        if (statusCode === 404 || statusCode === 409) {
+          // An owned upload stays with its accepted message; only detach this draft.
           update((files) => files.filter((file) => file.key !== key))
           return
         }

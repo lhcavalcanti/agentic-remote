@@ -19,6 +19,7 @@ import {
   listSessionMcpServers,
   listSessionSkills,
   removeQueuedPrompt,
+  removeManagerFile,
   readKnowledgeFile,
   sendMessage,
   sendTestPushNotification,
@@ -38,6 +39,17 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('removes an Oracle upload successfully with an empty 204 response', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(removeManagerFile('upload-id')).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/manager/files/upload-id',
+      { method: 'DELETE' },
+    )
+  })
+
   it('requests passive session detail without activating it', async () => {
     const fetchMock = vi.fn(async () => Response.json({
       session: { id: 'session' },

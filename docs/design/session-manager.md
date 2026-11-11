@@ -134,7 +134,8 @@ resolves stored bytes to SDK `blob` (text) or `file` (PDF/images) payloads besid
 the unchanged user text. The turn context marks files as untrusted shared data;
 their contents cannot grant structured-memory intent. Unowned files can be
 removed through `DELETE /api/manager/files/:id`; conversation ownership drives
-retention and cleanup.
+retention and cleanup. Removing a reference already owned by a message detaches
+only the draft.
 
 ## Prompt composition
 

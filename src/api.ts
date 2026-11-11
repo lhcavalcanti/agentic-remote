@@ -1158,7 +1158,7 @@ export async function uploadManagerFile(file: File): Promise<ManagerAttachment> 
 }
 
 export function removeManagerFile(id: string): Promise<void> {
-  return request<void>(`/api/manager/files/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return requestVoid(`/api/manager/files/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export async function sendManagerMessage(

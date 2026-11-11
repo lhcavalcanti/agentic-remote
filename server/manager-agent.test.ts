@@ -331,6 +331,29 @@ describe('ManagerAgent', () => {
     expect(store.message(message.id)?.state).toBe('done')
   })
 
+  it('cancels without SDK admission when Stop arrives during attachment resolution', async () => {
+    const file = await store.uploadFile('note.txt', Buffer.from('not yet admitted'))
+    let release!: () => void
+    const pending = new Promise<void>((resolve) => { release = resolve })
+    const resolveAttachments = store.resolveAttachments.bind(store)
+    const resolving = vi.spyOn(store, 'resolveAttachments').mockImplementationOnce(async (files) => {
+      await pending
+      return resolveAttachments(files)
+    })
+    await start()
+    const message = await agent!.send('Delegate the attached work.', undefined, { attachmentIds: [file.id] })
+    await vi.waitFor(() => expect(resolving).toHaveBeenCalled())
+    await agent!.cancel()
+    release()
+    await settled()
+
+    expect(sdk.sends).toEqual([])
+    expect(store.message(message.id)).toMatchObject({ state: 'cancelled', attachments: [file] })
+    expect(agent!.snapshot().status).toBe('idle')
+    expect(hub.createSession).not.toHaveBeenCalled()
+    expect(hub.sendMessage).not.toHaveBeenCalled()
+  })
+
   it('runs a later typed message before an automatic proactive message', async () => {
     agent = new ManagerAgent({
       store,

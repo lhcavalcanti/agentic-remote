@@ -1477,6 +1477,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         const attachments = message.source === undefined || message.source === 'typed'
           ? await this.store.resolveAttachments(message.attachments ?? [])
           : []
+        if (!current()) return this.leave()
+        if (cancelled()) return this.finishCancelled(message, current)
         turn = { text: await this.runTurn(prompt, attachments), acknowledgement }
         break
       } catch (error) {

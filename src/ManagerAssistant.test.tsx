@@ -273,6 +273,27 @@ describe('ManagerAssistant', () => {
     expect(uploadManagerFile).toHaveBeenCalledTimes(1)
   })
 
+  it('detaches a restored draft chip on 409 while keeping the message-owned attachment', async () => {
+    const file = { id: 'owned', name: 'owned.txt', size: 3, mimeType: 'text/plain' }
+    localStorage.setItem('agentic-remote:oracle-draft-v1', JSON.stringify({
+      version: 1, draft: 'Accepted delivery whose response was lost', attachments: [file],
+    }))
+    vi.mocked(removeManagerFile).mockRejectedValue(Object.assign(new Error('This attachment belongs to an Oracle message.'), { statusCode: 409 }))
+    setup({ ...empty, messages: [{
+      id: 'accepted', role: 'user', content: 'Accepted delivery whose response was lost',
+      state: 'done', createdAt: 't', attachments: [file],
+    }] })
+    await openPanel()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove owned.txt' }))
+
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Oracle attachments to send' })).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled()
+    expect(screen.queryByText('Could not remove the upload. Try Remove again.')).not.toBeInTheDocument()
+    expect(within(screen.getByRole('list', { name: 'Attached files' })).getByText('owned.txt')).toBeVisible()
+    expect(removeManagerFile).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(localStorage.getItem('agentic-remote:oracle-draft-v1')!)).not.toHaveProperty('attachments')
+  })
+
   it('shows stored attachments on queued edits and completed user messages', async () => {
     const file = { id: 'stored', name: 'report.pdf', size: 2048, mimeType: 'application/pdf' }
     setup({ ...empty, queued: 1, messages: [

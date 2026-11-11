@@ -1,7 +1,7 @@
 {
   "name": "agentic-remote",
   "private": true,
-  "version": "1.46.14",
+  "version": "1.46.15",
   "packageManager": "pnpm@10.34.5",
   "pnpm": {
     "onlyBuiltDependencies": [

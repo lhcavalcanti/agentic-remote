@@ -7569,6 +7569,12 @@ button {
   background: var(--muted);
 }
 
+/* On its way out: the other rows stay fully usable meanwhile. */
+.session-item--closing {
+  cursor: progress;
+  opacity: 0.45;
+}
+
 .composer-text-panel textarea:disabled {
   cursor: not-allowed;
   opacity: 0.6;

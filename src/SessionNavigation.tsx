@@ -25,6 +25,7 @@ import {
 } from './session-presentation'
 import type { SessionPresentation, SessionSort } from './session-presentation'
 import type { SessionFilter, SessionNavigationView } from './session-navigation-view'
+import { SignInExpiredNotice } from './SignInExpiredNotice'
 
 export type PendingSessionCreation = Pick<
   ManagedSession,
@@ -445,6 +446,7 @@ export function SessionNavigation({
   onRefresh,
   refreshState = 'fresh',
   refreshMessage,
+  signInExpired,
   ...actions
 }: SessionActions & {
   view: SessionNavigationView
@@ -465,6 +467,11 @@ export function SessionNavigation({
   onRefresh?: () => void
   refreshState?: 'fresh' | 'refreshing' | 'stale'
   refreshMessage?: string
+  /**
+   * Set while the sign-in gateway refuses requests, which every connection and
+   * refresh failure would then only repeat; `notice` puts its notice here.
+   */
+  signInExpired?: 'notice' | 'quiet'
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
   onShowSuspendedChange: (show: boolean) => void
@@ -498,7 +505,9 @@ export function SessionNavigation({
           <div className="session-list__title">
             <h2>Sessions <span>{counts.all}</span></h2>
             <small>
-            {loading
+            {signInExpired
+              ? 'Sign-in expired'
+              : loading
               ? 'Connecting...'
               : loadingError
                 ? 'Connection failed'
@@ -624,7 +633,7 @@ export function SessionNavigation({
             </button>
           </div>
         ) : null}
-        {onRefresh && refreshState !== 'fresh' ? (
+        {onRefresh && refreshState !== 'fresh' && !signInExpired ? (
           <p
             aria-label="Session data freshness"
             className={`session-list__freshness session-list__freshness--${refreshState}`}
@@ -635,6 +644,7 @@ export function SessionNavigation({
           </p>
         ) : null}
       </div>
+      {signInExpired === 'notice' ? <SignInExpiredNotice className="session-list__error" /> : null}
       {creationError ? (
         <div className="error-banner session-list__error" role="alert">
           <span>{creationError}</span>

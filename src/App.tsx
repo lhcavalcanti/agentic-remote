@@ -293,6 +293,7 @@ import {
   hubSignInExpired,
   subscribeHubSignIn,
 } from './hub-sign-in'
+import { SignInExpiredNotice } from './SignInExpiredNotice'
 import {
   currentSessionEventSequence,
   nextSessionEventSequence,
@@ -7574,6 +7575,8 @@ function App() {
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarView, setSidebarView] = useState<'sessions' | 'knowledge'>('sessions')
+  // An open session list covers the conversation on narrow screens.
+  const signInNoticeInSessionList = sidebarOpen && sidebarView === 'sessions'
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
   const [resizingSidebar, setResizingSidebar] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
@@ -16252,10 +16255,13 @@ function App() {
                 refreshMessage={refreshMessage}
                 refreshState={refreshState}
                 creationError={
-                  !newSessionOpen && sidebarOpen && sidebarView === 'sessions'
+                  !signInExpired && !newSessionOpen && sidebarOpen && sidebarView === 'sessions'
                     ? sessionCreationError
                     : undefined
                 }
+                signInExpired={signInExpired
+                  ? signInNoticeInSessionList ? 'notice' : 'quiet'
+                  : undefined}
                 loadingError={sessionLoadError}
                 onDismissCreationError={() => setSessionCreationError(undefined)}
                 onNewSession={openNewSession}
@@ -16779,12 +16785,9 @@ function App() {
           ) : null}
         </header>
 
-        {signInExpired ? (
+        {signInExpired && !signInNoticeInSessionList ? (
           // Everything else would fail the same way, so this stands alone.
-          <div className="error-banner" role="alert">
-            <span>Your sign-in has expired. Sign in again to reconnect; drafts stay on this device.</span>
-            <a className="error-banner__retry" href="/">Sign in again</a>
-          </div>
+          <SignInExpiredNotice />
         ) : null}
         {sessionLoadError && !signInExpired ? (
           <div className="error-banner" role="alert">

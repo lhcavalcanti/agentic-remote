@@ -13,6 +13,9 @@ export const HUB_SIGN_IN_EXPIRED_MESSAGE =
   'Your sign-in has expired; sign in again to reconnect'
 
 export class HubSignInExpiredError extends Error {
+  // The gateway refused the request before the hub saw it.
+  readonly uncertainDelivery = false
+
   constructor() {
     super(HUB_SIGN_IN_EXPIRED_MESSAGE)
     this.name = 'HubSignInExpiredError'

@@ -4,6 +4,7 @@ import {
   savePushSubscription,
 } from './api'
 import { parseAppVersion, type AppVersion } from '../shared/app-version'
+import { hubFetch } from './hub-sign-in'
 
 export const PWA_UPDATE_EVENT = 'agentic-remote:update-ready'
 let announcedUpdateIdentity: string | undefined
@@ -219,7 +220,7 @@ export async function checkForPwaUpdate(): Promise<
   if (!('serviceWorker' in navigator)) {
     return undefined
   }
-  const versionResponse = await fetch('/api/version', { cache: 'no-store' })
+  const versionResponse = await hubFetch('/api/version', { cache: 'no-store' })
   if (!versionResponse.ok) {
     throw new Error(`Unable to check app version (${versionResponse.status})`)
   }

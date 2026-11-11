@@ -784,7 +784,7 @@ describe('Hub sign-in', () => {
     expect(new Headers(init?.headers).get('x-requested-with')).toBe('XMLHttpRequest')
     expect(init?.redirect).toBe('manual')
     expect(caught).toBeInstanceOf(HubSignInExpiredError)
-    expect(caught).not.toHaveProperty('uncertainDelivery', true)
+    expect(caught).toHaveProperty('uncertainDelivery', false)
     expect(hubSignInExpired()).toBe(true)
   })
 

@@ -294,6 +294,7 @@ import {
   subscribeHubSignIn,
 } from './hub-sign-in'
 import { SignInExpiredNotice } from './SignInExpiredNotice'
+import { innermostDialogFrame, subscribeDialogFrames } from './components/dialog-stack'
 import {
   currentSessionEventSequence,
   nextSessionEventSequence,
@@ -7776,6 +7777,11 @@ function App() {
   const brandIcon = '/icon.svg'
   const [error, setError] = useState<string>()
   const signInExpired = useSyncExternalStore(subscribeHubSignIn, hubSignInExpired)
+  // An open modal carries the notice itself.
+  const modalOpen = useSyncExternalStore(
+    subscribeDialogFrames,
+    () => innermostDialogFrame() !== undefined,
+  )
   useEffect(() => {
     // A refusal the gateway has stopped making is no longer an error.
     if (!signInExpired) {
@@ -18010,9 +18016,9 @@ function App() {
           />
         </DialogFrame>
       ) : null}
-      {signInExpired ? (
+      {signInExpired && !modalOpen ? (
         // Everything else would fail the same way, so this stands alone.
-        <SignInExpiredNotice />
+        <SignInExpiredNotice placement="floating" />
       ) : null}
       {settingsNotice(settingsProfile) && !(updateRegistration && !updateToastDismissed) ? (
         <div className="update-toast settings-toast" role="status">

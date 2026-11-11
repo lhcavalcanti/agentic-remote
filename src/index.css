@@ -1543,15 +1543,18 @@ button {
   text-decoration: none;
 }
 
-/* Above the panes, Oracle, dialogs, and toasts: every one of them would only
-   repeat the failure this notice explains. */
-.error-banner.sign-in-notice {
-  position: fixed;
+/* Above the panes, Oracle, and toasts: every one of them would only repeat
+   the failure this notice explains. Placed in the shell, which follows the
+   visual viewport on a phone. */
+.error-banner.sign-in-notice--floating {
+  position: absolute;
   z-index: 45;
+  /* Not the conversation's banner row: the desktop shell is a grid too. */
+  grid-area: auto;
   top: calc(var(--app-safe-area-top, 0px) + 10px);
   left: 50%;
   width: max-content;
-  max-width: calc(100vw - 24px);
+  max-width: calc(100% - 24px);
   margin: 0;
   transform: translateX(-50%);
   background:
@@ -1560,14 +1563,14 @@ button {
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
 }
 
+.error-banner.sign-in-notice--inline {
+  margin: 0 0 16px;
+}
+
 /* Whatever is anchored to the top of the window starts below the notice, so
    it covers none of their controls. */
 .app-shell.app-shell--signed-out {
   --sign-in-band: 66px;
-}
-
-.app-shell--signed-out .manager-panel:not(.manager-panel--docked) {
-  top: calc(var(--app-safe-area-top, 0px) + var(--sign-in-band));
 }
 
 @media (min-width: 961px) {
@@ -1575,8 +1578,8 @@ button {
     padding-top: var(--sign-in-band);
   }
 
-  .app-shell--signed-out .dialog-backdrop {
-    padding-top: calc(var(--sign-in-band) + 8px);
+  .app-shell--signed-out .manager-panel:not(.manager-panel--docked) {
+    top: var(--sign-in-band);
   }
 }
 
@@ -1584,15 +1587,29 @@ button {
   /* A phone shows one full-screen layer at a time, and each one's top bar
      clears the notice the way it clears the notch. The notice keeps to two
      lines to fit that band. */
-  .app-shell.app-shell--signed-out:not(.app-shell--keyboard-open) {
+  .app-shell.app-shell--signed-out {
     --app-content-safe-area-top: calc(var(--app-safe-area-top) + var(--sign-in-band));
   }
 
-  .error-banner.sign-in-notice {
+  /* With the keyboard up, the shell already starts below the notch. */
+  .app-shell.app-shell--signed-out.app-shell--keyboard-open {
+    --app-content-safe-area-top: var(--sign-in-band);
+  }
+
+  .app-shell--keyboard-open .error-banner.sign-in-notice--floating {
+    top: 10px;
+  }
+
+  /* Oracle fills the screen and pads its own header past the notch. */
+  .app-shell--signed-out .manager-panel__header {
+    padding-top: calc(var(--app-safe-area-top) + var(--sign-in-band));
+  }
+
+  .error-banner.sign-in-notice--floating {
     height: 52px;
   }
 
-  .error-banner.sign-in-notice span {
+  .error-banner.sign-in-notice--floating span {
     display: -webkit-box;
     overflow: hidden;
     -webkit-box-orient: vertical;

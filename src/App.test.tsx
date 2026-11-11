@@ -8259,6 +8259,21 @@ describe('App', () => {
     expect(screen.queryByText(/Delivery could not be confirmed/)).not.toBeInTheDocument()
   })
 
+  it('moves the sign-in notice into an open dialog, which keeps focus inside itself', async () => {
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    act(() => setHubSignInExpired(true))
+
+    expect(screen.getAllByRole('link', { name: 'Sign in again' }))
+      .toEqual([within(dialog).getByRole('link', { name: 'Sign in again' })])
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App settings' })).not.toBeInTheDocument())
+    expect(screen.getByRole('link', { name: 'Sign in again' }).closest('[role="dialog"]')).toBeNull()
+  })
+
   it('restores a send the sign-in gateway refused without an uncertainty warning', async () => {
     vi.mocked(sendMessage).mockImplementationOnce(async () => {
       setHubSignInExpired(true)

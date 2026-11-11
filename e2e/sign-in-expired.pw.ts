@@ -45,6 +45,8 @@ type Layout = {
   height: number
   knowledge: 'hidden' | 'docked' | 'expanded'
   open?: (page: Page) => Promise<void>
+  // What else must hold once signed out.
+  check?: (page: Page) => Promise<void>
 }
 
 const phone = { width: 390, height: 844 }
@@ -55,16 +57,37 @@ const layouts: Layout[] = [
     await expect(page.getByRole('navigation', { name: 'Sessions' })).toBeInViewport()
   } },
   { name: 'over a phone conversation', ...phone, knowledge: 'hidden' },
+  { name: 'over a phone conversation while typing', ...phone, knowledge: 'hidden', open: async (page) => {
+    await page.getByLabel('Message', { exact: true }).focus()
+    // The on-screen keyboard shrinks the visual viewport.
+    await page.evaluate(() => {
+      const viewport = window.visualViewport!
+      Object.defineProperty(viewport, 'height', { configurable: true, get: () => window.innerHeight - 340 })
+      viewport.dispatchEvent(new Event('resize'))
+    })
+    await expect(page.locator('.app-shell')).toHaveClass(/app-shell--keyboard-open/)
+  } },
   { name: 'over docked Knowledge on a phone', ...phone, knowledge: 'docked' },
-  { name: 'over Oracle on a phone', ...phone, knowledge: 'hidden', open: openOracle },
+  { name: 'over Oracle on a phone', ...phone, knowledge: 'hidden', open: openOracle, check: oracleInsideWindow },
   { name: 'over a desktop conversation', ...desktop, knowledge: 'hidden' },
   { name: 'over expanded Knowledge', width: 1280, height: 800, knowledge: 'expanded' },
-  { name: 'over Oracle on a desktop', ...desktop, knowledge: 'hidden', open: openOracle },
+  { name: 'over Oracle on a desktop', ...desktop, knowledge: 'hidden', open: openOracle, check: oracleInsideWindow },
   { name: 'over a desktop dialog', ...desktop, knowledge: 'hidden', open: async (page) => {
     await page.getByRole('button', { name: 'App settings' }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
+  }, check: async (page) => {
+    // A modal keeps focus inside itself, so it carries the notice.
+    await expect(page.getByRole('dialog').getByRole('link', { name: 'Sign in again' })).toBeVisible()
   } },
 ]
+
+// Starting below the notice must not push Oracle's footer out of the window.
+async function oracleInsideWindow(page: Page) {
+  const panel = await page.locator('#oracle-panel').boundingBox()
+  expect(panel).not.toBeNull()
+  expect(panel!.y + panel!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+  await expect(page.getByRole('textbox', { name: 'Message Oracle', exact: true })).toBeInViewport({ ratio: 1 })
+}
 
 async function openOracle(page: Page) {
   await page.locator('main').getByRole('button', { name: /^Oracle/ }).first().click()
@@ -88,6 +111,7 @@ for (const layout of layouts) {
       await expect(signIn).toHaveCount(1)
       await expect(signIn).toBeInViewport({ ratio: 1 })
       await expect.poll(() => controlsUnderNotice(page)).toEqual([])
+      await layout.check?.(page)
     } finally {
       fixture.assertHealthy()
     }

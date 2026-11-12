@@ -228,6 +228,9 @@ Do not weaken these without an explicit product decision.
   per 750 ms, so busy sessions cost no more than the poll alone.
 - Process discovery places candidates in tmux from the parents in its single
   `ps` listing; do not reintroduce per-pane `/proc` ancestry walks.
+- Oracle's conversation rows are memoized and receive stable callbacks and
+  Markdown components, so a keystroke or streamed word re-renders only changed
+  rows. Do not pass inline callbacks or per-render objects to them.
 
 ## Validating a change
 

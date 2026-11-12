@@ -108,3 +108,18 @@ export function splitDocumentTree(tree: HastRoot, maxSourceChars = 16_384): Hast
   if (children.length || !chunks.length) chunks.push({ type: 'root', children })
   return chunks.map(withoutPositions)
 }
+
+/** What a render reports: every chunk in order, then the outline. */
+export type DocumentRenderEvent =
+  | { kind: 'chunk'; index: number; count: number; tree: HastRoot }
+  | { kind: 'done'; outline: DocumentHeading[] }
+  | { kind: 'error'; message: string }
+
+export function renderDocumentEvents(source: string): DocumentRenderEvent[] {
+  const { tree, outline } = renderDocumentTree(source)
+  const chunks = splitDocumentTree(tree)
+  return [
+    ...chunks.map((chunk, index): DocumentRenderEvent => ({ kind: 'chunk', index, count: chunks.length, tree: chunk })),
+    { kind: 'done', outline },
+  ]
+}

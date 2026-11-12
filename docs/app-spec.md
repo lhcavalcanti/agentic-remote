@@ -1732,6 +1732,12 @@ clear replacement IDs without losing, duplicating, or reordering content.
   their own rendered positions in both Knowledge and session-file outlines.
   Copying a code fence MUST require an explicit action, retain its exact text,
   and report clipboard failure rather than claiming success.
+- Drawing a Markdown preview MUST NOT freeze the app, however long the
+  document: past a small size it MUST be parsed off the page's thread and
+  drawn in parts, showing its opening first. The final page MUST equal a
+  whole-document render, and an opening the whole document reads differently
+  MUST be replaced. Section anchors, the outline, and a remembered scroll
+  offset MUST apply only once the whole document is drawn.
 - Relative Markdown document links MUST open through the owning workspace or
   Knowledge root without navigating away from the app. Section links MUST stay
   inside the displayed document, with unique anchors for repeated headings.

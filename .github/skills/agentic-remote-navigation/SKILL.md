@@ -231,6 +231,14 @@ Do not weaken these without an explicit product decision.
 - Oracle's conversation rows are memoized and receive stable callbacks and
   Markdown components, so a keystroke or streamed word re-renders only changed
   rows. Do not pass inline callbacks or per-render objects to them.
+- Knowledge and session-file Markdown go through `useMarkdownDocument`
+  (`src/markdown-document/`): long documents are parsed in a per-document Web
+  Worker, opening first, and drawn one `div.document-chunk` per frame. Keep
+  `pipeline.ts` identical to react-markdown's processing (plugins, raw HTML as
+  text, URL filter, `toJsxRuntime` options); its parity tests guard that. The
+  worker bundle must not import DOM builds: `vite.config.ts` redirects the
+  entity decoder, and only the Chromium spec `e2e/document-render.pw.ts`
+  catches a regression. Chat, Oracle, and side answers keep ReactMarkdown.
 
 ## Validating a change
 

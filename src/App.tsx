@@ -44,6 +44,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
+  SyntheticEvent,
   TouchEvent as ReactTouchEvent,
 } from 'react'
 import {
@@ -160,6 +161,7 @@ import {
   scrollToDocumentFragment,
   scrollToDocumentHeading,
   isExternalSource,
+  isReaderScroll,
   pushNavigation,
   rememberScroll,
   type NavigationEntry,
@@ -6327,14 +6329,15 @@ function KnowledgeReader({
     previousFilePath.current = file?.path
   }, [file, mode, documentReady])
 
-  // Opening a file or a section is a navigation, carried out once the
-  // document is drawn, so a section further down is never reported missing.
+  // Opening a file or a section is a navigation. The top is there at once; a
+  // section waits until the document is drawn, so one further down is never
+  // reported missing. A reader who scrolls first keeps their place.
   const navigation = useRef({ handled: true })
   useEffect(() => {
     navigation.current = { handled: false }
   }, [file?.path, fragment])
   useEffect(() => {
-    if (!documentReady || navigation.current.handled) return undefined
+    if (navigation.current.handled || (fragment !== undefined && !documentReady)) return undefined
     const pending = navigation.current
     const frame = requestAnimationFrame(() => {
       pending.handled = true
@@ -6348,6 +6351,9 @@ function KnowledgeReader({
     })
     return () => cancelAnimationFrame(frame)
   }, [file?.path, fragment, documentReady])
+  const keepReaderPlace = (event: SyntheticEvent<HTMLDivElement>) => {
+    if (!documentReady && isReaderScroll(event)) navigation.current.handled = true
+  }
 
   const outline = markdownDocument.outline
   const crumbs = breadcrumbSegments(file?.path ?? listing?.path ?? '.', root.name)
@@ -6454,6 +6460,8 @@ function KnowledgeReader({
         onClick={(event) =>
           followMarkdownLink(event, file.path, onOpenFile, setLinkError)
         }
+        onKeyDown={keepReaderPlace}
+        onPointerDown={keepReaderPlace}
         onScroll={(event) => {
           // While a document is still being drawn its height is short, and
           // the clamped position must not replace the reader's place.
@@ -6461,6 +6469,8 @@ function KnowledgeReader({
             contentScrollTop.current = event.currentTarget.scrollTop
           }
         }}
+        onTouchMove={keepReaderPlace}
+        onWheel={keepReaderPlace}
         ref={contentRef}
       >
         {file.kind === 'pdf' ? (
@@ -6782,8 +6792,9 @@ function WorkspaceDialog({
   // headings, and full height are not on the page.
   const documentReady = markdownDocument.ready || !(file?.kind === 'markdown' && !raw)
 
-  // What a newly opened document should show -- a remembered offset or a
-  // section -- is taken when it arrives and applied once it is drawn.
+  // What a newly opened document should show is taken when it arrives. Its
+  // top is there at once; a remembered offset or a section is applied once it
+  // is drawn, unless the reader has scrolled it by then.
   const arrival = useRef<{ handled: boolean; top: number; fragment?: string }>({ handled: true, top: 0 })
   useEffect(() => {
     arrival.current = { handled: false, top: pendingScrollRef.current ?? 0, fragment: pendingFragmentRef.current }
@@ -6791,8 +6802,10 @@ function WorkspaceDialog({
     pendingFragmentRef.current = undefined
   }, [file?.path])
   useEffect(() => {
-    if (!documentReady || arrival.current.handled) return undefined
     const pending = arrival.current
+    if (pending.handled || ((pending.fragment !== undefined || pending.top > 0) && !documentReady)) {
+      return undefined
+    }
     const frame = requestAnimationFrame(() => {
       pending.handled = true
       const element = previewContentRef.current
@@ -6808,6 +6821,9 @@ function WorkspaceDialog({
     // Deliberately not keyed on `raw`: toggling Rendered/Raw is not navigation
     // and must not throw the reader back to the top.
   }, [file?.path, documentReady])
+  const keepReaderPlace = (event: SyntheticEvent<HTMLDivElement>) => {
+    if (!documentReady && isReaderScroll(event)) arrival.current.handled = true
+  }
 
   const outline = markdownDocument.outline
 
@@ -7106,11 +7122,15 @@ function WorkspaceDialog({
                     setError,
                   )
                 }
+                onKeyDown={keepReaderPlace}
+                onPointerDown={keepReaderPlace}
                 onScroll={() => {
                   // A document still being drawn is short; its clamped
                   // offset must not replace the reader's place.
                   if (documentReady) rememberCurrentScroll()
                 }}
+                onTouchMove={keepReaderPlace}
+                onWheel={keepReaderPlace}
                 ref={previewContentRef}
               >
                 {file.kind === 'pdf' ? (

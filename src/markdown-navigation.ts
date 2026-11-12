@@ -326,6 +326,31 @@ export function resolveDocumentLink(documentPath: string, href: string): Documen
     : { kind: 'invalid', error: 'This link points outside the document root.' }
 }
 
+const scrollKeys = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '])
+
+/**
+ * Whether an input event on a scrolling document is the reader moving it
+ * themselves: a wheel, a swipe, a scrolling key, or a press on its scroll bar.
+ */
+export function isReaderScroll(event: {
+  type: string
+  key?: string
+  target: unknown
+  currentTarget: unknown
+}): boolean {
+  switch (event.type) {
+    case 'wheel':
+    case 'touchmove':
+      return true
+    case 'keydown':
+      return scrollKeys.has(event.key ?? '')
+    case 'pointerdown':
+      return event.target === event.currentTarget
+    default:
+      return false
+  }
+}
+
 export function scrollToDocumentFragment(
   container: HTMLElement | null,
   fragment: string,

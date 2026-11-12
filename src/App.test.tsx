@@ -477,6 +477,36 @@ function knowledgeListings(
 
 let restoreScrollTop: (() => void) | undefined
 
+/** jsdom performs no layout, so scrollTop is inert; back it with a store the test can read. */
+function backScrollTop() {
+  const offsets = new WeakMap<HTMLElement, number>()
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollTop')
+  Object.defineProperty(HTMLElement.prototype, 'scrollTop', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return offsets.get(this) ?? 0
+    },
+    set(this: HTMLElement, value: number) {
+      offsets.set(this, value)
+    },
+  })
+  if (original) restoreScrollTop = () => Object.defineProperty(HTMLElement.prototype, 'scrollTop', original)
+}
+
+/** Draws in the background, as the worker does; documents starting with `held` wait for the test. */
+function holdingRenderer(held: string) {
+  const waiting: (() => void)[] = []
+  const renderer: DocumentRenderer = {
+    render(source, emit) {
+      const deliver = () => [...documentRenderEvents(source)].forEach(emit)
+      if (source.startsWith(held)) waiting.push(deliver)
+      else queueMicrotask(deliver)
+      return () => undefined
+    },
+  }
+  return { renderer, release: () => act(() => waiting.splice(0).forEach((deliver) => deliver())) }
+}
+
 function openSessionActions() {
   const trigger = screen.getByRole('button', { name: 'Session actions' })
   if (trigger.getAttribute('aria-expanded') !== 'true') {
@@ -19478,6 +19508,72 @@ describe('App', () => {
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
   })
 
+  function mockGuideKnowledge(link: string) {
+    mockKnowledgeRoots([{
+      id: 'root-1',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/home/tester/docs',
+      name: 'docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    }])
+    vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
+      '.': { path: '.', entries: [{ name: 'README.md', path: 'README.md', kind: 'markdown' }] },
+    }))
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_root, path) => ({
+      path,
+      name: path,
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 100,
+      content: path === 'README.md' ? `# Knowledge start\n\n${link}` : '# Guide\n\n## Early\n\n## Late\n',
+    }))
+  }
+
+  async function openKnowledgeReadme(renderer: DocumentRenderer) {
+    render(
+      <DocumentRendererContext.Provider value={renderer}>
+        <App />
+      </DocumentRendererContext.Provider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /README.md/ }))
+    await screen.findByRole('heading', { name: 'Knowledge start' })
+  }
+
+  it('does not send a reader who scrolls a Knowledge document still being drawn back to its top', async () => {
+    backScrollTop()
+    mockGuideKnowledge('[Open guide](guide.md)')
+    const { renderer, release } = holdingRenderer('# Guide')
+    await openKnowledgeReadme(renderer)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open guide' }))
+    expect(await screen.findByText('Rendering document…')).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    const content = document.querySelector<HTMLElement>('.knowledge-reader .workspace-preview__content')!
+    content.scrollTop = 300
+    release()
+    expect(await screen.findByRole('heading', { name: 'Late' })).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(content.scrollTop).toBe(300)
+  })
+
+  it('leaves a reader who scrolls before a linked section is drawn where they are', async () => {
+    mockGuideKnowledge('[Open guide](guide.md#late)')
+    const { renderer, release } = holdingRenderer('# Guide')
+    await openKnowledgeReadme(renderer)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open guide' }))
+    expect(await screen.findByText('Rendering document…')).toBeInTheDocument()
+    fireEvent.wheel(document.querySelector('.knowledge-reader .workspace-preview__content')!)
+    release()
+    const late = await screen.findByRole('heading', { name: 'Late' })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(late).not.toHaveFocus()
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+  })
+
   it('follows Knowledge Markdown links on the owning root and reports failed reads', async () => {
     mockKnowledgeRoots([{
       id: 'root-1',
@@ -19653,6 +19749,55 @@ describe('App', () => {
       ).toBe(240),
     )
   })
+  it('does not restore a remembered offset once the reader has scrolled the document being drawn', async () => {
+    backScrollTop()
+    vi.mocked(readWorkspaceFile).mockImplementation(
+      async (_computerId, _sessionId, path) => ({
+        name: path.split('/').at(-1) || path,
+        path,
+        kind: 'markdown' as const,
+        mimeType: 'text/plain; charset=utf-8',
+        size: 40,
+        content: `# ${path}\n\nBody of ${path}.`,
+      }),
+    )
+    let holding = false
+    const waiting: (() => void)[] = []
+    const renderer: DocumentRenderer = {
+      render(source, emit) {
+        const deliver = () => [...documentRenderEvents(source)].forEach(emit)
+        if (holding) waiting.push(deliver)
+        else queueMicrotask(deliver)
+        return () => undefined
+      },
+    }
+    render(
+      <DocumentRendererContext.Provider value={renderer}>
+        <App />
+      </DocumentRendererContext.Provider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Browse current session folder' }))
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    await screen.findByRole('heading', { name: 'README.md' })
+    const content = document.querySelector<HTMLElement>('.workspace-preview__content')!
+    content.scrollTop = 240
+    fireEvent.scroll(content)
+    fireEvent.click(screen.getByRole('button', { name: 'Back to files' }))
+    fireEvent.click(await screen.findByRole('button', { name: /docs/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /knowledge.md/ }))
+    await screen.findByRole('heading', { name: 'docs/knowledge.md' })
+
+    holding = true
+    fireEvent.click(screen.getByRole('button', { name: 'Previous document' }))
+    expect(await screen.findByText('Rendering document…')).toBeInTheDocument()
+    const drawing = document.querySelector<HTMLElement>('.workspace-preview__content')!
+    fireEvent.wheel(drawing)
+    act(() => waiting.splice(0).forEach((deliver) => deliver()))
+    await screen.findByRole('heading', { name: 'README.md' })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(drawing.scrollTop).not.toBe(240)
+  })
+
   describe('Knowledge-to-agent handoff', () => {
     const note: WorkspaceFile = {
       name: 'guide.md',

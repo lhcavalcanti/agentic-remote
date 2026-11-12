@@ -52,6 +52,34 @@ vi.mock('./dreamer-api', async (importOriginal) => ({
   })),
 }))
 
+// Pass-through wrappers that record what rendered: every conversation row
+// shows a MessageTime, and every answer parses its Markdown.
+const rendered = vi.hoisted(() => ({ markdown: [] as string[], times: [] as string[] }))
+
+vi.mock('react-markdown', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-markdown')>()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    default: function CountedMarkdown(props: Parameters<typeof actual.default>[0]) {
+      rendered.markdown.push(String(props.children))
+      return createElement(actual.default, props)
+    },
+  }
+})
+
+vi.mock('./MessageTime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./MessageTime')>()
+  const { createElement } = await import('react')
+  return {
+    ...actual,
+    MessageTime: function CountedMessageTime(props: Parameters<typeof actual.MessageTime>[0]) {
+      if (props.value) rendered.times.push(props.value)
+      return createElement(actual.MessageTime, props)
+    },
+  }
+})
+
 type Props = Parameters<typeof ManagerAssistant>[0]
 
 /** The header button and the panel, wired the way App wires them. */
@@ -848,6 +876,66 @@ describe('ManagerAssistant', () => {
     expect(screen.getByRole('button', { name: 'Oracle, working, new reply' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Oracle, working, new reply' }))
     expect(screen.getByRole('button', { name: 'Oracle, working' })).toBeInTheDocument()
+  })
+
+  it('re-renders only the rows that changed while a reply streams or a message is typed', async () => {
+    const at = (second: number) => `2026-11-12T01:00:0${second}.000Z`
+    const history: ManagerMessage[] = [
+      { id: 'u1', role: 'user', content: 'What is running?', createdAt: at(0), state: 'done' },
+      {
+        id: 'a1', role: 'activity', content: 'Started a session', createdAt: at(1),
+        sessionRefs: [{ computerId: 'hub', sessionId: 's1', title: 'Build' }],
+      },
+      { id: 'r1', role: 'assistant', content: 'Two sessions are **running**.', createdAt: at(2) },
+      {
+        id: 'c1', role: 'activity', content: 'Close Build?', createdAt: at(3),
+        confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 's1', title: 'Build', state: 'pending' },
+      },
+      { id: 'u2', role: 'user', content: 'And the tests?', createdAt: at(4), state: 'running' },
+    ]
+    const { emit } = setup({ ...empty, status: 'working', messages: history })
+    const panel = await openPanel()
+    expect(within(panel).getByText('running')).toBeInTheDocument()
+    rendered.markdown.length = 0
+    rendered.times.length = 0
+
+    emit({ type: 'manager.delta', messageId: 'r2', content: 'Checking' })
+    emit({ type: 'manager.delta', messageId: 'r2', content: 'Checking the tests' })
+    fireEvent.change(within(panel).getByRole('textbox', { name: 'Message Oracle' }), { target: { value: 'Also the docs' } })
+    expect(within(panel).getByText('Checking the tests')).toBeInTheDocument()
+    expect(rendered.markdown).toEqual(['Checking', 'Checking the tests'])
+    expect(rendered.times).toEqual([])
+
+    emit({ type: 'manager.message', message: { ...history[2], content: 'Three sessions are **running**.', updatedAt: at(5) } })
+    expect(within(panel).getByText(/Three sessions are/)).toBeInTheDocument()
+    expect(rendered.markdown).toEqual(['Checking', 'Checking the tests', 'Three sessions are **running**.'])
+    expect(rendered.times).toEqual([at(2)])
+  })
+
+  it('keeps rows and their session links current when the app re-renders', async () => {
+    const view = setup({
+      ...empty,
+      messages: [
+        { id: 'r1', role: 'assistant', content: 'See [Build](?computer=hub&session=s1).', createdAt: '2026-11-12T01:00:00.000Z' },
+        {
+          id: 'a1', role: 'activity', content: 'Started a session', createdAt: '2026-11-12T01:00:01.000Z',
+          sessionRefs: [{ computerId: 'hub', sessionId: 's1', title: 'Build' }],
+        },
+      ],
+    })
+    const panel = await openPanel()
+    rendered.markdown.length = 0
+    rendered.times.length = 0
+
+    const onOpenSession = vi.fn<Props['onOpenSession']>(() => true)
+    view.rerender(<Harness {...view.props} onOpenSession={onOpenSession} />)
+    expect(rendered.markdown).toEqual([])
+    expect(rendered.times).toEqual([])
+
+    fireEvent.click(within(panel).getByRole('link', { name: 'Build' }))
+    fireEvent.click(within(panel).getByRole('button', { name: 'Open Build' }))
+    expect(onOpenSession.mock.calls.map(([ref]) => `${ref.computerId}:${ref.sessionId}`)).toEqual(['hub:s1', 'hub:s1'])
+    expect(view.onOpenSession).not.toHaveBeenCalled()
   })
 
   it('keeps a /oracle question in Oracle when it cannot be sent', async () => {

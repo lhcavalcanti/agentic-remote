@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, MouseEvent, MutableRefObject, PointerEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
@@ -223,7 +223,10 @@ function statusLine(snapshot: ManagerSnapshot, openSessions: number): string {
   return `Keeping track of ${openSessions} open session${openSessions === 1 ? '' : 's'}`
 }
 
-function ConfirmationCard({
+// Conversation rows are memoized, and their callbacks and Markdown components
+// are stable, so a keystroke, a streamed word, or an app update re-renders only
+// the rows whose message changed instead of re-parsing every earlier answer.
+const ConfirmationCard = memo(function ConfirmationCard({
   message,
   answering,
   onAnswer,
@@ -276,9 +279,9 @@ function ConfirmationCard({
       )}
     </li>
   )
-}
+})
 
-function ActivityRow({
+const ActivityRow = memo(function ActivityRow({
   message,
   onOpenSession,
 }: {
@@ -304,9 +307,9 @@ function ActivityRow({
       ))}
     </li>
   )
-}
+})
 
-function UserMessage({
+const UserMessage = memo(function UserMessage({
   message,
   onRetry,
   retrying,
@@ -351,7 +354,41 @@ function UserMessage({
       ) : null}
     </li>
   )
-}
+})
+
+const oracleRemarkPlugins = [remarkGfm, remarkSafeBreaks]
+
+const MarkdownMessage = memo(function MarkdownMessage({
+  message,
+  markdown,
+}: {
+  message: ManagerMessage
+  markdown: Components
+}) {
+  return (
+    <li className={`manager-message manager-message--${message.role}`}>
+      <div className="manager-message__markdown message__content">
+        <ReactMarkdown components={markdown} remarkPlugins={oracleRemarkPlugins}>
+          {message.content}
+        </ReactMarkdown>
+      </div>
+      <OracleMessageAttachments files={message.attachments} />
+      <MessageTime className="message__timestamp manager-message__time" value={message.createdAt} />
+    </li>
+  )
+})
+
+const StreamingReply = memo(function StreamingReply({ content, markdown }: { content: string; markdown: Components }) {
+  return (
+    <li aria-busy="true" className="manager-message manager-message--assistant manager-message--streaming">
+      <div className="manager-message__markdown message__content">
+        <ReactMarkdown components={markdown} remarkPlugins={oracleRemarkPlugins}>
+          {content}
+        </ReactMarkdown>
+      </div>
+    </li>
+  )
+})
 
 const answerOnlyStorageKey = 'agentic-remote:oracle-answer-only'
 
@@ -974,9 +1011,17 @@ export function ManagerAssistant({
     onOpenChange(false)
   }, [onOpenChange])
 
-  const openSession = useCallback((ref: ManagerSessionRef) => {
-    if (onOpenSession(ref) && phoneEnterCreatesNewline()) onOpenChange(false)
+  // App passes a new onOpenSession on every render; reading the latest through
+  // a ref keeps openSession, and so every row and Markdown link, stable.
+  const openSessionRef = useRef({ onOpenSession, onOpenChange })
+  useEffect(() => {
+    openSessionRef.current = { onOpenSession, onOpenChange }
   }, [onOpenChange, onOpenSession])
+
+  const openSession = useCallback((ref: ManagerSessionRef) => {
+    const latest = openSessionRef.current
+    if (latest.onOpenSession(ref) && phoneEnterCreatesNewline()) latest.onOpenChange(false)
+  }, [])
 
   const markdown = useMemo<Components>(() => ({
     a({ href, children }) {
@@ -1074,7 +1119,7 @@ export function ManagerAssistant({
     }
   }
 
-  async function act(message: ManagerMessage, work: () => Promise<ManagerMessage>) {
+  const act = useCallback(async (message: ManagerMessage, work: () => Promise<ManagerMessage>) => {
     setBusyMessage(message.id)
     setSendError(undefined)
     try {
@@ -1085,7 +1130,15 @@ export function ManagerAssistant({
     } finally {
       setBusyMessage(undefined)
     }
-  }
+  }, [updateSnapshot])
+
+  const retryMessage = useCallback((message: ManagerMessage) => {
+    void act(message, () => retryManagerMessage(message.id))
+  }, [act])
+
+  const answerConfirmation = useCallback((message: ManagerMessage, accept: boolean) => {
+    void act(message, () => resolveManagerConfirmation(message.id, accept))
+  }, [act])
 
   async function startOver() {
     setConfirmReset(false)
@@ -1319,7 +1372,7 @@ export function ManagerAssistant({
                   <UserMessage
                     key={message.id}
                     message={message}
-                    onRetry={(next) => void act(next, () => retryManagerMessage(next.id))}
+                    onRetry={retryMessage}
                     retrying={busyMessage === message.id}
                   />
                 )
@@ -1330,7 +1383,7 @@ export function ManagerAssistant({
                     answering={busyMessage === message.id}
                     key={message.id}
                     message={message}
-                    onAnswer={(next, accept) => void act(next, () => resolveManagerConfirmation(next.id, accept))}
+                    onAnswer={answerConfirmation}
                     onOpenSession={openSession}
                   />
                 )
@@ -1338,26 +1391,10 @@ export function ManagerAssistant({
               if (message.role === 'activity') {
                 return <ActivityRow key={message.id} message={message} onOpenSession={openSession} />
               }
-              return (
-                <li className={`manager-message manager-message--${message.role}`} key={message.id}>
-                  <div className="manager-message__markdown message__content">
-                    <ReactMarkdown components={markdown} remarkPlugins={[remarkGfm, remarkSafeBreaks]}>
-                      {message.content}
-                    </ReactMarkdown>
-                  </div>
-                  <OracleMessageAttachments files={message.attachments} />
-                  <MessageTime className="message__timestamp manager-message__time" value={message.createdAt} />
-                </li>
-              )
+              return <MarkdownMessage key={message.id} markdown={markdown} message={message} />
             })}
             {streaming ? (
-              <li aria-busy="true" className="manager-message manager-message--assistant manager-message--streaming">
-                <div className="manager-message__markdown message__content">
-                  <ReactMarkdown components={markdown} remarkPlugins={[remarkGfm, remarkSafeBreaks]}>
-                    {streaming.content}
-                  </ReactMarkdown>
-                </div>
-              </li>
+              <StreamingReply content={streaming.content} markdown={markdown} />
             ) : working ? (
               <li className="manager-message manager-message--thinking">
                 <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={14} />

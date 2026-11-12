@@ -18,7 +18,7 @@ function eventsFor(source: string): DocumentRenderEvent[] {
   const { tree, outline } = renderDocumentTree(source)
   const chunks = splitDocumentTree(tree, 20)
   return [
-    ...chunks.map((chunk, index): DocumentRenderEvent => ({ kind: 'chunk', index, count: chunks.length, tree: chunk })),
+    ...chunks.map((tree): DocumentRenderEvent => ({ kind: 'chunk', tree })),
     { kind: 'done', outline },
   ]
 }
@@ -38,8 +38,8 @@ function controlledRenderer() {
   return { renderer, calls }
 }
 
-function Reader({ source }: { source?: string }) {
-  const view = useMarkdownDocument(source, components)
+function Reader({ source, using = components }: { source?: string; using?: Components }) {
+  const view = useMarkdownDocument(source, using)
   return (
     <div data-outline={view.outline.map((heading) => heading.id).join(',')} data-ready={String(view.ready)} data-testid="reader">
       {view.content}
@@ -54,6 +54,17 @@ function show(renderer: DocumentRenderer, source?: string) {
     </DocumentRendererContext.Provider>,
   )
 }
+
+/** Lets one frame pass: the hook draws at most one chunk in it. */
+async function nextFrame() {
+  await act(async () => {
+    vi.advanceTimersToNextFrame()
+    // The fake clock delays a zero-delay timer set during a frame by 1 ms.
+    await vi.advanceTimersByTimeAsync(1)
+  })
+}
+
+const drawnChunks = () => screen.getByTestId('reader').querySelectorAll('.document-chunk').length
 
 /** Lets React draw, then runs the next chunk's timer, until nothing is left to draw. */
 async function settle() {
@@ -94,6 +105,58 @@ describe('useMarkdownDocument', () => {
     expect(screen.getByTestId('reader')).toHaveAttribute(
       'data-outline', outlineFromMarkdown(markdown).map((heading) => heading.id).join(','),
     )
+  })
+
+  it('draws one chunk per frame, however many have arrived', async () => {
+    const { renderer, calls } = controlledRenderer()
+    show(renderer, markdown)
+    act(() => eventsFor(markdown).forEach((event) => calls[0]!.emit(event)))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(drawnChunks()).toBe(0)
+    await nextFrame()
+    expect(drawnChunks()).toBe(1)
+    await nextFrame()
+    expect(drawnChunks()).toBe(2)
+  })
+
+  it('keeps the opening on the page through a restart until the whole document is drawn over it', async () => {
+    const { renderer, calls } = controlledRenderer()
+    show(renderer, markdown)
+    act(() => eventsFor('# First\n\nOpening paragraph.\n').slice(0, -1).forEach((event) => calls[0]!.emit(event)))
+    await settle()
+    expect(screen.getByText('Opening paragraph.')).toBeInTheDocument()
+
+    act(() => calls[0]!.emit({ kind: 'restart' }))
+    expect(screen.getByText('Opening paragraph.')).toBeInTheDocument()
+    expect(screen.queryByText('Rendering document…')).not.toBeInTheDocument()
+
+    act(() => eventsFor(markdown).forEach((event) => calls[0]!.emit(event)))
+    await settle()
+    expect(screen.getAllByText('Opening paragraph.')).toHaveLength(1)
+    expect(screen.getByText('Closing paragraph.')).toBeInTheDocument()
+    expect(drawnChunks()).toBe(eventsFor(markdown).length - 1)
+    expect(screen.getByTestId('reader')).toHaveAttribute('data-ready', 'true')
+  })
+
+  it('keeps the document on the page while new components draw it again', async () => {
+    const { renderer, calls } = controlledRenderer()
+    const view = show(renderer, markdown)
+    act(() => eventsFor(markdown).forEach((event) => calls[0]!.emit(event)))
+    await settle()
+
+    const marked: Components = { p: ({ node: _node, ...props }) => <p data-marked="yes" {...props} /> }
+    view.rerender(
+      <DocumentRendererContext.Provider value={renderer}>
+        <Reader source={markdown} using={marked} />
+      </DocumentRendererContext.Provider>,
+    )
+    expect(screen.getByText('Closing paragraph.')).toBeInTheDocument()
+    expect(calls).toHaveLength(1)
+    await settle()
+    expect(screen.getByText('Closing paragraph.')).toHaveAttribute('data-marked', 'yes')
+    expect(screen.getByTestId('reader')).toHaveAttribute('data-ready', 'true')
   })
 
   it('cancels the previous document and never shows its late chunks', async () => {

@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { outlineFromMarkdown } from '../markdown-navigation'
-import { renderDocumentEvents } from './pipeline'
+import { documentRenderEvents } from './pipeline'
 import type { DocumentRenderEvent } from './pipeline'
 import { createWorkerRenderer, synchronousRenderer } from './renderer'
 import type { RendererWorker } from './renderer'
-import { handleRenderRequests } from './worker-handler'
+import { handleRenderRequest } from './worker-handler'
 
 const markdown = '# One\n\nText.\n\n## Two\n'
 
@@ -34,61 +34,72 @@ describe('synchronous renderer', () => {
     synchronousRenderer.render(markdown, (event) => events.push(event))
     expect(events.map((event) => event.kind)).toEqual(['chunk', 'done'])
     expect(events.at(-1)).toEqual({ kind: 'done', outline: outlineFromMarkdown(markdown) })
-    expect(synchronousRenderer.renderNow?.(markdown).outline).toEqual(outlineFromMarkdown(markdown))
+    expect(synchronousRenderer.renderNow?.(markdown)?.outline).toEqual(outlineFromMarkdown(markdown))
   })
 })
 
 describe('worker renderer', () => {
-  it('routes replies to their render and drops them once cancelled', () => {
-    const worker = new FakeWorker()
-    const renderer = createWorkerRenderer(() => worker)
-    const first = vi.fn()
-    const second = vi.fn()
-    const cancelFirst = renderer.render('# a', first)
-    renderer.render('# b', second)
-    expect(worker.posted).toEqual([{ type: 'render', id: 1, source: '# a' }, { type: 'render', id: 2, source: '# b' }])
+  const large = `# Large\n\n${'A paragraph of text that keeps going. '.repeat(400)}\n`
 
-    worker.reply({ id: 2, kind: 'done', outline: [] })
-    cancelFirst()
-    expect(worker.posted.at(-1)).toEqual({ type: 'cancel', id: 1 })
-    worker.reply({ id: 1, kind: 'done', outline: [] })
-    worker.reply({ id: 2, kind: 'done', outline: [] })
-    expect(first).not.toHaveBeenCalled()
-    expect(second).toHaveBeenCalledOnce()
-  })
-
-  it('fails pending renders when the worker stops, and starts a fresh one next time', () => {
+  function startWorkers() {
     const workers: FakeWorker[] = []
     const renderer = createWorkerRenderer(() => {
       workers.push(new FakeWorker())
       return workers.at(-1)!
     })
-    const pending = vi.fn()
-    renderer.render('# a', pending)
+    return { renderer, workers }
+  }
+
+  it('renders each document in its own worker and stops it when done', () => {
+    const { renderer, workers } = startWorkers()
+    const events = vi.fn()
+    renderer.render(large, events)
+    renderer.render(markdown, vi.fn())
+    expect(workers.map((worker) => worker.posted)).toEqual([[large], [markdown]])
+
+    workers[0]!.reply({ kind: 'chunk', tree: { type: 'root', children: [] } })
+    workers[0]!.reply({ kind: 'done', outline: [] })
+    expect(events.mock.calls.map(([event]) => (event as DocumentRenderEvent).kind)).toEqual(['chunk', 'done'])
+    expect(workers.map((worker) => worker.terminated)).toEqual([true, false])
+  })
+
+  it('stops the worker when cancelled and ignores anything it still sends', () => {
+    const { renderer, workers } = startWorkers()
+    const events = vi.fn()
+    renderer.render(large, events)()
+    expect(workers[0]!.terminated).toBe(true)
+    workers[0]!.reply({ kind: 'done', outline: [] })
+    expect(events).not.toHaveBeenCalled()
+  })
+
+  it('reports a worker that stops or cannot start', () => {
+    const { renderer, workers } = startWorkers()
+    const stopped = vi.fn()
+    renderer.render(large, stopped)
     workers[0]!.fail('out of memory')
-    expect(pending).toHaveBeenCalledWith({ kind: 'error', message: 'out of memory' })
+    expect(stopped).toHaveBeenCalledWith({ kind: 'error', message: 'out of memory' })
     expect(workers[0]!.terminated).toBe(true)
 
-    renderer.render('# b', vi.fn())
-    expect(workers).toHaveLength(2)
-    expect(workers[1]!.posted).toEqual([{ type: 'render', id: 2, source: '# b' }])
+    const blocked = vi.fn()
+    createWorkerRenderer(() => {
+      throw new Error('blocked by policy')
+    }).render(large, blocked)
+    expect(blocked).toHaveBeenCalledWith({ kind: 'error', message: 'blocked by policy' })
+  })
+
+  it('renders small documents on the spot instead of starting a worker', () => {
+    const start = vi.fn()
+    const renderer = createWorkerRenderer(start)
+    expect(renderer.renderNow?.(markdown)?.outline).toEqual(outlineFromMarkdown(markdown))
+    expect(renderer.renderNow?.(large)).toBeUndefined()
+    expect(start).not.toHaveBeenCalled()
   })
 })
 
 describe('worker message handling', () => {
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  it('renders queued requests in order and skips one cancelled before its turn', () => {
-    vi.useFakeTimers()
+  it('posts every render event in order', () => {
     const posted: unknown[] = []
-    const handle = handleRenderRequests((message) => posted.push(message))
-    handle({ type: 'render', id: 1, source: '# a' })
-    handle({ type: 'render', id: 2, source: markdown })
-    handle({ type: 'cancel', id: 1 })
-    expect(posted).toEqual([])
-    vi.runAllTimers()
-    expect(posted).toEqual(renderDocumentEvents(markdown).map((event) => ({ id: 2, ...event })))
+    handleRenderRequest((message) => posted.push(message))(markdown)
+    expect(posted).toEqual([...documentRenderEvents(markdown)])
   })
 })

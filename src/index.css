@@ -2848,8 +2848,11 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* A long document is drawn in chunks, each a block of its own (see
+   use-markdown-document.ts); its blocks are treated as the body's own. */
 .message__content > *,
-.markdown-body > * {
+.markdown-body > *,
+.markdown-body > .document-chunk > * {
   max-width: 100%;
 }
 
@@ -2889,13 +2892,27 @@ button {
 }
 
 .message__content > :first-child,
-.markdown-body > :first-child {
+.markdown-body > :first-child,
+.markdown-body > .document-chunk:first-child > :first-child {
   margin-top: 0;
 }
 
 .message__content > :last-child,
-.markdown-body > :last-child {
+.markdown-body > :last-child,
+.markdown-body > .document-chunk:last-child > :last-child {
   margin-bottom: 0;
+}
+
+/* Appears only if a long document takes a noticeable moment to draw. */
+.document-rendering {
+  color: var(--muted);
+  animation: document-rendering-appear 0.2s ease-out 0.4s both;
+}
+
+@keyframes document-rendering-appear {
+  from {
+    opacity: 0;
+  }
 }
 
 .message__content p,

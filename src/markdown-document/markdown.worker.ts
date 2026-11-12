@@ -1,10 +1,9 @@
-import { handleRenderRequests } from './worker-handler'
-import type { RenderRequest } from './worker-handler'
+import { handleRenderRequest } from './worker-handler'
 
-// Parses Markdown documents off the page's thread; see renderer.ts.
+// Parses one Markdown document off the page's thread; see renderer.ts.
 const scope = globalThis as unknown as {
-  onmessage: ((event: MessageEvent<RenderRequest>) => void) | null
+  onmessage: ((event: MessageEvent<string>) => void) | null
   postMessage(message: unknown): void
 }
-const handle = handleRenderRequests((message) => scope.postMessage(message))
-scope.onmessage = (event) => handle(event.data)
+const render = handleRenderRequest((event) => scope.postMessage(event))
+scope.onmessage = (event) => render(event.data)

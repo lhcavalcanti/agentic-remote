@@ -104,7 +104,7 @@ import {
 import { HubSignInExpiredError, setHubSignInExpired } from './hub-sign-in'
 import { composerMaximumHeight } from './composer-sizing'
 import { DreamerApiError, getDreamer } from './dreamer-api'
-import { renderDocumentEvents } from './markdown-document/pipeline'
+import { documentRenderEvents } from './markdown-document/pipeline'
 import { DocumentRendererContext } from './markdown-document/renderer'
 import type { DocumentRenderer } from './markdown-document/renderer'
 import { PWA_UPDATE_EVENT } from './pwa'
@@ -19452,7 +19452,7 @@ describe('App', () => {
     const held: (() => void)[] = []
     const renderer: DocumentRenderer = {
       render(source, emit) {
-        const deliver = () => renderDocumentEvents(source).forEach(emit)
+        const deliver = () => [...documentRenderEvents(source)].forEach(emit)
         if (source.startsWith('# Guide')) held.push(deliver)
         else queueMicrotask(deliver)
         return () => undefined

@@ -4372,6 +4372,34 @@ describe('App', () => {
     expect(screen.getByText('No readable time').closest('.message')?.querySelector('time')).toBeNull()
   })
 
+  it('collapses a long message you sent behind Show all, but never an agent reply', async () => {
+    const steps = Array.from({ length: 14 }, (_, index) => `Step ${index + 1}: check the build output.`)
+    const longSession = {
+      ...session,
+      messages: [
+        { id: 'sent-long', role: 'user' as const, content: steps.join('\n'), createdAt: '2026-07-22T00:00:00.000Z' },
+        {
+          id: 'reply-long',
+          role: 'assistant' as const,
+          content: steps.join('\n').replaceAll('Step', 'Done'),
+          createdAt: '2026-07-22T00:00:01.000Z',
+        },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([longSession])
+    vi.mocked(getSession).mockResolvedValue(longSession)
+    render(<App />)
+
+    const sent = (await screen.findByText(/Step 14:/)).closest('.message') as HTMLElement
+    expect(sent.querySelector('.message__content')).toHaveClass('message__content--collapsed')
+    fireEvent.click(within(sent).getByRole('button', { name: 'Show all' }))
+    expect(within(sent).getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true')
+    expect(sent.querySelector('.message__content')).not.toHaveClass('message__content--collapsed')
+
+    const reply = screen.getByText(/Done 14:/).closest('.message') as HTMLElement
+    expect(within(reply).queryByRole('button', { name: /^Show (all|less)$/ })).toBeNull()
+  })
+
   it('renders MCP activity as a compact, identifiable tool row', async () => {
     const mcpSession: ManagedSession = {
       ...session,
@@ -11233,6 +11261,26 @@ describe('App', () => {
     const emit = (event: unknown) => act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
       data: JSON.stringify(event),
     } as MessageEvent))
+
+    it('collapses a long steer behind Show all while it waits', async () => {
+      vi.mocked(listSessions).mockResolvedValue([running])
+      vi.mocked(getSession).mockResolvedValue(running)
+      vi.mocked(sendMessage).mockResolvedValue(running)
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message')
+      await act(async () => {})
+
+      const longSteer = Array.from({ length: 14 }, (_, index) => `Also check step ${index + 1}.`).join('\n')
+      fireEvent.change(textarea, { target: { value: longSteer } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+
+      const bubble = await screen.findByRole('article', {
+        name: 'Your message was sent to the terminal and is waiting for the agent',
+      })
+      expect(within(bubble).getByRole('button', { name: 'Show all' })).toHaveAttribute('aria-expanded', 'false')
+      expect(bubble.querySelector('.message__content')).toHaveClass('message__content--plain', 'message__content--collapsed')
+      expect(bubble).toHaveTextContent('Also check step 14.')
+    })
 
     it('shows as sent, marked pending, until the transcript has it', async () => {
       vi.mocked(listSessions).mockResolvedValue([running])

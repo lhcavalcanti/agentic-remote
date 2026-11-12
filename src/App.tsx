@@ -369,6 +369,8 @@ import {
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
 import { MessageTime } from './MessageTime'
+import { PauseFollowingContext } from './sent-message'
+import { SentMessageContent } from './SentMessageContent'
 import { SessionPatchReceiver } from './session-patches'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import {
@@ -5041,6 +5043,20 @@ const TranscriptMessage = memo(function TranscriptMessage({
 }: {
   message: ChatMessage
 }) {
+  const body = message.content ? (
+    <ReactMarkdown
+      components={mermaidComponents}
+      remarkPlugins={[remarkGfm, remarkSafeBreaks]}
+    >
+      {message.content}
+    </ReactMarkdown>
+  ) : (
+    <span className="typing-indicator">
+      <i />
+      <i />
+      <i />
+    </span>
+  )
   return (
     <article className={`message message--${message.role}`} key={message.id}>
       <div className="message__metadata">
@@ -5053,22 +5069,13 @@ const TranscriptMessage = memo(function TranscriptMessage({
         </span>
         <MessageTime value={message.createdAt} />
       </div>
-      <div className="message__content">
-        {message.content ? (
-          <ReactMarkdown
-            components={mermaidComponents}
-            remarkPlugins={[remarkGfm, remarkSafeBreaks]}
-          >
-            {message.content}
-          </ReactMarkdown>
-        ) : (
-          <span className="typing-indicator">
-            <i />
-            <i />
-            <i />
-          </span>
-        )}
-      </div>
+      {message.role === 'user' ? (
+        <SentMessageContent className="message__content" content={message.content}>
+          {body}
+        </SentMessageContent>
+      ) : (
+        <div className="message__content">{body}</div>
+      )}
     </article>
   )
 }, (previous, next) => sameMessage(previous.message, next.message))
@@ -5093,7 +5100,9 @@ function PendingEchoMessage({ content }: { content: string }) {
           Pending in terminal
         </span>
       </div>
-      <div className="message__content message__content--plain">{content}</div>
+      <SentMessageContent className="message__content message__content--plain" content={content}>
+        {content}
+      </SentMessageContent>
     </article>
   )
 }
@@ -7851,6 +7860,13 @@ function App() {
   // Where the view last put the timeline's end. A scroll read there is the
   // content moving under a reader who stayed put, not the reader leaving.
   const pinnedScrollTopRef = useRef<number | undefined>(undefined)
+  // Expanding a long sent message is the reader going somewhere, as a scroll
+  // up would be: the view stops following the end until they return to it.
+  const pauseFollowing = useCallback(() => {
+    autoScrollRef.current = false
+    pinnedScrollTopRef.current = undefined
+    setFollowingLatest(false)
+  }, [])
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const audioInputRef = useRef<HTMLInputElement>(null)
   const attachmentQueueRef = useRef<Promise<void> | undefined>(undefined)
@@ -16877,18 +16893,20 @@ function App() {
               </p>
             </div>
           ) : (
-            <ConversationMessages
-              currentToolId={currentTool?.id}
-              onShowAll={expandSelectedTranscript}
-              showAll={expandedTranscripts[sessionKey(selected)] === true}
-              // Identity is the computer and the session together: two
-              // computers can hand out the same provider session id, and
-              // keying on the id alone reuses this component between them,
-              // carrying an expanded transcript across.
-              key={sessionKey(selected)}
-              messages={selected.messages}
-              pendingEchoes={selectedPendingEchoes}
-            />
+            <PauseFollowingContext.Provider value={pauseFollowing}>
+              <ConversationMessages
+                currentToolId={currentTool?.id}
+                onShowAll={expandSelectedTranscript}
+                showAll={expandedTranscripts[sessionKey(selected)] === true}
+                // Identity is the computer and the session together: two
+                // computers can hand out the same provider session id, and
+                // keying on the id alone reuses this component between them,
+                // carrying an expanded transcript across.
+                key={sessionKey(selected)}
+                messages={selected.messages}
+                pendingEchoes={selectedPendingEchoes}
+              />
+            </PauseFollowingContext.Provider>
           )}
           {selectedHasStaleInteraction && selectedShowsRecovery ? (
             <StaleInteractionRecoveryCard

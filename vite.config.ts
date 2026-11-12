@@ -171,6 +171,21 @@ export default defineConfig(({ command, mode }) => {
       __APP_VERSION__: JSON.stringify(packageVersion.version),
       __APP_BUILD_ID__: JSON.stringify(buildId),
     },
+    // Module workers (the Markdown document renderer) are built as modules.
+    // micromark's entity decoder resolves to a `browser` build that decodes
+    // through the DOM, which a worker does not have; take its plain build.
+    worker: {
+      format: 'es',
+      plugins: () => [{
+        name: 'worker-dom-free-entity-decoder',
+        enforce: 'pre',
+        async resolveId(source, importer, options) {
+          if (source !== 'decode-named-character-reference') return null
+          const resolved = await this.resolve(source, importer, { ...options, skipSelf: true })
+          return resolved && { ...resolved, id: resolved.id.replace(/index\.dom\.js$/, 'index.js') }
+        },
+      }],
+    },
     plugins: [
       react(),
       {

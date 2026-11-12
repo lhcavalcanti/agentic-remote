@@ -2858,6 +2858,36 @@ button {
   line-height: 1.55;
 }
 
+/* A long message the user sent starts collapsed to six lines on a phone or a
+   touch device (the app's phone rule); everywhere else it shows whole. */
+.message__expand {
+  display: none;
+}
+
+@media (max-width: 960px), (pointer: coarse) {
+  .message__content--collapsed {
+    max-height: calc(1.55em * 6);
+    overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.55em), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 1.55em), transparent);
+  }
+
+  .message__expand {
+    display: inline-flex;
+    min-height: 40px;
+    align-items: center;
+    margin-top: 2px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+}
+
 .message__content > :first-child,
 .markdown-body > :first-child {
   margin-top: 0;

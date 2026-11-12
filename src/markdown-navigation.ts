@@ -151,6 +151,11 @@ export function inlineText(markdown: string): string {
 export function outlineFromMarkdown(content: string): DocumentHeading[] {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(content)
   remarkSafeBreaks()(tree)
+  return outlineFromTree(tree)
+}
+
+/** The outline of an already parsed document, after `remarkSafeBreaks`. */
+export function outlineFromTree(tree: Root): DocumentHeading[] {
   const headings: DocumentHeading[] = []
   const used = new Map<string, number>()
   // Counted separately from the entries. An outline entry is found in the

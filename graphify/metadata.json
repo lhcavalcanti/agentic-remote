@@ -441,7 +441,7 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 237,
+  "communities": 223,
   "community_algorithm": "louvain-seed-42",
   "edges": 20681,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
@@ -527,7 +527,7 @@
     "e2e/capture-workbench-review.ts": "0c19d55997cf62800b731c21431051645e46d487214e646a85d9cf01f649e705",
     "e2e/capture-workspace.ts": "9e4822a55a435bfdc8cc739dfa30fe550ac5a9d421a8cbd51bbb1a6187cc2dcc",
     "e2e/check-workspace-review-regressions.ts": "984ac6eea437021174d1ab37b6b7b29630b57882711b8cb16060f286efe70a81",
-    "e2e/document-render.pw.ts": "a1c740cbec552a79aa6e1b428a8ff670699f29bd841511d168bb783f50a8d6fd",
+    "e2e/document-render.pw.ts": "cb6fbc2a679e215756a0dadb3833328aea579f8a415cb4e9e0d85eda10ac1467",
     "e2e/fixtures/fake-vad.ts": "af55cfc7a2df0f8f7a819b82f000ae06c60b6916bbd23c775481ffa1c7d0e8e6",
     "e2e/fixtures/fake-voice.ts": "33d7296553761b304dcbd8d6f3c223b7246f95d2593a274e575af2ab5c77b400",
     "e2e/fixtures/real-voice.ts": "58eb995cf6e4f694f915d14af35334df0155749813d22929bbb1f7ecdd19c26a",
@@ -923,11 +923,11 @@
     "src/markdown-document/document-jsx.ts": "f8438be1d181fef1e5ed156742e42223e18723de17a34806d17e87924408440c",
     "src/markdown-document/markdown.worker.ts": "376349bcef514d6a1f646126974a73acb1fab6e9d41bf8b347aac44b52a3cd68",
     "src/markdown-document/pipeline.test.tsx": "0b429bf8fd0bf2d0e14c31891db21c8f3b2a828cc8ffefa87d366e880556e7aa",
-    "src/markdown-document/pipeline.ts": "92370a69d6f05b5c1ad8ba2fb5644c09d46fd3802b1a7867a5982e9d82f1e8b2",
-    "src/markdown-document/renderer.test.ts": "89db0b8b83efc81ff1ec47489598332c6db4fcf751487a8a587a45f5d3386d09",
-    "src/markdown-document/renderer.ts": "828a6ca8759a935abc16cd8cd007a220744796297691f920e6103024ffebccba",
-    "src/markdown-document/use-markdown-document.test.tsx": "4904845e2dc07a7971c9a6f04cf67c09ac7d4b2497a35521a1f1883aea203daa",
-    "src/markdown-document/use-markdown-document.ts": "a550f0ab14509fa841dafebf05e57152a731724ee73a53ae1f989e70876e9e5f",
+    "src/markdown-document/pipeline.ts": "1f07933356d9adfeb1c57166be2e4e66305f308708cb0b208e0e75bcd4cdf5ca",
+    "src/markdown-document/renderer.test.ts": "9a4dc2e1f2c362bfe929f2185cb70660bbceeeddfd360791a6fdf52488864dc9",
+    "src/markdown-document/renderer.ts": "87303f55049388c0099ec79cd0a2014afb33d0d8aa0471a0ea5715fc4b845229",
+    "src/markdown-document/use-markdown-document.test.tsx": "55b62d9ceda61e7449230b25ffa344be13c0a5518867b09cfe771e32ce744f5f",
+    "src/markdown-document/use-markdown-document.ts": "9d7036fe7fd5d2ea761e9de8ca83833bc9ed5f3f992f1dea7cb08bbe4bb739c3",
     "src/markdown-document/worker-handler.ts": "f27680bb9310454ff0b1fca32ce39081a3637637eb3f767bf358d64655749b06",
     "src/markdown-navigation.test.ts": "f51d2999147549fddbe8cd41be99a01bbd6528ed2c3b275dcd9976898d1882dd",
     "src/markdown-navigation.ts": "db79c484e41a84ac97505088fb6a60f3ad7642746efd1684822dba45540261e0",
@@ -987,7 +987,7 @@
     "vite.config.ts": "2d56a9b191689c051176f2e9a34d78d1fc908aa8367de0db37629d4c2441c4da"
   },
   "mode": "local-ast-only",
-  "nodes": 7454,
+  "nodes": 7455,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1089,36 +1089,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6ac27109e00890af2289da650b200166758a09658687b6657f580442efc1893f",
-    "communities.json": "b398ad23b6984da020623ecdb7de21ccba4b69265f6390f6a7b52793f9f6e5a0",
-    "graph.html": "8a3f8d0f0be55701ffe331c9c8aca8d03b1268c97a8e9a9ac27c01a2a56465aa",
-    "graph.json": "c3002cfbaf45f4ac9eebaa3890efd46a5a68fe682285cd93e398cdf9a2198560"
+    "GRAPH_REPORT.md": "3b860038c641e7ad73f7c600bd05098525fa04d953debb8d9874b017495582f8",
+    "communities.json": "1689fe04174ec2f1358c26b8cce252a4215ef593e80bd2275d94ab3bdbd37264",
+    "graph.html": "24026c67c2594522cdfb54f55275c70132c79426d1fc13950ce0774c71d8efe5",
+    "graph.json": "42d78c1786fa6a816cc08fe6e3053521e17eddb866db42397872b1e39d447ed3"
   },
   "schema_version": 1,
-  "source_commit": "0f92eca357b61683feeba918c9dc4f3c3c8079f7",
-  "source_fingerprint": "20e5c9f1f4f7021304c5f7578d76328ffbed6f4b1c95ce66808d989aa91e8b0e",
-  "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    "docs/app-spec.md",
-    "e2e/document-render.pw.ts",
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.test.tsx",
-    "src/App.tsx",
-    "src/index.css",
-    "src/markdown-document/markdown.worker.ts",
-    "src/markdown-document/pipeline.test.tsx",
-    "src/markdown-document/pipeline.ts",
-    "src/markdown-document/renderer.test.ts",
-    "src/markdown-document/renderer.ts",
-    "src/markdown-document/use-markdown-document.test.tsx",
-    "src/markdown-document/use-markdown-document.ts",
-    "src/markdown-document/worker-handler.ts",
-    "src/markdown-navigation.test.ts",
-    "src/markdown-navigation.ts",
-    "vite.config.ts"
-  ]
+  "source_commit": "b0372c57a47cac9aba19b2dd0f608e98b39ba11b",
+  "source_fingerprint": "4362aae4036d32758e89aca4fec46060e6598b8b3a4793c35ecce4c2ab600dbf",
+  "working_tree_changes": []
 }

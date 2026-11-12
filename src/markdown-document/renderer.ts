@@ -44,28 +44,36 @@ const renderNowLimit = 8_192
 
 /**
  * Renders each document in a worker of its own, so leaving a long document
- * stops its parse at once instead of holding up the next one.
+ * stops its parse at once instead of holding up the next one. A worker that
+ * finished its document is kept, loaded and warmed up, for the next one.
  */
 export function createWorkerRenderer(startWorker: () => RendererWorker = startMarkdownWorker): DocumentRenderer {
+  let spare: RendererWorker | undefined
   return {
     render(source, onEvent) {
       let worker: RendererWorker | undefined
-      let stopped = false
-      const stop = () => {
-        stopped = true
-        worker?.terminate()
+      let active = true
+      const end = (finished: boolean) => {
+        active = false
+        if (!worker) return
+        worker.onmessage = null
+        worker.onerror = null
+        if (finished && !spare) spare = worker
+        else worker.terminate()
+        worker = undefined
       }
       const fail = (message: string) => {
-        if (stopped) return
-        stop()
+        if (!active) return
+        end(false)
         onEvent({ kind: 'error', message })
       }
       try {
-        worker = startWorker()
+        worker = spare ?? startWorker()
+        spare = undefined
         worker.onmessage = ({ data }) => {
-          if (stopped) return
+          if (!active) return
           const event = data as DocumentRenderEvent
-          if (event.kind === 'done' || event.kind === 'error') stop()
+          if (event.kind === 'done' || event.kind === 'error') end(event.kind === 'done')
           onEvent(event)
         }
         worker.onerror = (error) => {
@@ -76,7 +84,9 @@ export function createWorkerRenderer(startWorker: () => RendererWorker = startMa
       } catch (error) {
         fail(error instanceof Error ? error.message : String(error))
       }
-      return stop
+      return () => {
+        if (active) end(false)
+      }
     },
     renderNow: (source) => (source.length <= renderNowLimit ? renderDocumentTree(source) : undefined),
   }

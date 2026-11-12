@@ -50,7 +50,7 @@ describe('worker renderer', () => {
     return { renderer, workers }
   }
 
-  it('renders each document in its own worker and stops it when done', () => {
+  it('gives a document a worker of its own and keeps a finished one for the next', () => {
     const { renderer, workers } = startWorkers()
     const events = vi.fn()
     renderer.render(large, events)
@@ -60,16 +60,24 @@ describe('worker renderer', () => {
     workers[0]!.reply({ kind: 'chunk', tree: { type: 'root', children: [] } })
     workers[0]!.reply({ kind: 'done', outline: [] })
     expect(events.mock.calls.map(([event]) => (event as DocumentRenderEvent).kind)).toEqual(['chunk', 'done'])
-    expect(workers.map((worker) => worker.terminated)).toEqual([true, false])
+    workers[1]!.reply({ kind: 'done', outline: [] })
+    expect(workers.map((worker) => worker.terminated)).toEqual([false, true])
+
+    renderer.render(large, vi.fn())
+    expect(workers).toHaveLength(2)
+    expect(workers[0]!.posted).toEqual([large, large])
   })
 
-  it('stops the worker when cancelled and ignores anything it still sends', () => {
+  it('stops a worker still rendering when cancelled and ignores anything it still sends', () => {
     const { renderer, workers } = startWorkers()
     const events = vi.fn()
     renderer.render(large, events)()
     expect(workers[0]!.terminated).toBe(true)
     workers[0]!.reply({ kind: 'done', outline: [] })
     expect(events).not.toHaveBeenCalled()
+
+    renderer.render(large, vi.fn())
+    expect(workers).toHaveLength(2)
   })
 
   it('reports a worker that stops or cannot start', () => {

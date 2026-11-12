@@ -107,18 +107,22 @@ describe('useMarkdownDocument', () => {
     )
   })
 
-  it('draws one chunk per frame, however many have arrived', async () => {
+  it('draws the first chunk at once and the rest one per frame, however many have arrived', async () => {
     const { renderer, calls } = controlledRenderer()
     show(renderer, markdown)
     act(() => eventsFor(markdown).forEach((event) => calls[0]!.emit(event)))
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
-    expect(drawnChunks()).toBe(0)
-    await nextFrame()
+    expect(drawnChunks()).toBe(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
     expect(drawnChunks()).toBe(1)
     await nextFrame()
     expect(drawnChunks()).toBe(2)
+    await nextFrame()
+    expect(drawnChunks()).toBe(3)
   })
 
   it('keeps the opening on the page through a restart until the whole document is drawn over it', async () => {

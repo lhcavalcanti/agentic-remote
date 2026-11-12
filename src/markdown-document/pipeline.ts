@@ -127,7 +127,7 @@ const topLevelHeading = /^#{1,6}(?:[ \t]|$)/
  * for short documents. The cut is only a likely block boundary: whoever shows
  * the opening must check it against the whole document's render.
  */
-export function documentOpening(source: string, limit = 32_768): string | undefined {
+export function documentOpening(source: string, limit = 16_384): string | undefined {
   if (source.length <= limit * 2) return undefined
   let cut: number | undefined
   let fence: string | undefined

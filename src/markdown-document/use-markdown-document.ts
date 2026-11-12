@@ -50,6 +50,11 @@ function chunkElement(tree: Root, index: number, components: Components): ReactE
   return createElement('div', { key: index, className: 'document-chunk' }, documentJsx(tree, components))
 }
 
+function soon(callback: () => void): () => void {
+  const timer = setTimeout(callback, 0)
+  return () => clearTimeout(timer)
+}
+
 /** Calls `callback` once the page has drawn its next frame. */
 function afterNextFrame(callback: () => void): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -113,7 +118,9 @@ export function useMarkdownDocument(source: string | undefined, components: Comp
     const { token, pass } = current
     const index = own.length
     const tree = current.trees[index]!
-    return afterNextFrame(() => {
+    // An empty page gets its first chunk at once; after that, one a frame.
+    const schedule = index === 0 && !behind.length ? soon : afterNextFrame
+    return schedule(() => {
       setDrawn((previous) => {
         if (previous.token === token && previous.pass === pass && previous.components === components) {
           if (previous.elements.length !== index) return previous
@@ -129,7 +136,7 @@ export function useMarkdownDocument(source: string | undefined, components: Comp
         }
       })
     })
-  }, [current, own, components])
+  }, [current, own, behind.length, components])
 
   // A worker that fails leaves the document to be drawn here, as before.
   const recovered = useMemo(

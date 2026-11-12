@@ -75,6 +75,38 @@ test('a long message you send starts collapsed on a phone, and reading it keeps 
   }
 })
 
+test('Show all keeps the first line where it was, however it is pressed', async ({ page }, testInfo) => {
+  await page.setViewportSize(phone)
+  const { fixture, sent, content } = await open(page, testInfo.project.use.baseURL!, 24)
+  /** The first line's offset from the top of the visible timeline. */
+  const firstLine = () => content.evaluate((element) =>
+    element.getBoundingClientRect().top - element.closest('.timeline')!.getBoundingClientRect().top)
+  const scrollFirstLineTo = (offset: number) => content.evaluate((element, wanted) => {
+    const timeline = element.closest('.timeline')!
+    timeline.scrollTop += element.getBoundingClientRect().top - timeline.getBoundingClientRect().top - wanted
+  }, offset)
+  try {
+    // Mid-conversation, the whole message in view: a tap.
+    await scrollFirstLineTo(160)
+    const before = await firstLine()
+    await sent.getByRole('button', { name: 'Show all' }).click()
+    await expect(sent.getByRole('button', { name: 'Show less' })).toBeAttached()
+    expect(Math.abs((await firstLine()) - before)).toBeLessThan(1)
+    await sent.getByRole('button', { name: 'Show less' }).click()
+
+    // Its start above the view and the toggle focused: the keyboard.
+    await scrollFirstLineTo(-60)
+    const above = await firstLine()
+    const showAll = sent.getByRole('button', { name: 'Show all' })
+    await showAll.focus()
+    await page.keyboard.press('Enter')
+    await expect(sent.getByRole('button', { name: 'Show less' })).toBeFocused()
+    expect(Math.abs((await firstLine()) - above)).toBeLessThan(1)
+  } finally {
+    fixture.assertHealthy()
+  }
+})
+
 test('Show less on a phone brings the collapsed message back into view', async ({ page }, testInfo) => {
   await page.setViewportSize(phone)
   const { fixture, sent, content } = await open(page, testInfo.project.use.baseURL!, 24)

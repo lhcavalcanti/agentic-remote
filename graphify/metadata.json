@@ -520,7 +520,7 @@
     "e2e/fixtures/fake-vad.ts": "af55cfc7a2df0f8f7a819b82f000ae06c60b6916bbd23c775481ffa1c7d0e8e6",
     "e2e/fixtures/fake-voice.ts": "33d7296553761b304dcbd8d6f3c223b7246f95d2593a274e575af2ab5c77b400",
     "e2e/fixtures/real-voice.ts": "58eb995cf6e4f694f915d14af35334df0155749813d22929bbb1f7ecdd19c26a",
-    "e2e/long-sent-message.pw.ts": "7f6286ae62c4f59a61551dae81a8d0cbf7a12a2dc772d52e85f76ae0a97a55c1",
+    "e2e/long-sent-message.pw.ts": "907b83e89f691468d7608d09571aad42dd01a2ef74d9564919df82d2809bef55",
     "e2e/nested-knowledge.pw.ts": "81eef00b2f302820e5efb66c32619c09d7378583bd3570723ff0b768161c93c9",
     "e2e/oracle-attachments.pw.ts": "6f2bb3d39ec86464e02ad77ea2912f231c52a5c1d86ed20a94c6f70ad9c90a8a",
     "e2e/oracle-conversation-real.test.ts": "b13c24bb2dd23c1328031b0b8627f0f44cd46993b45cba6dca34424baef3ca41",
@@ -1069,28 +1069,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "0f11e3e736861e25e28e355fd81156855c8df7181b3141d69eb904f45e4d68ba",
+    "GRAPH_REPORT.md": "bc29afc8879bddd763bd5282bae471fa144e1503e3322d5a69b99bffcf6f5509",
     "communities.json": "aa38d8ee8117ef2295acaa82beccacae3524b3770b40c745520c92c390d907bc",
-    "graph.html": "ff742580405707e483a161b9986b0d16cb8cfb602af4d28c89481294f18292bc",
-    "graph.json": "921e0f13e0942ff0894f7d108d066a19e820e10c76eb106d70f368fe86992f17"
+    "graph.html": "0c9a37cba33179216d787da230c00f04f20cba6abe53e3fedd2819342664c920",
+    "graph.json": "0008b498664b33d3e1b017243879ea11cfa0832cca0f727eeaaa289f8a7c2556"
   },
   "schema_version": 1,
-  "source_commit": "c241da8edd90c046e7e6c23aad525b3ae7324c67",
-  "source_fingerprint": "ad4864d9d67c1128fd0047a9e830bf44dc838e66e4295b1f2a32b6f6985c4fcf",
+  "source_commit": "2eeafad512d6818cac356d4dc454fdc40ad1a4d8",
+  "source_fingerprint": "7d9db8e03c5b93e36385dcba900a703bb21182049a1fc9349486ba6ebdbe2c65",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "e2e/long-sent-message.pw.ts",
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.test.tsx",
-    "src/App.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/SentMessageContent.test.tsx",
-    "src/SentMessageContent.tsx",
-    "src/index.css",
-    "src/sent-message.ts"
+    "e2e/long-sent-message.pw.ts"
   ]
 }

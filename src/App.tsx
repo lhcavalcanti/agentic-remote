@@ -155,16 +155,13 @@ import type { SessionSort } from './session-presentation'
 import { MermaidDiagram } from './MermaidDiagram.js'
 import {
   breadcrumbSegments,
-  outlineFromMarkdown,
   resolveDocumentPath,
   resolveDocumentLink,
-  rehypeDocumentHeadings,
   scrollToDocumentFragment,
   scrollToDocumentHeading,
   isExternalSource,
   pushNavigation,
   rememberScroll,
-  type DocumentHeading,
   type NavigationEntry,
 } from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
@@ -369,6 +366,7 @@ import {
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
 import { MessageTime } from './MessageTime'
+import { useMarkdownDocument } from './markdown-document/use-markdown-document'
 import { PauseFollowingContext } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
 import { SessionPatchReceiver } from './session-patches'
@@ -6300,6 +6298,17 @@ function KnowledgeReader({
   const contentRef = useRef<HTMLDivElement>(null)
   const contentScrollTop = useRef(0)
   const previousFilePath = useRef(file?.path)
+  const components = useMemo(
+    () => markdownComponentsFor(file?.path || '.', onLoadAsset),
+    [file?.path, onLoadAsset],
+  )
+  const markdownDocument = useMarkdownDocument(
+    file?.kind === 'markdown' && !raw ? file.content || '' : undefined,
+    components,
+  )
+  // A Markdown preview is drawn in the background; until then its anchors,
+  // headings, and full height are not on the page.
+  const documentReady = markdownDocument.ready || !(file?.kind === 'markdown' && !raw)
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -6309,17 +6318,26 @@ function KnowledgeReader({
     }
     if (previousFilePath.current !== file?.path) {
       contentScrollTop.current = 0
-    } else if (mode !== 'hidden') {
+    } else if (mode !== 'hidden' && documentReady) {
       if (contentScrollTop.current === 0) {
         contentScrollTop.current = content.scrollTop
       }
       content.scrollTop = contentScrollTop.current
     }
     previousFilePath.current = file?.path
-  }, [file, mode])
+  }, [file, mode, documentReady])
 
+  // Opening a file or a section is a navigation, carried out once the
+  // document is drawn, so a section further down is never reported missing.
+  const navigation = useRef({ handled: true })
   useEffect(() => {
+    navigation.current = { handled: false }
+  }, [file?.path, fragment])
+  useEffect(() => {
+    if (!documentReady || navigation.current.handled) return undefined
+    const pending = navigation.current
     const frame = requestAnimationFrame(() => {
+      pending.handled = true
       if (fragment !== undefined) {
         if (!scrollToDocumentFragment(contentRef.current, fragment)) {
           setLinkError(missingDocumentFragment(fragment))
@@ -6329,20 +6347,10 @@ function KnowledgeReader({
       }
     })
     return () => cancelAnimationFrame(frame)
-  }, [file?.path, fragment])
+  }, [file?.path, fragment, documentReady])
 
-  const outline = useMemo<DocumentHeading[]>(
-    () =>
-      file?.kind === 'markdown' && !raw
-        ? outlineFromMarkdown(file.content || '')
-        : [],
-    [file, raw],
-  )
+  const outline = markdownDocument.outline
   const crumbs = breadcrumbSegments(file?.path ?? listing?.path ?? '.', root.name)
-  const components = useMemo(
-    () => markdownComponentsFor(file?.path || '.', onLoadAsset),
-    [file?.path, onLoadAsset],
-  )
 
   if (!file) {
     return (
@@ -6447,7 +6455,11 @@ function KnowledgeReader({
           followMarkdownLink(event, file.path, onOpenFile, setLinkError)
         }
         onScroll={(event) => {
-          contentScrollTop.current = event.currentTarget.scrollTop
+          // While a document is still being drawn its height is short, and
+          // the clamped position must not replace the reader's place.
+          if (documentReady) {
+            contentScrollTop.current = event.currentTarget.scrollTop
+          }
         }}
         ref={contentRef}
       >
@@ -6458,13 +6470,7 @@ function KnowledgeReader({
         ) : file.kind === 'html' && !raw ? (
           <HtmlPreview name={file.name} source={file.content || ''} />
         ) : file.kind === 'markdown' && !raw ? (
-          <ReactMarkdown
-            components={components}
-            rehypePlugins={[rehypeDocumentHeadings]}
-            remarkPlugins={[remarkGfm, remarkSafeBreaks]}
-          >
-            {file.content || ''}
-          </ReactMarkdown>
+          markdownDocument.content
         ) : (
           <pre>{file.content}</pre>
         )}
@@ -6761,35 +6767,6 @@ function WorkspaceDialog({
     updateDirectoryHistory,
   ])
 
-  useEffect(() => {
-    const top = pendingScrollRef.current ?? 0
-    pendingScrollRef.current = undefined
-    const fragment = pendingFragmentRef.current
-    pendingFragmentRef.current = undefined
-    // Wait for the rendered document before restoring its offset.
-    const frame = requestAnimationFrame(() => {
-      const element = previewContentRef.current
-      if (fragment !== undefined) {
-        if (!scrollToDocumentFragment(element, fragment)) {
-          setError(missingDocumentFragment(fragment))
-        }
-      } else if (element) {
-        element.scrollTop = top
-      }
-    })
-    return () => cancelAnimationFrame(frame)
-    // Deliberately not keyed on `raw`: toggling Rendered/Raw is not navigation
-    // and must not throw the reader back to the top.
-  }, [file?.path])
-
-  const outline = useMemo<DocumentHeading[]>(
-    () =>
-      file?.kind === 'markdown' && !raw
-        ? outlineFromMarkdown(file.content || '')
-        : [],
-    [file, raw],
-  )
-
   const markdownComponents = useMemo(
     () =>
       markdownComponentsFor(file?.path || '.', (assetPath) =>
@@ -6797,6 +6774,42 @@ function WorkspaceDialog({
       ),
     [file?.path, session.computerId, session.id],
   )
+  const markdownDocument = useMarkdownDocument(
+    file?.kind === 'markdown' && !raw ? file.content || '' : undefined,
+    markdownComponents,
+  )
+  // A Markdown preview is drawn in the background; until then its anchors,
+  // headings, and full height are not on the page.
+  const documentReady = markdownDocument.ready || !(file?.kind === 'markdown' && !raw)
+
+  // What a newly opened document should show -- a remembered offset or a
+  // section -- is taken when it arrives and applied once it is drawn.
+  const arrival = useRef<{ handled: boolean; top: number; fragment?: string }>({ handled: true, top: 0 })
+  useEffect(() => {
+    arrival.current = { handled: false, top: pendingScrollRef.current ?? 0, fragment: pendingFragmentRef.current }
+    pendingScrollRef.current = undefined
+    pendingFragmentRef.current = undefined
+  }, [file?.path])
+  useEffect(() => {
+    if (!documentReady || arrival.current.handled) return undefined
+    const pending = arrival.current
+    const frame = requestAnimationFrame(() => {
+      pending.handled = true
+      const element = previewContentRef.current
+      if (pending.fragment !== undefined) {
+        if (!scrollToDocumentFragment(element, pending.fragment)) {
+          setError(missingDocumentFragment(pending.fragment))
+        }
+      } else if (element) {
+        element.scrollTop = pending.top
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+    // Deliberately not keyed on `raw`: toggling Rendered/Raw is not navigation
+    // and must not throw the reader back to the top.
+  }, [file?.path, documentReady])
+
+  const outline = markdownDocument.outline
 
   const crumbs = breadcrumbSegments(
     listing?.path ?? '.',
@@ -7093,7 +7106,11 @@ function WorkspaceDialog({
                     setError,
                   )
                 }
-                onScroll={rememberCurrentScroll}
+                onScroll={() => {
+                  // A document still being drawn is short; its clamped
+                  // offset must not replace the reader's place.
+                  if (documentReady) rememberCurrentScroll()
+                }}
                 ref={previewContentRef}
               >
                 {file.kind === 'pdf' ? (
@@ -7103,13 +7120,7 @@ function WorkspaceDialog({
                 ) : file.kind === 'html' && !raw ? (
                   <HtmlPreview name={file.name} source={file.content || ''} />
                 ) : file.kind === 'markdown' && !raw ? (
-                  <ReactMarkdown
-                    components={markdownComponents}
-                    rehypePlugins={[rehypeDocumentHeadings]}
-                    remarkPlugins={[remarkGfm, remarkSafeBreaks]}
-                  >
-                    {file.content || ''}
-                  </ReactMarkdown>
+                  markdownDocument.content
                 ) : (
                   <pre>{file.content}</pre>
                 )}

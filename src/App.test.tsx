@@ -104,6 +104,9 @@ import {
 import { HubSignInExpiredError, setHubSignInExpired } from './hub-sign-in'
 import { composerMaximumHeight } from './composer-sizing'
 import { DreamerApiError, getDreamer } from './dreamer-api'
+import { renderDocumentEvents } from './markdown-document/pipeline'
+import { DocumentRendererContext } from './markdown-document/renderer'
+import type { DocumentRenderer } from './markdown-document/renderer'
 import { PWA_UPDATE_EVENT } from './pwa'
 import * as shell from './shell'
 
@@ -19421,6 +19424,58 @@ describe('App', () => {
     expect(await screen.findByText('This link points outside the document root.'))
       .toBeInTheDocument()
     expect(readWorkspaceFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('follows a section link only once the linked document has been drawn', async () => {
+    mockKnowledgeRoots([{
+      id: 'root-1',
+      computerId: computer.id,
+      computerName: computer.name,
+      path: '/home/tester/docs',
+      name: 'docs',
+      createdAt: '2026-08-01T00:00:00.000Z',
+    }])
+    vi.mocked(listKnowledgeEntries).mockImplementation(knowledgeListings({
+      '.': { path: '.', entries: [{ name: 'README.md', path: 'README.md', kind: 'markdown' }] },
+    }))
+    vi.mocked(readKnowledgeFile).mockImplementation(async (_root, path) => ({
+      path,
+      name: path,
+      kind: 'markdown',
+      mimeType: 'text/markdown',
+      size: 100,
+      content: path === 'README.md'
+        ? '# Knowledge start\n\n[Open guide](guide.md#late)'
+        : '# Guide\n\n## Early\n\n## Late\n',
+    }))
+    // Draws in the background, as the worker does; the guide waits for the test.
+    const held: (() => void)[] = []
+    const renderer: DocumentRenderer = {
+      render(source, emit) {
+        const deliver = () => renderDocumentEvents(source).forEach(emit)
+        if (source.startsWith('# Guide')) held.push(deliver)
+        else queueMicrotask(deliver)
+        return () => undefined
+      },
+    }
+    render(
+      <DocumentRendererContext.Provider value={renderer}>
+        <App />
+      </DocumentRendererContext.Provider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Session knowledge' }))
+    const tree = await screen.findByRole('navigation', { name: 'Knowledge' })
+    fireEvent.click(await within(tree).findByRole('treeitem', { name: /README.md/ }))
+    fireEvent.click(await screen.findByRole('link', { name: 'Open guide' }))
+
+    expect(await screen.findByText('Rendering document…')).toBeInTheDocument()
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+
+    act(() => held.splice(0).forEach((deliver) => deliver()))
+    const late = await screen.findByRole('heading', { name: 'Late' })
+    await waitFor(() => expect(late).toHaveFocus())
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
   })
 
   it('follows Knowledge Markdown links on the owning root and reports failed reads', async () => {

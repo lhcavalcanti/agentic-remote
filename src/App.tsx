@@ -6332,7 +6332,8 @@ function KnowledgeReader({
   // so one further down is never reported missing. A reader who scrolls the
   // Preview before then keeps their place.
   const navigation = useRef<{ handled: boolean; fragment?: string }>({ handled: true })
-  useEffect(() => {
+  // Taken before the browser handles more input, so a reader's first scroll counts.
+  useLayoutEffect(() => {
     navigation.current = { handled: false, fragment }
   }, [file?.path, fragment])
   useEffect(() => {
@@ -6808,7 +6809,8 @@ function WorkspaceDialog({
   // Preview, through a switch to Source and back, unless the reader scrolls
   // the Preview before then.
   const arrival = useRef<{ handled: boolean; top: number; fragment?: string }>({ handled: true, top: 0 })
-  useEffect(() => {
+  // Taken before the browser handles more input, so a reader's first scroll counts.
+  useLayoutEffect(() => {
     arrival.current = { handled: false, top: pendingScrollRef.current ?? 0, fragment: pendingFragmentRef.current }
     pendingScrollRef.current = undefined
     pendingFragmentRef.current = undefined

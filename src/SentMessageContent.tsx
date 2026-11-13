@@ -1,11 +1,12 @@
 import { useContext, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { isLongSentMessage, PauseFollowingContext } from './sent-message'
+import { PauseFollowingContext, sentMessageLength } from './sent-message'
 
 /**
  * The text of a message the user sent. A long one starts collapsed behind
- * Show all; the stylesheet confines collapsing to phones and touch devices,
- * and the whole text always stays in the page for copying and screen readers.
+ * Show all; marked with its length, it is collapsed by the stylesheet only
+ * where it passes the device's limit. The whole text always stays in the page
+ * for copying and screen readers.
  */
 export function SentMessageContent({
   content,
@@ -30,11 +31,12 @@ export function SentMessageContent({
     contentRef.current?.closest('.message')?.scrollIntoView?.({ block: 'nearest' })
   }, [expanded])
 
-  if (!isLongSentMessage(content)) return <div className={className}>{children}</div>
+  const length = sentMessageLength(content)
+  if (length === 'short') return <div className={className}>{children}</div>
   return (
     <>
       <div
-        className={expanded ? className : `${className} message__content--collapsed`}
+        className={`${className} message__content--${length}${expanded ? '' : ' message__content--collapsed'}`}
         id={id}
         ref={contentRef}
       >
@@ -43,7 +45,7 @@ export function SentMessageContent({
       <button
         aria-controls={id}
         aria-expanded={expanded}
-        className="message__expand"
+        className={`message__expand message__expand--${length}`}
         onClick={() => {
           if (expanded) collapsedByReader.current = true
           else pauseFollowing()

@@ -44,7 +44,7 @@ import {
 import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
 import { MessageTime } from './MessageTime'
-import { isLongSentMessage } from './sent-message'
+import { sentMessageLength } from './sent-message'
 import { OracleAttachmentChips, OracleMessageAttachments } from './OracleAttachments'
 import { useOracleAttachments } from './use-oracle-attachments'
 import { remarkSafeBreaks } from './remark-safe-breaks'
@@ -321,15 +321,21 @@ const UserMessage = memo(function UserMessage({
 }) {
   const retryable = !message.removedAttachmentNames?.length
     && (message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled')
-  const long = isLongSentMessage(message.content)
+  // Folded by the conversation's rule; the stylesheet applies the device's limit.
+  const length = sentMessageLength(message.content)
   const [expanded, setExpanded] = useState(false)
+  const textClass = length === 'short'
+    ? 'manager-message__text'
+    : `manager-message__text manager-message__text--${length}${expanded ? '' : ' manager-message__text--clamped'}`
   return (
     <li className={`manager-message manager-message--user manager-message--${message.state ?? 'done'}`}>
-      <p className={`manager-message__text${long && !expanded ? ' manager-message__text--clamped' : ''}`}>
-        {message.content}
-      </p>
-      {long ? (
-        <button className="manager-message__expand" onClick={() => setExpanded((value) => !value)} type="button">
+      <p className={textClass}>{message.content}</p>
+      {length !== 'short' ? (
+        <button
+          className={`manager-message__expand manager-message__expand--${length}`}
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
           {expanded ? 'Show less' : 'Show all'}
         </button>
       ) : null}

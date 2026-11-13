@@ -1039,13 +1039,14 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   shown time MUST gain its date once the viewer's day turns, including after
   the device sleeps, without a reload. An
   unreadable time MUST show nothing rather than break the transcript.
-- On a phone or touch device (a coarse pointer, or a window at most 960px
-  wide), a message the user sent that is longer than 12 lines or 600
-  characters MUST start collapsed to its first six lines behind **Show all**;
-  **Show less** collapses it again. Agent messages MUST NOT collapse, and other
-  layouts MUST show sent messages whole. Expanding MUST keep the message where
-  it is and stop following the end; collapsing MUST bring the message back into
-  view. The full text MUST remain in the page.
+- A message the user sent MUST start collapsed behind **Show all** once it
+  passes the device's limit: on a phone or touch device (a coarse pointer, or a
+  window at most 960px wide), longer than 12 lines or 600 characters, to its
+  first six lines; elsewhere, longer than 30 lines or 2,000 characters, to its
+  first twelve. **Show less** collapses it again. Agent messages MUST NOT
+  collapse. Expanding MUST keep the message where it is and stop following the
+  end; collapsing MUST bring the message back into view. The full text MUST
+  remain in the page. Oracle MUST fold a message sent to it by the same limits.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
 - Parallel tools MUST retain independent running/completed/failed states.

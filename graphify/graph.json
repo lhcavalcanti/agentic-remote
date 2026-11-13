@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "37009690bd8dbce55a0792f5eded0eff56d5e549",
+  "built_at_commit": "3427e981e6ad80b27175fb82e4ce2f6a43f78320",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -218764,7 +218764,7 @@
       "relation": "contains",
       "source": "src_markdown_document_pipeline",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L186",
+      "source_location": "L190",
       "target": "src_markdown_document_pipeline_documentopening",
       "weight": 1.0
     },
@@ -218775,7 +218775,7 @@
       "relation": "contains",
       "source": "src_markdown_document_pipeline",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L145",
+      "source_location": "L149",
       "target": "src_markdown_document_pipeline_documentparts",
       "weight": 1.0
     },
@@ -218786,7 +218786,7 @@
       "relation": "contains",
       "source": "src_markdown_document_pipeline",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L226",
+      "source_location": "L230",
       "target": "src_markdown_document_pipeline_documentrenderevent",
       "weight": 1.0
     },
@@ -218797,7 +218797,7 @@
       "relation": "contains",
       "source": "src_markdown_document_pipeline",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L250",
+      "source_location": "L254",
       "target": "src_markdown_document_pipeline_documentrenderevents",
       "weight": 1.0
     },
@@ -218830,7 +218830,7 @@
       "relation": "contains",
       "source": "src_markdown_document_pipeline",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L105",
+      "source_location": "L109",
       "target": "src_markdown_document_pipeline_drawsteps",
       "weight": 1.0
     },
@@ -218841,7 +218841,7 @@
       "relation": "contains",
       "source": "src_markdown_document_pipeline",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L102",
+      "source_location": "L106",
       "target": "src_markdown_document_pipeline_growable",
       "weight": 1.0
     },
@@ -218852,7 +218852,7 @@
       "relation": "contains",
       "source": "src_markdown_document_pipeline",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L167",
+      "source_location": "L171",
       "target": "src_markdown_document_pipeline_htmlblocks",
       "weight": 1.0
     },
@@ -218896,7 +218896,7 @@
       "relation": "contains",
       "source": "src_markdown_document_pipeline",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L234",
+      "source_location": "L238",
       "target": "src_markdown_document_pipeline_samenode",
       "weight": 1.0
     },
@@ -219003,7 +219003,7 @@
       "relation": "calls",
       "source": "src_markdown_document_pipeline_documentparts",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L152",
+      "source_location": "L156",
       "target": "src_markdown_document_pipeline_drawsteps",
       "weight": 1.0
     },
@@ -219015,7 +219015,7 @@
       "relation": "indirect_call",
       "source": "src_markdown_document_pipeline_documentparts",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L153",
+      "source_location": "L157",
       "target": "src_markdown_document_pipeline_withoutpositions",
       "weight": 1.0
     },
@@ -219027,7 +219027,7 @@
       "relation": "calls",
       "source": "src_markdown_document_pipeline_documentrenderevents",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L255",
+      "source_location": "L259",
       "target": "src_markdown_document_pipeline_documentopening",
       "weight": 1.0
     },
@@ -219039,7 +219039,7 @@
       "relation": "calls",
       "source": "src_markdown_document_pipeline_documentrenderevents",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L257",
+      "source_location": "L261",
       "target": "src_markdown_document_pipeline_documentparts",
       "weight": 1.0
     },
@@ -219051,7 +219051,7 @@
       "relation": "calls",
       "source": "src_markdown_document_pipeline_documentrenderevents",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L256",
+      "source_location": "L260",
       "target": "src_markdown_document_pipeline_renderdocumenttree",
       "weight": 1.0
     },
@@ -219063,7 +219063,7 @@
       "relation": "calls",
       "source": "src_markdown_document_pipeline_documentrenderevents",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L265",
+      "source_location": "L269",
       "target": "src_markdown_document_pipeline_samenode",
       "weight": 1.0
     },
@@ -219075,7 +219075,7 @@
       "relation": "calls",
       "source": "src_markdown_document_pipeline_drawsteps",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L114",
+      "source_location": "L118",
       "target": "src_markdown_document_pipeline_sourcelength",
       "weight": 1.0
     },
@@ -321228,7 +321228,7 @@
       "label": "documentOpening()",
       "norm_label": "documentopening()",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L186"
+      "source_location": "L190"
     },
     {
       "_callable": true,
@@ -321240,7 +321240,7 @@
       "label": "documentParts()",
       "norm_label": "documentparts()",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L145"
+      "source_location": "L149"
     },
     {
       "_callable": true,
@@ -321253,7 +321253,7 @@
       "label": "DocumentRenderEvent",
       "norm_label": "documentrenderevent",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L226"
+      "source_location": "L230"
     },
     {
       "_callable": true,
@@ -321265,7 +321265,7 @@
       "label": "documentRenderEvents()",
       "norm_label": "documentrenderevents()",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L250"
+      "source_location": "L254"
     },
     {
       "_callable": true,
@@ -321302,7 +321302,7 @@
       "label": "drawSteps()",
       "norm_label": "drawsteps()",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L105"
+      "source_location": "L109"
     },
     {
       "_origin": "ast",
@@ -321313,7 +321313,7 @@
       "label": "growable",
       "norm_label": "growable",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L102"
+      "source_location": "L106"
     },
     {
       "_origin": "ast",
@@ -321324,7 +321324,7 @@
       "label": "htmlBlocks",
       "norm_label": "htmlblocks",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L167"
+      "source_location": "L171"
     },
     {
       "_origin": "ast",
@@ -321372,7 +321372,7 @@
       "label": "sameNode()",
       "norm_label": "samenode()",
       "source_file": "src/markdown-document/pipeline.ts",
-      "source_location": "L234"
+      "source_location": "L238"
     },
     {
       "_callable": true,

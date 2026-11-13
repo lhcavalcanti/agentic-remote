@@ -483,7 +483,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "bff93412064a9a1e5a403a0b4cb71920aba04efafff69233e256aca82b94a636",
+    "docs/app-spec.md": "eec2b2fdd515e222fdc979726b52b6f3986fc5f66d3e42eb95916e6f7417cf8f",
     "docs/architecture.md": "7cd18b668f5792d250a763da97879f938a96c9a7150410805da62b2a8b68126b",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -925,7 +925,7 @@
     "src/markdown-document/draw.ts": "de91ea40a6ea8bc388818f81180701c6febcbd91d848ed21578a6ba01aa1e7d4",
     "src/markdown-document/markdown.worker.ts": "4825892b044a381fdad27d3200f79a3b3afbaf0817ddd922e7a4fcd007ceb2f1",
     "src/markdown-document/pipeline.test.tsx": "6e8ce2190032378d1c05cff33edb892ed29625fa1cae044942a1579b11490a70",
-    "src/markdown-document/pipeline.ts": "19d056dac9f691db280c78e3f4c116901b9b6f18e9a8ccc99d51c8b4d6246169",
+    "src/markdown-document/pipeline.ts": "a50e025107f07fab4445ef99fed332700ba9b1b2aa70863e71a759aaa6351d73",
     "src/markdown-document/renderer.test.ts": "904cd5783fd6b5ef21da754d42e62a6edd376d1f3b4a6058928048d91dcff573",
     "src/markdown-document/renderer.ts": "020570e9119f5509bd03a3ef14d85c12108fac622e9d9be02240c335e94ecb1f",
     "src/markdown-document/use-markdown-document.test.tsx": "4865da802f83ce8c438d03dfc42149d7b827336ae1f14245d66dc88b81a811d7",
@@ -1091,16 +1091,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "f4def1385554c683cf7f561793fdc689ffbbc430e9b9d67d643e4d5e7523bd3d",
+    "GRAPH_REPORT.md": "58193b616b52a26536aab9086b53adf03a7875e8b3bc520ccd8ce022caba40ad",
     "communities.json": "20ca443ad083feb20b60d88d0eb17999bc716a6e176652cdd7a9578c95763fd1",
-    "graph.html": "40ca115711982d2585fea491239f02c3b9bc5ed5a5532aff50c278f24cff77fc",
-    "graph.json": "eb2f54e61074c2d1116c80d6a792b13a49aa4964303bed20779ca1425db65e04"
+    "graph.html": "f0c4bdc0604bc8ffbccd69d8fa4fa12d616beb218c4ac52121614e0550399564",
+    "graph.json": "6ec3146f480509419da1ec52e26bebe7cd03daf170e0dc0f872378344cd4bb94"
   },
   "schema_version": 1,
-  "source_commit": "37009690bd8dbce55a0792f5eded0eff56d5e549",
-  "source_fingerprint": "3ec00d7f225c3b20538cd369532d0fbb5ae0a2e5406f018f8ecf3247ef6e0c49",
+  "source_commit": "3427e981e6ad80b27175fb82e4ce2f6a43f78320",
+  "source_fingerprint": "b1f1a2556755f084a2eb2e115b49d7919bc74b9a5701fa56c0b8e1b9509c0df3",
   "working_tree_changes": [
-    ".github/skills/agentic-remote-navigation/SKILL.md",
-    "docs/app-spec.md"
+    "docs/app-spec.md",
+    "src/markdown-document/pipeline.ts"
   ]
 }

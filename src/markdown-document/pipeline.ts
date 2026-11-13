@@ -98,6 +98,10 @@ export interface DrawStep {
 /**
  * Elements a reader may draw a part at a time. No reader replaces one with a
  * component, and children added to one leave those drawn before as they were.
+ * A single run of text -- a fence, or a paragraph of plain text -- is drawn
+ * at once: the browser lays it out whole each time text is added, so drawing a
+ * 2 MiB one in pieces halved its longest frame but made its total blocking
+ * time about 20 times longer, and a fence's copy button would copy part of it.
  */
 const growable = new Set(['blockquote', 'li', 'ol', 'p', 'section', 'table', 'tbody', 'tfoot', 'thead', 'ul'])
 

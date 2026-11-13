@@ -44,7 +44,7 @@ import {
 import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
 import { MessageTime } from './MessageTime'
-import { isLongSentMessage } from './sent-message'
+import { sentMessageLength } from './sent-message'
 import { OracleAttachmentChips, OracleMessageAttachments } from './OracleAttachments'
 import { useOracleAttachments } from './use-oracle-attachments'
 import { remarkSafeBreaks } from './remark-safe-breaks'
@@ -321,7 +321,8 @@ const UserMessage = memo(function UserMessage({
 }) {
   const retryable = !message.removedAttachmentNames?.length
     && (message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled')
-  const long = isLongSentMessage(message.content)
+  // Oracle's panel is narrow, so it folds a long message on every device.
+  const long = sentMessageLength(message.content) !== 'short'
   const [expanded, setExpanded] = useState(false)
   return (
     <li className={`manager-message manager-message--user manager-message--${message.state ?? 'done'}`}>

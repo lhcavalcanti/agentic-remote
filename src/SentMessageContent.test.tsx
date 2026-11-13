@@ -2,21 +2,44 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isLongSentMessage, PauseFollowingContext } from './sent-message'
+import { PauseFollowingContext, sentMessageLength } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
 
-const thirteenLines = Array.from({ length: 13 }, (_, index) => `Line ${index + 1}`).join('\n')
+const lines = (count: number) => Array.from({ length: count }, (_, index) => `Line ${index + 1}`).join('\n')
+const thirteenLines = lines(13)
 
 describe('SentMessageContent', () => {
   afterEach(() => {
     cleanup()
   })
 
-  it('counts a message as long past 12 lines or 600 characters', () => {
-    expect(isLongSentMessage('x'.repeat(600))).toBe(false)
-    expect(isLongSentMessage('x'.repeat(601))).toBe(true)
-    expect(isLongSentMessage(Array.from({ length: 12 }, () => 'x').join('\n'))).toBe(false)
-    expect(isLongSentMessage(thirteenLines)).toBe(true)
+  it.each([
+    { size: '600 characters', content: 'x'.repeat(600), length: 'short' },
+    { size: '601 characters', content: 'x'.repeat(601), length: 'long' },
+    { size: '12 lines', content: lines(12), length: 'short' },
+    { size: '13 lines', content: lines(13), length: 'long' },
+    { size: '2,000 characters', content: 'x'.repeat(2000), length: 'long' },
+    { size: '2,001 characters', content: 'x'.repeat(2001), length: 'very-long' },
+    { size: '30 lines', content: lines(30), length: 'long' },
+    { size: '31 lines', content: lines(31), length: 'very-long' },
+  ])('measures a message of $size as $length', ({ content, length }) => {
+    expect(sentMessageLength(content)).toBe(length)
+  })
+
+  it('marks how long a collapsible message is, so a desktop collapses only a very long one', () => {
+    render(
+      <>
+        <SentMessageContent className="message__content" content={thirteenLines}>{thirteenLines}</SentMessageContent>
+        <SentMessageContent className="message__content" content={lines(31)}>{lines(31)}</SentMessageContent>
+      </>,
+    )
+    const [long, veryLong] = screen.getAllByRole('button', { name: 'Show all' })
+    expect(long).toHaveClass('message__expand', 'message__expand--long')
+    expect(document.getElementById(long.getAttribute('aria-controls')!))
+      .toHaveClass('message__content--long', 'message__content--collapsed')
+    expect(veryLong).toHaveClass('message__expand', 'message__expand--very-long')
+    expect(document.getElementById(veryLong.getAttribute('aria-controls')!))
+      .toHaveClass('message__content--very-long', 'message__content--collapsed')
   })
 
   it('shows a short message whole, with no toggle', () => {

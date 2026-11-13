@@ -1734,10 +1734,9 @@ clear replacement IDs without losing, duplicating, or reordering content.
   and report clipboard failure rather than claiming success.
 - Drawing a Markdown preview MUST NOT freeze the app, however long the
   document: past a small size it MUST be parsed off the page's thread and
-  drawn in parts, showing its opening first; a long table, list, quote, or
-  paragraph with markup is filled across several. A single run of text (a
-  fence or a paragraph of plain text), which the browser lays out whole on
-  every change, is drawn in one frame. The final page MUST equal a
+  drawn in parts, showing its opening first; a long table, list, quote,
+  paragraph, or fence is filled across several, and a fence's copy waits until
+  all of it is drawn. The final page MUST equal a
   whole-document render, and an opening the whole document reads differently
   MUST be replaced. A section, the outline, and a remembered scroll offset
   MUST apply to the Preview once it is wholly drawn, waiting through a switch

@@ -234,9 +234,11 @@ Do not weaken these without an explicit product decision.
 - Knowledge and session-file Markdown go through `useMarkdownDocument`
   (`src/markdown-document/`): long documents are parsed in a per-document Web
   Worker, opening first, and drawn a part per frame, top-level parts each in a
-  `div.document-chunk`. A long table, list, quote, or paragraph is filled in
-  place across parts (`draw.ts`); tags a reader draws with a component are
-  passed as `whole` and never split. Keep `pipeline.ts` identical to
+  `div.document-chunk`. A long table, list, quote, paragraph, or fence is
+  filled in place across parts (`draw.ts`). A component's element is drawn
+  whole unless it is marked `drawnInParts`; such a component gets
+  `drawing: true` until it is complete (a fence's copy waits on it). Keep
+  `pipeline.ts` identical to
   react-markdown's processing (plugins, raw HTML as text, URL filter,
   `toJsxRuntime` options); its parity tests guard that. The worker bundle must
   not import DOM builds: `vite.config.ts` redirects the entity decoder, and

@@ -5,10 +5,13 @@ import { Check, Copy } from 'lucide-react'
 export function MarkdownCodeBlock({
   source,
   language,
+  drawing = false,
   children,
 }: {
   source: string
   language?: string
+  /** A long fence is drawn in pieces; copying it before then would copy part of it. */
+  drawing?: boolean
   children: ReactNode
 }) {
   const [feedback, setFeedback] = useState<{ source: string; error?: string }>()
@@ -54,8 +57,9 @@ export function MarkdownCodeBlock({
         <span>{language || 'Code'}</span>
         <button
           aria-label={copied ? 'Code copied' : 'Copy code'}
-          disabled={copying}
+          disabled={copying || drawing}
           onClick={() => void copy()}
+          title={drawing ? 'Copy is available once all of the code is drawn' : undefined}
           type="button"
         >
           {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}

@@ -151,6 +151,11 @@ export function inlineText(markdown: string): string {
 export function outlineFromMarkdown(content: string): DocumentHeading[] {
   const tree = unified().use(remarkParse).use(remarkGfm).parse(content)
   remarkSafeBreaks()(tree)
+  return outlineFromTree(tree)
+}
+
+/** The outline of an already parsed document, after `remarkSafeBreaks`. */
+export function outlineFromTree(tree: Root): DocumentHeading[] {
   const headings: DocumentHeading[] = []
   const used = new Map<string, number>()
   // Counted separately from the entries. An outline entry is found in the
@@ -319,6 +324,31 @@ export function resolveDocumentLink(documentPath: string, href: string): Documen
   return path
     ? { kind: 'document', path, fragment }
     : { kind: 'invalid', error: 'This link points outside the document root.' }
+}
+
+const scrollKeys = new Set(['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '])
+
+/**
+ * Whether an input event on a scrolling document is the reader moving it
+ * themselves: a wheel, a swipe, a scrolling key, or a press on its scroll bar.
+ */
+export function isReaderScroll(event: {
+  type: string
+  key?: string
+  target: unknown
+  currentTarget: unknown
+}): boolean {
+  switch (event.type) {
+    case 'wheel':
+    case 'touchmove':
+      return true
+    case 'keydown':
+      return scrollKeys.has(event.key ?? '')
+    case 'pointerdown':
+      return event.target === event.currentTarget
+    default:
+      return false
+  }
 }
 
 export function scrollToDocumentFragment(

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   isValidElement,
   memo,
   useCallback,
@@ -44,6 +45,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
+  SyntheticEvent,
   TouchEvent as ReactTouchEvent,
 } from 'react'
 import {
@@ -155,16 +157,14 @@ import type { SessionSort } from './session-presentation'
 import { MermaidDiagram } from './MermaidDiagram.js'
 import {
   breadcrumbSegments,
-  outlineFromMarkdown,
   resolveDocumentPath,
   resolveDocumentLink,
-  rehypeDocumentHeadings,
   scrollToDocumentFragment,
   scrollToDocumentHeading,
   isExternalSource,
+  isReaderScroll,
   pushNavigation,
   rememberScroll,
-  type DocumentHeading,
   type NavigationEntry,
 } from './markdown-navigation'
 import remarkGfm from 'remark-gfm'
@@ -369,6 +369,8 @@ import {
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
 import { MessageTime } from './MessageTime'
+import { drawnInParts } from './markdown-document/drawing'
+import { useMarkdownDocument } from './markdown-document/use-markdown-document'
 import { PauseFollowingContext } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
 import { SessionPatchReceiver } from './session-patches'
@@ -6118,20 +6120,27 @@ function markdownComponentsFor(
 ) {
   return {
     ...mermaidComponents,
-    pre({ children, node: _node, ...rest }: { children?: ReactNode; node?: unknown }) {
+    // A long fence is drawn in pieces; its copy waits until it is all drawn.
+    pre: drawnInParts(function DocumentFence({
+      children,
+      drawing,
+      node: _node,
+      ...rest
+    }: { children?: ReactNode; drawing?: boolean; node?: unknown }) {
       const mermaid = mermaidFencedSource(children)
       if (mermaid !== undefined) return <MermaidDiagram source={mermaid} />
       const fence = codeFenceProps(children)
       if (!fence) return <pre {...rest}>{children}</pre>
       return (
         <MarkdownCodeBlock
+          drawing={drawing}
           language={fence.className?.match(/\blanguage-([^\s]+)/)?.[1]}
           source={fencedSource(fence.children)}
         >
           <pre {...rest}>{children}</pre>
         </MarkdownCodeBlock>
       )
-    },
+    }),
     img({ alt, src, title }: { alt?: string; src?: unknown; title?: string }) {
       return (
         <MarkdownImage
@@ -6146,15 +6155,18 @@ function markdownComponentsFor(
   }
 }
 
+/** Children as a flat list, arrays and fragments opened: a long fence arrives in fragments, a piece each. */
+function flatChildren(children: ReactNode): ReactNode[] {
+  if (Array.isArray(children)) return children.flatMap((child) => flatChildren(child as ReactNode))
+  if (isValidElement<{ children?: ReactNode }>(children) && children.type === Fragment) {
+    return flatChildren(children.props.children)
+  }
+  return [children]
+}
+
 /** Reads the text of a fenced block, which arrives as its children. */
 function fencedSource(children: ReactNode): string {
-  if (typeof children === 'string') {
-    return children
-  }
-  if (Array.isArray(children)) {
-    return children.map((child) => fencedSource(child as ReactNode)).join('')
-  }
-  return ''
+  return flatChildren(children).map((child) => (typeof child === 'string' ? child : '')).join('')
 }
 
 const mermaidComponents = {
@@ -6176,31 +6188,31 @@ const mermaidComponents = {
     }
     return <MermaidDiagram source={source} />
   },
-  code({
+  code: drawnInParts(function MarkdownCode({
     children,
     className,
-    // React Markdown hands every custom component its own syntax tree node.
-    // Forwarding it would put an object on a DOM attribute.
+    // React Markdown hands every custom component its own syntax tree node,
+    // and a document still being drawn says so; neither is a DOM attribute.
     node: _node,
+    drawing: _drawing,
     ...rest
   }: {
     children?: ReactNode
     className?: string
     node?: unknown
+    drawing?: boolean
   }) {
     return (
       <code className={className} {...rest}>
         {children}
       </code>
     )
-  },
+  }),
 }
 
 /** The text of a fenced mermaid block, or nothing if that is not what it is. */
 function codeFenceProps(children: ReactNode) {
-  const fence = Array.isArray(children)
-    ? children.find((child) => isValidElement(child))
-    : children
+  const fence = flatChildren(children).find((child) => isValidElement(child))
   return isValidElement<{ className?: string; children?: ReactNode }>(fence)
     ? fence.props
     : undefined
@@ -6224,6 +6236,7 @@ function followMarkdownLink(
   documentPath: string,
   onOpen: (path: string, fragment?: string) => void,
   onError: (message: string | undefined) => void,
+  onSection: (fragment: string) => void,
 ) {
   if (
     event.defaultPrevented || event.button !== 0 ||
@@ -6246,13 +6259,8 @@ function followMarkdownLink(
     return
   }
   onError(undefined)
-  if (target.path === documentPath) {
-    if (!scrollToDocumentFragment(event.currentTarget, target.fragment || '')) {
-      onError(missingDocumentFragment(target.fragment || ''))
-    }
-  } else {
-    onOpen(target.path, target.fragment)
-  }
+  if (target.path === documentPath) onSection(target.fragment || '')
+  else onOpen(target.path, target.fragment)
 }
 
 function knowledgeTreeVisible(node: HTMLElement): boolean {
@@ -6300,6 +6308,19 @@ function KnowledgeReader({
   const contentRef = useRef<HTMLDivElement>(null)
   const contentScrollTop = useRef(0)
   const previousFilePath = useRef(file?.path)
+  const components = useMemo(
+    () => markdownComponentsFor(file?.path || '.', onLoadAsset),
+    [file?.path, onLoadAsset],
+  )
+  const markdownDocument = useMarkdownDocument(
+    file?.kind === 'markdown' && !raw ? file.content || '' : undefined,
+    components,
+  )
+  // A Markdown preview is drawn in the background; until then its anchors,
+  // headings, and full height are not on the page.
+  const documentReady = markdownDocument.ready || !(file?.kind === 'markdown' && !raw)
+  // Sections are looked for in a Markdown file's drawn Preview.
+  const previewReady = file?.kind !== 'markdown' || (!raw && markdownDocument.ready)
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -6309,40 +6330,55 @@ function KnowledgeReader({
     }
     if (previousFilePath.current !== file?.path) {
       contentScrollTop.current = 0
-    } else if (mode !== 'hidden') {
+    } else if (mode !== 'hidden' && documentReady) {
       if (contentScrollTop.current === 0) {
         contentScrollTop.current = content.scrollTop
       }
       content.scrollTop = contentScrollTop.current
     }
     previousFilePath.current = file?.path
-  }, [file, mode])
+  }, [file, mode, documentReady])
 
+  // Opening a file or a section is a navigation. The top is there at once. A
+  // section waits for the drawn Preview, through a switch to Source and back,
+  // so one further down is never reported missing. A reader who scrolls the
+  // Preview before then keeps their place.
+  const navigation = useRef<{ handled: boolean; fragment?: string }>({ handled: true })
+  // Taken before the browser handles more input, so a reader's first scroll counts.
+  useLayoutEffect(() => {
+    navigation.current = { handled: false, fragment }
+  }, [file?.path, fragment])
   useEffect(() => {
+    const pending = navigation.current
+    if (pending.handled || (pending.fragment !== undefined && !previewReady)) return undefined
     const frame = requestAnimationFrame(() => {
-      if (fragment !== undefined) {
-        if (!scrollToDocumentFragment(contentRef.current, fragment)) {
-          setLinkError(missingDocumentFragment(fragment))
+      pending.handled = true
+      if (pending.fragment !== undefined) {
+        if (!scrollToDocumentFragment(contentRef.current, pending.fragment)) {
+          setLinkError(missingDocumentFragment(pending.fragment))
         }
       } else if (contentRef.current) {
         contentRef.current.scrollTop = 0
       }
     })
     return () => cancelAnimationFrame(frame)
-  }, [file?.path, fragment])
+  }, [file?.path, fragment, previewReady])
+  // A section of this document: shown now if it is drawn, else once it is.
+  const showSection = (section: string) => {
+    navigation.current.handled = true
+    if (scrollToDocumentFragment(contentRef.current, section)) return
+    if (previewReady) setLinkError(missingDocumentFragment(section))
+    else navigation.current = { handled: false, fragment: section }
+  }
+  const keepReaderPlace = (event: SyntheticEvent<HTMLDivElement>) => {
+    if (documentReady || !isReaderScroll(event)) return
+    navigation.current.handled = true
+    // Nor is a remembered offset restored over the reader's own.
+    contentScrollTop.current = 0
+  }
 
-  const outline = useMemo<DocumentHeading[]>(
-    () =>
-      file?.kind === 'markdown' && !raw
-        ? outlineFromMarkdown(file.content || '')
-        : [],
-    [file, raw],
-  )
+  const outline = markdownDocument.outline
   const crumbs = breadcrumbSegments(file?.path ?? listing?.path ?? '.', root.name)
-  const components = useMemo(
-    () => markdownComponentsFor(file?.path || '.', onLoadAsset),
-    [file?.path, onLoadAsset],
-  )
 
   if (!file) {
     return (
@@ -6444,11 +6480,19 @@ function KnowledgeReader({
             : ''
         }`}
         onClick={(event) =>
-          followMarkdownLink(event, file.path, onOpenFile, setLinkError)
+          followMarkdownLink(event, file.path, onOpenFile, setLinkError, showSection)
         }
+        onKeyDown={keepReaderPlace}
+        onPointerDown={keepReaderPlace}
         onScroll={(event) => {
-          contentScrollTop.current = event.currentTarget.scrollTop
+          // While a document is still being drawn its height is short, and
+          // the clamped position must not replace the reader's place.
+          if (documentReady) {
+            contentScrollTop.current = event.currentTarget.scrollTop
+          }
         }}
+        onTouchMove={keepReaderPlace}
+        onWheel={keepReaderPlace}
         ref={contentRef}
       >
         {file.kind === 'pdf' ? (
@@ -6458,13 +6502,7 @@ function KnowledgeReader({
         ) : file.kind === 'html' && !raw ? (
           <HtmlPreview name={file.name} source={file.content || ''} />
         ) : file.kind === 'markdown' && !raw ? (
-          <ReactMarkdown
-            components={components}
-            rehypePlugins={[rehypeDocumentHeadings]}
-            remarkPlugins={[remarkGfm, remarkSafeBreaks]}
-          >
-            {file.content || ''}
-          </ReactMarkdown>
+          markdownDocument.content
         ) : (
           <pre>{file.content}</pre>
         )}
@@ -6761,35 +6799,6 @@ function WorkspaceDialog({
     updateDirectoryHistory,
   ])
 
-  useEffect(() => {
-    const top = pendingScrollRef.current ?? 0
-    pendingScrollRef.current = undefined
-    const fragment = pendingFragmentRef.current
-    pendingFragmentRef.current = undefined
-    // Wait for the rendered document before restoring its offset.
-    const frame = requestAnimationFrame(() => {
-      const element = previewContentRef.current
-      if (fragment !== undefined) {
-        if (!scrollToDocumentFragment(element, fragment)) {
-          setError(missingDocumentFragment(fragment))
-        }
-      } else if (element) {
-        element.scrollTop = top
-      }
-    })
-    return () => cancelAnimationFrame(frame)
-    // Deliberately not keyed on `raw`: toggling Rendered/Raw is not navigation
-    // and must not throw the reader back to the top.
-  }, [file?.path])
-
-  const outline = useMemo<DocumentHeading[]>(
-    () =>
-      file?.kind === 'markdown' && !raw
-        ? outlineFromMarkdown(file.content || '')
-        : [],
-    [file, raw],
-  )
-
   const markdownComponents = useMemo(
     () =>
       markdownComponentsFor(file?.path || '.', (assetPath) =>
@@ -6797,6 +6806,59 @@ function WorkspaceDialog({
       ),
     [file?.path, session.computerId, session.id],
   )
+  const markdownDocument = useMarkdownDocument(
+    file?.kind === 'markdown' && !raw ? file.content || '' : undefined,
+    markdownComponents,
+  )
+  // A Markdown preview is drawn in the background; until then its anchors,
+  // headings, and full height are not on the page.
+  const documentReady = markdownDocument.ready || !(file?.kind === 'markdown' && !raw)
+  // Sections and offsets are looked for in a Markdown file's drawn Preview.
+  const previewReady = file?.kind !== 'markdown' || (!raw && markdownDocument.ready)
+
+  // What a newly opened document should show is taken when it arrives. Its
+  // top is there at once. A remembered offset or a section waits for the drawn
+  // Preview, through a switch to Source and back, unless the reader scrolls
+  // the Preview before then.
+  const arrival = useRef<{ handled: boolean; top: number; fragment?: string }>({ handled: true, top: 0 })
+  // Taken before the browser handles more input, so a reader's first scroll counts.
+  useLayoutEffect(() => {
+    arrival.current = { handled: false, top: pendingScrollRef.current ?? 0, fragment: pendingFragmentRef.current }
+    pendingScrollRef.current = undefined
+    pendingFragmentRef.current = undefined
+  }, [file?.path])
+  useEffect(() => {
+    const pending = arrival.current
+    if (pending.handled || ((pending.fragment !== undefined || pending.top > 0) && !previewReady)) {
+      return undefined
+    }
+    const frame = requestAnimationFrame(() => {
+      pending.handled = true
+      const element = previewContentRef.current
+      if (pending.fragment !== undefined) {
+        if (!scrollToDocumentFragment(element, pending.fragment)) {
+          setError(missingDocumentFragment(pending.fragment))
+        }
+      } else if (element) {
+        element.scrollTop = pending.top
+      }
+    })
+    return () => cancelAnimationFrame(frame)
+    // Toggling Rendered/Raw is not navigation: it only lets an arrival still
+    // waiting for the Preview complete, and never throws the reader to the top.
+  }, [file?.path, previewReady])
+  // A section of this document: shown now if it is drawn, else once it is.
+  const showSection = (section: string) => {
+    arrival.current.handled = true
+    if (scrollToDocumentFragment(previewContentRef.current, section)) return
+    if (previewReady) setError(missingDocumentFragment(section))
+    else arrival.current = { handled: false, top: 0, fragment: section }
+  }
+  const keepReaderPlace = (event: SyntheticEvent<HTMLDivElement>) => {
+    if (!documentReady && isReaderScroll(event)) arrival.current.handled = true
+  }
+
+  const outline = markdownDocument.outline
 
   const crumbs = breadcrumbSegments(
     listing?.path ?? '.',
@@ -7091,9 +7153,18 @@ function WorkspaceDialog({
                     file.path,
                     (path, fragment) => void openFile(path, undefined, fragment),
                     setError,
+                    showSection,
                   )
                 }
-                onScroll={rememberCurrentScroll}
+                onKeyDown={keepReaderPlace}
+                onPointerDown={keepReaderPlace}
+                onScroll={() => {
+                  // A document still being drawn is short; its clamped
+                  // offset must not replace the reader's place.
+                  if (documentReady) rememberCurrentScroll()
+                }}
+                onTouchMove={keepReaderPlace}
+                onWheel={keepReaderPlace}
                 ref={previewContentRef}
               >
                 {file.kind === 'pdf' ? (
@@ -7103,13 +7174,7 @@ function WorkspaceDialog({
                 ) : file.kind === 'html' && !raw ? (
                   <HtmlPreview name={file.name} source={file.content || ''} />
                 ) : file.kind === 'markdown' && !raw ? (
-                  <ReactMarkdown
-                    components={markdownComponents}
-                    rehypePlugins={[rehypeDocumentHeadings]}
-                    remarkPlugins={[remarkGfm, remarkSafeBreaks]}
-                  >
-                    {file.content || ''}
-                  </ReactMarkdown>
+                  markdownDocument.content
                 ) : (
                   <pre>{file.content}</pre>
                 )}

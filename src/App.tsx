@@ -6224,6 +6224,7 @@ function followMarkdownLink(
   documentPath: string,
   onOpen: (path: string, fragment?: string) => void,
   onError: (message: string | undefined) => void,
+  onSection: (fragment: string) => void,
 ) {
   if (
     event.defaultPrevented || event.button !== 0 ||
@@ -6246,13 +6247,8 @@ function followMarkdownLink(
     return
   }
   onError(undefined)
-  if (target.path === documentPath) {
-    if (!scrollToDocumentFragment(event.currentTarget, target.fragment || '')) {
-      onError(missingDocumentFragment(target.fragment || ''))
-    }
-  } else {
-    onOpen(target.path, target.fragment)
-  }
+  if (target.path === documentPath) onSection(target.fragment || '')
+  else onOpen(target.path, target.fragment)
 }
 
 function knowledgeTreeVisible(node: HTMLElement): boolean {
@@ -6311,6 +6307,8 @@ function KnowledgeReader({
   // A Markdown preview is drawn in the background; until then its anchors,
   // headings, and full height are not on the page.
   const documentReady = markdownDocument.ready || !(file?.kind === 'markdown' && !raw)
+  // Sections are looked for in a Markdown file's drawn Preview.
+  const previewReady = file?.kind !== 'markdown' || (!raw && markdownDocument.ready)
 
   useLayoutEffect(() => {
     const content = contentRef.current
@@ -6329,30 +6327,41 @@ function KnowledgeReader({
     previousFilePath.current = file?.path
   }, [file, mode, documentReady])
 
-  // Opening a file or a section is a navigation. The top is there at once; a
-  // section waits until the document is drawn, so one further down is never
-  // reported missing. A reader who scrolls first keeps their place.
-  const navigation = useRef({ handled: true })
+  // Opening a file or a section is a navigation. The top is there at once. A
+  // section waits for the drawn Preview, through a switch to Source and back,
+  // so one further down is never reported missing. A reader who scrolls the
+  // Preview before then keeps their place.
+  const navigation = useRef<{ handled: boolean; fragment?: string }>({ handled: true })
   useEffect(() => {
-    navigation.current = { handled: false }
+    navigation.current = { handled: false, fragment }
   }, [file?.path, fragment])
   useEffect(() => {
-    if (navigation.current.handled || (fragment !== undefined && !documentReady)) return undefined
     const pending = navigation.current
+    if (pending.handled || (pending.fragment !== undefined && !previewReady)) return undefined
     const frame = requestAnimationFrame(() => {
       pending.handled = true
-      if (fragment !== undefined) {
-        if (!scrollToDocumentFragment(contentRef.current, fragment)) {
-          setLinkError(missingDocumentFragment(fragment))
+      if (pending.fragment !== undefined) {
+        if (!scrollToDocumentFragment(contentRef.current, pending.fragment)) {
+          setLinkError(missingDocumentFragment(pending.fragment))
         }
       } else if (contentRef.current) {
         contentRef.current.scrollTop = 0
       }
     })
     return () => cancelAnimationFrame(frame)
-  }, [file?.path, fragment, documentReady])
+  }, [file?.path, fragment, previewReady])
+  // A section of this document: shown now if it is drawn, else once it is.
+  const showSection = (section: string) => {
+    navigation.current.handled = true
+    if (scrollToDocumentFragment(contentRef.current, section)) return
+    if (previewReady) setLinkError(missingDocumentFragment(section))
+    else navigation.current = { handled: false, fragment: section }
+  }
   const keepReaderPlace = (event: SyntheticEvent<HTMLDivElement>) => {
-    if (!documentReady && isReaderScroll(event)) navigation.current.handled = true
+    if (documentReady || !isReaderScroll(event)) return
+    navigation.current.handled = true
+    // Nor is a remembered offset restored over the reader's own.
+    contentScrollTop.current = 0
   }
 
   const outline = markdownDocument.outline
@@ -6458,7 +6467,7 @@ function KnowledgeReader({
             : ''
         }`}
         onClick={(event) =>
-          followMarkdownLink(event, file.path, onOpenFile, setLinkError)
+          followMarkdownLink(event, file.path, onOpenFile, setLinkError, showSection)
         }
         onKeyDown={keepReaderPlace}
         onPointerDown={keepReaderPlace}
@@ -6791,10 +6800,13 @@ function WorkspaceDialog({
   // A Markdown preview is drawn in the background; until then its anchors,
   // headings, and full height are not on the page.
   const documentReady = markdownDocument.ready || !(file?.kind === 'markdown' && !raw)
+  // Sections and offsets are looked for in a Markdown file's drawn Preview.
+  const previewReady = file?.kind !== 'markdown' || (!raw && markdownDocument.ready)
 
   // What a newly opened document should show is taken when it arrives. Its
-  // top is there at once; a remembered offset or a section is applied once it
-  // is drawn, unless the reader has scrolled it by then.
+  // top is there at once. A remembered offset or a section waits for the drawn
+  // Preview, through a switch to Source and back, unless the reader scrolls
+  // the Preview before then.
   const arrival = useRef<{ handled: boolean; top: number; fragment?: string }>({ handled: true, top: 0 })
   useEffect(() => {
     arrival.current = { handled: false, top: pendingScrollRef.current ?? 0, fragment: pendingFragmentRef.current }
@@ -6803,7 +6815,7 @@ function WorkspaceDialog({
   }, [file?.path])
   useEffect(() => {
     const pending = arrival.current
-    if (pending.handled || ((pending.fragment !== undefined || pending.top > 0) && !documentReady)) {
+    if (pending.handled || ((pending.fragment !== undefined || pending.top > 0) && !previewReady)) {
       return undefined
     }
     const frame = requestAnimationFrame(() => {
@@ -6818,9 +6830,16 @@ function WorkspaceDialog({
       }
     })
     return () => cancelAnimationFrame(frame)
-    // Deliberately not keyed on `raw`: toggling Rendered/Raw is not navigation
-    // and must not throw the reader back to the top.
-  }, [file?.path, documentReady])
+    // Toggling Rendered/Raw is not navigation: it only lets an arrival still
+    // waiting for the Preview complete, and never throws the reader to the top.
+  }, [file?.path, previewReady])
+  // A section of this document: shown now if it is drawn, else once it is.
+  const showSection = (section: string) => {
+    arrival.current.handled = true
+    if (scrollToDocumentFragment(previewContentRef.current, section)) return
+    if (previewReady) setError(missingDocumentFragment(section))
+    else arrival.current = { handled: false, top: 0, fragment: section }
+  }
   const keepReaderPlace = (event: SyntheticEvent<HTMLDivElement>) => {
     if (!documentReady && isReaderScroll(event)) arrival.current.handled = true
   }
@@ -7120,6 +7139,7 @@ function WorkspaceDialog({
                     file.path,
                     (path, fragment) => void openFile(path, undefined, fragment),
                     setError,
+                    showSection,
                   )
                 }
                 onKeyDown={keepReaderPlace}

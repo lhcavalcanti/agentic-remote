@@ -104,7 +104,8 @@ import {
 import { HubSignInExpiredError, setHubSignInExpired } from './hub-sign-in'
 import { composerMaximumHeight } from './composer-sizing'
 import { DreamerApiError, getDreamer } from './dreamer-api'
-import { documentRenderEvents } from './markdown-document/pipeline'
+import { documentParts, documentRenderEvents, renderDocumentTree } from './markdown-document/pipeline'
+import type { DocumentRenderEvent } from './markdown-document/pipeline'
 import { DocumentRendererContext } from './markdown-document/renderer'
 import type { DocumentRenderer } from './markdown-document/renderer'
 import { PWA_UPDATE_EVENT } from './pwa'
@@ -494,6 +495,28 @@ function backScrollTop() {
 }
 
 /** Draws in the background, as the worker does; documents starting with `held` wait for the test. */
+/**
+ * Draws in the background, a top-level node a part; a document starting with
+ * `held` gets only its first `shown` parts until the test releases the rest.
+ */
+function partlyHeldRenderer(held: string, shown: number) {
+  const waiting: (() => void)[] = []
+  const renderer: DocumentRenderer = {
+    render(source, emit) {
+      const { tree, outline } = renderDocumentTree(source)
+      const events: DocumentRenderEvent[] = [
+        ...[...documentParts(tree.children, { budget: 1 })].map((steps): DocumentRenderEvent => ({ kind: 'part', steps })),
+        { kind: 'done', outline },
+      ]
+      const now = source.startsWith(held) ? events.slice(0, shown) : events
+      queueMicrotask(() => now.forEach(emit))
+      if (now !== events) waiting.push(() => events.slice(shown).forEach(emit))
+      return () => undefined
+    },
+  }
+  return { renderer, release: () => act(() => waiting.splice(0).forEach((deliver) => deliver())) }
+}
+
 function holdingRenderer(held: string) {
   const waiting: (() => void)[] = []
   const renderer: DocumentRenderer = {
@@ -19508,7 +19531,7 @@ describe('App', () => {
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
   })
 
-  function mockGuideKnowledge(link: string) {
+  function mockGuideKnowledge(link: string, readme = `# Knowledge start\n\n${link}`) {
     mockKnowledgeRoots([{
       id: 'root-1',
       computerId: computer.id,
@@ -19526,7 +19549,7 @@ describe('App', () => {
       kind: 'markdown',
       mimeType: 'text/markdown',
       size: 100,
-      content: path === 'README.md' ? `# Knowledge start\n\n${link}` : '# Guide\n\n## Early\n\n## Late\n',
+      content: path === 'README.md' ? readme : '# Guide\n\n## Early\n\n## Late\n',
     }))
   }
 
@@ -19541,6 +19564,38 @@ describe('App', () => {
     fireEvent.click(await within(tree).findByRole('treeitem', { name: /README.md/ }))
     await screen.findByRole('heading', { name: 'Knowledge start' })
   }
+
+  it('waits for a section of the same Knowledge document that is not drawn yet', async () => {
+    mockGuideKnowledge('', '# Knowledge start\n\n[Jump to the end](#late)\n\n## Early\n\nEarly text.\n\n## Late\n\nThe end.\n')
+    const { renderer, release } = partlyHeldRenderer('# Knowledge start', 3)
+    await openKnowledgeReadme(renderer)
+
+    fireEvent.click(await screen.findByRole('link', { name: 'Jump to the end' }))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByRole('heading', { name: 'Late' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+    release()
+    const late = await screen.findByRole('heading', { name: 'Late' })
+    await waitFor(() => expect(late).toHaveFocus())
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+  })
+
+  it('keeps a Knowledge section it is opening through a switch to Source and back', async () => {
+    mockGuideKnowledge('[Open guide](guide.md#late)')
+    const { renderer, release } = holdingRenderer('# Guide')
+    await openKnowledgeReadme(renderer)
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open guide' }))
+    expect(await screen.findByText('Rendering document…')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    release()
+    const late = await screen.findByRole('heading', { name: 'Late' })
+    await waitFor(() => expect(late).toHaveFocus())
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+  })
 
   it('does not send a reader who scrolls a Knowledge document still being drawn back to its top', async () => {
     backScrollTop()
@@ -19749,6 +19804,63 @@ describe('App', () => {
       ).toBe(240),
     )
   })
+  function mockSessionDocuments(documents: Record<string, string>) {
+    vi.mocked(readWorkspaceFile).mockImplementation(async (_computerId, _sessionId, path) => ({
+      name: path.split('/').at(-1) || path,
+      path,
+      kind: 'markdown' as const,
+      mimeType: 'text/plain; charset=utf-8',
+      size: 40,
+      content: documents[path] ?? `# ${path}\n\nBody of ${path}.`,
+    }))
+  }
+
+  async function openSessionReadme(renderer: DocumentRenderer, heading: string) {
+    render(
+      <DocumentRendererContext.Provider value={renderer}>
+        <App />
+      </DocumentRendererContext.Provider>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Browse current session folder' }))
+    fireEvent.click(await screen.findByRole('button', { name: /README.md/ }))
+    await screen.findByRole('heading', { name: heading })
+  }
+
+  it('waits for a section of the same session file that is not drawn yet', async () => {
+    mockSessionDocuments({ 'README.md': '# Read me\n\n[Jump to the end](#late)\n\n## Early\n\nEarly text.\n\n## Late\n\nThe end.\n' })
+    const { renderer, release } = partlyHeldRenderer('# Read me', 3)
+    await openSessionReadme(renderer, 'Read me')
+
+    fireEvent.click(await screen.findByRole('link', { name: 'Jump to the end' }))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByRole('heading', { name: 'Late' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+    release()
+    const late = await screen.findByRole('heading', { name: 'Late' })
+    await waitFor(() => expect(late).toHaveFocus())
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+  })
+
+  it('keeps a session file section it is opening through a switch to Source and back', async () => {
+    mockSessionDocuments({
+      'README.md': '# Read me\n\n[Open guide](docs/guide.md#late)\n',
+      'docs/guide.md': '# Guide\n\n## Early\n\n## Late\n',
+    })
+    const { renderer, release } = holdingRenderer('# Guide')
+    await openSessionReadme(renderer, 'Read me')
+
+    fireEvent.click(screen.getByRole('link', { name: 'Open guide' }))
+    expect(await screen.findByText('Rendering document…')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+    await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    release()
+    const late = await screen.findByRole('heading', { name: 'Late' })
+    await waitFor(() => expect(late).toHaveFocus())
+    expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
+  })
+
   it('does not restore a remembered offset once the reader has scrolled the document being drawn', async () => {
     backScrollTop()
     vi.mocked(readWorkspaceFile).mockImplementation(

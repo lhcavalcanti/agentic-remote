@@ -8024,18 +8024,14 @@ button {
   white-space: pre-wrap;
 }
 
-/* Oracle folds a message of yours by the conversation's limits: a desktop only
-   a very long one, to twelve lines; a phone or a touch device any long one, to
-   eight. */
-.manager-message__text--very-long.manager-message__text--clamped {
+.manager-message__text--clamped {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 12;
+  -webkit-line-clamp: 8;
 }
 
 .manager-message__expand {
-  display: none;
   min-height: 32px;
   padding: 0 4px;
   border: 0;
@@ -8044,24 +8040,6 @@ button {
   font: inherit;
   font-size: 12px;
   cursor: pointer;
-}
-
-.manager-message__expand--very-long {
-  display: block;
-}
-
-@media (max-width: 960px), (pointer: coarse) {
-  .manager-message__text--long.manager-message__text--clamped,
-  .manager-message__text--very-long.manager-message__text--clamped {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 8;
-  }
-
-  .manager-message__expand {
-    display: block;
-  }
 }
 
 .manager-message--failed .manager-message__text {

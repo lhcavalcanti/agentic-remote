@@ -321,21 +321,16 @@ const UserMessage = memo(function UserMessage({
 }) {
   const retryable = !message.removedAttachmentNames?.length
     && (message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled')
-  // Folded by the conversation's rule; the stylesheet applies the device's limit.
-  const length = sentMessageLength(message.content)
+  // Oracle's panel is narrow, so it folds a long message on every device.
+  const long = sentMessageLength(message.content) !== 'short'
   const [expanded, setExpanded] = useState(false)
-  const textClass = length === 'short'
-    ? 'manager-message__text'
-    : `manager-message__text manager-message__text--${length}${expanded ? '' : ' manager-message__text--clamped'}`
   return (
     <li className={`manager-message manager-message--user manager-message--${message.state ?? 'done'}`}>
-      <p className={textClass}>{message.content}</p>
-      {length !== 'short' ? (
-        <button
-          className={`manager-message__expand manager-message__expand--${length}`}
-          onClick={() => setExpanded((value) => !value)}
-          type="button"
-        >
+      <p className={`manager-message__text${long && !expanded ? ' manager-message__text--clamped' : ''}`}>
+        {message.content}
+      </p>
+      {long ? (
+        <button className="manager-message__expand" onClick={() => setExpanded((value) => !value)} type="button">
           {expanded ? 'Show less' : 'Show all'}
         </button>
       ) : null}

@@ -192,3 +192,47 @@ test('scrolls a wide table in a docked Oracle answer without breaking its words'
     fixture.assertHealthy()
   }
 })
+
+test.describe('with a mouse', () => {
+  // The project emulates touch; Oracle's rule must not depend on it.
+  test.use({ hasTouch: false })
+
+  test('folds a long message you send on a desktop to eight lines, as on a phone', async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const createdAt = new Date(Date.parse(FIXTURE_NOW) - 5 * 60_000).toISOString()
+    const steps = (count: number) =>
+      Array.from({ length: count }, (_, index) => `Step ${index + 1}: rerun the checks.`).join('\n')
+    const fixture = await setupWorkspaceFixture(page, {
+      baseUrl: testInfo.project.use.baseURL!,
+      knowledgeMode: 'hidden',
+      manager: {
+        available: true,
+        status: 'idle',
+        // Past Oracle's limit of 12 lines; and past the desktop conversation's 30.
+        messages: [
+          { id: 'long', role: 'user', content: steps(13), createdAt, state: 'done' },
+          { id: 'very-long', role: 'user', content: steps(31), createdAt, state: 'done' },
+        ],
+        queued: 0,
+        managedSessions: [],
+      },
+    })
+    // Eight lines of 14px text at a 1.5 line height, inside 8px of padding above and below.
+    const folded = 8 * 14 * 1.5 + 16
+    try {
+      await page.goto('/?oracle=open')
+      const sent = page.locator('#oracle-panel .manager-message--user')
+      for (const message of [sent.nth(0), sent.nth(1)]) {
+        await expect(message.getByRole('button', { name: 'Show all' })).toBeVisible()
+        const text = message.locator('.manager-message__text')
+        expect(Math.abs((await text.boundingBox())!.height - folded)).toBeLessThan(2)
+        await message.getByRole('button', { name: 'Show all' }).click()
+        expect(await text.evaluate((element) => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1)
+        await message.getByRole('button', { name: 'Show less' }).click()
+        expect(Math.abs((await text.boundingBox())!.height - folded)).toBeLessThan(2)
+      }
+    } finally {
+      fixture.assertHealthy()
+    }
+  })
+})

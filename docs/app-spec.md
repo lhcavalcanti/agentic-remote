@@ -1046,7 +1046,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   first twelve. **Show less** collapses it again. Agent messages MUST NOT
   collapse. Expanding MUST keep the message where it is and stop following the
   end; collapsing MUST bring the message back into view. The full text MUST
-  remain in the page. Oracle MUST fold a message sent to it by the same limits.
+  remain in the page. Oracle's narrow panel MUST keep folding a message sent
+  to it past 12 lines or 600 characters to eight lines on every device.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
 - Parallel tools MUST retain independent running/completed/failed states.

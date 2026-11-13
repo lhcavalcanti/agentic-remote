@@ -4,10 +4,10 @@ export type SentMessageLength = 'short' | 'long' | 'very-long'
 
 /**
  * How long a message the user sent is, for collapsing it behind Show all. A
- * phone or a touch device collapses a long one, past 12 lines or 600
- * characters; a desktop has room for more and collapses only a very long one,
- * past 30 lines or 2,000 characters. The stylesheet applies the device's
- * limit, for the conversation and Oracle alike.
+ * long one, past 12 lines or 600 characters, collapses on a phone or a touch
+ * device, and in Oracle's narrow panel on every device; a very long one, past
+ * 30 lines or 2,000 characters, also collapses in a desktop's conversation,
+ * which has room for more. The stylesheet applies the device's limit.
  */
 export function sentMessageLength(content: string): SentMessageLength {
   const lines = content.split('\n').length

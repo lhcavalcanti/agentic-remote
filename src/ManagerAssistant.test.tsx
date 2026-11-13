@@ -2119,24 +2119,6 @@ describe('ManagerAssistant', () => {
     expect(document.querySelector('.manager-message__text--clamped')).toBeNull()
   })
 
-  it('marks how long a folded message of yours is, as the conversation does', async () => {
-    setup({
-      ...empty,
-      messages: [
-        { id: 'u1', role: 'user', content: 'word '.repeat(300), createdAt: 't', state: 'done' },
-        { id: 'u2', role: 'user', content: 'word '.repeat(401), createdAt: 't', state: 'done' },
-      ],
-    })
-    await openPanel()
-    const [long, veryLong] = screen.getAllByRole('button', { name: 'Show all' })
-    expect(long).toHaveClass('manager-message__expand--long')
-    expect(long.closest('li')?.querySelector('.manager-message__text'))
-      .toHaveClass('manager-message__text--long', 'manager-message__text--clamped')
-    expect(veryLong).toHaveClass('manager-message__expand--very-long')
-    expect(veryLong.closest('li')?.querySelector('.manager-message__text'))
-      .toHaveClass('manager-message__text--very-long', 'manager-message__text--clamped')
-  })
-
   describe('following the conversation', () => {
     const docs = { computerId: 'hub', sessionId: 's1', title: 'Docs' }
     const conversation: ManagerSnapshot = {

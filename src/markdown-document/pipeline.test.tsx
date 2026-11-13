@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { render } from '@testing-library/react'
-import { Fragment } from 'react'
 import type { ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import type { Components } from 'react-markdown'
@@ -9,8 +8,16 @@ import { describe, expect, it } from 'vitest'
 import { outlineFromMarkdown, rehypeDocumentHeadings } from '../markdown-navigation'
 import { remarkSafeBreaks } from '../remark-safe-breaks'
 import { documentJsx } from './document-jsx'
-import { documentOpening, documentRenderEvents, documentUrlTransform, renderDocumentTree, splitDocumentTree } from './pipeline'
-import type { DocumentRenderEvent } from './pipeline'
+import { drawStep, emptyDrawing } from './draw'
+import type { DocumentDrawing } from './draw'
+import {
+  documentOpening,
+  documentParts,
+  documentRenderEvents,
+  documentUrlTransform,
+  renderDocumentTree,
+} from './pipeline'
+import type { DocumentRenderEvent, DrawStep } from './pipeline'
 
 const fixtures: Record<string, string> = {
   headings: '# Title\n\n## Repeat\n\ntext\n\n## Repeat\n\n#\n\n## ![](logo.png)\n\n## Repeat!\n\n### Café *déjà* vu\n',
@@ -79,20 +86,63 @@ describe('document pipeline', () => {
     for (const url of urls) expect(documentUrlTransform(url)).toBe(defaultUrlTransform(url))
   })
 
-  it('splits a long document into bounded chunks that render the same document', () => {
+})
+
+/** The page drawn from `parts`, its blocks' contents in order: what the reader sees. */
+function drawnPage(parts: DrawStep[][]): string {
+  const drawing = parts.flat().reduce<DocumentDrawing>((sofar, step) => drawStep(sofar, step, components), emptyDrawing)
+  const { container, unmount } = render(<div>{drawing.blocks}</div>)
+  const result = [...container.querySelectorAll(':scope > div > .document-chunk')].map((block) => block.innerHTML).join('')
+  unmount()
+  return result
+}
+
+/** The page a whole-document render makes. */
+function wholePage(markdown: string): string {
+  const { container, unmount } = render(<div>{documentJsx(renderDocumentTree(markdown).tree, components)}</div>)
+  const result = container.firstElementChild!.innerHTML
+  unmount()
+  return result
+}
+
+/** About `bytes` of Markdown made of `unit` repeated. */
+function repeated(bytes: number, unit: (index: number) => string): string {
+  let body = ''
+  for (let index = 1; body.length < bytes; index += 1) body += unit(index)
+  return body
+}
+
+describe('document parts', () => {
+  it('draws a long document in bounded parts that make the same page', () => {
     const markdown = Array.from({ length: 60 }, (_, index) =>
       `## Part ${index}\n\n${'Words in a paragraph. '.repeat(20)}\n\n- one\n- two\n`).join('\n')
-    const whole = renderDocumentTree(markdown).tree
-    const chunks = splitDocumentTree(renderDocumentTree(markdown).tree, 2_000)
-    expect(chunks.length).toBeGreaterThan(5)
-    expect(chunks.some(hasPosition)).toBe(false)
-    expect(html(chunks.map((chunk, index) => <Fragment key={index}>{documentJsx(chunk, components)}</Fragment>)))
-      .toBe(html(documentJsx(whole, components)))
+    const parts = [...documentParts(renderDocumentTree(markdown).tree.children, { budget: 2_000 })]
+    expect(parts.length).toBeGreaterThan(5)
+    expect(parts.some((part) => part.some((step) => step.nodes.some(hasPosition)))).toBe(false)
+    expect(drawnPage(parts)).toBe(wholePage(markdown))
   })
 
-  it('keeps a short document in one chunk', () => {
-    expect(splitDocumentTree(renderDocumentTree('# One\n\nShort.\n').tree)).toHaveLength(1)
-    expect(splitDocumentTree(renderDocumentTree('').tree)).toHaveLength(1)
+  it.each([
+    ['table', `| Check | Result |\n| --- | :-: |\n${repeated(6_000, (index) => `| check ${index} | **passed** |\n`)}`],
+    ['list', repeated(6_000, (index) => `- Change ${index} with [a link](plans/${index}.md)\n`)],
+    ['numbered list', repeated(6_000, (index) => `${index}. Step ${index}\n`)],
+    ['nested list', `- Everything\n${repeated(6_000, (index) => `  - Item ${index}\n`)}\nAfter the list.\n`],
+    ['quote', repeated(6_000, (index) => `> Quoted line ${index}\n>\n`)],
+    ['paragraph', repeated(6_000, (index) => `word${index} *em${index}* `)],
+    ['footnotes', `${Array.from({ length: 400 }, (_, index) => `Note[^${index}]`).join(' ')}\n\n${
+      Array.from({ length: 400 }, (_, index) => `[^${index}]: Note ${index}.\n`).join('')}`],
+  ])('fills one long %s over several parts, ending with the same page', (_name, markdown) => {
+    const parts = [...documentParts(renderDocumentTree(markdown).tree.children, { budget: 1_000 })]
+    expect(parts.length).toBeGreaterThan(3)
+    expect(Math.max(...parts.flat().map((step) => step.depth))).toBeGreaterThan(0)
+    expect(drawnPage(parts)).toBe(wholePage(markdown))
+  })
+
+  it('draws an element some reader draws with a component in one part', () => {
+    const markdown = `| a |\n| - |\n${repeated(6_000, (index) => `| ${index} |\n`)}`
+    const parts = [...documentParts(renderDocumentTree(markdown).tree.children, { budget: 1_000, whole: ['table'] })]
+    expect(parts.flat().every((step) => step.depth === 0)).toBe(true)
+    expect(drawnPage(parts)).toBe(wholePage(markdown))
   })
 })
 
@@ -109,6 +159,26 @@ describe('document opening', () => {
     expect(opening.length).toBeLessThanOrEqual(4_096)
     expect(source.slice(opening.length)).toMatch(/^## Section \d+\n/)
     expect(source.startsWith(opening)).toBe(true)
+  })
+
+  it('without headings, ends before a block, or else at a line', () => {
+    const paragraphs = repeated(40_000, (index) => `Paragraph ${index} has a sentence.\n\n`)
+    const opening = documentOpening(paragraphs, 4_096)!
+    expect(opening.length).toBeLessThanOrEqual(4_096)
+    expect(opening.endsWith('\n\n')).toBe(true)
+
+    const list = repeated(40_000, (index) => `- Item ${index}\n`)
+    const listOpening = documentOpening(list, 4_096)!
+    expect(listOpening.length).toBeLessThanOrEqual(4_096)
+    expect(list.slice(listOpening.length)).toMatch(/^- Item \d+\n/)
+  })
+
+  it('never ends before a line that changes how the one before it reads', () => {
+    const table = `| a | b |\n${repeated(40_000, (index) => `| ${index} | x |\n|---|---|\n`)}`
+    const opening = documentOpening(table, 4_096)!
+    expect(table.slice(opening.length)).not.toMatch(/^\|---/)
+    const setext = repeated(40_000, (index) => `Title ${index}\n===\n`)
+    expect(setext.slice(documentOpening(setext, 4_096)!.length)).not.toMatch(/^===/)
   })
 
   it('never ends inside a code fence or a preformatted HTML block', () => {
@@ -128,20 +198,21 @@ describe('document render events', () => {
   const part = (index: number) => `## Part ${index}\n\n${'Words in a paragraph. '.repeat(30)}\n\n- one\n- two\n\n`
   const long = (extra = '') => Array.from({ length: 200 }, (_, index) => part(index)).join('') + extra
 
-  /** The page a reader ends with: every chunk since the last restart, in order. */
+  /** The page a reader ends with: every part since the last restart, in order. */
   function drawn(events: DocumentRenderEvent[]): string {
-    let trees: DocumentRenderEvent[] = []
-    for (const event of events) trees = event.kind === 'restart' ? [] : [...trees, event]
-    return html(trees.map((event, index) => (
-      event.kind === 'chunk' ? <Fragment key={index}>{documentJsx(event.tree, components)}</Fragment> : null
-    )))
+    let parts: DrawStep[][] = []
+    for (const event of events) {
+      if (event.kind === 'restart') parts = []
+      else if (event.kind === 'part') parts = [...parts, event.steps]
+    }
+    return drawnPage(parts)
   }
 
-  const whole = (source: string) => html(documentJsx(renderDocumentTree(source).tree, components))
+  const whole = wholePage
 
   it('sends a short document whole, then its outline', () => {
     const events = [...documentRenderEvents(fixtures.headings!)]
-    expect(events.map((event) => event.kind)).toEqual(['chunk', 'done'])
+    expect(events.map((event) => event.kind)).toEqual(['part', 'done'])
     expect(drawn(events)).toBe(whole(fixtures.headings!))
     expect(events.at(-1)).toEqual({ kind: 'done', outline: outlineFromMarkdown(fixtures.headings!) })
   })
@@ -149,8 +220,8 @@ describe('document render events', () => {
   it("sends a long document's opening first and keeps it when the whole document agrees", () => {
     const source = long()
     const events = [...documentRenderEvents(source)]
-    const opening = splitDocumentTree(renderDocumentTree(documentOpening(source)!).tree)
-    expect(events.slice(0, opening.length)).toEqual(opening.map((tree) => ({ kind: 'chunk', tree })))
+    const opening = [...documentParts(renderDocumentTree(documentOpening(source)!).tree.children)]
+    expect(events.slice(0, opening.length)).toEqual(opening.map((steps) => ({ kind: 'part', steps })))
     expect(events.map((event) => event.kind)).not.toContain('restart')
     expect(drawn(events)).toBe(whole(source))
     expect(events.at(-1)).toEqual({ kind: 'done', outline: outlineFromMarkdown(source) })
@@ -161,5 +232,20 @@ describe('document render events', () => {
     const events = [...documentRenderEvents(source)]
     expect(events.filter((event) => event.kind === 'restart')).toHaveLength(1)
     expect(drawn(events)).toBe(whole(source))
+  })
+
+  it('shows the start of a long document without headings, then starts over with the whole of it', () => {
+    const source = repeated(80_000, (index) => `- Change ${index}\n`)
+    const events = [...documentRenderEvents(source)]
+    expect(events[0]!.kind).toBe('part')
+    expect(events.filter((event) => event.kind === 'restart')).toHaveLength(1)
+    expect(drawn(events)).toBe(whole(source))
+  })
+
+  it('passes on which elements to draw whole', () => {
+    const source = `${'Intro paragraph.\n\n'.repeat(3_000)}| a |\n| - |\n${repeated(40_000, (index) => `| ${index} |\n`)}`
+    const steps = [...documentRenderEvents(source, ['table'])]
+      .flatMap((event) => (event.kind === 'part' ? event.steps : []))
+    expect(steps.every((step) => step.depth === 0)).toBe(true)
   })
 })

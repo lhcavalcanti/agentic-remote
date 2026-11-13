@@ -65,12 +65,17 @@ function lastClick(page: Page): Promise<number> {
   return page.evaluate(() => (window as unknown as { lastClick: number }).lastClick)
 }
 
-test('a large Knowledge document opens at once and draws without freezing the page', async ({ page }, testInfo) => {
-  test.setTimeout(180_000)
-  await page.setViewportSize({ width: 1440, height: 900 })
-  const plan = `# Plan 1\n\n${'The plan for the first milestone, step by step. '.repeat(400)}\n`
-  await page.addInitScript(() => {
-    const frames: { start: number; duration: number; render: number; scripts: string }[] = []
+interface LongFrame {
+  start: number
+  duration: number
+  render: number
+  scripts: string
+}
+
+/** Records the page's long animation frames and its last click, from before it loads. */
+function watchFrames(page: Page) {
+  return page.addInitScript(() => {
+    const frames: LongFrame[] = []
     ;(window as unknown as { longFrames: typeof frames }).longFrames = frames
     new PerformanceObserver((list) => {
       for (const entry of list.getEntries() as PerformanceEntry[] as (PerformanceEntry & {
@@ -89,6 +94,37 @@ test('a large Knowledge document opens at once and draws without freezing the pa
       ;(window as unknown as { lastClick: number }).lastClick = performance.now()
     }, true)
   })
+}
+
+/** The two longest frames between `since` and `until`, longest first. */
+async function longestFrames(page: Page, since: number, until: number): Promise<[LongFrame, LongFrame]> {
+  const none = { start: since, duration: 0, render: 0, scripts: '' }
+  const frames = await page.evaluate(([from, to]) => (window as unknown as { longFrames: LongFrame[] }).longFrames
+    .filter((frame) => frame.start >= from && frame.start < to)
+    .sort((a, b) => b.duration - a.duration)
+    .slice(0, 2), [since, until])
+  return [frames[0] ?? none, frames[1] ?? none]
+}
+
+function describeFrames([longest, next]: [LongFrame, LongFrame], clicked: number): string {
+  return `longest frames while drawing ${Math.round(longest.duration)} and ${Math.round(next.duration)} ms`
+    + ` (the longest at ${Math.round(longest.start - clicked)} ms; rendering ${Math.round(longest.render)} ms; scripts: ${longest.scripts || 'none'})`
+}
+
+/**
+ * Drawing on the page would freeze it for seconds. A host's passing hiccup can
+ * stretch one frame, but a slower renderer stretches many.
+ */
+function expectNoFreeze([longest, next]: [LongFrame, LongFrame], bound = 250) {
+  expect(longest.duration).toBeLessThan(2_000)
+  expect(next.duration).toBeLessThan(bound)
+}
+
+test('a large Knowledge document opens at once and draws without freezing the page', async ({ page }, testInfo) => {
+  test.setTimeout(180_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const plan = `# Plan 1\n\n${'The plan for the first milestone, step by step. '.repeat(400)}\n`
+  await watchFrames(page)
   const fixture = await setupWorkspaceFixture(page, { baseUrl: testInfo.project.use.baseURL!, knowledgeMode: 'docked' })
   await serveDocuments(page, {
     [KNOWLEDGE_FILE_PATH]: '# Agent workspace\n\n[Open the checklist](release-checklist.md)\n',
@@ -102,19 +138,10 @@ test('a large Knowledge document opens at once and draws without freezing the pa
     const opened = await appeared(page, 'section-1')
     const drawn = await appeared(page, 'final-checks')
     const clicked = await lastClick(page)
-    const [longest, next] = await page.evaluate(([since, until]) => (window as unknown as {
-      longFrames: { start: number; duration: number; render: number; scripts: string }[]
-    }).longFrames.filter((frame) => frame.start >= since && frame.start < until)
-      .sort((a, b) => b.duration - a.duration)
-      .concat([{ start: since, duration: 0, render: 0, scripts: '' }, { start: since, duration: 0, render: 0, scripts: '' }])
-      .slice(0, 2), [clicked, drawn])
-    console.log(`2 MB document: opening after ${Math.round(opened - clicked)} ms, whole after ${Math.round(drawn - clicked)} ms, longest frames while drawing ${Math.round(longest!.duration)} and ${Math.round(next!.duration)} ms`
-      + ` (the longest at ${Math.round(longest!.start - clicked)} ms; rendering ${Math.round(longest!.render)} ms; scripts: ${longest!.scripts || 'none'})`)
+    const frames = await longestFrames(page, clicked, drawn)
+    console.log(`2 MB document: opening after ${Math.round(opened - clicked)} ms, whole after ${Math.round(drawn - clicked)} ms, ${describeFrames(frames, clicked)}`)
     expect(opened - clicked).toBeLessThan(2_000)
-    // Drawing on the page would freeze it for seconds; a host's passing hiccup
-    // can stretch one frame, but a slower renderer stretches many.
-    expect(longest!.duration).toBeLessThan(2_000)
-    expect(next!.duration).toBeLessThan(250)
+    expectNoFreeze(frames)
 
     await page.getByRole('button', { name: 'Document outline' }).click()
     await page.getByRole('navigation', { name: 'Document outline' }).getByRole('button', { name: 'Final checks' }).click()
@@ -129,6 +156,44 @@ test('a large Knowledge document opens at once and draws without freezing the pa
     const leaving = await lastClick(page)
     console.log(`next document after leaving mid-parse: ${Math.round(arrived - leaving)} ms`)
     expect(arrived - leaving).toBeLessThan(2_000)
+  } finally {
+    fixture.assertHealthy()
+  }
+})
+
+/** About `bytes` of Markdown made of `unit` repeated. */
+function repeated(bytes: number, unit: (index: number) => string): string {
+  let body = ''
+  for (let index = 1; body.length < bytes; index += 1) body += unit(index)
+  return body
+}
+
+// Chromium lays a table out whole each time rows are added to it, so the
+// frames that fill a long one grow with it: about 0.3 seconds by 1 MB.
+for (const [shape, bound, body] of [
+  ['table', 1_000, () => `| Check | Result | Owner |\n| --- | --- | --- |\n${repeated(1024 * 1024, (index) => `| check ${index} | **passed** in ${index} ms | team ${index % 7} |\n`)}`],
+  ['list', 250, () => repeated(1024 * 1024, (index) => `- Change ${index}: fixed [item ${index}](plans/plan-${index}.md) with *care*\n`)],
+] as const) test(`a Knowledge document that is one long ${shape} opens at once and draws without freezing the page`, async ({ page }, testInfo) => {
+  test.setTimeout(120_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await watchFrames(page)
+  const fixture = await setupWorkspaceFixture(page, { baseUrl: testInfo.project.use.baseURL!, knowledgeMode: 'docked' })
+  await serveDocuments(page, {
+    [KNOWLEDGE_FILE_PATH]: '# Agent workspace\n\n[Open the report](report.md)\n',
+    'handbook/report.md': `# Report\n\n${body()}\n## Final checks\n\nThe end.\n`,
+  })
+  try {
+    await page.goto('/')
+    const reader = page.locator('.workspace-preview__content.markdown-body')
+    await reader.getByRole('link', { name: 'Open the report' }).click()
+    const opened = await appeared(page, 'report')
+    const drawn = await appeared(page, 'final-checks')
+    const clicked = await lastClick(page)
+    const frames = await longestFrames(page, clicked, drawn)
+    console.log(`1 MB ${shape}: opening after ${Math.round(opened - clicked)} ms, whole after ${Math.round(drawn - clicked)} ms, ${describeFrames(frames, clicked)}`)
+    expect(opened - clicked).toBeLessThan(2_000)
+    expectNoFreeze(frames, bound)
+    await expect(reader.locator(shape === 'table' ? 'table' : 'ul')).toHaveCount(1)
   } finally {
     fixture.assertHealthy()
   }

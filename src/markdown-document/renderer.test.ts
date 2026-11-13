@@ -32,7 +32,7 @@ describe('synchronous renderer', () => {
   it('reports every chunk and then the outline before returning', () => {
     const events: DocumentRenderEvent[] = []
     synchronousRenderer.render(markdown, (event) => events.push(event))
-    expect(events.map((event) => event.kind)).toEqual(['chunk', 'done'])
+    expect(events.map((event) => event.kind)).toEqual(['part', 'done'])
     expect(events.at(-1)).toEqual({ kind: 'done', outline: outlineFromMarkdown(markdown) })
     expect(synchronousRenderer.renderNow?.(markdown)?.outline).toEqual(outlineFromMarkdown(markdown))
   })
@@ -53,19 +53,19 @@ describe('worker renderer', () => {
   it('gives a document a worker of its own and keeps a finished one for the next', () => {
     const { renderer, workers } = startWorkers()
     const events = vi.fn()
-    renderer.render(large, events)
+    renderer.render(large, events, ['pre'])
     renderer.render(markdown, vi.fn())
-    expect(workers.map((worker) => worker.posted)).toEqual([[large], [markdown]])
+    expect(workers.map((worker) => worker.posted)).toEqual([[{ source: large, whole: ['pre'] }], [{ source: markdown, whole: [] }]])
 
-    workers[0]!.reply({ kind: 'chunk', tree: { type: 'root', children: [] } })
+    workers[0]!.reply({ kind: 'part', steps: [] })
     workers[0]!.reply({ kind: 'done', outline: [] })
-    expect(events.mock.calls.map(([event]) => (event as DocumentRenderEvent).kind)).toEqual(['chunk', 'done'])
+    expect(events.mock.calls.map(([event]) => (event as DocumentRenderEvent).kind)).toEqual(['part', 'done'])
     workers[1]!.reply({ kind: 'done', outline: [] })
     expect(workers.map((worker) => worker.terminated)).toEqual([false, true])
 
     renderer.render(large, vi.fn())
     expect(workers).toHaveLength(2)
-    expect(workers[0]!.posted).toEqual([large, large])
+    expect(workers[0]!.posted).toEqual([{ source: large, whole: ['pre'] }, { source: large, whole: [] }])
   })
 
   it('stops a worker still rendering when cancelled and ignores anything it still sends', () => {
@@ -107,7 +107,7 @@ describe('worker renderer', () => {
 describe('worker message handling', () => {
   it('posts every render event in order', () => {
     const posted: unknown[] = []
-    handleRenderRequest((message) => posted.push(message))(markdown)
-    expect(posted).toEqual([...documentRenderEvents(markdown)])
+    handleRenderRequest((message) => posted.push(message))({ source: markdown, whole: ['p'] })
+    expect(posted).toEqual([...documentRenderEvents(markdown, ['p'])])
   })
 })

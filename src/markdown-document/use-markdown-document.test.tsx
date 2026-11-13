@@ -4,7 +4,7 @@ import { act, cleanup, render, screen } from '@testing-library/react'
 import type { Components } from 'react-markdown'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { outlineFromMarkdown } from '../markdown-navigation'
-import { renderDocumentTree, splitDocumentTree } from './pipeline'
+import { documentParts, renderDocumentTree } from './pipeline'
 import type { DocumentRenderEvent } from './pipeline'
 import { DocumentRendererContext } from './renderer'
 import type { DocumentRenderer } from './renderer'
@@ -13,22 +13,26 @@ import { useMarkdownDocument } from './use-markdown-document'
 const components: Components = {}
 const markdown = '# First\n\nOpening paragraph.\n\n## Second\n\nMiddle paragraph.\n\n## Third\n\nClosing paragraph.\n'
 
-/** Every chunk of `source` split small, then its outline: what a worker would send. */
-function eventsFor(source: string): DocumentRenderEvent[] {
+/** Every part of `source` drawn small, then its outline: what a worker would send. */
+function eventsFor(source: string, budget = 20): DocumentRenderEvent[] {
   const { tree, outline } = renderDocumentTree(source)
-  const chunks = splitDocumentTree(tree, 20)
   return [
-    ...chunks.map((tree): DocumentRenderEvent => ({ kind: 'chunk', tree })),
+    ...[...documentParts(tree.children, { budget })].map((steps): DocumentRenderEvent => ({ kind: 'part', steps })),
     { kind: 'done', outline },
   ]
 }
 
 /** A renderer that answers only when the test says so. */
 function controlledRenderer() {
-  const calls: { source: string; emit: (event: DocumentRenderEvent) => void; cancelled: boolean }[] = []
+  const calls: {
+    source: string
+    emit: (event: DocumentRenderEvent) => void
+    whole?: readonly string[]
+    cancelled: boolean
+  }[] = []
   const renderer: DocumentRenderer = {
-    render(source, emit) {
-      const call = { source, emit, cancelled: false }
+    render(source, emit, whole) {
+      const call = { source, emit, whole, cancelled: false }
       calls.push(call)
       return () => {
         call.cancelled = true
@@ -125,6 +129,27 @@ describe('useMarkdownDocument', () => {
     expect(drawnChunks()).toBe(3)
   })
 
+  it('fills a long table in place, a part a frame', async () => {
+    const { renderer, calls } = controlledRenderer()
+    const table = `| Check | Result |\n| --- | --- |\n${Array.from({ length: 60 }, (_, index) => `| check ${index} | passed |`).join('\n')}\n`
+    show(renderer, table)
+    const events = eventsFor(table, 200)
+    expect(events.length).toBeGreaterThan(4)
+    act(() => events.forEach((event) => calls[0]!.emit(event)))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    const drawnTable = screen.getByRole('table')
+    const rows = screen.getAllByRole('row').length
+    await nextFrame()
+    expect(screen.getByRole('table')).toBe(drawnTable)
+    expect(screen.getAllByRole('row').length).toBeGreaterThan(rows)
+    await settle()
+    expect(screen.getByRole('table')).toBe(drawnTable)
+    expect(screen.getAllByRole('row')).toHaveLength(61)
+    expect(screen.getByTestId('reader')).toHaveAttribute('data-ready', 'true')
+  })
+
   it('keeps the opening on the page through a restart until the whole document is drawn over it', async () => {
     const { renderer, calls } = controlledRenderer()
     show(renderer, markdown)
@@ -146,10 +171,17 @@ describe('useMarkdownDocument', () => {
 
   it('keeps the document on the page while new components draw it again', async () => {
     const { renderer, calls } = controlledRenderer()
-    const view = show(renderer, markdown)
+    const plain: Components = { p: ({ node: _node, ...props }) => <p {...props} /> }
+    const view = render(
+      <DocumentRendererContext.Provider value={renderer}>
+        <Reader source={markdown} using={plain} />
+      </DocumentRendererContext.Provider>,
+    )
+    expect(calls[0]!.whole).toEqual(['p'])
     act(() => eventsFor(markdown).forEach((event) => calls[0]!.emit(event)))
     await settle()
 
+    // The same tags drawn by new components: the parts already sent still hold.
     const marked: Components = { p: ({ node: _node, ...props }) => <p data-marked="yes" {...props} /> }
     view.rerender(
       <DocumentRendererContext.Provider value={renderer}>
@@ -177,6 +209,22 @@ describe('useMarkdownDocument', () => {
     await settle()
     expect(screen.getByRole('heading', { name: 'Replacement' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'First' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('reader')).toHaveAttribute('data-ready', 'true')
+  })
+
+  it('ignores a cancelled render that keeps sending', async () => {
+    const { renderer, calls } = controlledRenderer()
+    const view = show(renderer, markdown)
+    view.rerender(
+      <DocumentRendererContext.Provider value={renderer}>
+        <Reader source={'# Replacement\n'} />
+      </DocumentRendererContext.Provider>,
+    )
+    act(() => eventsFor('# Replacement\n').slice(0, -1).forEach((event) => calls[1]!.emit(event)))
+    act(() => eventsFor(markdown).forEach((event) => calls[0]!.emit(event)))
+    act(() => calls[1]!.emit(eventsFor('# Replacement\n').at(-1)!))
+    await settle()
+    expect(screen.getByRole('heading', { name: 'Replacement' })).toBeInTheDocument()
     expect(screen.getByTestId('reader')).toHaveAttribute('data-ready', 'true')
   })
 

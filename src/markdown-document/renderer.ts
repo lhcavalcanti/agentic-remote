@@ -3,18 +3,21 @@ import { documentRenderEvents, renderDocumentTree } from './pipeline'
 import type { DocumentRenderEvent, RenderedDocumentTree } from './pipeline'
 
 export interface DocumentRenderer {
-  /** Renders `source`, reporting each chunk and then the outline; returns a cancel. */
-  render(source: string, onEvent: (event: DocumentRenderEvent) => void): () => void
+  /**
+   * Renders `source`, reporting each part to draw and then the outline;
+   * returns a cancel. Elements whose tags are in `whole` are drawn whole.
+   */
+  render(source: string, onEvent: (event: DocumentRenderEvent) => void, whole?: readonly string[]): () => void
   /** Renders `source` on the calling thread when that is quick enough; otherwise undefined. */
   renderNow?(source: string): RenderedDocumentTree | undefined
 }
 
 /** Renders on the page's thread; used where Web Workers are unavailable. */
 export const synchronousRenderer: DocumentRenderer = {
-  render(source, onEvent) {
+  render(source, onEvent, whole) {
     let cancelled = false
     try {
-      for (const event of documentRenderEvents(source)) {
+      for (const event of documentRenderEvents(source, whole)) {
         if (cancelled) break
         onEvent(event)
       }
@@ -50,7 +53,7 @@ const renderNowLimit = 8_192
 export function createWorkerRenderer(startWorker: () => RendererWorker = startMarkdownWorker): DocumentRenderer {
   let spare: RendererWorker | undefined
   return {
-    render(source, onEvent) {
+    render(source, onEvent, whole = []) {
       let worker: RendererWorker | undefined
       let active = true
       const end = (finished: boolean) => {
@@ -80,7 +83,7 @@ export function createWorkerRenderer(startWorker: () => RendererWorker = startMa
           error.preventDefault()
           fail(error.message || 'The document renderer stopped.')
         }
-        worker.postMessage(source)
+        worker.postMessage({ source, whole: [...whole] })
       } catch (error) {
         fail(error instanceof Error ? error.message : String(error))
       }

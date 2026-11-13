@@ -19597,6 +19597,37 @@ describe('App', () => {
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
   })
 
+  it('copies all of a long fence drawn in pieces, under its language', async () => {
+    const code = `${Array.from({ length: 30 }, (_, index) => `line ${index} of the log`).join('\n')}\n`
+    mockGuideKnowledge('', `# Knowledge start\n\n\`\`\`text\n${code}\`\`\`\n`)
+    // Small parts, so the fence is drawn in pieces of text.
+    const renderer: DocumentRenderer = {
+      render(source, emit) {
+        const { tree, outline } = renderDocumentTree(source)
+        queueMicrotask(() => {
+          for (const steps of documentParts(tree.children, { budget: 20 })) emit({ kind: 'part', steps })
+          emit({ kind: 'done', outline })
+        })
+        return () => undefined
+      },
+    }
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    try {
+      await openKnowledgeReadme(renderer)
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Copy code' })).toBeEnabled())
+      expect(document.querySelector('figure.document-code code')!.childNodes.length).toBeGreaterThan(1)
+      expect(screen.getByText('text', { selector: 'figcaption span' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Copy code' }))
+      await screen.findByRole('button', { name: 'Code copied' })
+      expect(writeText).toHaveBeenCalledWith(code)
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    }
+  })
+
   it('does not send a reader who scrolls a Knowledge document still being drawn back to its top', async () => {
     backScrollTop()
     mockGuideKnowledge('[Open guide](guide.md)')

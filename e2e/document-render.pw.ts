@@ -181,9 +181,10 @@ for (const [shape, bound, selector, count, body] of [
   await page.setViewportSize({ width: 1440, height: 900 })
   await watchFrames(page)
   const fixture = await setupWorkspaceFixture(page, { baseUrl: testInfo.project.use.baseURL!, knowledgeMode: 'docked' })
+  const content = body()
   await serveDocuments(page, {
     [KNOWLEDGE_FILE_PATH]: '# Agent workspace\n\n[Open the report](report.md)\n',
-    'handbook/report.md': `# Report\n\n${body()}\n## Final checks\n\nThe end.\n`,
+    'handbook/report.md': `# Report\n\n${content}\n## Final checks\n\nThe end.\n`,
   })
   try {
     await page.goto('/')
@@ -197,8 +198,21 @@ for (const [shape, bound, selector, count, body] of [
     expect(opened - clicked).toBeLessThan(2_000)
     expectNoFreeze(frames, bound)
     await expect(reader.locator(selector)).toHaveCount(count)
-    // A fence's copy waits for all of it, then is there.
-    if (shape === 'fence') await expect(reader.getByRole('button', { name: 'Copy code' })).toBeEnabled()
+    if (shape === 'fence') {
+      // Drawn in pieces, the fence still copies all of its text.
+      await expect(reader.getByRole('button', { name: 'Copy code' })).toBeEnabled()
+      await page.evaluate(() => {
+        Object.defineProperty(navigator, 'clipboard', {
+          configurable: true,
+          value: { writeText: async (text: string) => { (window as unknown as { copied: string }).copied = text } },
+        })
+      })
+      await reader.getByRole('button', { name: 'Copy code' }).click()
+      await expect(reader.getByRole('button', { name: 'Code copied' })).toBeVisible()
+      const code = content.slice('```text\n'.length, -'```\n'.length)
+      expect(await page.evaluate(() => (window as unknown as { copied: string }).copied.length)).toBe(code.length)
+      expect(await page.evaluate(() => (window as unknown as { copied: string }).copied.slice(-60))).toBe(code.slice(-60))
+    }
   } finally {
     fixture.assertHealthy()
   }

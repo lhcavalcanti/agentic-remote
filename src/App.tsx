@@ -1,4 +1,5 @@
 import {
+  Fragment,
   isValidElement,
   memo,
   useCallback,
@@ -6154,15 +6155,18 @@ function markdownComponentsFor(
   }
 }
 
+/** Children as a flat list, arrays and fragments opened: a long fence arrives in fragments, a piece each. */
+function flatChildren(children: ReactNode): ReactNode[] {
+  if (Array.isArray(children)) return children.flatMap((child) => flatChildren(child as ReactNode))
+  if (isValidElement<{ children?: ReactNode }>(children) && children.type === Fragment) {
+    return flatChildren(children.props.children)
+  }
+  return [children]
+}
+
 /** Reads the text of a fenced block, which arrives as its children. */
 function fencedSource(children: ReactNode): string {
-  if (typeof children === 'string') {
-    return children
-  }
-  if (Array.isArray(children)) {
-    return children.map((child) => fencedSource(child as ReactNode)).join('')
-  }
-  return ''
+  return flatChildren(children).map((child) => (typeof child === 'string' ? child : '')).join('')
 }
 
 const mermaidComponents = {
@@ -6208,9 +6212,7 @@ const mermaidComponents = {
 
 /** The text of a fenced mermaid block, or nothing if that is not what it is. */
 function codeFenceProps(children: ReactNode) {
-  const fence = Array.isArray(children)
-    ? children.find((child) => isValidElement(child))
-    : children
+  const fence = flatChildren(children).find((child) => isValidElement(child))
   return isValidElement<{ className?: string; children?: ReactNode }>(fence)
     ? fence.props
     : undefined

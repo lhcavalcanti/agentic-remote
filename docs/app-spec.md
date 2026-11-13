@@ -1734,10 +1734,13 @@ clear replacement IDs without losing, duplicating, or reordering content.
   and report clipboard failure rather than claiming success.
 - Drawing a Markdown preview MUST NOT freeze the app, however long the
   document: past a small size it MUST be parsed off the page's thread and
-  drawn in parts, showing its opening first. The final page MUST equal a
+  drawn in parts, showing its opening first; a long table, list, quote, or
+  paragraph is filled across several. The final page MUST equal a
   whole-document render, and an opening the whole document reads differently
-  MUST be replaced. Section anchors, the outline, and a remembered scroll
-  offset MUST apply only once the whole document is drawn.
+  MUST be replaced. A section, the outline, and a remembered scroll offset
+  MUST apply to the Preview once it is wholly drawn, waiting through a switch
+  to Source; only then MAY a section be reported missing. A reader who scrolls
+  the Preview before then keeps their place.
 - Relative Markdown document links MUST open through the owning workspace or
   Knowledge root without navigating away from the app. Section links MUST stay
   inside the displayed document, with unique anchors for repeated headings.

@@ -233,12 +233,15 @@ Do not weaken these without an explicit product decision.
   rows. Do not pass inline callbacks or per-render objects to them.
 - Knowledge and session-file Markdown go through `useMarkdownDocument`
   (`src/markdown-document/`): long documents are parsed in a per-document Web
-  Worker, opening first, and drawn one `div.document-chunk` per frame. Keep
-  `pipeline.ts` identical to react-markdown's processing (plugins, raw HTML as
-  text, URL filter, `toJsxRuntime` options); its parity tests guard that. The
-  worker bundle must not import DOM builds: `vite.config.ts` redirects the
-  entity decoder, and only the Chromium spec `e2e/document-render.pw.ts`
-  catches a regression. Chat, Oracle, and side answers keep ReactMarkdown.
+  Worker, opening first, and drawn a part per frame, top-level parts each in a
+  `div.document-chunk`. A long table, list, quote, or paragraph is filled in
+  place across parts (`draw.ts`); tags a reader draws with a component are
+  passed as `whole` and never split. Keep `pipeline.ts` identical to
+  react-markdown's processing (plugins, raw HTML as text, URL filter,
+  `toJsxRuntime` options); its parity tests guard that. The worker bundle must
+  not import DOM builds: `vite.config.ts` redirects the entity decoder, and
+  only the Chromium spec `e2e/document-render.pw.ts` catches a regression.
+  Chat, Oracle, and side answers keep ReactMarkdown.
 
 ## Validating a change
 

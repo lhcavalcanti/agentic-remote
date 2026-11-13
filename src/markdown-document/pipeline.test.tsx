@@ -131,11 +131,30 @@ describe('document parts', () => {
     ['paragraph', repeated(6_000, (index) => `word${index} *em${index}* `)],
     ['footnotes', `${Array.from({ length: 400 }, (_, index) => `Note[^${index}]`).join(' ')}\n\n${
       Array.from({ length: 400 }, (_, index) => `[^${index}]: Note ${index}.\n`).join('')}`],
+    ['plain paragraph', repeated(30_000, (index) => `plain words ${index}${index % 8 === 0 ? '\n' : ' '}`)],
+    ['fence', `\`\`\`text\n${repeated(30_000, (index) => `line ${index} of the log\n`)}\`\`\`\n`],
   ])('fills one long %s over several parts, ending with the same page', (_name, markdown) => {
     const parts = [...documentParts(renderDocumentTree(markdown).tree.children, { budget: 1_000 })]
     expect(parts.length).toBeGreaterThan(3)
     expect(Math.max(...parts.flat().map((step) => step.depth))).toBeGreaterThan(0)
     expect(drawnPage(parts)).toBe(wholePage(markdown))
+  })
+
+  it('ends the pieces of a long run of text at line ends', () => {
+    const markdown = `\`\`\`text\n${repeated(30_000, (index) => `line ${index} of the log\n`)}\`\`\`\n`
+    const pieces = [...documentParts(renderDocumentTree(markdown).tree.children, { budget: 1_000 })]
+      .flat()
+      .flatMap((step) => step.nodes)
+      .filter((node) => node.type === 'text')
+      .map((node) => (node as { value: string }).value)
+    expect(pieces.length).toBeGreaterThan(2)
+    expect(pieces.slice(0, -1).every((piece) => piece.endsWith('\n') && piece.length <= 8_000)).toBe(true)
+  })
+
+  it('draws a diagram fence in one part', () => {
+    const markdown = `\`\`\`mermaid\ngraph TD\n${repeated(30_000, (index) => `  A${index} --> B${index}\n`)}\`\`\`\n`
+    const parts = [...documentParts(renderDocumentTree(markdown).tree.children, { budget: 1_000 })]
+    expect(parts.flat().every((step) => step.depth === 0)).toBe(true)
   })
 
   it('draws an element some reader draws with a component in one part', () => {

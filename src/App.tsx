@@ -368,6 +368,7 @@ import {
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
 import { MessageTime } from './MessageTime'
+import { drawnInParts } from './markdown-document/drawing'
 import { useMarkdownDocument } from './markdown-document/use-markdown-document'
 import { PauseFollowingContext } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
@@ -6118,20 +6119,27 @@ function markdownComponentsFor(
 ) {
   return {
     ...mermaidComponents,
-    pre({ children, node: _node, ...rest }: { children?: ReactNode; node?: unknown }) {
+    // A long fence is drawn in pieces; its copy waits until it is all drawn.
+    pre: drawnInParts(function DocumentFence({
+      children,
+      drawing,
+      node: _node,
+      ...rest
+    }: { children?: ReactNode; drawing?: boolean; node?: unknown }) {
       const mermaid = mermaidFencedSource(children)
       if (mermaid !== undefined) return <MermaidDiagram source={mermaid} />
       const fence = codeFenceProps(children)
       if (!fence) return <pre {...rest}>{children}</pre>
       return (
         <MarkdownCodeBlock
+          drawing={drawing}
           language={fence.className?.match(/\blanguage-([^\s]+)/)?.[1]}
           source={fencedSource(fence.children)}
         >
           <pre {...rest}>{children}</pre>
         </MarkdownCodeBlock>
       )
-    },
+    }),
     img({ alt, src, title }: { alt?: string; src?: unknown; title?: string }) {
       return (
         <MarkdownImage
@@ -6176,24 +6184,26 @@ const mermaidComponents = {
     }
     return <MermaidDiagram source={source} />
   },
-  code({
+  code: drawnInParts(function MarkdownCode({
     children,
     className,
-    // React Markdown hands every custom component its own syntax tree node.
-    // Forwarding it would put an object on a DOM attribute.
+    // React Markdown hands every custom component its own syntax tree node,
+    // and a document still being drawn says so; neither is a DOM attribute.
     node: _node,
+    drawing: _drawing,
     ...rest
   }: {
     children?: ReactNode
     className?: string
     node?: unknown
+    drawing?: boolean
   }) {
     return (
       <code className={className} {...rest}>
         {children}
       </code>
     )
-  },
+  }),
 }
 
 /** The text of a fenced mermaid block, or nothing if that is not what it is. */

@@ -168,11 +168,14 @@ function repeated(bytes: number, unit: (index: number) => string): string {
   return body
 }
 
-// Chromium lays a table out whole each time rows are added to it, so the
-// frames that fill a long one grow with it: about 0.3 seconds by 1 MB.
-for (const [shape, bound, body] of [
-  ['table', 1_000, () => `| Check | Result | Owner |\n| --- | --- | --- |\n${repeated(1024 * 1024, (index) => `| check ${index} | **passed** in ${index} ms | team ${index % 7} |\n`)}`],
-  ['list', 250, () => repeated(1024 * 1024, (index) => `- Change ${index}: fixed [item ${index}](plans/plan-${index}.md) with *care*\n`)],
+// Chromium lays a table, or a paragraph's text, out whole each time content
+// is added to it, so the frames that fill a long one grow with it: a few
+// tenths of a second by 1 MB.
+for (const [shape, bound, selector, count, body] of [
+  ['table', 1_000, 'table', 1, () => `| Check | Result | Owner |\n| --- | --- | --- |\n${repeated(1024 * 1024, (index) => `| check ${index} | **passed** in ${index} ms | team ${index % 7} |\n`)}`],
+  ['list', 250, 'ul', 1, () => repeated(1024 * 1024, (index) => `- Change ${index}: fixed [item ${index}](plans/plan-${index}.md) with *care*\n`)],
+  ['fence', 250, 'pre', 1, () => `\`\`\`text\n${repeated(1024 * 1024, (index) => `2026-11-12T10:00:00Z INFO request ${index} served\n`)}\`\`\`\n`],
+  ['plain paragraph', 1_000, 'p', 2, () => repeated(1024 * 1024, (index) => `plain words in sentence ${index}.${index % 8 === 0 ? '\n' : ' '}`)],
 ] as const) test(`a Knowledge document that is one long ${shape} opens at once and draws without freezing the page`, async ({ page }, testInfo) => {
   test.setTimeout(120_000)
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -193,7 +196,9 @@ for (const [shape, bound, body] of [
     console.log(`1 MB ${shape}: opening after ${Math.round(opened - clicked)} ms, whole after ${Math.round(drawn - clicked)} ms, ${describeFrames(frames, clicked)}`)
     expect(opened - clicked).toBeLessThan(2_000)
     expectNoFreeze(frames, bound)
-    await expect(reader.locator(shape === 'table' ? 'table' : 'ul')).toHaveCount(1)
+    await expect(reader.locator(selector)).toHaveCount(count)
+    // A fence's copy waits for all of it, then is there.
+    if (shape === 'fence') await expect(reader.getByRole('button', { name: 'Copy code' })).toBeEnabled()
   } finally {
     fixture.assertHealthy()
   }

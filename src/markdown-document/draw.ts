@@ -3,6 +3,7 @@ import type { ReactElement, ReactNode } from 'react'
 import type { Element, RootContent } from 'hast'
 import type { Components } from 'react-markdown'
 import { documentJsx } from './document-jsx'
+import { isDrawnInParts } from './drawing'
 import type { DrawStep } from './pipeline'
 
 /** An element still being drawn into. */
@@ -47,13 +48,17 @@ function elementsFor(nodes: RootContent[], components: Components, parent?: Elem
   return list(childrenOf(childrenOf(made)))
 }
 
-/** The element `levels[index]` stands for, every open level below it inside. */
-function build(levels: Level[], index: number): ReactElement {
+/**
+ * The element `levels[index]` stands for, every level below it inside. While
+ * they are `open`, a component drawing one is told it is still being drawn.
+ */
+function build(levels: Level[], index: number, open: boolean): ReactElement {
   const level = levels[index]!
   const latest = index + 1 < levels.length
-    ? [...level.latest.slice(0, -1), build(levels, index + 1)]
+    ? [...level.latest.slice(0, -1), build(levels, index + 1, open)]
     : level.latest
-  return cloneElement(level.shell, undefined, [
+  const shell = level.shell as ReactElement<{ drawing?: boolean }>
+  return cloneElement(shell, open && isDrawnInParts(shell.type) ? { drawing: true } : undefined, [
     ...level.done,
     createElement(Fragment, { key: level.done.length }, latest),
   ])
@@ -74,14 +79,15 @@ export function drawStep(drawing: DocumentDrawing, step: DrawStep, components: C
       latest: elementsFor(step.nodes, components),
       last: step.nodes.at(-1),
     }
-    return { blocks: [...drawing.blocks, build([block], 0)], open: [block] }
+    const { blocks } = finishDrawing(drawing)
+    return { blocks: [...blocks, build([block], 0, true)], open: [block] }
   }
   if (drawing.open.length < depth) throw new Error(`Nothing is open to draw into at depth ${depth}.`)
   const levels = drawing.open.slice(0, depth + 1)
   let container = levels[depth]
   if (drawing.open.length > depth + 1) {
     // Whatever is open below the element drawn into is complete.
-    container = { ...container!, latest: [...container!.latest.slice(0, -1), build(drawing.open, depth + 1)] }
+    container = { ...container!, latest: [...container!.latest.slice(0, -1), build(drawing.open, depth + 1, false)] }
   }
   if (container) {
     container = {
@@ -101,5 +107,11 @@ export function drawStep(drawing: DocumentDrawing, step: DrawStep, components: C
     latest: elementsFor(step.nodes, components, container.node),
     last: step.nodes.at(-1),
   }
-  return { blocks: [...drawing.blocks.slice(0, -1), build(levels, 0)], open: levels }
+  return { blocks: [...drawing.blocks.slice(0, -1), build(levels, 0, true)], open: levels }
+}
+
+/** `drawing` once nothing more will be added: whatever was still open is complete. */
+export function finishDrawing(drawing: DocumentDrawing): DocumentDrawing {
+  if (drawing.open.length < 2) return drawing
+  return { blocks: [...drawing.blocks.slice(0, -1), build(drawing.open, 0, false)], open: [] }
 }

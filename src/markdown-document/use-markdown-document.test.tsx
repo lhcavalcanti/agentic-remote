@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { outlineFromMarkdown } from '../markdown-navigation'
 import { documentParts, renderDocumentTree } from './pipeline'
 import type { DocumentRenderEvent } from './pipeline'
+import { drawnInParts } from './drawing'
 import { DocumentRendererContext } from './renderer'
 import type { DocumentRenderer } from './renderer'
 import { useMarkdownDocument } from './use-markdown-document'
@@ -226,6 +227,67 @@ describe('useMarkdownDocument', () => {
     await settle()
     expect(screen.getByRole('heading', { name: 'Replacement' })).toBeInTheDocument()
     expect(screen.getByTestId('reader')).toHaveAttribute('data-ready', 'true')
+  })
+
+  it('tells a component it is still being drawn into until all of it is drawn', async () => {
+    const { renderer, calls } = controlledRenderer()
+    const reporting: Components = {
+      p: drawnInParts(function Reporting({ node: _node, drawing, ...props }: { node?: unknown; drawing?: boolean }) {
+        return <p data-drawing={String(Boolean(drawing))} {...props} />
+      }),
+    }
+    // Long enough to be drawn in pieces of text, part by part.
+    const long = `# Notes\n\n${Array.from({ length: 200 }, (_, index) => `word ${index}`).join(' ')}\n\nAfter.\n`
+    render(
+      <DocumentRendererContext.Provider value={renderer}>
+        <Reader source={long} using={reporting} />
+      </DocumentRendererContext.Provider>,
+    )
+    const events = eventsFor(long, 50)
+    expect(events.length).toBeGreaterThan(4)
+    const paragraph = () => screen.getByText(/^word 0 /)
+    act(() => events.slice(0, 2).forEach((event) => calls[0]!.emit(event)))
+    await settle()
+    expect(paragraph()).toHaveAttribute('data-drawing', 'true')
+    act(() => events.slice(2).forEach((event) => calls[0]!.emit(event)))
+    await settle()
+    expect(paragraph()).toHaveAttribute('data-drawing', 'false')
+    expect(screen.getByText('After.')).toHaveAttribute('data-drawing', 'false')
+  })
+
+  it('tells the last component drawn into that it is complete once the document is', async () => {
+    const { renderer, calls } = controlledRenderer()
+    const reporting: Components = {
+      p: drawnInParts(function Reporting({ node: _node, drawing, ...props }: { node?: unknown; drawing?: boolean }) {
+        return <p data-drawing={String(Boolean(drawing))} {...props} />
+      }),
+    }
+    const long = `# Notes\n\n${Array.from({ length: 200 }, (_, index) => `word ${index}`).join(' ')}\n`
+    render(
+      <DocumentRendererContext.Provider value={renderer}>
+        <Reader source={long} using={reporting} />
+      </DocumentRendererContext.Provider>,
+    )
+    act(() => eventsFor(long, 50).forEach((event) => calls[0]!.emit(event)))
+    await settle()
+    expect(screen.getByText(/^word 0 /)).toHaveAttribute('data-drawing', 'false')
+    expect(screen.getByTestId('reader')).toHaveAttribute('data-ready', 'true')
+  })
+
+  it('asks for elements drawn by components to be drawn whole, unless they draw whatever they are given', () => {
+    const { renderer, calls } = controlledRenderer()
+    const using: Components = {
+      pre: drawnInParts(function Fence(props: object) {
+        return <pre {...props} />
+      }),
+      img: ({ node: _node, ...props }) => <img {...props} />,
+    }
+    render(
+      <DocumentRendererContext.Provider value={renderer}>
+        <Reader source={markdown} using={using} />
+      </DocumentRendererContext.Provider>,
+    )
+    expect(calls[0]!.whole).toEqual(['img'])
   })
 
   it('renders on the page when the worker fails', async () => {

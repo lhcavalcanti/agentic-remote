@@ -1,4 +1,4 @@
-import type { Root as HastRoot, RootContent as HastContent } from 'hast'
+import type { Element as HastElement, Root as HastRoot, RootContent as HastContent, Text as HastText } from 'hast'
 import { urlAttributes } from 'html-url-attributes'
 import type { Root as MdastRoot } from 'mdast'
 import remarkGfm from 'remark-gfm'
@@ -96,14 +96,45 @@ export interface DrawStep {
 }
 
 /**
- * Elements a reader may draw a part at a time. No reader replaces one with a
- * component, and children added to one leave those drawn before as they were.
- * A single run of text -- a fence, or a paragraph of plain text -- is drawn
- * at once: the browser lays it out whole each time text is added, so drawing a
- * 2 MiB one in pieces halved its longest frame but made its total blocking
- * time about 20 times longer, and a fence's copy button would copy part of it.
+ * Elements a reader may draw a part at a time: children added to one leave
+ * those drawn before as they were. One a reader draws with a component is
+ * drawn whole unless the component is marked as drawing whatever it is given.
  */
-const growable = new Set(['blockquote', 'li', 'ol', 'p', 'section', 'table', 'tbody', 'tfoot', 'thead', 'ul'])
+const growable = new Set([
+  'blockquote', 'code', 'li', 'ol', 'p', 'pre', 'section', 'table', 'tbody', 'tfoot', 'thead', 'ul',
+])
+
+/** A fence a reader draws as a diagram, which needs all of its source at once. */
+function isDiagram(node: HastElement): boolean {
+  const code = node.tagName === 'pre'
+    ? node.children.find((child): child is HastElement => child.type === 'element' && child.tagName === 'code')
+    : node
+  const className = code?.properties.className
+  return Array.isArray(className) && className.includes('language-mermaid')
+}
+
+/**
+ * A long run of text in pieces of about `size` characters, each ending at a
+ * line end or a space if one is near. The browser lays such a run out whole
+ * each time text is added to it, so the pieces are large: the work a frame
+ * does grows with the run, not with the piece.
+ */
+function textPieces(text: string, size: number): HastText[] {
+  const pieces: HastText[] = []
+  let start = 0
+  while (text.length - start > size) {
+    let end = text.lastIndexOf('\n', start + size - 1) + 1
+    if (end <= start + size / 2) end = text.lastIndexOf(' ', start + size - 1) + 1
+    if (end <= start + size / 2) end = start + size
+    // Never between the two halves of a character outside the basic plane.
+    const code = text.charCodeAt(end - 1)
+    if (code >= 0xd800 && code <= 0xdbff) end -= 1
+    pieces.push({ type: 'text', value: text.slice(start, end) })
+    start = end
+  }
+  pieces.push({ type: 'text', value: text.slice(start) })
+  return pieces
+}
 
 /** The steps that draw `children` into the element `depth` levels down, about `budget` characters of source each. */
 function* drawSteps(
@@ -114,11 +145,14 @@ function* drawSteps(
 ): Generator<DrawStep & { size: number }, void, undefined> {
   let nodes: HastContent[] = []
   let size = 0
-  for (const node of children) {
+  const pieces = children.flatMap((child) => (
+    child.type === 'text' && child.value.length > budget * 8 ? textPieces(child.value, budget * 8) : [child]
+  ))
+  for (const node of pieces) {
     const length = sourceLength(node)
     if (
       length > budget && node.type === 'element' && growable.has(node.tagName) &&
-      !whole.has(node.tagName) && node.children.length > 1
+      !whole.has(node.tagName) && node.children.length > 0 && !isDiagram(node)
     ) {
       // Too large to draw at once: drawn empty, then filled.
       nodes.push({ ...node, children: [] })
@@ -142,9 +176,9 @@ function* drawSteps(
 /**
  * How a reader draws a document's top-level `nodes`: in parts of about
  * `budget` characters of Markdown, one a frame. An element too large for one
- * part -- a long table, list, quote, or paragraph -- is filled over several,
- * unless its tag is in `whole`. Positions are taken off the nodes as they go:
- * they would only enlarge what crosses threads.
+ * part -- a long table, list, quote, paragraph, or fence -- is filled over
+ * several, unless its tag is in `whole`. Positions are taken off the nodes as
+ * they go: they would only enlarge what crosses threads.
  */
 export function* documentParts(
   nodes: HastContent[],

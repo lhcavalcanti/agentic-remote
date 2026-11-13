@@ -3,8 +3,9 @@ import type { ReactElement, ReactNode } from 'react'
 import type { Components } from 'react-markdown'
 import type { DocumentHeading } from '../markdown-navigation'
 import { documentJsx } from './document-jsx'
-import { drawStep, emptyDrawing } from './draw'
+import { drawStep, emptyDrawing, finishDrawing } from './draw'
 import type { DocumentDrawing } from './draw'
+import { isDrawnInParts } from './drawing'
 import { renderDocumentTree } from './pipeline'
 import type { DrawStep } from './pipeline'
 import { defaultDocumentRenderer, DocumentRendererContext } from './renderer'
@@ -77,8 +78,15 @@ export function useMarkdownDocument(source: string | undefined, components: Comp
   const renderer = useContext(DocumentRendererContext) ?? defaultDocumentRenderer()
   const [progress, setProgress] = useState<Progress>(notStarted)
   const [drawn, setDrawn] = useState<Drawn>({ pass: 0, count: 0, drawing: emptyDrawing, behind: nothing })
-  // Elements a component draws are never drawn a part at a time.
-  const whole = useMemo(() => Object.keys(components).sort().join(' '), [components])
+  // Elements a component draws are drawn whole, unless it draws whatever it is given.
+  const whole = useMemo(
+    () => Object.entries(components)
+      .filter(([, component]) => !isDrawnInParts(component))
+      .map(([tag]) => tag)
+      .sort()
+      .join(' '),
+    [components],
+  )
 
   // A short document is drawn on the first pass, as is any without a worker.
   const immediate = useMemo(
@@ -116,8 +124,11 @@ export function useMarkdownDocument(source: string | undefined, components: Comp
   const current = progress.token && progress.source === source && !immediate ? progress : undefined
   const sameRender = current !== undefined && drawn.token === current.token
   const fresh = sameRender && drawn.pass === current.pass && drawn.components === components
-  const own = fresh ? drawn.drawing.blocks : nothing
   const count = fresh ? drawn.count : 0
+  const ready = Boolean(current?.done) && count === current!.parts.length
+  // Once it is all drawn, nothing is still being drawn into.
+  const finished = useMemo(() => (ready ? finishDrawing(drawn.drawing).blocks : undefined), [ready, drawn.drawing])
+  const own = fresh ? finished ?? drawn.drawing.blocks : nothing
   const behind = fresh ? drawn.behind : sameRender ? onPage(drawn) : nothing
 
   // Scheduled as the part before is committed, so its frame is the one waited for.
@@ -160,7 +171,6 @@ export function useMarkdownDocument(source: string | undefined, components: Comp
 
   if (source === undefined) return { content: null, outline: [], ready: false }
   if (wholeDocument) return { content: wholeContent, outline: wholeDocument.outline, ready: true }
-  const ready = Boolean(current?.done) && count === current!.parts.length
   const shown = ready || behind.length <= own.length ? own : [...own, ...behind.slice(own.length)]
   return {
     content: shown.length || ready

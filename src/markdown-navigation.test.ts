@@ -5,6 +5,7 @@ import {
   headingSlug,
   headingText,
   inlineText,
+  isReaderScroll,
   outlineFromMarkdown,
   resolveDocumentPath,
   resolveDocumentLink,
@@ -418,5 +419,26 @@ describe('resolveDocumentLink', () => {
       .toBe('invalid')
     expect(resolveDocumentLink('docs/start.md', '#%broken').kind)
       .toBe('invalid')
+  })
+})
+
+describe('isReaderScroll', () => {
+  const page = {}
+  const link = {}
+
+  it('counts wheels, swipes, scrolling keys, and presses on the scroll bar', () => {
+    expect(isReaderScroll({ type: 'wheel', target: link, currentTarget: page })).toBe(true)
+    expect(isReaderScroll({ type: 'touchmove', target: link, currentTarget: page })).toBe(true)
+    for (const key of ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' ']) {
+      expect(isReaderScroll({ type: 'keydown', key, target: page, currentTarget: page })).toBe(true)
+    }
+    expect(isReaderScroll({ type: 'pointerdown', target: page, currentTarget: page })).toBe(true)
+  })
+
+  it('ignores other keys and presses on the document itself', () => {
+    expect(isReaderScroll({ type: 'keydown', key: 'Tab', target: page, currentTarget: page })).toBe(false)
+    expect(isReaderScroll({ type: 'keydown', key: 'c', target: page, currentTarget: page })).toBe(false)
+    expect(isReaderScroll({ type: 'pointerdown', target: link, currentTarget: page })).toBe(false)
+    expect(isReaderScroll({ type: 'scroll', target: page, currentTarget: page })).toBe(false)
   })
 })

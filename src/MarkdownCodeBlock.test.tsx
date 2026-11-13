@@ -6,8 +6,8 @@ import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
 const source = 'const value = 1;\n\n'
-function block(text = source) {
-  return <MarkdownCodeBlock source={text} language="typescript">
+function block(text = source, drawing = false) {
+  return <MarkdownCodeBlock drawing={drawing} source={text} language="typescript">
     <pre><code>{text}</code></pre>
   </MarkdownCodeBlock>
 }
@@ -25,6 +25,21 @@ describe('Markdown code copying', () => {
     render(block())
     expect(writeText).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Copy code' }))
+    await screen.findByRole('button', { name: 'Code copied' })
+    expect(writeText).toHaveBeenCalledWith(source)
+  })
+
+  it('waits until all of the code is drawn', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const view = render(block(source, true))
+    const button = screen.getByRole('button', { name: 'Copy code' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'Copy is available once all of the code is drawn')
+
+    view.rerender(block())
+    expect(button).toBeEnabled()
+    fireEvent.click(button)
     await screen.findByRole('button', { name: 'Code copied' })
     expect(writeText).toHaveBeenCalledWith(source)
   })

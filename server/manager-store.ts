@@ -57,7 +57,7 @@ export interface ManagerState {
   defaults?: ManagerClientDefaults
 }
 
-export type JournalKind = 'created' | 'status' | 'renamed' | 'replaced' | 'removed'
+export type JournalKind = 'created' | 'status' | 'renamed' | 'replaced' | 'removed' | 'schedule-proposal'
 
 export interface JournalDraft {
   kind: JournalKind
@@ -69,6 +69,9 @@ export interface JournalDraft {
   to?: string
   replacedBy?: string
   origin?: SessionOrigin
+  proposalId?: string
+  proposalOperation?: string
+  proposalStatus?: string
 }
 
 export interface JournalEntry extends JournalDraft {

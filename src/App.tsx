@@ -3777,6 +3777,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
   const managerListenersRef = useRef(new Set<(event: ManagerEvent) => void>())
+  const [scheduleProposalEpoch, setScheduleProposalEpoch] = useState(0)
   const authoritativeRefreshRef = useRef<() => Promise<void>>(async () => undefined)
   const authoritativeRefreshGeneration = useRef(0)
   const [refreshState, setRefreshState] = useState<'fresh' | 'refreshing' | 'stale'>('fresh')
@@ -7506,6 +7507,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         void syncSessionOrderRef.current()
         // Settings events are not replayed either.
         void settingsClient.sync()
+        setScheduleProposalEpoch((current) => current + 1)
         void refreshAllAuthoritativeState(setSessionLoadError).catch(() => undefined)
       }
       socket.onmessage = (message) => {
@@ -7516,6 +7518,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // move the transcript sequence either.
           for (const listener of managerListenersRef.current) listener(event)
           raiseOracleShellNotificationRef.current(event)
+        } else if (event.type === 'schedule-proposals.changed') {
+          setScheduleProposalEpoch((current) => current + 1)
         } else if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)
         } else if (event.type === 'session.order.updated') {
@@ -14386,6 +14390,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         onOracleResponseStyleChange={(next) => saveSetting('oracleResponseStyle', next)}
         notificationScope={profile.notificationScope ?? 'all'}
         onNotificationScopeChange={(next) => saveSetting('notificationScope', next)}
+        schedulerAllowAllForOracle={profile.schedulerAllowAllForOracle === true}
+        onSchedulerAllowAllForOracleChange={(next) => saveSetting('schedulerAllowAllForOracle', next)}
         onClose={() => setSettingsOpen(false)}
         computers={computers}
         defaultRuntimes={defaultRuntimes}
@@ -14529,6 +14535,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       ) : null}
       <ManagerAssistant
         connectionEpoch={0}
+        scheduleProposalEpoch={scheduleProposalEpoch}
         controlRef={oracleControlRef}
         defaults={managerDefaults}
         onIndicatorChange={setOracleIndicator}

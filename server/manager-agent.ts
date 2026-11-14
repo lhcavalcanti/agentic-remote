@@ -162,6 +162,8 @@ export interface ManagerSdkClient {
 }
 
 export interface ManagerAgentOptions {
+  scheduler?: ManagerToolHost['scheduler']
+  schedulerAllowAllForOracle?: () => boolean
   store: ManagerStore
   recorder: JournalRecorder
   hub: ManagerHub
@@ -358,6 +360,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly recordProactiveOutcomes?: ManagerAgentOptions['recordProactiveOutcomes']
   private readonly tools: ManagerTool[]
   private readonly hostTelemetryTarget?: ManagerToolHost['hostTelemetryTarget']
+  private readonly scheduler?: ManagerToolHost['scheduler']
+  private readonly schedulerAllowAllForOracle?: () => boolean
   private client?: ManagerSdkClient
   private session?: ManagerSdkSession
   private status: ManagerStatus = 'idle'
@@ -436,6 +440,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.recordProactiveOutcomes = options.recordProactiveOutcomes
     this.unfinishedTaskSessions = options.unfinishedTaskSessions
     this.hostTelemetryTarget = options.hostTelemetryTarget
+    this.scheduler = options.scheduler
+    this.schedulerAllowAllForOracle = options.schedulerAllowAllForOracle
     // A call keeps the turn it started in, so one that outlives a stopped
     // turn is filed under that turn and cannot act for the next one.
     this.tools = createManagerTools(this.toolHost(), (activity) => this.recordActivity(activity))
@@ -1161,6 +1167,8 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private toolHost(): ManagerToolHost {
     const hub = this.hub
     return {
+      scheduler: this.scheduler,
+      schedulerAllowAllForOracle: this.schedulerAllowAllForOracle,
       computers: () => hub.listComputers(),
       findComputer: (nameOrId) => hub.findComputer(nameOrId),
       hostTelemetryTarget: this.hostTelemetryTarget,

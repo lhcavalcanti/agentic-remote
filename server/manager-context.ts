@@ -275,6 +275,10 @@ function changeLines(changes: JournalEntry[], registry: ManagerRegistry, limit: 
   const lines: string[] = []
   const statusRuns = new Map<string, JournalEntry[]>()
   for (const change of changes) {
+    if (change.kind === 'schedule-proposal') {
+      lines.push(`- ${clock(change.at)} schedule proposal ${change.proposalId}: ${oneLine(change.title ?? '', 240)} · ${change.proposalStatus}${change.to ? ` · ${oneLine(change.to, 200)}` : ''}`)
+      continue
+    }
     if (change.kind === 'status') {
       const key = registryKey(change.computerId, change.sessionId)
       const run = statusRuns.get(key)

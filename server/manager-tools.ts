@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { scheduleCreateSchema, scheduleRunListSchema, scheduleUpdateSchema } from '../shared/schedules.js'
+import { scheduleProposalSummary, type ScheduleProposalInput } from '../shared/schedule-proposals.js'
+import type { SchedulerStore } from './scheduler-store.js'
 import type {
   AgentMode,
   AgentProvider,
@@ -53,6 +56,9 @@ export interface ManagerSkillSummary {
 
 /** What the manager's tools act on. Backed by the hub's ComputerManager. */
 export interface ManagerToolHost {
+  /** Present only on scheduler-enabled hubs. No direct scheduler mutation tools. */
+  scheduler?: () => SchedulerStore | undefined
+  schedulerAllowAllForOracle?: () => boolean
   computers(): ComputerSummary[]
   findComputer(nameOrId: string): ComputerSummary | undefined
   /** Undefined targets explicitly report disabled monitoring without reading the host. */
@@ -198,6 +204,9 @@ class ToolFailure extends Error {}
 export type ManagerToolMutability = 'read' | 'mutation'
 
 const VOICE_READ_ONLY_TOOLS = new Set([
+  'list_schedules',
+  'get_schedule',
+  'list_schedule_runs',
   'list_computers',
   'get_host_status',
   'list_models',
@@ -681,6 +690,52 @@ export function createManagerTools(
     validUntil: z.iso.datetime({ offset: true }).optional(),
   }
 
+  function scheduleTools(): ManagerTool[] {
+    if (!host.scheduler) return []
+    const scheduleStore = () => {
+      const store = host.scheduler?.()
+      if (!store) throw new ToolFailure('Scheduler is unavailable on this hub.')
+      return store
+    }
+    const propose = async (input: ScheduleProposalInput) => {
+      const proposal = await scheduleStore().propose(input, host.schedulerAllowAllForOracle?.() === true)
+      const summary = scheduleProposalSummary(proposal)
+      onActivity({ tool: `schedule.${input.operation}`, content: `Approval required · ${summary} · proposal ${proposal.id}` })
+      return JSON.stringify({ proposalId: proposal.id, status: proposal.status, summary, approvalRequired: true })
+    }
+    const scheduleIdentity = { scheduleId: z.string().min(1).max(200), revision: z.number().int().positive() }
+    return [
+      define('list_schedules', 'Read schedules; Oracle-created schedules are not Oracle-owned sessions.',
+        z.object({ archived: z.boolean().optional() }).strict(),
+        async ({ archived }) => JSON.stringify(scheduleStore().list(archived))),
+      define('get_schedule', 'Read one schedule without running or changing it.',
+        z.object({ scheduleId: scheduleIdentity.scheduleId }).strict(),
+        async ({ scheduleId }) => JSON.stringify(scheduleStore().get(scheduleId))),
+      define('list_schedule_runs', 'Read a bounded page of runs, optionally for one schedule.',
+        scheduleRunListSchema.extend({ scheduleId: scheduleIdentity.scheduleId.optional() }),
+        async ({ scheduleId, ...page }) => JSON.stringify(scheduleStore().listRuns(page, scheduleId))),
+      define('create_schedule', 'Propose a new schedule. Nothing applies until the user approves the exact proposal.',
+        scheduleCreateSchema,
+        async (payload) => propose({ operation: 'create', payload }), { actsOnSessions: true }),
+      define('update_schedule', 'Propose exact schedule changes at a revision. User approval is always required.',
+        z.object({ ...scheduleIdentity, changes: scheduleUpdateSchema.omit({ revision: true }) }).strict(),
+        async ({ scheduleId, revision, changes }) => propose({ operation: 'update', scheduleId, baseRevision: revision, payload: changes }),
+        { actsOnSessions: true }),
+      define('set_schedule_enabled', 'Propose enabling or disabling a schedule. User approval is always required.',
+        z.object({ ...scheduleIdentity, enabled: z.boolean() }).strict(),
+        async ({ scheduleId, revision, enabled }) => propose({ operation: enabled ? 'enable' : 'disable', scheduleId, baseRevision: revision, payload: {} }),
+        { actsOnSessions: true }),
+      define('run_schedule_now', 'Propose running a schedule now. No run is admitted before user approval.',
+        z.object(scheduleIdentity).strict(),
+        async ({ scheduleId, revision }) => propose({ operation: 'run-now', scheduleId, baseRevision: revision, payload: {} }),
+        { actsOnSessions: true }),
+      define('archive_schedule', 'Propose archiving a schedule, never deleting it. User approval is always required.',
+        z.object(scheduleIdentity).strict(),
+        async ({ scheduleId, revision }) => propose({ operation: 'archive', scheduleId, baseRevision: revision, payload: {} }),
+        { actsOnSessions: true }),
+    ]
+  }
+
   function structuredTools(): ManagerTool[] {
     const memory = host.structuredMemory
     const allowedScopes = host.structuredMemoryScopes
@@ -982,6 +1037,7 @@ export function createManagerTools(
         )
       },
     )] : []),
+    ...scheduleTools(),
     define(
       'list_computers',
       'List the computers sessions can run on, whether each is online, and which providers it offers.',

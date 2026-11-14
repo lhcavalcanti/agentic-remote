@@ -8,6 +8,7 @@ import type { useOracleSettings } from '../use-oracle-settings'
 import { DreamerSettings } from '../OracleDreamer'
 import { OracleModelSettings, OracleSettingsStatus } from '../OracleSettings'
 import { PreviewFeaturesSettings } from '../PreviewFeaturesSettings'
+import { SchedulerPermissionSettings } from './SchedulerPermissionSettings'
 import { openShellSettings, shellSettingsAvailable } from '../shell'
 import { DefaultRuntimeControls, DefaultSessionFolderControl, SettingScope, ShortcutEditor } from './controls'
 import { accentThemes, appearanceOptions, notificationScopeOptions } from './options'
@@ -372,6 +373,8 @@ export const settingsSections: readonly SettingsSection[] = [
       onShortcutsChange,
       shortcutOverrides,
       shortcuts,
+      schedulerAllowAllForOracle,
+      onSchedulerAllowAllForOracleChange,
     }) => (
       <>
         <div className="app-settings-group__body">
@@ -470,6 +473,7 @@ export const settingsSections: readonly SettingsSection[] = [
             </p>
           </section>
           <PreviewFeaturesSettings />
+          <SchedulerPermissionSettings allowed={schedulerAllowAllForOracle} onChange={onSchedulerAllowAllForOracleChange} />
         </div>
       </>
     ),

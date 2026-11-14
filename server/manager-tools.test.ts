@@ -14,6 +14,7 @@ import {
   type ManagerToolHost,
 } from './manager-tools.js'
 import * as managerToolsModule from './manager-tools.js'
+import { SchedulerStore } from './scheduler-store.js'
 
 const computers: ComputerSummary[] = [
   {
@@ -152,6 +153,68 @@ describe('manager tools', () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
+  })
+
+  async function enableSchedulerTools() {
+    const store = new SchedulerStore(root, { now: () => Date.parse('2026-11-14T18:00:00Z') })
+    await store.initialize()
+    host.scheduler = () => store
+    tools = new Map(createManagerTools(host, (entry) => activities.push(entry)).map((tool) => [tool.name, tool]))
+    return store
+  }
+
+  const scheduleInput = () => ({
+    name: 'Fictional review', prompt: 'Review the fictional guide.',
+    target: { computerId: 'hub', folder: '/fictional/repo', provider: 'copilot' as const },
+    recurrence: { type: 'daily' as const, time: '09:00' }, timezone: 'UTC',
+  })
+
+  it.each([
+    ['typed', true], ['voice', false], ['proactive', false], ['task', false],
+  ] as const)('refuses every schedule write in %s turns with Ask=%s', async (kind, ask) => {
+    const store = await enableSchedulerTools()
+    source = kind
+    answerOnly = ask
+    for (const name of ['create_schedule', 'update_schedule', 'set_schedule_enabled', 'run_schedule_now', 'archive_schedule']) {
+      expect(await call(name, {}), name).toMatchObject({ resultType: 'failure' })
+    }
+    expect(store.proposals()).toEqual([])
+    expect(store.list()).toEqual([])
+    expect(host.createSession).not.toHaveBeenCalled()
+  })
+
+  it('only proposes each Delegate schedule write and never mutates schedules or admits runs', async () => {
+    const store = await enableSchedulerTools()
+    const schedule = await store.create(scheduleInput())
+    const identity = { scheduleId: schedule.id, revision: 1 }
+    for (const [name, args, operation] of [
+      ['create_schedule', { ...scheduleInput(), name: 'New fictional review' }, 'create'],
+      ['update_schedule', { ...identity, changes: { prompt: 'Changed prompt' } }, 'update'],
+      ['set_schedule_enabled', { ...identity, enabled: true }, 'enable'],
+      ['set_schedule_enabled', { ...identity, enabled: false }, 'disable'],
+      ['run_schedule_now', identity, 'run-now'],
+      ['archive_schedule', identity, 'archive'],
+    ] as const) {
+      const result = JSON.parse(await call(name, args) as string)
+      expect(result).toMatchObject({ approvalRequired: true, status: 'pending', summary: expect.any(String) })
+      expect(store.proposal(result.proposalId).operation).toBe(operation)
+    }
+    expect(store.list()).toEqual([schedule])
+    expect(store.allRuns()).toEqual([])
+    expect(activities).toHaveLength(6)
+    expect(tools.has('delete_schedule')).toBe(false)
+  })
+
+  it.each(['typed', 'voice', 'proactive', 'task'] as const)('allows bounded schedule reads in %s and Ask mode', async (kind) => {
+    const store = await enableSchedulerTools()
+    const schedule = await store.create(scheduleInput())
+    source = kind
+    answerOnly = true
+    expect(JSON.parse(await call('list_schedules', {}) as string)).toHaveLength(1)
+    expect(JSON.parse(await call('get_schedule', { scheduleId: schedule.id }) as string).id).toBe(schedule.id)
+    expect(JSON.parse(await call('list_schedule_runs', { scheduleId: schedule.id, limit: 1 }) as string).runs).toEqual([])
+    expect(await call('list_schedule_runs', { limit: 201 })).toMatchObject({ resultType: 'failure' })
+    expect(store.proposals()).toEqual([])
   })
 
   it('offers only management tools, none of which prompt for permission', () => {

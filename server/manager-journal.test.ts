@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { ManagedSession } from '../shared/contracts.js'
-import { JournalRecorder } from './manager-journal.js'
+import { JournalRecorder, recordScheduleProposal } from './manager-journal.js'
+import { SchedulerStore } from './scheduler-store.js'
 import { ManagerStore } from './manager-store.js'
 
 function session(id: string, change: Partial<ManagedSession> = {}): ManagedSession {
@@ -36,6 +37,30 @@ describe('JournalRecorder', () => {
   afterEach(async () => {
     await recorder.stop()
     await rm(root, { recursive: true, force: true })
+  })
+
+  it('journals proposals and outcomes durably without making scheduled sessions Oracle-owned', async () => {
+    const schedules = new SchedulerStore(root)
+    await schedules.initialize()
+    const proposal = await schedules.propose({
+      operation: 'create', payload: {
+        name: 'Fictional review', prompt: 'Review the fictional guide.',
+        target: { computerId: 'hub', folder: '/fictional/repo', provider: 'copilot' },
+        recurrence: { type: 'daily', time: '09:00' }, timezone: 'UTC',
+      },
+    })
+    await recordScheduleProposal(store, proposal)
+    await recordScheduleProposal(store, proposal)
+    await recordScheduleProposal(store, await schedules.rejectProposal(proposal.id))
+    const restarted = new ManagerStore(path.join(root, 'manager'))
+    await restarted.initialize()
+    expect(restarted.journalSince(0).map((entry) => entry.proposalStatus)).toEqual(['pending', 'rejected'])
+    await store.updateRegistry((registry) => {
+      registry['hub:scheduled'] = { computerId: 'hub', sessionId: 'scheduled', title: 'Scheduled review', origin: 'schedule', firstSeenAt: '2026-11-14T18:00:00Z' }
+    })
+    await expect(recorder.markManaged(session('scheduled'), 'Take ownership')).rejects.toThrow('not owned')
+    expect(recorder.managedSessions()).toEqual([])
+    expect(store.registry()['hub:scheduled'].origin).toBe('schedule')
   })
 
   it('takes in the sessions that already exist without reporting them as new', async () => {

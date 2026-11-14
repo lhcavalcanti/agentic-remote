@@ -44,6 +44,7 @@ export const uiSceneNames = [
   'new-session-dialog',
   'computers-dialog',
   'oracle-panel',
+  'oracle-schedule-approval',
 ] as const
 
 export type UISceneName = typeof uiSceneNames[number]
@@ -112,6 +113,12 @@ export function createUIScenes(
           session.queuedCount = 1
         }
       }
+      if (name === 'oracle-schedule-approval') {
+        state.hubFlags = { ...state.hubFlags, scheduler: true }
+        state.settings = {
+          revision: 1, values: { previewFeatures: { schedulerView: true } }, keyRevisions: { previewFeatures: 1 },
+        }
+      }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
@@ -131,7 +138,19 @@ export function createUIScenes(
         appearance: 'graphite',
         state,
         hostMonitor: Boolean(hostStatus),
-        manager: hostStatus?.manager ?? (name === 'oracle-panel' ? {
+        scheduler: name === 'oracle-schedule-approval' ? {
+          schedules: [], runs: [], proposals: [{
+            id: 'fictional-morning-review', operation: 'create', createdBy: 'oracle', status: 'pending',
+            createdAt: FIXTURE_NOW, expiresAt: '2026-10-16T12:00:00.000Z',
+            payload: {
+              name: 'Morning workspace review', prompt: 'Review the fictional guide and summarize outstanding checks.',
+              target: { computerId: 'fixture-studio', folder: '/fictional/workspace', provider: 'copilot', mode: 'autopilot', permissionPolicy: 'ask', folderTrust: 'ask' },
+              recurrence: { type: 'weekdays', time: '09:00' }, timezone: 'America/Los_Angeles', workspace: 'checkout',
+              catchUp: 'skip', overlap: 'skip', maxRuntimeMin: 60, notify: 'attention', enabled: true,
+            },
+          }],
+        } : undefined,
+        manager: hostStatus?.manager ?? (name === 'oracle-panel' || name === 'oracle-schedule-approval' ? {
           available: true,
           status: 'idle',
           queued: 0,
@@ -204,11 +223,15 @@ export function createUIScenes(
         const dialog = page.getByRole('dialog', { name: 'Choose a folder' })
         await expect(dialog.getByRole('button', { name: 'Create session', exact: true })).toBeEnabled()
         await expect(dialog.getByText('Loading', { exact: false })).toHaveCount(0)
-      } else if (name === 'oracle-panel') {
+      } else if (name === 'oracle-panel' || name === 'oracle-schedule-approval') {
         await page.locator('main').getByRole('button', { name: /^Oracle/ }).first().click()
         await expect(page.locator('#oracle-panel').getByRole('textbox', { name: 'Message Oracle', exact: true })).toBeVisible()
         await expect(page.locator('#oracle-panel')).toContainText(hostStatus
           ? 'Studio is under resource pressure.' : 'Review the recovery checklist on Studio')
+        if (name === 'oracle-schedule-approval') {
+          await expect(page.getByRole('region', { name: 'Schedule approvals' })).toContainText('Morning workspace review')
+          await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+        }
       }
       await page.evaluate(() => document.fonts.ready)
       await page.mouse.move(0, 0)

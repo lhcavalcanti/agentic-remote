@@ -1309,6 +1309,21 @@ export async function resolveManagerConfirmation(
   return response.message
 }
 
+export async function listScheduleProposals(): Promise<import('../shared/schedule-proposals').ScheduleProposal[]> {
+  const response = await request<{ proposals: import('../shared/schedule-proposals').ScheduleProposal[] }>(
+    '/api/schedules/proposals', { cache: 'no-store' },
+  )
+  return response.proposals
+}
+
+export async function resolveScheduleProposal(id: string, approve: boolean): Promise<import('../shared/schedule-proposals').ScheduleProposal> {
+  const response = await request<{ proposal: import('../shared/schedule-proposals').ScheduleProposal }>(
+    `/api/schedules/proposals/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`,
+    { method: 'POST', body: '{}' },
+  )
+  return response.proposal
+}
+
 export function cancelManager(): Promise<void> {
   return requestVoid('/api/manager/cancel', { method: 'POST' })
 }

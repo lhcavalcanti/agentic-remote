@@ -24,7 +24,7 @@ import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
 import { ManagerAgent } from './manager-agent.js'
-import { JournalRecorder } from './manager-journal.js'
+import { JournalRecorder, recordScheduleProposal } from './manager-journal.js'
 import { registerManagerRoutes } from './manager-routes.js'
 import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
 import { ManagerStore } from './manager-store.js'
@@ -364,6 +364,7 @@ export async function buildApp(
   let managerStoreReady = false
   let dreamerService: DreamerService | undefined
   let scheduler: SchedulerDispatcher | undefined
+  let scheduleJournal: Promise<unknown> = Promise.resolve()
   let proactiveCoordinator: ManagerProactiveCoordinator | undefined
   let proactiveInbox: ManagerProactiveInbox | undefined
   let oracleTaskStore: OracleTaskStore | undefined
@@ -498,6 +499,10 @@ export async function buildApp(
         progressContext: () => dreamerService?.progressView(),
         // App settings → Models, read as each Oracle session starts.
         newSessionRuntimes: () => settingsProfileStore?.snapshot().values.newSessionRuntimes,
+        ...(hubFlags?.scheduler ? {
+          scheduler: () => scheduler?.store,
+          schedulerAllowAllForOracle: () => settingsProfileStore?.snapshot().values.schedulerAllowAllForOracle === true,
+        } : {}),
         structuredMemory: managerStructuredMemory,
         recordProactiveOutcomes: (input) => {
           if (!proactiveCoordinator) {
@@ -602,6 +607,13 @@ export async function buildApp(
         options.scheduleLauncher ?? new SessionScheduleLauncher(manager, scheduleStore, managerStore!), {
         targetOnline: (computerId) => manager!.listComputers().some((computer) => computer.id === computerId && computer.online),
         warn: (message) => app.log.warn(message),
+      })
+      const store = scheduler.store
+      store.on('proposal', () => {
+        const proposals = store.proposals()
+        scheduleJournal = scheduleJournal.then(async () => {
+          for (const proposal of proposals) await recordScheduleProposal(managerStore!, proposal)
+        }).catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
       })
     }
     if (notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
@@ -721,7 +733,11 @@ export async function buildApp(
       await startupPhases.run('hostTelemetry.start', async () => hostTelemetry.start())
     }
     if (hostAlerts) await startupPhases.run('hostAlerts.start', async () => hostAlerts.start())
-    if (scheduler) await startupPhases.run('scheduler.start', () => scheduler!.start())
+    if (scheduler) await startupPhases.run('scheduler.start', async () => {
+      await scheduler!.start()
+      for (const proposal of scheduler!.store.proposals()) await recordScheduleProposal(managerStore!, proposal)
+      await scheduleJournal
+    })
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
     const starting = managerAgent
@@ -741,6 +757,7 @@ export async function buildApp(
     await hostAlerts?.stop()
     hostTelemetry?.stop()
     await scheduler?.stop()
+    await scheduleJournal
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
     if (forwardToProactive) manager?.off('event', forwardToProactive)

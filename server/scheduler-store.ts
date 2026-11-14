@@ -220,6 +220,17 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     })
   }
 
+  failProposal(id: string, error: string): Promise<void> {
+    return this.commit((next) => {
+      const proposal = next.proposals.find((entry) => entry.id === id)
+      if (proposal?.status === 'approved') {
+        proposal.status = 'failed'
+        proposal.error = error.slice(0, 2000)
+      }
+      return { result: undefined, proposalId: id }
+    })
+  }
+
   expireProposals(): Promise<void> {
     return this.commit((next) => {
       for (const proposal of next.proposals) {

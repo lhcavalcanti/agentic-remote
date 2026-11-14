@@ -47,6 +47,8 @@ export type AppSettingsDialogProps = {
   onOracleResponseStyleChange: (style: OracleResponseStyle) => void
   notificationScope: NotificationScope
   onNotificationScopeChange: (scope: NotificationScope) => void
+  schedulerAllowAllForOracle?: boolean
+  onSchedulerAllowAllForOracleChange?: (allowed: boolean) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
   shortcuts: ShortcutDefinition[]

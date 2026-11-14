@@ -1,4 +1,5 @@
 import type { HubEvent, ManagedSession, SessionStatus } from '../shared/contracts.js'
+import { scheduleProposalSummary, type ScheduleProposal } from '../shared/schedule-proposals.js'
 import {
   registryKey,
   type JournalDraft,
@@ -14,6 +15,18 @@ interface Seen {
 }
 
 const TASK_LIMIT = 400
+
+/** Replayed at startup as well as after each durable proposal transition. */
+export async function recordScheduleProposal(store: ManagerStore, proposal: ScheduleProposal): Promise<void> {
+  if (store.journalSince(0).some((entry) =>
+    entry.proposalId === proposal.id && entry.proposalStatus === proposal.status)) return
+  await store.appendJournal([{
+    kind: 'schedule-proposal', computerId: 'hub', sessionId: proposal.id,
+    title: scheduleProposalSummary(proposal),
+    proposalId: proposal.id, proposalOperation: proposal.operation, proposalStatus: proposal.status,
+    ...(proposal.error ? { to: proposal.error } : {}),
+  }])
+}
 
 export interface JournalRecorderOptions {
   /** How long changes gather before they are written together. */

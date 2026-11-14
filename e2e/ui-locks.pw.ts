@@ -12,6 +12,19 @@ import { SELECTED_SESSION_ID } from './workspace-fixtures'
 
 test.use(uiContextOptions)
 
+for (const action of ['Approve', 'Reject'] as const) {
+  test(`schedule proposal ${action.toLowerCase()} sends the exact id`, async ({ page, baseURL }) => {
+    const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'oracle-schedule-approval')!.setup(page)
+    try {
+      await page.getByRole('button', { name: action, exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Schedule approvals' })).toHaveCount(0)
+      expect(fixture.requests).toContainEqual({
+        method: 'POST', path: `/api/schedules/proposals/fictional-morning-review/${action === 'Approve' ? 'approve' : 'reject'}`,
+      })
+    } finally { fixture.assertHealthy() }
+  })
+}
+
 for (const viewport of uiViewports) {
   test.describe(viewport.name, () => {
     test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })

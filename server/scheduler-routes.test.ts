@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Schedule, ScheduleRun } from '../shared/schedules.js'
@@ -111,6 +111,20 @@ describe('scheduler hub API', () => {
     expect(launcher.launch).not.toHaveBeenCalled()
   })
 
+  it('settles and journals a failed approved Run now without admitting a run', async () => {
+    const server = await app()
+    const schedule = await runtime.scheduler!.store.create(input() as never)
+    const proposal = await runtime.scheduler!.store.propose({ operation: 'run-now', scheduleId: schedule.id, baseRevision: 1, payload: {} })
+    vi.spyOn(runtime.scheduler!, 'runNow').mockRejectedValueOnce(Object.assign(new Error('Schedule revision conflict'), { statusCode: 409 }))
+    const response = await server.inject({ method: 'POST', url: `/api/schedules/proposals/${proposal.id}/approve`, headers })
+    expect(response.statusCode).toBe(409)
+    expect(runtime.scheduler!.store.proposal(proposal.id)).toMatchObject({ status: 'failed', error: 'Schedule revision conflict' })
+    expect(runtime.scheduler!.store.allRuns()).toEqual([])
+    await vi.waitFor(async () => {
+      const entries = (await readFile(path.join(directory, 'manager', 'journal.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
+      expect(entries.filter((entry) => entry.proposalId === proposal.id).map((entry) => entry.proposalStatus)).toEqual(['pending', 'approved', 'failed'])
+    })
+  })
   it('lists and resolves proposals without accepting payload substitutions and enforces hostile origins', async () => {
     const server = await app()
     const proposal = await runtime.scheduler!.store.propose({ operation: 'create', payload: input() as never })

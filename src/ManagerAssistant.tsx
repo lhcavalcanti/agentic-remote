@@ -32,6 +32,7 @@ import type {
 } from '../shared/manager'
 import { MANAGER_MESSAGE_MAX_LENGTH, MANAGER_REMOVED_ATTACHMENTS_REASON } from '../shared/manager'
 import { CLOSED_SESSION_RETENTION_DAYS } from '../shared/closed-sessions'
+import { ScheduleProposalCards } from './ScheduleProposalCards'
 import {
   cancelManager,
   editQueuedManagerMessage,
@@ -745,6 +746,7 @@ export function ManagerAssistant({
   onPlacementChange,
   focusRequest = 0,
   onRequestSessionFocus,
+  scheduleProposalEpoch = 0,
 }: {
   /** Changes each time the event socket reconnects, so the snapshot is reread. */
   connectionEpoch: number
@@ -774,6 +776,7 @@ export function ManagerAssistant({
   focusRequest?: number
   /** Lets App focus the active writable session composer after Oracle closes. */
   onRequestSessionFocus?: () => boolean
+  scheduleProposalEpoch?: number
 }) {
   const [storedDraft] = useState(readStoredOracleDraft)
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
@@ -1470,6 +1473,7 @@ export function ManagerAssistant({
         </p>
       ) : null}
       <DreamerMorningPlan active={open} />
+      <ScheduleProposalCards active={open} refreshKey={scheduleProposalEpoch} />
       {confirmReset ? (
         <div className="manager-panel__confirm" role="alertdialog" aria-label="Start a new conversation">
           <p>Start a new conversation? Oracle keeps its notes and memory.</p>

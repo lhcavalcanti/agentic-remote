@@ -1,6 +1,6 @@
 # Scheduler
 
-Status: shared contracts, pure recurrence, durable storage, hub dispatcher, policy-explicit session runner, and HTTP/event contracts. The hub constructs the store, runner and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. UI, Oracle tools, and notification integration remain separate work. Dreamer's existing schedule is unchanged.
+Status: shared contracts, pure recurrence, durable storage, hub dispatcher, policy-explicit session runner, HTTP/event contracts, Oracle proposal tools and confirmation cards. The hub constructs the store, runner and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. The schedule editor and notification integration remain separate work. Dreamer's existing schedule is unchanged.
 
 ## Schema
 
@@ -145,4 +145,12 @@ The scheduler transaction also retains at most 1,000 typed proposals (24-hour pe
 
 Approval revalidates the 20-active-Oracle-schedule limit, recurrence spacing, exact revision, and permission policy in the mutation transaction. The hub settings profile's `schedulerAllowAllForOracle` defaults to false when unset; true permits proposing allow-all but never bypasses explicit approval. Disabling or archiving does not grant any execution permission. Pending proposals expire at startup, scheduler sweeps, reads, and confirmation.
 
-Origin-enforced routes are `GET /api/schedules/proposals` (pending only, no-store), `POST /api/schedules/proposals/:id/approve`, and `POST /api/schedules/proposals/:id/reject`; actions accept no replacement payload. Socket invalidations use `schedule-proposals.changed` with a monotonic revision and proposal ID. These routes and storage remain unavailable without the hub scheduler flag. Oracle tools and confirmation cards are a separate layer.
+Origin-enforced routes are `GET /api/schedules/proposals` (pending only, no-store), `POST /api/schedules/proposals/:id/approve`, and `POST /api/schedules/proposals/:id/reject`; actions accept no replacement payload. Socket invalidations use `schedule-proposals.changed` with a monotonic revision and proposal ID. These routes and storage remain unavailable without the hub scheduler flag. Oracle tools and confirmation cards are described below.
+
+## Oracle tools and confirmation cards
+
+Scheduler-enabled hubs register `list_schedules`, `get_schedule`, and bounded `list_schedule_runs` for Ask, Delegate, voice and proactive reads. `create_schedule`, revision-checked `update_schedule`, `set_schedule_enabled`, `run_schedule_now` and `archive_schedule` only create proposals in typed Delegate turns. Voice, proactive, Ask and durable-task turns cannot propose writes; there is no delete tool or confirmation bypass.
+
+Each proposal and observed outcome is recorded in the manager journal, including confirmation, rejection, expiry and failure, with startup replay for interrupted journal delivery. Proposal IDs are not session ownership. Schedule-started sessions retain the registry's `schedule` origin and cannot be promoted to Oracle ownership; Oracle-created schedules are not Oracle-owned sessions.
+
+With Interface › Preview features › Scheduler enabled and the authoritative hub flag on, the Oracle panel renders pending confirmation cards. Each card shows the operation, summary, base revision, exact immutable payload and expiry, with Approve and Reject actions bound only to the proposal ID. Socket changes and reconnects refresh the pending list. The Interface › Scheduler setting permits allow-all proposals, defaults off, and never approves a proposal itself.

@@ -19,7 +19,11 @@ export async function registerSchedulerRoutes(
     const id = scheduleIdParamsSchema.parse(request.params).id
     const proposal = await scheduler.store.approveProposal(id, allowAllForOracle())
     if (proposal.operation === 'run-now' && proposal.status === 'approved') {
-      await scheduler.runNow(proposal.scheduleId, proposal.baseRevision, proposal.id)
+      try { await scheduler.runNow(proposal.scheduleId, proposal.baseRevision, proposal.id) }
+      catch (error) {
+        await scheduler.store.failProposal(id, (error as Error).message)
+        throw error
+      }
     }
     return { proposal: scheduler.store.proposal(id) }
   })

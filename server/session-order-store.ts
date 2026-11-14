@@ -79,7 +79,7 @@ export class SessionOrderStore {
    * names the successor, which then inherits this; a Show in between clears
    * it. Nothing else reads it, so it stays in memory and small.
    */
-  private readonly retiredHidden = new Set<string>()
+  private retiredHidden = new Set<string>()
 
   constructor(private readonly directory: string) {
     this.statePath = path.join(directory, 'session-order.json')
@@ -403,6 +403,8 @@ export class SessionOrderStore {
   ): Promise<SessionOrderSnapshot> {
     const run = this.commits.then(async () => {
       const previous = this.state
+      // Restored with the state, so a refused write can be retried.
+      const retired = new Set(this.retiredHidden)
       const draft = structuredClone(previous.order)
       const staged: SessionOrderState = {
         ...previous,
@@ -428,6 +430,7 @@ export class SessionOrderStore {
         // clients would converge on an order the hub forgets on restart.
         // Nothing else is in flight, so the previous state is still current.
         this.state = previous
+        this.retiredHidden = retired
         throw error
       }
       return this.snapshot()

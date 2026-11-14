@@ -21386,6 +21386,73 @@ describe('App', () => {
     expect(toggle).toHaveTextContent('Hidden1')
   })
 
+  it('keeps a hidden session cleared on a node without replacement links out of the list', async () => {
+    const other = { ...session, id: 'other-work', title: 'Other work', messages: [] }
+    const items = [session, other]
+    const replacement = { ...session, id: 'session-1-cleared', messages: [] }
+    const created = { ...session, id: 'fresh-work', title: 'Fresh work', messages: [] }
+    const key = (id: string) => `${computer.id}:${id}`
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = [...items, replacement, created].find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      showSuspended: true,
+      hidden: [key(session.id)],
+      order: { [computer.id]: items.map((item) => key(item.id)) },
+    }
+    window.history.replaceState({}, '', `/?computer=${computer.id}&session=${session.id}`)
+    let answerClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(() =>
+      new Promise((resolve) => { answerClear = resolve }),
+    )
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden1'))
+
+    fireEvent.click(sessionAction('Clear conversation'))
+    await waitFor(() => expect(answerClear).toBeDefined())
+    // Such a node reports a plain removal, then a session nothing links to it.
+    act(() => {
+      for (const event of [
+        { type: 'session.removed', computerId: computer.id, sessionId: session.id },
+        { type: 'session.upserted', session: replacement },
+        { type: 'session.upserted', session: created },
+      ]) {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify(event),
+        } as MessageEvent)
+      }
+    })
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+
+    // The hub hides the successor once the clear's response names it.
+    hubSessionOrder = {
+      ...hubSessionOrder,
+      revision: 6,
+      hidden: [key(replacement.id)],
+      order: { [computer.id]: [key(replacement.id), key(other.id), key(created.id)] },
+    }
+    await act(async () => {
+      answerClear?.(replacement)
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Fresh work,/ })).toBeVisible(),
+    )
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden1')
+    confirmSpy.mockRestore()
+  })
+
   it('skips hidden sessions in keyboard navigation but still opens them by address', async () => {
     const items = [
       { ...session, id: 'nav-first', title: 'First', messages: [] },

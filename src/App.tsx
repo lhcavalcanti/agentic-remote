@@ -7896,6 +7896,14 @@ function App() {
     () => new Set(),
   )
   const hidingSessionsRef = useRef(new Set<string>())
+  // While this browser clears or recovers a hidden session, sessions that
+  // appear on its computer stay out of the list until the hub's snapshot says
+  // whether they are hidden: a node that predates replacement links names the
+  // successor only in its response.
+  const [replacementHold, setReplacementHold] = useState<{
+    computerId: string
+    known: ReadonlySet<string>
+  }>()
   const sessionOrderRef = useRef(sessionOrder)
   sessionOrderRef.current = sessionOrder
   const sessionOrderRevisionRef = useRef(sessionOrderRevision)
@@ -8334,6 +8342,17 @@ function App() {
     }
     return grouped
   }, [orderedComputers, sessionOrder, sessions, sessionSort, backgroundTaskSnapshots])
+  const listedHiddenKeys = useMemo(() => {
+    if (!replacementHold) return hiddenSessionKeys
+    const keys = new Set(hiddenSessionKeys)
+    for (const session of sessions) {
+      const key = sessionKey(session)
+      if (session.computerId === replacementHold.computerId && !replacementHold.known.has(key)) {
+        keys.add(key)
+      }
+    }
+    return keys
+  }, [hiddenSessionKeys, replacementHold, sessions])
   const navigationView = useMemo(
     () => sessionNavigationView(
       orderedComputers,
@@ -8342,7 +8361,7 @@ function App() {
       sessionQuery,
       sessionFilter,
       showSuspendedSessions,
-      { keys: hiddenSessionKeys, shown: showHiddenSessions },
+      { keys: listedHiddenKeys, shown: showHiddenSessions },
     ),
     [
       orderedComputers,
@@ -8351,7 +8370,7 @@ function App() {
       sessionQuery,
       sessionFilter,
       showSuspendedSessions,
-      hiddenSessionKeys,
+      listedHiddenKeys,
       showHiddenSessions,
     ],
   )
@@ -15530,6 +15549,25 @@ function App() {
     return liveIsGone ? undefined : liveKey
   }
 
+  /** Holds the list for a hidden session's replacement; the result lets go. */
+  function holdHiddenReplacement(target: ManagedSession): () => void {
+    if (!hiddenSessionKeys.has(sessionKey(target))) return () => {}
+    const hold = {
+      computerId: target.computerId,
+      known: new Set(
+        sessionsRef.current
+          .filter((session) => session.computerId === target.computerId)
+          .map(sessionKey),
+      ),
+    }
+    setReplacementHold(hold)
+    return () => {
+      void syncSessionOrderRef.current().finally(() =>
+        setReplacementHold((current) => (current === hold ? undefined : current)),
+      )
+    }
+  }
+
   async function clearSelectedConversation(): Promise<string | undefined> {
     if (
       !selected ||
@@ -15544,6 +15582,7 @@ function App() {
     const target = selected
     const targetKey = sessionKey(target)
     clearingSessions.current.add(targetKey)
+    const releaseHold = holdHiddenReplacement(target)
     setClearing(true)
     setError(undefined)
     try {
@@ -15566,6 +15605,7 @@ function App() {
       // Released only once the replacement is known, so a removal arriving
       // first cannot discard the position on its way across.
       clearingSessions.current.delete(targetKey)
+      releaseHold()
       setClearing(false)
     }
   }
@@ -15585,6 +15625,7 @@ function App() {
     const target = selected
     const targetKey = sessionKey(target)
     clearingSessions.current.add(targetKey)
+    const releaseHold = holdHiddenReplacement(target)
     setRecovering(true)
     setError(undefined)
     try {
@@ -15616,6 +15657,7 @@ function App() {
       return sessionKey(target)
     } finally {
       clearingSessions.current.delete(targetKey)
+      releaseHold()
       setRecovering(false)
     }
   }

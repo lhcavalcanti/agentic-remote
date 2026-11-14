@@ -448,9 +448,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 226,
+  "communities": 238,
   "community_algorithm": "louvain-seed-42",
-  "edges": 20858,
+  "edges": 20862,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -760,8 +760,8 @@
     "server/session-knowledge-store.ts": "4ebe43018e24063320d91da1361cb498a2bb93a74b35ec67c692fab8b0e742cf",
     "server/session-metadata-provenance.test.ts": "be2c62820258c7847f63664e714b26e4b518e41aa9ef7f02bb3efa7aaef97f66",
     "server/session-order-routes.test.ts": "cae02dd25a3deb4a52d801152eda84bb772b13a7f542ff4f14886c890bb7d5ad",
-    "server/session-order-store.test.ts": "79140091679954454dbc7dc118272fa77c6a6d0127c46b5a5a50c0398032ff5b",
-    "server/session-order-store.ts": "b54e2753f68ee4e304fbff11d70e164e3931f0d49ed0e2d4e8f8e30a2e69bd03",
+    "server/session-order-store.test.ts": "ca595d735a6306007154fd30149cb07f1c4ceb5bfd8357aba0fea69651d22130",
+    "server/session-order-store.ts": "e32fcb9c7cf21ef27073f3a23133ebf395c8cbffe4d0e0fa57244cf6902ba667",
     "server/session-patch-integration.test.ts": "9ed3b21239d86119a1b74d634121563d5e5c2595e7326e5da50fd17c8aa9dda8",
     "server/session-patch-routes.test.ts": "6e335b7b11798cbb51aa72bc843a6386800d4c0965d25fa43b2f67bac22a4921",
     "server/session-patches.test.ts": "b9e6b443cb422f2195b07006b77029b7ac3ed0283fbcb3af8c7ecb06ce3a376f",
@@ -860,8 +860,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "7146528e84f18f472009461aef76c6d05fca987be3cd454b09a0a663420636c3",
-    "src/App.tsx": "7771e98634b541db81b02bf6cf0605a5104aa4331c85af51968be96145e39b50",
+    "src/App.test.tsx": "ff7f231e17022e7a5f23d17287afc0f60f22554d473706a20d6bb1188684413a",
+    "src/App.tsx": "5d179bb04adfc371ac91b15bb5a2b1fead229f4b3825d1621a6939112f36cedc",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -1001,7 +1001,7 @@
     "vite.config.ts": "d07296b23cab957c5bb7432e1a2cecbd233706e026cefeccd1d8ade5bee905f2"
   },
   "mode": "local-ast-only",
-  "nodes": 7526,
+  "nodes": 7527,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1103,18 +1103,18 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "8382a7dc171426369fb9d2b5d3bab451e7494cc2744bad6befe79c150bcb740d",
-    "communities.json": "b1053b60a3b08e9d878fa32d87df2539a9f5683c4ee4a00565a1f5b092e97d9a",
-    "graph.html": "231c6ea7fbc5f105ebabfe41e2549f6e6c46b526b07c0d5ffc36f122f76913b2",
-    "graph.json": "6acd15850b7c8f35ed7b16f6971e5d1370dd1b60c0adaaaa55200b6fb13681fb"
+    "GRAPH_REPORT.md": "97319032d11d2eaedc2f6d84c076cbebf1a01a5a3ee6211698817916f83a9090",
+    "communities.json": "2e4e790e9aa78430eb9ea79e40feae33b876ce3cc9eb0b3439390d07d3b56846",
+    "graph.html": "5bfccb5d2082b44dcf53b19279e2f39bd6292698c509230b9431cb44c150d890",
+    "graph.json": "a4be28a7a3b50b5550e1dd65b50c2beac0d68d6047077643af07124e80c6e1a0"
   },
   "schema_version": 1,
-  "source_commit": "07ce3300ac284862a8e322c5347c296b01188327",
-  "source_fingerprint": "6cec766d4c8fe2a661c02b2fb6d55289974655be338209f70e541c513a882ec9",
+  "source_commit": "925b94c0712ade13a34a4594e4a702cbdbe82864",
+  "source_fingerprint": "bdee90073822d0703d5b4cae2e754c03d6d7fe009732755fcbd43e42339b989d",
   "working_tree_changes": [
-    "server/hub-routes.ts",
-    "server/session-order-routes.test.ts",
     "server/session-order-store.test.ts",
-    "server/session-order-store.ts"
+    "server/session-order-store.ts",
+    "src/App.test.tsx",
+    "src/App.tsx"
   ]
 }

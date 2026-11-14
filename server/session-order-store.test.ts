@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -209,6 +209,22 @@ describe('SessionOrderStore', () => {
     // Reported again, the same clear changes nothing.
     expect((await order.replaceSession('pc', 'a', 'a2', slot)).revision)
       .toBe(restored.revision)
+  })
+
+  it('keeps what a removal retired for a retry when saving its replacement fails', async () => {
+    const { store: order, directory } = await store()
+    await order.appendSession('pc', 'a')
+    await order.setSessionHidden('pc', 'a', true)
+    await order.removeSession('pc', 'a')
+
+    // Replacing the directory with a file makes the temporary write fail.
+    await rm(directory, { recursive: true, force: true })
+    await writeFile(directory, 'blocked')
+    await expect(order.replaceSession('pc', 'a', 'a2', 0)).rejects.toThrow()
+    await rm(directory, { force: true })
+    await mkdir(directory)
+
+    expect((await order.replaceSession('pc', 'a', 'a2', 0)).hidden).toEqual(['pc:a2'])
   })
 
   it('does not hide a replacement whose predecessor was shown again before it was replaced', async () => {

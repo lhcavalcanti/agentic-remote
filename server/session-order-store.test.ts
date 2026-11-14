@@ -129,8 +129,6 @@ describe('SessionOrderStore', () => {
     const hidden = await order.setSessionHidden('pc', 'b', true)
     expect(hidden).toMatchObject({ revision: 3, hidden: ['pc:b'], showHidden: false })
     expect((await order.setSessionHidden('pc', 'b', true)).revision).toBe(3)
-    expect(order.isHidden('pc', 'b')).toBe(true)
-    expect(order.isHidden('pc', 'a')).toBe(false)
 
     const shown = await order.setVisibility({ showHidden: true })
     expect(shown).toMatchObject({ revision: 4, showHidden: true, showSuspended: true })
@@ -201,17 +199,33 @@ describe('SessionOrderStore', () => {
     await order.appendSession('pc', 'b')
     await order.setSessionHidden('pc', 'a', true)
     const slot = order.indexOf('pc', 'a')
-    const wasHidden = order.isHidden('pc', 'a')
 
     // A legacy node reports the clear as a plain removal first.
     expect((await order.removeSession('pc', 'a')).hidden).toEqual([])
-    const restored = await order.replaceSession('pc', 'a', 'a2', slot, wasHidden)
+    const restored = await order.replaceSession('pc', 'a', 'a2', slot)
     expect(restored.hidden).toEqual(['pc:a2'])
     expect(restored.order).toEqual({ pc: ['pc:a2', 'pc:b'] })
 
     // Reported again, the same clear changes nothing.
-    expect((await order.replaceSession('pc', 'a', 'a2', slot, wasHidden)).revision)
+    expect((await order.replaceSession('pc', 'a', 'a2', slot)).revision)
       .toBe(restored.revision)
+  })
+
+  it('does not hide a replacement whose predecessor was shown again before it was replaced', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.setSessionHidden('pc', 'a', true)
+    await order.setSessionHidden('pc', 'b', true)
+
+    // Shown after a legacy node's plain removal already retired it.
+    await order.removeSession('pc', 'a')
+    await order.setSessionHidden('pc', 'a', false)
+    expect((await order.replaceSession('pc', 'a', 'a2', 0)).hidden).toEqual(['pc:b'])
+
+    // Shown before the clear's link arrives.
+    await order.setSessionHidden('pc', 'b', false)
+    expect((await order.replaceSession('pc', 'b', 'b2')).hidden).toEqual([])
   })
 
   it('reorders one lane without touching another', async () => {

@@ -357,7 +357,7 @@ describe('hub session order routes', () => {
           computerId: 'computer-1',
           sessionId: 'session-1',
         })
-        await until(() => !store.isHidden('computer-1', 'session-1'))
+        await until(() => !(store.snapshot().hidden ?? []).includes('computer-1:session-1'))
         return { id: 'session-1-cleared', computerId: 'computer-1' }
       },
     })
@@ -374,6 +374,46 @@ describe('hub session order routes', () => {
       order: {
         'computer-1': ['computer-1:other', 'computer-1:session-1-cleared', 'computer-1:last'],
       },
+    })
+    await app.close()
+  })
+
+  it('does not re-hide a replacement that was shown while its clear was in flight', async () => {
+    const store = await orderStore()
+    await store.bootstrap({ 'computer-1': ['computer-1:session-1'] })
+    await store.setSessionHidden('computer-1', 'session-1', true)
+    const { app, manager } = await hub(store, {
+      clearConversation: async () => {
+        const shown = await app.inject({
+          method: 'PUT',
+          url: '/api/session-order/computer-1/session-1',
+          headers: { host: 'localhost' },
+          payload: { hidden: false },
+        })
+        expect(shown.statusCode).toBe(200)
+        manager.emit('event', {
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-1',
+          replacedBy: 'session-1-cleared',
+        })
+        await until(() =>
+          (store.snapshot().order['computer-1'] ?? []).includes('computer-1:session-1-cleared'),
+        )
+        return { id: 'session-1-cleared', computerId: 'computer-1' }
+      },
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/computers/computer-1/sessions/session-1/clear',
+      headers: { host: 'localhost' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(store.snapshot()).toMatchObject({
+      hidden: [],
+      order: { 'computer-1': ['computer-1:session-1-cleared'] },
     })
     await app.close()
   })

@@ -874,7 +874,6 @@ export async function registerHubRoutes(
       // event, which can retire the predecessor's slot before this response
       // names the successor that should inherit it.
       const orderSlot = sessionOrder?.indexOf(computerId, sessionId)
-      const wasHidden = sessionOrder?.isHidden(computerId, sessionId) ?? false
       const session = await replace()
       assertCurrent()
       // The replacement is already real. Auxiliary persistence must not hide
@@ -912,7 +911,6 @@ export async function registerHubRoutes(
                   sessionId,
                   session.id,
                   orderSlot !== undefined && orderSlot >= 0 ? orderSlot : undefined,
-                  wasHidden,
                 ),
               )
             : undefined,

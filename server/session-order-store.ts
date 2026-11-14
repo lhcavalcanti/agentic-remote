@@ -73,6 +73,13 @@ export class SessionOrderStore {
    * disk, or undo a newer write while restoring their own.
    */
   private commits: Promise<unknown> = Promise.resolve()
+  /**
+   * Hidden sessions a plain removal took out of the list. A node that
+   * predates replacement links reports a clear that way before its response
+   * names the successor, which then inherits this; a Show in between clears
+   * it. Nothing else reads it, so it stays in memory and small.
+   */
+  private readonly retiredHidden = new Set<string>()
 
   constructor(private readonly directory: string) {
     this.statePath = path.join(directory, 'session-order.json')
@@ -159,11 +166,6 @@ export class SessionOrderStore {
     })
   }
 
-  /** Whether a session is left out of the list, for carrying it onto a successor. */
-  isHidden(computerId: string, sessionId: string): boolean {
-    return this.state.hidden.includes(sessionOrderKey(computerId, sessionId))
-  }
-
   /**
    * Leaves a session out of the Sessions list, or puts it back. Nothing about
    * the session itself changes. Only a session its lane holds can be hidden,
@@ -176,6 +178,7 @@ export class SessionOrderStore {
   ): Promise<SessionOrderSnapshot> {
     const key = sessionOrderKey(computerId, sessionId)
     return this.commit((order, state) => {
+      if (!hidden) this.retiredHidden.delete(key)
       if (state.hidden.includes(key) === hidden) return false
       if (!hidden) {
         state.hidden = state.hidden.filter((entry) => entry !== key)
@@ -294,15 +297,14 @@ export class SessionOrderStore {
    *
    * `fallbackIndex` covers a legacy node whose plain removal already retired
    * the predecessor before the clear response named its successor: the slot is
-   * read before the clear and restored here. `fallbackHidden` does the same
-   * for whether the predecessor was hidden.
+   * read before the clear and restored here. Whether it was hidden is what
+   * that removal retired.
    */
   async replaceSession(
     computerId: string,
     previousSessionId: string,
     nextSessionId: string,
     fallbackIndex?: number,
-    fallbackHidden = false,
   ): Promise<SessionOrderSnapshot> {
     if (previousSessionId === nextSessionId) return this.snapshot()
     const previous = sessionOrderKey(computerId, previousSessionId)
@@ -310,7 +312,8 @@ export class SessionOrderStore {
     return this.commit((order, state) => {
       // Clearing replaces the identity, not the decision to keep it out of
       // the list.
-      const carried = state.hidden.includes(previous) || fallbackHidden
+      const retired = this.retiredHidden.delete(previous)
+      const carried = state.hidden.includes(previous) || retired
       const hidden = state.hidden.filter((key) => key !== previous)
       if (carried && !hidden.includes(next)) hidden.push(next)
       const hiddenChanged = !sameLane(state.hidden, hidden)
@@ -362,7 +365,15 @@ export class SessionOrderStore {
         if (next.length === 0) delete order[computerId]
         else order[computerId] = next
       }
-      if (hidden) state.hidden = state.hidden.filter((entry) => entry !== key)
+      if (hidden) {
+        state.hidden = state.hidden.filter((entry) => entry !== key)
+        this.retiredHidden.add(key)
+        // Only a clear's own response comes back for one, moments later.
+        const [oldest] = this.retiredHidden
+        if (this.retiredHidden.size > 64 && oldest !== undefined) {
+          this.retiredHidden.delete(oldest)
+        }
+      }
       return true
     })
   }

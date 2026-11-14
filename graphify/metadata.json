@@ -448,9 +448,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 237,
+  "communities": 226,
   "community_algorithm": "louvain-seed-42",
-  "edges": 20861,
+  "edges": 20858,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -646,7 +646,7 @@
     "server/full-gate.test.ts": "0d5ee37c73e959ccb0a3a80203e2785c1a225339824d43eaa99ef94131d3db5a",
     "server/history-projection.test.ts": "09f9da54f6c63562199a088f798f437e180a64cdd38a551d3f857b3d9da43979",
     "server/hub-routes.test.ts": "34e7345239d24539d6b3700c32f78c712e2397e7c6ae98526cbf98085cb97c79",
-    "server/hub-routes.ts": "43278f6a05ab47ca44c015b564f57512d8137ca51601b392e2b108f3eee1ce29",
+    "server/hub-routes.ts": "82800ff7670466b00b8b766555b539ab98a34eca0c413f21f6f53af8728d1edc",
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "f9ee699c3e51c98ccb043ccc23323ed3ac4718a713dfcc924c390c7e96d8439c",
     "server/knowledge-store.ts": "a4ec94cabb119e24fa92b474eaed1386021a4673c7cd0f10fe4c219b1753b45c",
@@ -759,9 +759,9 @@
     "server/session-knowledge-store.test.ts": "d2f592b28cb44ec0bbbabcd0b8eeb1a1ab5e5be243dd195befbc6f20a44e45d8",
     "server/session-knowledge-store.ts": "4ebe43018e24063320d91da1361cb498a2bb93a74b35ec67c692fab8b0e742cf",
     "server/session-metadata-provenance.test.ts": "be2c62820258c7847f63664e714b26e4b518e41aa9ef7f02bb3efa7aaef97f66",
-    "server/session-order-routes.test.ts": "247cc45b5bbbb5a80e4096a6ae76b8292cc13c3ec5c08354b75042bf2a02632a",
-    "server/session-order-store.test.ts": "208f18b39a827281bec75da8d586e9075140158c1742188f8d5fb20f6e977a9a",
-    "server/session-order-store.ts": "31e18c3adf9589a6b963b1516fbfda42cda4cf0780f97a381b35673468db0a3f",
+    "server/session-order-routes.test.ts": "cae02dd25a3deb4a52d801152eda84bb772b13a7f542ff4f14886c890bb7d5ad",
+    "server/session-order-store.test.ts": "79140091679954454dbc7dc118272fa77c6a6d0127c46b5a5a50c0398032ff5b",
+    "server/session-order-store.ts": "b54e2753f68ee4e304fbff11d70e164e3931f0d49ed0e2d4e8f8e30a2e69bd03",
     "server/session-patch-integration.test.ts": "9ed3b21239d86119a1b74d634121563d5e5c2595e7326e5da50fd17c8aa9dda8",
     "server/session-patch-routes.test.ts": "6e335b7b11798cbb51aa72bc843a6386800d4c0965d25fa43b2f67bac22a4921",
     "server/session-patches.test.ts": "b9e6b443cb422f2195b07006b77029b7ac3ed0283fbcb3af8c7ecb06ce3a376f",
@@ -1001,7 +1001,7 @@
     "vite.config.ts": "d07296b23cab957c5bb7432e1a2cecbd233706e026cefeccd1d8ade5bee905f2"
   },
   "mode": "local-ast-only",
-  "nodes": 7527,
+  "nodes": 7526,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1103,36 +1103,18 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "66b656d726dad68fecb9c90b87463dd37f53060b88b765ecd66f5ef56d3896c9",
-    "communities.json": "44e05978e9da7b01f7a6124eb57d00d3e4dd240b400e77185b8439a6d810a0cc",
-    "graph.html": "1a2815dc3c69cdc70594f38c671bd38811c9ace4bde3917a71d18752fcc0506c",
-    "graph.json": "320f7e5d3bef87064cc6cde99cefcd1e288d6223c9ec80f1bbaa1d70984a71ed"
+    "GRAPH_REPORT.md": "8382a7dc171426369fb9d2b5d3bab451e7494cc2744bad6befe79c150bcb740d",
+    "communities.json": "b1053b60a3b08e9d878fa32d87df2539a9f5683c4ee4a00565a1f5b092e97d9a",
+    "graph.html": "231c6ea7fbc5f105ebabfe41e2549f6e6c46b526b07c0d5ffc36f122f76913b2",
+    "graph.json": "6acd15850b7c8f35ed7b16f6971e5d1370dd1b60c0adaaaa55200b6fb13681fb"
   },
   "schema_version": 1,
-  "source_commit": "63538390f28613cddcb03e0be82822e28c82b1ee",
-  "source_fingerprint": "5c51b8e1003468d645ffed4c16e71e1ac34c31929147a6046956cbfdbeb7b0e7",
+  "source_commit": "07ce3300ac284862a8e322c5347c296b01188327",
+  "source_fingerprint": "6cec766d4c8fe2a661c02b2fb6d55289974655be338209f70e541c513a882ec9",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "e2e/oracle-automatic-turns.pw.ts",
-    "package.json",
-    "server/dreamer-service.test.ts",
-    "server/dreamer-service.ts",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-proactive-coordinator.ts",
-    "server/manager-proactive-inbox.ts",
-    "server/oracle-task-store.ts",
-    "shared/manager-automatic.test.ts",
-    "shared/manager-automatic.ts",
-    "shared/manager.ts",
-    "shared/oracle-task.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/ManagerAssistant.test.tsx",
-    "src/ManagerAssistant.tsx",
-    "src/index.css",
-    "src/oracle-automatic.ts"
+    "server/hub-routes.ts",
+    "server/session-order-routes.test.ts",
+    "server/session-order-store.test.ts",
+    "server/session-order-store.ts"
   ]
 }

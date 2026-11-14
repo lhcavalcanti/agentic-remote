@@ -21453,6 +21453,82 @@ describe('App', () => {
     confirmSpy.mockRestore()
   })
 
+  it('keeps holding one hidden replacement while another overlaps it', async () => {
+    const errored = { ...session, id: 'errored-work', title: 'Errored work', status: 'error' as const, messages: [] }
+    const items = [session, errored]
+    const cleared = { ...session, id: 'session-1-cleared', messages: [] }
+    const recovered = {
+      ...errored, id: 'errored-recovered', status: 'idle' as const, replacedSessionIds: [errored.id],
+    }
+    const key = (id: string) => `${computer.id}:${id}`
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = [...items, cleared, recovered].find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      showSuspended: true,
+      hidden: items.map((item) => key(item.id)),
+      order: { [computer.id]: items.map((item) => key(item.id)) },
+    }
+    window.history.replaceState({}, '', `/?computer=${computer.id}&session=${session.id}`)
+    let answerClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(() =>
+      new Promise((resolve) => { answerClear = resolve }),
+    )
+    let answerRecover: ((value: ManagedSession) => void) | undefined
+    vi.mocked(recoverConversation).mockImplementation(() =>
+      new Promise((resolve) => { answerRecover = resolve }),
+    )
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const emit = (event: unknown) => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify(event),
+    } as MessageEvent)
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden2'))
+
+    fireEvent.click(sessionAction('Clear conversation'))
+    await waitFor(() => expect(answerClear).toBeDefined())
+    act(() => {
+      emit({ type: 'session.removed', computerId: computer.id, sessionId: session.id })
+      emit({ type: 'session.upserted', session: cleared })
+    })
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+
+    // The errored session needs you, so it is listed and can be recovered.
+    fireEvent.click(screen.getByRole('button', { name: /^Errored work,/ }))
+    await waitFor(() => expect(window.location.search).toContain(`session=${errored.id}`))
+    fireEvent.click(await findSessionAction('Recover conversation'))
+    await waitFor(() => expect(answerRecover).toBeDefined())
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+
+    hubSessionOrder = {
+      ...hubSessionOrder,
+      revision: 7,
+      hidden: [key(cleared.id), key(recovered.id)],
+      order: { [computer.id]: [key(cleared.id), key(recovered.id)] },
+    }
+    await act(async () => {
+      answerClear?.(cleared)
+    })
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+    await act(async () => {
+      answerRecover?.(recovered)
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden2'))
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Errored work,/ })).toBeNull()
+    confirmSpy.mockRestore()
+  })
+
   it('skips hidden sessions in keyboard navigation but still opens them by address', async () => {
     const items = [
       { ...session, id: 'nav-first', title: 'First', messages: [] },

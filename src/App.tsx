@@ -7899,11 +7899,12 @@ function App() {
   // While this browser clears or recovers a hidden session, sessions that
   // appear on its computer stay out of the list until the hub's snapshot says
   // whether they are hidden: a node that predates replacement links names the
-  // successor only in its response.
-  const [replacementHold, setReplacementHold] = useState<{
+  // successor only in its response. A clear and a recovery can overlap, so
+  // each keeps its own hold.
+  const [replacementHolds, setReplacementHolds] = useState<readonly {
     computerId: string
     known: ReadonlySet<string>
-  }>()
+  }[]>([])
   const sessionOrderRef = useRef(sessionOrder)
   sessionOrderRef.current = sessionOrder
   const sessionOrderRevisionRef = useRef(sessionOrderRevision)
@@ -8343,16 +8344,17 @@ function App() {
     return grouped
   }, [orderedComputers, sessionOrder, sessions, sessionSort, backgroundTaskSnapshots])
   const listedHiddenKeys = useMemo(() => {
-    if (!replacementHold) return hiddenSessionKeys
+    if (replacementHolds.length === 0) return hiddenSessionKeys
     const keys = new Set(hiddenSessionKeys)
     for (const session of sessions) {
       const key = sessionKey(session)
-      if (session.computerId === replacementHold.computerId && !replacementHold.known.has(key)) {
+      if (replacementHolds.some((hold) =>
+        hold.computerId === session.computerId && !hold.known.has(key))) {
         keys.add(key)
       }
     }
     return keys
-  }, [hiddenSessionKeys, replacementHold, sessions])
+  }, [hiddenSessionKeys, replacementHolds, sessions])
   const navigationView = useMemo(
     () => sessionNavigationView(
       orderedComputers,
@@ -15560,10 +15562,10 @@ function App() {
           .map(sessionKey),
       ),
     }
-    setReplacementHold(hold)
+    setReplacementHolds((current) => [...current, hold])
     return () => {
       void syncSessionOrderRef.current().finally(() =>
-        setReplacementHold((current) => (current === hold ? undefined : current)),
+        setReplacementHolds((current) => current.filter((entry) => entry !== hold)),
       )
     }
   }

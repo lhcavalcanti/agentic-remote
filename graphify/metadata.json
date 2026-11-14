@@ -860,8 +860,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "ff7f231e17022e7a5f23d17287afc0f60f22554d473706a20d6bb1188684413a",
-    "src/App.tsx": "5d179bb04adfc371ac91b15bb5a2b1fead229f4b3825d1621a6939112f36cedc",
+    "src/App.test.tsx": "f343ab3867f6211af384c2196824570c0e4b2992bbc6b874c7809835153d215d",
+    "src/App.tsx": "2bf95a7a9babbed31727e1b5d149c8c8c72ddef7e5f86364bc8bcb89a2e4622e",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -1103,17 +1103,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "97319032d11d2eaedc2f6d84c076cbebf1a01a5a3ee6211698817916f83a9090",
+    "GRAPH_REPORT.md": "70783cf42f1aa25278d40cab766e3e0265c4252041c886d16dfa73460bcba16f",
     "communities.json": "2e4e790e9aa78430eb9ea79e40feae33b876ce3cc9eb0b3439390d07d3b56846",
-    "graph.html": "5bfccb5d2082b44dcf53b19279e2f39bd6292698c509230b9431cb44c150d890",
-    "graph.json": "a4be28a7a3b50b5550e1dd65b50c2beac0d68d6047077643af07124e80c6e1a0"
+    "graph.html": "c98b5f6a94562b3710b0f353ebadbfe9a235f884422e50a9781e8b6bda6fc35d",
+    "graph.json": "bc7d26675962677a648c24bbf5d00eca07160bd4473c8b0915d4a271a5308c29"
   },
   "schema_version": 1,
-  "source_commit": "925b94c0712ade13a34a4594e4a702cbdbe82864",
-  "source_fingerprint": "bdee90073822d0703d5b4cae2e754c03d6d7fe009732755fcbd43e42339b989d",
+  "source_commit": "eb0f501261d38949994d533b61e7a5f19ddc67eb",
+  "source_fingerprint": "6e9e32261670698322c258bca458ec539c214e935c48d89ed90a520b09c079c0",
   "working_tree_changes": [
-    "server/session-order-store.test.ts",
-    "server/session-order-store.ts",
     "src/App.test.tsx",
     "src/App.tsx"
   ]

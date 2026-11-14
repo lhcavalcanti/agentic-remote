@@ -91,6 +91,8 @@ export interface ManagerHub {
   replyUserInput(computerId: string, sessionId: string, requestId: string, input: UserInputReplyInput): Promise<ManagedSession>
   /** Opens a closed session again. */
   activateSession(computerId: string, sessionId: string): Promise<ManagedSession>
+  /** Suspends a session through its owning computer's lifecycle, which refuses one that is not idle. */
+  suspendSession(computerId: string, sessionId: string): Promise<ManagedSession>
   resumeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
   deleteSession(computerId: string, sessionId: string): Promise<void>
@@ -1159,6 +1161,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       replyUserInput: (computerId, sessionId, requestId, input) =>
         hub.replyUserInput(computerId, sessionId, requestId, input),
       reopenSession: (computerId, sessionId) => hub.activateSession(computerId, sessionId),
+      suspendSession: (computerId, sessionId) => hub.suspendSession(computerId, sessionId),
       resumeSession: (computerId, sessionId) => hub.resumeSession(computerId, sessionId),
       cancel: (computerId, sessionId) => hub.cancel(computerId, sessionId),
       requestCloseConfirmation: (session, reason, why) => this.requestCloseConfirmation(session, reason, why),
@@ -1671,7 +1674,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     } else if (this.currentMessageSource === 'task') {
       notes.push(`This is user-authorized work for durable task ${message.automatic?.taskId ?? '(missing task id)'}. Act only for that task and keep all execution tied to it.`)
     } else if (message.answerOnly) {
-      notes.push('The user asked this in Ask mode: answer it yourself from the current state, while their sessions keep working undisturbed. Read sessions and use ask_session as needed. Your own memory and settings stay yours to change, so use set_session_folder if they ask where new sessions should start and set_session_backend if they ask how new sessions open. Do not start, message, rename, stop, or close any session; if they ask for one of those, say what you would do and that switching Oracle to Delegate lets you do it.')
+      notes.push('The user asked this in Ask mode: answer it yourself from the current state, while their sessions keep working undisturbed. Read sessions and use ask_session as needed. Your own memory and settings stay yours to change, so use set_session_folder if they ask where new sessions should start and set_session_backend if they ask how new sessions open. Do not start, message, rename, suspend, resume, stop, or close any session; if they ask for one of those, say what you would do and that switching Oracle to Delegate lets you do it.')
     }
     let context = buildTurnContext({
       now: this.now(),

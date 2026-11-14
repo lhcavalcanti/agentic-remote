@@ -110,8 +110,8 @@ export interface ManagerMessage {
   state?: ManagerMessageState
   /**
    * Ask mode: Oracle answers from the current state, reading sessions and
-   * asking them side questions, but must not start, message, rename, stop,
-   * or close one, so their work carries on undisturbed.
+   * asking them side questions, but must not start, message, rename, suspend,
+   * resume, stop, or close one, so their work carries on undisturbed.
    */
   answerOnly?: boolean
   /**

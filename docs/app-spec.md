@@ -708,6 +708,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   message; anything else it is shown goes through Oracle's judgment instead. Oracle approves what a
   session needs for its task and denies, or asks you about, anything
   destructive or beyond it; every answer appears in its transcript.
+- In **Delegate**, Oracle MAY suspend any session when you ask, a broad
+  request such as pausing the idle review sessions included, MUST NOT suspend
+  one on its own initiative, and resumes one when you ask. Both go through the
+  owning computer's Pause and Resume lifecycle (§3.1), whose refusal reason
+  Oracle reports to you; resuming a session that is not suspended changes
+  nothing. Each appears in its transcript.
 - **Ask** is the panel's conversational mode: you ask Oracle about your
   sessions while their work carries on. Oracle answers from the current state,
   reading sessions as they are recorded and asking side questions that fork a
@@ -715,9 +721,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   turn added so its answer is not mistaken for the whole story, and MUST NOT
   interrupt, cancel, redirect, prompt,
   or otherwise change any session or its work. The hub refuses every tool that
-  would start, message, rename, stop, or close a session for that message, and
-  Oracle's reads never open, resume, or reconcile a session. Oracle's memory and
-  settings are its own and stay writable. Under the message bar, an **Ask |
+  would start, message, rename, suspend, resume, stop, or close a session for
+  that message, and Oracle's reads never open, resume, or reconcile a session.
+  Oracle's memory and settings are its own and stay writable. Under the message
+  bar, an **Ask |
   Delegate** switch chooses the mode, remembered per browser; **Delegate** lets
   Oracle start and steer sessions. `/oracle <question>` in a session's message
   bar is a shortcut
@@ -989,9 +996,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   idempotent and release active-task capacity.
 - Oracle-owned findings MUST include an executable prompt. Task-origin Oracle
   turns MAY create, continue, answer or cancel execution sessions only for the
-  durable task; unrelated settings, naming, closure, proactive-outcome and
-  memory mutations MUST fail closed. Generic Oracle queue edit/remove/retry
-  controls MUST reject internal task messages so task identity cannot diverge.
+  durable task; unrelated settings, naming, suspension, closure,
+  proactive-outcome and memory mutations MUST fail closed. Generic Oracle queue
+  edit/remove/retry controls MUST reject internal task messages so task
+  identity cannot diverge.
 - Proactive Oracle turns MUST limit session listing, transcript reads and side
   questions to the exact computer/session identities admitted in their current
   durable event batch. Evidence whose pairing was replaced after admission

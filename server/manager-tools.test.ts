@@ -92,6 +92,7 @@ describe('manager tools', () => {
       replyPermission: vi.fn(async (_computerId: string, id: string) => session(id)),
       replyUserInput: vi.fn(async (_computerId: string, id: string) => session(id)),
       reopenSession: vi.fn(async (_computerId: string, id: string) => session(id)),
+      suspendSession: vi.fn(async (_computerId: string, id: string) => session(id, { suspended: true })),
       resumeSession: vi.fn(async (_computerId: string, id: string) => session(id)),
       cancel: vi.fn(async () => undefined),
       requestCloseConfirmation: vi.fn(async () => undefined),
@@ -147,7 +148,8 @@ describe('manager tools', () => {
       'answer_session', 'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
       'list_computers', 'list_models', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
       'memory_list', 'memory_read', 'memory_write', 'record_proactive_outcomes',
-      'rename_session', 'send_to_session', 'set_session_backend', 'set_session_folder',
+      'rename_session', 'resume_session', 'send_to_session', 'set_session_backend', 'set_session_folder',
+      'suspend_session',
     ])
     for (const tool of tools.values()) {
       expect(tool.skipPermission).toBe(true)
@@ -1077,6 +1079,81 @@ describe('manager tools', () => {
     expect(host.sendMessage).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'Carry on.')
   })
 
+  it('suspends a session through its owning computer and shows it', async () => {
+    const result = String(await call('suspend_session', { sessionId: 'abc12345' }))
+    expect(host.suspendSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
+    expect(result).toContain('Suspended [Session abc12345-aaaa](?computer=hub&session=abc12345-aaaa)')
+    expect(activities).toEqual([{
+      tool: 'suspend_session',
+      content: 'Suspended "Session abc12345-aaaa"',
+      sessionRefs: [{ computerId: 'hub', sessionId: 'abc12345-aaaa', title: 'Session abc12345-aaaa' }],
+    }])
+  })
+
+  it('resumes a suspended session the user did not start, as send_to_session would', async () => {
+    vi.mocked(host.listSessions).mockResolvedValue([session('abc12345-aaaa', { suspended: true })])
+    const result = String(await call('resume_session', { sessionId: 'abc12345' }))
+    expect(host.resumeSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
+    expect(result).toContain('Resumed [Session abc12345-aaaa](?computer=hub&session=abc12345-aaaa)')
+    expect(activities).toEqual([{
+      tool: 'resume_session',
+      content: 'Resumed "Session abc12345-aaaa"',
+      sessionRefs: [{ computerId: 'hub', sessionId: 'abc12345-aaaa', title: 'Session abc12345-aaaa' }],
+    }])
+  })
+
+  it('changes nothing for a session already suspended, or resumed while not suspended', async () => {
+    vi.mocked(host.listSessions).mockResolvedValue([
+      session('abc12345-aaaa', { suspended: true }),
+      session('def67890-bbbb'),
+    ])
+    expect(String(await call('suspend_session', { sessionId: 'abc12345' }))).toContain('already suspended')
+    expect(String(await call('resume_session', { sessionId: 'def67890' }))).toContain('not suspended')
+    expect(host.suspendSession).not.toHaveBeenCalled()
+    expect(host.resumeSession).not.toHaveBeenCalled()
+    expect(activities).toEqual([])
+  })
+
+  it.each([
+    ['is not idle', 409, 'suspend.not-idle', 'Session can only be suspended while idle'],
+    ['runs in a terminal it cannot put down', 501, 'suspend.terminal-unsupported', 'Terminal session suspend is not available'],
+  ])('passes on why the owning computer refused to suspend a session that %s', async (_case, statusCode, reasonCode, reason) => {
+    vi.mocked(host.suspendSession).mockRejectedValueOnce(Object.assign(new Error(reason), { statusCode, reasonCode }))
+    const result = await call('suspend_session', { sessionId: 'abc12345' })
+    expect(result).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(result)).toContain('Could not suspend [Session abc12345-aaaa]')
+    expect(JSON.stringify(result)).toContain(reason)
+    expect(activities).toEqual([])
+  })
+
+  it('passes on why the owning computer refused to resume a session', async () => {
+    vi.mocked(host.listSessions).mockResolvedValue([session('abc12345-aaaa', { suspended: true })])
+    vi.mocked(host.resumeSession).mockRejectedValueOnce(new Error('Terminal session resume is not available'))
+    const result = await call('resume_session', { sessionId: 'abc12345' })
+    expect(result).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(result)).toContain('Could not resume [Session abc12345-aaaa]')
+    expect(JSON.stringify(result)).toContain('Terminal session resume is not available')
+    expect(activities).toEqual([])
+  })
+
+  it('refuses to suspend or resume a session whose computer is offline, without reaching it', async () => {
+    vi.mocked(host.listSessions).mockResolvedValue([
+      session('far12345-eeee', { computerId: 'node', computerName: 'production' }),
+      session('far67890-ffff', { computerId: 'node', computerName: 'production', suspended: true }),
+    ])
+    for (const [name, sessionId, verb] of [
+      ['suspend_session', 'far12345', 'suspended'],
+      ['resume_session', 'far67890', 'resumed'],
+    ] as const) {
+      const result = await call(name, { sessionId })
+      expect(result, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(result), name).toContain('production is offline')
+      expect(JSON.stringify(result), name).toContain(`cannot be ${verb}`)
+    }
+    expect(host.suspendSession).not.toHaveBeenCalled()
+    expect(host.resumeSession).not.toHaveBeenCalled()
+  })
+
   it('only asks the user to close a session and never closes one itself', async () => {
     const result = await call('close_session', { sessionId: 'abc12345', userConfirmed: true, reason: 'It finished.' })
     expect(host.requestCloseConfirmation).toHaveBeenCalledWith(expect.objectContaining({ id: 'abc12345-aaaa' }), 'It finished.')
@@ -1381,6 +1458,8 @@ describe('manager tools', () => {
       ['cancel_session', { sessionId: 'abc12345' }],
       ['close_session', { sessionId: 'abc12345' }],
       ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
+      ['suspend_session', { sessionId: 'abc12345' }],
+      ['resume_session', { sessionId: 'abc12345' }],
     ] as const) {
       const result = await call(name, args)
       expect(result, name).toMatchObject({ resultType: 'failure' })
@@ -1392,6 +1471,8 @@ describe('manager tools', () => {
     expect(host.renameSession).not.toHaveBeenCalled()
     expect(host.cancel).not.toHaveBeenCalled()
     expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
+    expect(host.suspendSession).not.toHaveBeenCalled()
+    expect(host.resumeSession).not.toHaveBeenCalled()
     expect(activities).toEqual([])
     // Reading, side questions, which fork the session's history rather than
     // prompt it, and Oracle's own memory leave running work alone.
@@ -1428,6 +1509,8 @@ describe('manager tools', () => {
       ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
       ['cancel_session', { sessionId: 'abc12345' }],
       ['close_session', { sessionId: 'abc12345' }],
+      ['suspend_session', { sessionId: 'abc12345' }],
+      ['resume_session', { sessionId: 'abc12345' }],
       ['memory_write', { path: 'MEMORY.md', content: '# Replaced' }],
       ['memory_append', { path: 'MEMORY.md', content: '\n- planted' }],
       ['memory_delete', { path: 'MEMORY.md' }],
@@ -1445,6 +1528,8 @@ describe('manager tools', () => {
     expect(host.replyUserInput).not.toHaveBeenCalled()
     expect(host.cancel).not.toHaveBeenCalled()
     expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
+    expect(host.suspendSession).not.toHaveBeenCalled()
+    expect(host.resumeSession).not.toHaveBeenCalled()
     expect(await host.memory.read('MEMORY.md')).toBe('# Trusted')
     expect(oracleFolders).toEqual({})
     expect(activities).toEqual([])
@@ -1483,6 +1568,14 @@ describe('manager tools', () => {
     expect(JSON.stringify(result)).toContain('proactive')
     expect(JSON.stringify(result)).toContain('read-only')
     expect(host.createSession).not.toHaveBeenCalled()
+    proactiveSessionIds = new Set(['abc12345-aaaa'])
+    for (const name of ['suspend_session', 'resume_session']) {
+      const refused = await call(name, { sessionId: 'abc12345' })
+      expect(refused, name).toMatchObject({ resultType: 'failure' })
+      expect(JSON.stringify(refused), name).toContain('read-only')
+    }
+    expect(host.suspendSession).not.toHaveBeenCalled()
+    expect(host.resumeSession).not.toHaveBeenCalled()
   })
 
   it('requires an execution prompt for every Oracle-owned proactive task', async () => {
@@ -1584,6 +1677,9 @@ describe('manager tools', () => {
       ['set_session_backend', { backend: 'terminal' }],
       ['rename_session', { sessionId: 'abc12345', title: 'Changed by task' }],
       ['close_session', { sessionId: 'abc12345' }],
+      // Refused even for the task's own session.
+      ['suspend_session', { sessionId: 'def67890' }],
+      ['resume_session', { sessionId: 'def67890' }],
       ['memory_write', { path: 'MEMORY.md', content: '# Task mutation' }],
       ['record_proactive_outcomes', { outcomes: [{
         kind: 'no-action',
@@ -1595,6 +1691,8 @@ describe('manager tools', () => {
       expect(result, name).toMatchObject({ resultType: 'failure' })
       expect(JSON.stringify(result), name).toContain('task')
     }
+    expect(host.suspendSession).not.toHaveBeenCalled()
+    expect(host.resumeSession).not.toHaveBeenCalled()
   })
 
   it('classifies unknown future tools as mutations so voice fails closed', () => {

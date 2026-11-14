@@ -183,6 +183,7 @@ describe('ManagerAgent', () => {
       replyPermission: vi.fn(async (_computerId: string, id: string) => session(id)),
       replyUserInput: vi.fn(async (_computerId: string, id: string) => session(id)),
       activateSession: vi.fn(async (_computerId: string, id: string) => session(id)),
+      suspendSession: vi.fn(async (_computerId: string, id: string) => session(id, { suspended: true })),
       resumeSession: vi.fn(async (_computerId: string, id: string) => session(id)),
       cancel: vi.fn(async () => undefined),
       deleteSession: vi.fn(async () => undefined),
@@ -2417,6 +2418,30 @@ describe('ManagerAgent', () => {
     expect(hub.replyPermission).toHaveBeenCalledWith('hub', 'existing', 'trust-1', { optionId: 'terminal:allow' })
     expect(hub.activateSession).toHaveBeenCalledWith('hub', 'closed-1')
     expect(hub.sendMessage).toHaveBeenCalledWith('hub', 'closed-1', { content: 'Pick it back up.', enqueue: true })
+  })
+
+  it('suspends a session and brings it back through the hub, each shown in the transcript', async () => {
+    vi.mocked(hub.suspendSession).mockImplementation(async (_computerId, id) => {
+      sessions = sessions.map((candidate) => candidate.id === id ? { ...candidate, suspended: true } : candidate)
+      return session(id, { suspended: true })
+    })
+    sdk.behaviors.push(async (fakeSession) => {
+      await fakeSession.tool('suspend_session')({ sessionId: 'existing' })
+      await fakeSession.tool('resume_session')({ sessionId: 'existing' })
+      reply('Done.')(fakeSession, '')
+    })
+    await start()
+    await agent!.send('Pause the existing session, then bring it back')
+    await settled()
+    expect(hub.suspendSession).toHaveBeenCalledWith('hub', 'existing')
+    expect(hub.resumeSession).toHaveBeenCalledWith('hub', 'existing')
+    const existing = { computerId: 'hub', sessionId: 'existing', title: 'Session existing' }
+    expect(agent!.snapshot().messages
+      .filter((message) => message.role === 'activity')
+      .map(({ tool, content, sessionRefs }) => ({ tool, content, sessionRefs }))).toEqual([
+      { tool: 'suspend_session', content: 'Suspended "Session existing"', sessionRefs: [existing] },
+      { tool: 'resume_session', content: 'Resumed "Session existing"', sessionRefs: [existing] },
+    ])
   })
 
   it('steers a busy session rather than queueing it after the turn', async () => {

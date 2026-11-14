@@ -18950,6 +18950,28 @@ describe('App', () => {
     expect(screen.queryByRole('menu', { name: 'Message delivery' })).not.toBeInTheDocument()
   })
 
+  it('shows projected origin in the header and runtime subagents beside background work only in the preview', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...computer, providers: computer.providers!.map((capability) => ({ ...capability, supportsBackgroundTasks: true })),
+    }])
+    const projected = { ...session, provenance: { origin: 'manager' as const } }
+    vi.mocked(listSessions).mockResolvedValue([projected])
+    vi.mocked(getSession).mockResolvedValue(projected)
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      supported: true, runningCount: 0, tasks: [{
+        id: 'reported-sync-agent', type: 'agent', status: 'running', executionMode: 'sync',
+        description: 'Review the recovery checklist', startedAt: '2026-11-14T20:00:00Z', canCancel: false,
+      }],
+    })
+    render(<App />)
+    await screen.findByLabelText('Message')
+    const header = document.querySelector('.conversation-header') as HTMLElement
+    expect(within(header).getByRole('img', { name: 'Started by Oracle' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '1 subagent running' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View background tasks' })).toHaveTextContent('0 background tasks running')
+  })
+
   it('previews searched sent messages without sending and restores the parked collapsed-paste draft on cancel', async () => {
     seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const sentSession = {

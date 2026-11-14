@@ -12,6 +12,8 @@ import type {
 import { SessionNavigation, type PendingSessionCreation } from './SessionNavigation'
 import type { SessionSort } from './session-presentation'
 import { sessionNavigationView, type SessionFilter } from './session-navigation-view'
+import { PreviewFeaturesContext } from './preview-features'
+import { defaultHubFeatureFlags, effectivePreviewFeatures } from '../shared/feature-flags'
 
 const computers: ComputerSummary[] = [
   { id: 'studio', name: 'Studio', isLocal: true, online: true },
@@ -179,6 +181,28 @@ afterEach(() => {
 })
 
 describe('session navigation', () => {
+  it('uses the projected origin in row accessibility instead of guessing from titles or providers', () => {
+    const listed = new Map([['studio', [
+      { ...session, id: 'user', provenance: { origin: 'user' as const } },
+      { ...session, id: 'oracle', provenance: { origin: 'manager' as const } },
+      { ...session, id: 'external', provenance: { origin: 'discovered' as const } },
+      { ...session, id: 'schedule', provenance: { origin: 'schedule' as const, scheduleName: 'Morning review', scheduleRunId: 'run' } },
+      { ...session, id: 'unknown', title: 'Oracle schedule title without provenance' },
+    ]]])
+    render(
+      <PreviewFeaturesContext.Provider value={{
+        hubFlags: defaultHubFeatureFlags, preferences: { composerRefresh: true },
+        effective: effectivePreviewFeatures({ composerRefresh: true }, defaultHubFeatureFlags), set: vi.fn(),
+      }}>{navigation(listed)}</PreviewFeaturesContext.Provider>,
+    )
+    expect(screen.getByRole('button', { name: /Review the release, Started by you/ })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Review the release, Started by Oracle/ })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Review the release, Found on this computer/ })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Review the release, Started by schedule Morning review/ })).toBeVisible()
+    expect(screen.getAllByRole('img')).toHaveLength(4)
+    expect(screen.queryByRole('link', { name: /View run from schedule/ })).not.toBeInTheDocument()
+  })
+
   it('distinguishes loading from a failed connection without showing an empty list', () => {
     const rendered = render(
       <NavigationHarness loading computerList={[]} sessions={new Map()} />,

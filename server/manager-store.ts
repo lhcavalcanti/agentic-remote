@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import type { AgentProvider, SessionStatus } from '../shared/contracts.js'
+import type { AgentProvider, SessionOrigin, SessionProvenance, SessionStatus } from '../shared/contracts.js'
 import type {
   ManagerClientDefaults,
   ManagerAttachment,
@@ -12,7 +12,7 @@ import type {
 import { ManagerMemory } from './manager-memory.js'
 import { ManagerUploads } from './manager-uploads.js'
 
-export type SessionOrigin = 'manager' | 'user' | 'discovered' | 'schedule'
+export type { SessionOrigin } from '../shared/contracts.js'
 
 export interface ManagerState {
   /** The SDK session holding the manager's conversation. */
@@ -358,6 +358,14 @@ export class ManagerStore {
 
   sessionOrigin(computerId: string, sessionId: string): SessionOrigin | undefined {
     return this.sessions[registryKey(computerId, sessionId)]?.origin
+  }
+
+  sessionProvenance(computerId: string, sessionId: string): SessionProvenance | undefined {
+    const entry = this.sessions[registryKey(computerId, sessionId)]
+    if (!entry || entry.computerId !== computerId || entry.sessionId !== sessionId) return undefined
+    return entry.origin === 'schedule'
+      ? { origin: entry.origin, scheduleId: entry.scheduleId, scheduleRunId: entry.scheduleRunId }
+      : { origin: entry.origin }
   }
 
   updateRegistry(change: (registry: ManagerRegistry) => void): Promise<void> {

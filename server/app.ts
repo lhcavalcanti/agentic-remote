@@ -669,6 +669,7 @@ export async function buildApp(
       scheduler?.store,
       scheduleNotifications,
       isScheduledSession,
+      managerStoreReady ? managerStore : undefined,
     )
     if (!notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     app.get('/api/features', async (_request, reply) => {

@@ -598,6 +598,7 @@ export interface WorkspaceFixtureOptions {
   hostMonitorWsl?: boolean
   /** Omitted keeps the hub scheduler disabled. All data remains fictional. */
   scheduler?: { schedules: Schedule[]; runs: ScheduleRun[]; proposals?: import('../shared/schedule-proposals').ScheduleProposal[] }
+  taskSnapshots?: Record<string, BackgroundTaskSnapshot>
   /** Use a native event socket only on the already-validated local fixture origin. */
   nativeLocalEvents?: boolean
   realClock?: boolean
@@ -1725,7 +1726,7 @@ export async function setupWorkspaceFixture(
       }
       if (method === 'GET' && action === '/tasks') {
         await respond(
-          fixtureBackgroundTasks[session.id] ?? {
+          options.taskSnapshots?.[`${session.computerId}:${session.id}`] ?? fixtureBackgroundTasks[session.id] ?? {
             tasks: [],
             runningCount: 0,
             supported: session.provider === 'copilot',

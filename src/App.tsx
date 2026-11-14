@@ -164,6 +164,9 @@ import {
   useSessionKnowledgeRoot,
 } from './use-session-knowledge-root'
 import { SessionActions } from './SessionActions'
+import { SessionOriginBadge } from './SessionOriginBadge'
+import { SessionOriginRunLink } from './SessionOriginRunLink'
+import { SubagentCount } from './SubagentCount'
 import { SessionRetentionSettings } from './SessionRetentionSettings'
 import { SessionResources } from './SessionResources'
 import {
@@ -13502,7 +13505,15 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             <Menu size={21} />
           </button>
           <div className="conversation-header__title">
-            <strong>{selected?.title || 'Agentic Remote'}</strong>
+            <strong>
+              {selected ? (
+                <span className="conversation-header__origin">
+                  <SessionOriginBadge compact provenance={selected.provenance} />
+                  <SessionOriginRunLink provenance={selected.provenance} />
+                </span>
+              ) : null}
+              {selected?.title || 'Agentic Remote'}
+            </strong>
             {selected ? (
               <span className="conversation-header__meta">
                 {/* The description shrinks; the folder does not. On a phone
@@ -13959,6 +13970,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 {selectedRunningBackgroundTasks} background task
                 {selectedRunningBackgroundTasks === 1 ? '' : 's'} running
               </button>
+            ) : null}
+            {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
+              <SubagentCount snapshot={selectedBackgroundTasks} onOpen={openBackgroundTasks} />
             ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>

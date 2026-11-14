@@ -33,6 +33,8 @@ import type { ClientPresence } from './client-presence.js'
 import type { NotificationCenterService } from './notification-center-service.js'
 import type { SchedulerStore } from './scheduler-store.js'
 import type { ScheduleNotificationService } from './schedule-notification-service.js'
+import type { ManagerStore } from './manager-store.js'
+import { sessionProvenanceProjection } from './session-provenance.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
@@ -414,7 +416,10 @@ export async function registerHubRoutes(
   scheduler?: SchedulerStore,
   scheduleNotifications?: ScheduleNotificationService,
   isScheduledSession?: (session: ManagedSession) => boolean,
+  provenance?: Pick<ManagerStore, 'sessionProvenance'>,
 ): Promise<void> {
+  const projection = sessionProvenanceProjection(provenance, scheduler)
+  app.addHook('preSerialization', async (_request, _reply, payload) => projection.reply(payload))
   const sessionForClient = (session: ManagedSession): ManagedSession => {
     const result = { ...session }
     delete result.suppressOrdinaryNotifications
@@ -1296,8 +1301,8 @@ export async function registerHubRoutes(
   })
   let broadcasts: Promise<unknown> = Promise.resolve()
   const broadcast = (event: HubEvent) => {
-    const outgoing = scheduler && event.type === 'session.upserted'
-      ? { ...event, session: sessionForClient(event.session) } : event
+    const outgoing = projection.reply(scheduler && event.type === 'session.upserted'
+      ? { ...event, session: sessionForClient(event.session) } : event)
     if (!notifications) {
       publications.broadcast(outgoing)
       return

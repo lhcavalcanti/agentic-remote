@@ -496,7 +496,18 @@ export interface ComputerSummary {
   voice?: VoiceBackendCapability
 }
 
+export type SessionOrigin = 'manager' | 'user' | 'discovered' | 'schedule'
+
+export interface SessionProvenance {
+  origin: SessionOrigin
+  scheduleId?: string
+  scheduleRunId?: string
+  scheduleName?: string
+}
+
 export interface ManagedSession extends SessionDetail {
+  /** Hub-owned provenance; never inferred from title, provider or runtime. */
+  provenance?: SessionProvenance
   computerId: string
   computerName: string
   /** Hub-derived delivery metadata, not owner-side session provenance. */

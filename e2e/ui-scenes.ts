@@ -6,6 +6,8 @@ import {
   SELECTED_SESSION_ID,
   createWorkspaceFixtureState,
   fixtureBaseUrl,
+  fixtureSchedules,
+  fixtureScheduleRuns,
   setupWorkspaceFixture,
   type WorkspaceFixture,
   type WorkspaceFixtureState,
@@ -38,6 +40,9 @@ export const uiSceneNames = [
   'composer-sent-messages',
   'composer-delivery-menu',
   'composer-delivery-unavailable',
+  'session-origins',
+  'session-origin-run',
+  'session-subagents',
   'session-list',
   'app-settings',
   'preview-features',
@@ -84,6 +89,20 @@ export function createUIScenes(
       const state = createWorkspaceFixtureState()
       const hostStatus = name === 'oracle-panel' && options.oracleHostStatus
         ? await oracleHostStatusFixture() : undefined
+      const origins = name === 'session-origins' || name === 'session-origin-run' || name === 'session-subagents'
+      if (origins) {
+        state.settings = {
+          revision: 1, values: { previewFeatures: { composerRefresh: true, schedulerView: true } },
+          keyRevisions: { previewFeatures: 1 },
+        }
+        state.sessions[0].provenance = {
+          origin: 'schedule', scheduleId: fixtureSchedules[0].id,
+          scheduleName: fixtureSchedules[0].name, scheduleRunId: fixtureScheduleRuns[0].id,
+        }
+        state.sessions[1].provenance = { origin: 'user' }
+        state.sessions[2].provenance = { origin: 'manager' }
+        state.sessions[3].provenance = { origin: 'discovered' }
+      }
       if (name === 'composer-family-claude' || name === 'composer-family-openai') {
         const family = name === 'composer-family-claude' ? 'claude' : 'gpt'
         const model = { ...state.models[0], id: `fixture-${family}-99`, name: `${family} fictional model` }
@@ -192,7 +211,16 @@ export function createUIScenes(
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: fixtureScheduleProposals,
         } : name === 'scheduler' || name === 'scheduler-form' || name === 'notification-panel'
-          ? { schedules: fixtureSchedules, runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals } : undefined,
+          ? { schedules: fixtureSchedules, runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals }
+          : origins ? { schedules: structuredClone(fixtureSchedules), runs: structuredClone(fixtureScheduleRuns) } : undefined,
+        taskSnapshots: name === 'session-subagents' ? {
+          [`fixture-studio:${SELECTED_SESSION_ID}`]: {
+            supported: true, runningCount: 1, tasks: [
+              { id: 'fixture-sync-agent', type: 'agent', description: 'Review recovery paths', status: 'running', executionMode: 'sync', startedAt: FIXTURE_NOW, canCancel: false },
+              { id: 'fixture-background-agent', type: 'agent', description: 'Check the guide links', status: 'running', executionMode: 'background', startedAt: FIXTURE_NOW, canCancel: true },
+            ],
+          },
+        } : undefined,
         manager: hostStatus?.manager ?? (['oracle-panel', 'oracle-schedule-approval', 'scheduler', 'scheduler-form'].includes(name) ? {
           available: true,
           status: 'idle',
@@ -228,6 +256,17 @@ export function createUIScenes(
         await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Focus this review on the recovery checklist.')
         await page.getByRole('button', { name: 'Send message', exact: true }).click()
         await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
+      } else if (name === 'session-origins') {
+        await openSessions(page)
+        const nav = page.getByRole('navigation', { name: 'Sessions', exact: true })
+        await expect(nav.getByRole('img', { name: 'Started by schedule Morning field guide review' })).toBeVisible()
+        await expect(nav.getByRole('img', { name: 'Started by Oracle' })).toBeVisible()
+        await expect(nav.getByRole('img', { name: 'Found on this computer' })).toBeVisible()
+      } else if (name === 'session-origin-run') {
+        await page.locator('.conversation-header').getByRole('link', { name: 'View run from schedule Morning field guide review' }).click()
+        await expect(page.getByRole('dialog', { name: 'Schedule run' })).toContainText('Reviewed the field guide links.')
+      } else if (name === 'session-subagents') {
+        await expect(page.getByRole('button', { name: '2 subagents running', exact: true })).toBeVisible()
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
       } else if (name === 'settings-skills' || name === 'settings-skill-confirmation') {

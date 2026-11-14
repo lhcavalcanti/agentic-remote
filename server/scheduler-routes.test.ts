@@ -103,6 +103,11 @@ describe('scheduler hub API', () => {
     const registry = new ManagerStore(path.join(directory, 'manager'))
     await registry.initialize()
     expect(registry.registry()[`${computerId}:${detail.id}`]).toMatchObject({ origin: 'schedule', scheduleId: schedule.id })
+    const projected = await server.inject({ method: 'GET', url: `/api/computers/${computerId}/sessions/${detail.id}?passive=1`, headers })
+    expect(projected.statusCode).toBe(200)
+    expect(projected.json().session.provenance).toEqual({
+      origin: 'schedule', scheduleId: schedule.id, scheduleRunId: run.id, scheduleName: schedule.name,
+    })
     expect(runtime.managerAgent).toBeUndefined()
     expect(records.filter((record) => record.startupPhase === 'scheduler.provenance').map((record) => record.event)).toEqual(['begin', 'complete'])
     launch!.receipts[0].outcome = 'succeeded'

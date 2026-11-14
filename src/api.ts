@@ -80,6 +80,7 @@ import type {
 } from '../shared/settings-profile'
 import { HubSignInExpiredError, hubFetch } from './hub-sign-in'
 import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
+import type { ScheduleRun } from '../shared/schedules'
 
 async function responseError(
   response: Response,
@@ -197,6 +198,12 @@ async function requestVoid(path: string, init: RequestInit): Promise<void> {
   if (!response.ok) {
     throw await responseError(response)
   }
+
+}
+
+export async function getScheduleRun(id: string, signal?: AbortSignal): Promise<ScheduleRun> {
+  const response = await request<{ run: ScheduleRun }>(`/api/schedules/runs/${encodeURIComponent(id)}`, { signal })
+  return response.run
 }
 
 function sessionPath(computerId: string, sessionId?: string): string {

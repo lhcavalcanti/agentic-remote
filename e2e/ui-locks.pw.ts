@@ -55,6 +55,36 @@ for (const action of ['Approve', 'Reject'] as const) {
 }
 
 for (const viewport of uiViewports) {
+  test.describe(`origin presentation ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    test('distinguishes all origins and reads the recorded run without launching work', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'session-origins')!.setup(page)
+      try {
+        const nav = page.getByRole('navigation', { name: 'Sessions', exact: true })
+        for (const origin of ['user', 'manager', 'schedule', 'discovered']) {
+          await expect(nav.locator(`[data-session-origin="${origin}"]`)).toHaveCount(1)
+        }
+        await nav.getByRole('link', { name: 'View run from schedule Morning field guide review' }).click()
+        const dialog = page.getByRole('dialog', { name: 'Schedule run', exact: true })
+        await expect(dialog).toContainText('succeeded')
+        await expect(dialog).toContainText('Reviewed the field guide links.')
+        expect(fixture.requests.filter((request) => request.method !== 'GET' && request.path.startsWith('/api/schedules'))).toEqual([])
+        await page.keyboard.press('Escape')
+        await expect(dialog).toBeHidden()
+        await assertNoHorizontalOverflow(page)
+      } finally { fixture.assertHealthy() }
+    })
+    test('uses the reported subagent subset and opens the existing task panel', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'session-subagents')!.setup(page)
+      try {
+        const chip = page.getByRole('button', { name: '2 subagents running', exact: true })
+        await chip.click()
+        await expect(page.getByRole('dialog', { name: /^Background tasks ·/ })).toContainText('Review recovery paths')
+        expect(fixture.requests.some((request) => request.method === 'POST' && request.path.endsWith('/messages'))).toBe(false)
+        await assertNoHorizontalOverflow(page)
+      } finally { fixture.assertHealthy() }
+    })
+  })
   test.describe(viewport.name, () => {
     test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
     for (const name of uiSceneNames) {

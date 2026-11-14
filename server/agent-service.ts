@@ -9082,7 +9082,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId) ||
       this.closingSessions.has(sessionId) || this.store.isClosed(sessionId)
     ) {
-      await sdkSession.disconnect()
+      try {
+        await sdkSession.disconnect()
+      } catch (error) {
+        // Still running, so kept where Close (and a later Reopen or Delete)
+        // finds it rather than lost.
+        if (
+          (this.closingSessions.has(sessionId) || this.store.isClosed(sessionId)) &&
+          !this.sessions.has(sessionId)
+        ) {
+          this.installSdkOwner(sdkSession, sessionId, ownerGeneration)
+        }
+        throw error
+      }
       throw new Error('Session is no longer available')
     }
     if (this.terminalActivations.has(sessionId)) {

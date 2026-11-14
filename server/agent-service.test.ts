@@ -14293,6 +14293,32 @@ describe('AgentService recoverable close', () => {
     expect(store.get(created.id)).toMatchObject({ isOpen: false, closedAt: expect.any(String) })
   })
 
+  it('keeps a late SDK owner it could not detach where Close finds it', async () => {
+    const { client, service } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    await service.closeSession(created.id)
+    await service.activateSession(created.id)
+    let attach!: () => void
+    const attaching = new Promise<void>((resolve) => { attach = resolve })
+    const resume = client.resumeSession.bind(client)
+    vi.spyOn(client, 'resumeSession').mockImplementationOnce(async (...args) => {
+      await attaching
+      return resume(...args)
+    })
+    const disconnect = vi.spyOn(client.session, 'disconnect').mockRejectedValueOnce(new Error('provider busy'))
+
+    const reading = service.openSession(created.id).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(client.resumeSession).toHaveBeenCalled())
+    const closing = service.closeSession(created.id)
+    await vi.waitFor(() => expect(service['closingSessions'].has(created.id)).toBe(true))
+    attach()
+
+    await expect(closing).resolves.toMatchObject({ closedAt: expect.any(String) })
+    await reading
+    expect(disconnect).toHaveBeenCalledTimes(2)
+    expect(service['sessions'].has(created.id)).toBe(false)
+  })
+
   it('reopens an SDK session lazily under the same id', async () => {
     const { client, service } = await closableService()
     const created = await service.createSession(tmpdir(), false)

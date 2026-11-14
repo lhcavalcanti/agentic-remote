@@ -36,8 +36,9 @@ session that gained an owner, an admitted send, or a lifecycle change after
 discovery's snapshot is never archived.
 
 Archival is not Delete or Close. It never terminates a live process, removes
-history, deletes a folder/worktree, or erases resumability. Explicit Close and
-Delete retain their existing destructive semantics and confirmations. Default
+history, deletes a folder/worktree, or erases resumability. Close and Delete
+permanently are confirmed user actions ([app spec §3.3](app-spec.md)): Close
+keeps a session reopenable for 14 days, then deletes it. Default
 retention does not start a process for every retained record. Existing safe
 startup recovery may restore an owned terminal; ordinary discovery does not
 respawn a missing one. Failed recovery leaves a visible interruption.

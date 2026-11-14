@@ -1,4 +1,5 @@
 import { expect, type BrowserContextOptions, type Page } from '@playwright/test'
+import { oracleHostStatusFixture } from './oracle-host-status-fixture'
 import {
   FIXTURE_NOW,
   SELECTED_SESSION_ID,
@@ -59,12 +60,17 @@ async function openSessions(page: Page) {
 }
 
 /** The same fixed-clock, fail-closed scenes drive both locks and PR captures. */
-export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
+export function createUIScenes(
+  baseUrl = 'http://127.0.0.1:4395',
+  options: { oracleHostStatus?: boolean } = {},
+): UIScene[] {
   const origin = fixtureBaseUrl(baseUrl).origin
   return uiSceneNames.map((name) => ({
     name,
     async setup(page) {
       const state = createWorkspaceFixtureState()
+      const hostStatus = name === 'oracle-panel' && options.oracleHostStatus
+        ? await oracleHostStatusFixture() : undefined
       if (name === 'composer-family-claude' || name === 'composer-family-openai') {
         const family = name === 'composer-family-claude' ? 'claude' : 'gpt'
         const model = { ...state.models[0], id: `fixture-${family}-99`, name: `${family} fictional model` }
@@ -124,7 +130,8 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
         knowledgeMode: 'hidden',
         appearance: 'graphite',
         state,
-        manager: name === 'oracle-panel' ? {
+        hostMonitor: Boolean(hostStatus),
+        manager: hostStatus?.manager ?? (name === 'oracle-panel' ? {
           available: true,
           status: 'idle',
           queued: 0,
@@ -133,7 +140,7 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
             { id: 'fixture-oracle-question', role: 'user', content: 'What should I review next?', createdAt: FIXTURE_NOW },
             { id: 'fixture-oracle-answer', role: 'assistant', content: 'Review the recovery checklist on Studio, then the document check on Build node.', createdAt: FIXTURE_NOW },
           ],
-        } : undefined,
+        } : undefined),
       })
       await page.goto(fixture.url)
       await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible()
@@ -200,7 +207,8 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
       } else if (name === 'oracle-panel') {
         await page.locator('main').getByRole('button', { name: /^Oracle/ }).first().click()
         await expect(page.locator('#oracle-panel').getByRole('textbox', { name: 'Message Oracle', exact: true })).toBeVisible()
-        await expect(page.locator('#oracle-panel')).toContainText('Review the recovery checklist on Studio')
+        await expect(page.locator('#oracle-panel')).toContainText(hostStatus
+          ? 'Studio is under resource pressure.' : 'Review the recovery checklist on Studio')
       }
       await page.evaluate(() => document.fonts.ready)
       await page.mouse.move(0, 0)

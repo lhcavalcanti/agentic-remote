@@ -13,6 +13,7 @@ const { values } = parseArgs({
     'output-dir': { type: 'string' },
     'base-url': { type: 'string' },
     'no-build': { type: 'boolean', default: false },
+    'oracle-host-status': { type: 'boolean', default: false },
     scene: { type: 'string', multiple: true },
     viewport: { type: 'string', multiple: true },
     help: { type: 'boolean' },
@@ -20,10 +21,11 @@ const { values } = parseArgs({
 })
 
 if (values.help) {
-  console.log('pnpm screens -- --output-dir <dir> [--scene <name> ...] [--viewport desktop|foldable|phone ...] [--base-url <loopback origin>] [--no-build]\n' +
+  console.log('pnpm screens -- --output-dir <dir> [--scene <name> ...] [--viewport desktop|foldable|phone ...] [--base-url <loopback origin>] [--no-build] [--oracle-host-status]\n' +
     `Scenes: ${uiSceneNames.join(', ')}\n` +
     'Builds once and starts/stops a frontend-only server on an ephemeral loopback port.\n' +
     '--no-build reuses the worktree-local Playwright frontend build; --base-url uses an already-running frontend instead.\n' +
+    '--oracle-host-status uses a read-only host-pressure answer in the oracle-panel scene.\n' +
     'All domain traffic is mocked. Production ports 4317/4318 and system temporary output directories are refused.')
   process.exit(0)
 }
@@ -39,7 +41,7 @@ for (const name of values.viewport ?? []) {
 await mkdir(outputDir, { recursive: true })
 const frontend = externalUrl ? undefined : await startFixtureFrontend(values['no-build'])
 try {
-  const scenes = createUIScenes(externalUrl ?? frontend!.url)
+  const scenes = createUIScenes(externalUrl ?? frontend!.url, { oracleHostStatus: values['oracle-host-status'] })
   const browser = await chromium.launch()
   try {
     for (const viewport of uiViewports.filter((viewport) => !values.viewport?.length || values.viewport.includes(viewport.name))) {
@@ -55,7 +57,8 @@ try {
           const fixture = await scene.setup(page)
           try {
             await assertNoHorizontalOverflow(page)
-            const path = join(outputDir, `${viewport.name}-${scene.name}.png`)
+            const name = values['oracle-host-status'] && scene.name === 'oracle-panel' ? 'oracle-host-status' : scene.name
+            const path = join(outputDir, `${viewport.name}-${name}.png`)
             let previous: Buffer | undefined
             let stable: Buffer | undefined
             for (let attempt = 0; attempt < 6; attempt++) {

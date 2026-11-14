@@ -113,6 +113,7 @@ import type { DocumentRenderEvent } from './markdown-document/pipeline'
 import { DocumentRendererContext } from './markdown-document/renderer'
 import type { DocumentRenderer } from './markdown-document/renderer'
 import { PWA_UPDATE_EVENT } from './pwa'
+import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
 import * as shell from './shell'
 
 type DndProps = ComponentProps<typeof import('@dnd-kit/core').DndContext>
@@ -17147,6 +17148,34 @@ describe('App', () => {
     expect(closeSession).not.toHaveBeenCalled()
     expect(deleteSession).not.toHaveBeenCalled()
     expect(screen.getByText('Hello agent')).toBeInTheDocument()
+  })
+
+  it('keeps a session reopened elsewhere while its own close was answering', async () => {
+    let answer!: () => void
+    vi.mocked(closeSession).mockImplementationOnce(async () => {
+      // As the client does: a response is dated by when its request left.
+      const startedAt = currentSessionEventSequence()
+      await new Promise<void>((resolve) => { answer = resolve })
+      return rememberSessionResponse({ ...session, isOpen: false, closedAt: '2026-07-22T01:00:00.000Z' }, startedAt)
+    })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(sessionAction('Close session'))
+    confirmClose()
+    await waitFor(() => expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-1'))
+
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.removed', computerId: computer.id, sessionId: session.id, closed: true }),
+      } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session }),
+      } as MessageEvent)
+    })
+    await act(async () => answer())
+
+    expect(await screen.findByRole('button', { name: /^Project chat,/ })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Recently closed' })).toBeInTheDocument())
   })
 
   it('drops a Close confirmation whose session was closed elsewhere', async () => {

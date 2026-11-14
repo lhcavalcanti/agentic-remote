@@ -16140,7 +16140,18 @@ function App() {
         await deleteSession(target.computerId, target.id)
         closedSessionKeys.current.delete(closedKey)
       } else {
-        recentlyClosed.remember(await closeSession(target.computerId, target.id))
+        const closed = await closeSession(target.computerId, target.id)
+        const startedAt = sessionResponseStartedAt(closed)
+        // Announced again after this close left, and not removed since: it
+        // was reopened, here or elsewhere, and is open now.
+        if (
+          startedAt !== undefined &&
+          (sessionEventSequenceRef.current.get(closedKey) || 0) > startedAt &&
+          !removedSessions.current.has(closedKey)
+        ) {
+          return
+        }
+        recentlyClosed.remember(closed)
         closedSessionKeys.current.add(closedKey)
       }
       removedSessions.current.add(closedKey)

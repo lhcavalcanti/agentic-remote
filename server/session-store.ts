@@ -1402,7 +1402,7 @@ export class SessionStore {
       }
       if (session.pendingPermission) session.pendingPermission.stale = true
       if (session.pendingUserInput) session.pendingUserInput.stale = true
-    }, (session) => (!options.retainedQueueOnly || requiresExplicitTerminalReopen(session)) && (
+    }, (session) => !session.closedAt && (!options.retainedQueueOnly || requiresExplicitTerminalReopen(session)) && (
       !session.interruption || replaces(session) ||
       Boolean(session.pendingPermission && !session.pendingPermission.stale) ||
       Boolean(session.pendingUserInput && !session.pendingUserInput.stale)))

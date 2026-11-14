@@ -14272,6 +14272,27 @@ describe('AgentService recoverable close', () => {
     expect(terminal.send).not.toHaveBeenCalled()
   })
 
+  it('lets no SDK owner attach while it closes', async () => {
+    const { service, store } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    await service.closeSession(created.id)
+    await service.activateSession(created.id)
+    const commit = store.closeSession.bind(store)
+    let reading: Promise<unknown> | undefined
+    vi.spyOn(store, 'closeSession').mockImplementationOnce(async (id) => {
+      // A read that would attach the session arrives while the close is recorded.
+      reading = service.openSession(id).catch((error: unknown) => error)
+      await new Promise((resolve) => setImmediate(resolve))
+      return commit(id)
+    })
+
+    await service.closeSession(created.id)
+    await reading
+
+    expect(service['sessions'].has(created.id)).toBe(false)
+    expect(store.get(created.id)).toMatchObject({ isOpen: false, closedAt: expect.any(String) })
+  })
+
   it('reopens an SDK session lazily under the same id', async () => {
     const { client, service } = await closableService()
     const created = await service.createSession(tmpdir(), false)

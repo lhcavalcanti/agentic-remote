@@ -1323,4 +1323,19 @@ describe('ClaudeAgentService recoverable close', () => {
     expect(f.deleteSession).toHaveBeenCalledWith(created.id, { dir: f.directory })
     expect(f.service.getSession(created.id)).toBeUndefined()
   })
+
+  it('keeps an expired session closed when Claude cannot delete it, so the next sweep retries', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory, false, true, 'claude')
+    const closed = await f.service.closeSession(created.id)
+    const closedAt = Date.parse(closed.closedAt!)
+    f.deleteSession.mockRejectedValueOnce(new Error('transcript is locked'))
+
+    await expect(f.service.deleteExpiredClosedSession(created.id, closedAt)).rejects.toThrow('transcript is locked')
+    expect(f.service.listClosedSessions()).toEqual([expect.objectContaining({ id: created.id })])
+    await expect(f.service.deleteExpiredClosedSession(created.id, closedAt)).resolves.toBe(true)
+
+    expect(f.deleteSession).toHaveBeenCalledTimes(2)
+    expect(f.service.getSession(created.id)).toBeUndefined()
+  })
 })

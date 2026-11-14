@@ -1544,7 +1544,7 @@ export class ClaudeAgentService
     )
   }
 
-  private async deleteSerialized(sessionId: string): Promise<void> {
+  private async deleteSerialized(sessionId: string, keepUnlessDeleted = false): Promise<void> {
     const session = this.requireSession(sessionId)
     // Marked before anything is awaited. Deleting takes several awaits, and a
     // send starting inside any of them ran a turn against a conversation that
@@ -1553,7 +1553,7 @@ export class ClaudeAgentService
     this.queueReceiptStops.get(sessionId)?.()
     try {
       await Promise.allSettled(this.claudeReplyWrites(sessionId))
-      await this.deleteClaimed(sessionId, session)
+      await this.deleteClaimed(sessionId, session, keepUnlessDeleted)
     } finally {
       this.deletingSessions.delete(sessionId)
     }
@@ -1568,7 +1568,9 @@ export class ClaudeAgentService
       const closedAt = this.store.get(sessionId)?.closedAt
       if (!closedAt || !(Date.parse(closedAt) <= closedBefore)) return false
       this.resourceObservations.delete(sessionId)
-      await this.deleteSerialized(sessionId)
+      // Kept, still closed, unless Claude's transcript went too, so the next
+      // sweep can try again.
+      await this.deleteSerialized(sessionId, true)
       return true
     })
   }
@@ -1625,6 +1627,7 @@ export class ClaudeAgentService
   private async deleteClaimed(
     sessionId: string,
     session: SessionDetail,
+    keepUnlessDeleted = false,
   ): Promise<void> {
     await this.stopForRemoval(sessionId, 'Session was deleted')
     let cleanupError: unknown
@@ -1635,6 +1638,7 @@ export class ClaudeAgentService
         cleanupError = error
       }
     }
+    if (cleanupError && keepUnlessDeleted) throw cleanupError
     await this.store.remove(sessionId)
     this.pendingQueueAdmissions.delete(sessionId)
     this.forgetClaudeReplies(sessionId)

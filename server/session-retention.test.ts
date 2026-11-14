@@ -492,6 +492,16 @@ describe('closed sessions stay reopenable without running', () => {
     await store.close()
   })
 
+  it('is never marked interrupted while closed', async () => {
+    const { store } = await fixture()
+    const closed = await store.closeSession('retained')
+
+    await store.markInterrupted('retained', 'terminal-stopped')
+
+    expect(store.get('retained')).toEqual(closed)
+    await store.close()
+  })
+
   it('forgets the closure when it is reopened', async () => {
     const { store } = await fixture()
     await store.closeSession('retained')

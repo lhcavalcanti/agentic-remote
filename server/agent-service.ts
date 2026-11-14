@@ -2098,6 +2098,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingTerminalPromptDispatches = new Map<string, string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
+  /** Being closed to reopen later: nothing may attach or wake its runtime. */
+  private readonly closingSessions = new Set<string>()
   /** SDK sessions owned by something else on this computer, such as the manager agent. */
   private readonly hiddenSessionIds = new Set<string>()
   private sideQuestionTimeoutMs = SIDE_QUESTION_TIMEOUT_MS
@@ -3284,7 +3286,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async openSession(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
     // Read as kept: opening one of these must not start its runtime.
-    if (stored.interruption || stored.archivedAt || stored.closedAt) return this.publicSession(stored)
+    if (stored.interruption || stored.archivedAt || stored.closedAt || this.closingSessions.has(id)) {
+      return this.publicSession(stored)
+    }
     if (
       this.externalSessionIds.has(id) ||
       this.isTerminalRecoveryPending(id)
@@ -7818,6 +7822,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const terminalBacked = this.store.backend(sessionId) === 'terminal'
 
     this.deletingSessions.add(sessionId)
+    this.closingSessions.add(sessionId)
     // Discovery that started before the runtime went holds an answer that
     // predates the close.
     this.discoveryGeneration += 1
@@ -7859,6 +7864,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return closed
     } finally {
       this.deletingSessions.delete(sessionId)
+      this.closingSessions.delete(sessionId)
       this.discoveryGeneration += 1
     }
   }
@@ -8943,7 +8949,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Session is no longer available')
     }
     const retained = this.store.get(sessionId)
-    if (retained?.closedAt) {
+    if (retained?.closedAt || this.closingSessions.has(sessionId)) {
       throw queueConflict('Reopen the closed session before using its provider runtime.')
     }
     if (retained?.interruption || retained?.archivedAt) {
@@ -9071,7 +9077,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           .catch((error: unknown) => this.publishError(sessionId, error))
       }
     }
-    if (this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId)) {
+    // A close that began while this attached has already stopped the runtime.
+    if (
+      this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId) ||
+      this.closingSessions.has(sessionId) || this.store.isClosed(sessionId)
+    ) {
       await sdkSession.disconnect()
       throw new Error('Session is no longer available')
     }

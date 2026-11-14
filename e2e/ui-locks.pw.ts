@@ -103,6 +103,34 @@ test.describe('browser interaction contracts', () => {
     expect(session.queuedPrompts).toHaveLength(2)
   })
 
+  test('keeps identified prompt receipts idempotent and reconcilable in the shared fixture', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'conversation')
+    const session = handle.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+    session.launchId = 'fixture-launch'
+    const result = await page.evaluate(async ({ path, launchPath }) => {
+      const deliver = async () => {
+        const response = await fetch(`${path}/messages`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ content: 'One identified fixture prompt.', enqueue: true, deliveryId: 'fixture-root' }),
+        })
+        return { status: response.status, body: await response.json() }
+      }
+      const first = await deliver()
+      const retry = await deliver()
+      const reconciled = await fetch(launchPath).then((response) => response.json())
+      return { first, retry, reconciled }
+    }, { path: sessionPath, launchPath: '/api/computers/fixture-studio/launches/fixture-launch' })
+    expect(result.first.status).toBe(200)
+    expect(result.retry.body.receipt).toEqual(result.first.body.receipt)
+    expect(result.retry.body.session.revision).toBe(result.first.body.session.revision)
+    expect(result.reconciled.launch).toMatchObject({
+      launchId: 'fixture-launch', sessionId: SELECTED_SESSION_ID,
+      receipts: [{ deliveryId: 'fixture-root', state: 'queued' }],
+    })
+    expect(session.queuedPrompts?.filter((prompt) => prompt.content === 'One identified fixture prompt.')).toHaveLength(1)
+  })
+
   test('attaches a chosen file and a pasted image and sends their uploaded references', async ({ page, baseURL }) => {
     await open(page, baseURL, 'conversation')
     const chooser = page.waitForEvent('filechooser')

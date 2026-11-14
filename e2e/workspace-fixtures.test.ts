@@ -72,6 +72,17 @@ describe('workspace fixture directory routing', () => {
     fixture.assertHealthy()
   })
 
+  it('serves changed hub flags independently of preview preferences', async () => {
+    const { fixture, request, state } = await fixtureApi()
+    state.settings.values.previewFeatures = { notificationPanel: true }
+    state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
+    expect((await request('/api/features')).body).toEqual({ hubFlags: state.hubFlags })
+    state.hubFlags = { notificationCenter: false, hostMonitor: false, scheduler: false }
+    expect((await request('/api/features')).body).toEqual({ hubFlags: state.hubFlags })
+    expect(state.settings.values.previewFeatures.notificationPanel).toBe(true)
+    fixture.assertHealthy()
+  })
+
   it.each([
     ['fixture-studio', '~', '/home/demo'],
     ['fixture-studio', '/home/demo', '/home/demo'],

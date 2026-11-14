@@ -206,4 +206,31 @@ test.describe('browser interaction contracts', () => {
     await page.getByRole('button', { name: 'App settings', exact: true }).click()
     await expect(page.getByRole('combobox', { name: 'How new sessions start', exact: true })).toHaveValue('sdk')
   })
+
+  test('persists available previews and respects changed hub availability', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'preview-features')
+    const settings = page.getByRole('dialog', { name: 'App settings', exact: true })
+    const previews = settings.getByRole('region', { name: 'Preview features', exact: true })
+    const notifications = previews.getByRole('checkbox', { name: 'Notification panel', exact: true })
+    await expect(notifications).not.toBeChecked()
+    await expect(previews.getByRole('checkbox', { name: 'Host monitor', exact: true }))
+      .toHaveAccessibleDescription(/Turned off on this hub/)
+    const saved = page.waitForRequest((request) =>
+      request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/settings')
+    await notifications.check()
+    expect((await saved).postDataJSON()).toMatchObject({
+      changes: { previewFeatures: { value: { notificationPanel: true }, baseRevision: expect.any(Number) } },
+    })
+    await expect.poll(() => handle.state.settings.values.previewFeatures?.notificationPanel).toBe(true)
+    await settings.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByRole('button', { name: 'App settings', exact: true }).click()
+    await expect(notifications).toBeChecked()
+
+    handle.state.hubFlags = { notificationCenter: false, hostMonitor: false, scheduler: false }
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(notifications).toBeDisabled()
+    await expect(notifications).toHaveAccessibleDescription(/Turned off on this hub/)
+    await expect(notifications).toBeChecked()
+    expect(handle.state.settings.values.previewFeatures?.notificationPanel).toBe(true)
+  })
 })

@@ -1,5 +1,5 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
-import { defaultHubFeatureFlags } from '../shared/feature-flags'
+import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
 import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
 import {
@@ -501,6 +501,7 @@ export interface WorkspaceFixtureOptions {
 }
 
 export interface WorkspaceFixtureState {
+  hubFlags: HubFeatureFlags
   roots: KnowledgeRoot[]
   sessions: ManagedSession[]
   /** Closed and still reopenable, newest first. */
@@ -518,6 +519,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
   const roots = structuredClone(fixtureKnowledgeRoots)
   const sessions = structuredClone(fixtureSessions)
   return {
+    hubFlags: { ...defaultHubFeatureFlags },
     roots,
     sessions,
     closedSessions: [],
@@ -775,7 +777,7 @@ export async function setupWorkspaceFixture(
       })
 
     if (method === 'GET' && path === '/api/features') {
-      await respond({ hubFlags: defaultHubFeatureFlags })
+      await respond({ hubFlags: state.hubFlags })
       return
     }
     if (method === 'GET' && path === '/api/computers') {

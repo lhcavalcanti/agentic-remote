@@ -29,6 +29,7 @@ export const uiSceneNames = [
   'composer-busy-queue',
   'session-list',
   'app-settings',
+  'preview-features',
   'runtime-dialog',
   'new-session-dialog',
   'computers-dialog',
@@ -55,6 +56,9 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
     name,
     async setup(page) {
       const state = createWorkspaceFixtureState()
+      if (name === 'preview-features') {
+        state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
+      }
       if (name === 'composer-busy-queue') {
         const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
         session.status = 'running'
@@ -90,18 +94,33 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
         await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the release notes next.')
       } else if (name === 'session-list') {
         await openSessions(page)
-      } else if (name === 'app-settings' || name === 'computers-dialog') {
+      } else if (name === 'app-settings' || name === 'preview-features' || name === 'computers-dialog') {
+        const appSettings = name !== 'computers-dialog'
         await openSessions(page)
         await page.getByRole('button', {
-          name: name === 'app-settings' ? 'App settings' : 'Manage computers', exact: true,
+          name: appSettings ? 'App settings' : 'Manage computers', exact: true,
         }).click()
-        const dialog = page.getByRole('dialog', { name: name === 'app-settings' ? 'App settings' : 'Computers', exact: true })
+        const dialog = page.getByRole('dialog', { name: appSettings ? 'App settings' : 'Computers', exact: true })
         await expect(dialog).toBeVisible()
-        if (name === 'app-settings') {
+        if (appSettings) {
           await expect(dialog.getByRole('combobox', { name: 'GitHub Copilot default model', exact: true })).toBeEnabled()
           await expect(dialog.getByRole('combobox', { name: 'Claude Agent default model', exact: true })).toBeEnabled()
           await dialog.evaluate((element) => { element.scrollTop = 0 })
           await expect(dialog.getByRole('heading', { name: 'Models', exact: true })).toBeInViewport()
+          if (name === 'preview-features') {
+            await dialog.getByRole('button', { name: 'Interface', exact: true }).click()
+            const previews = dialog.getByRole('region', { name: 'Preview features', exact: true })
+            await previews.evaluate((target) => {
+              const container = target.closest<HTMLElement>('.app-settings-dialog')!
+              const nav = container.querySelector<HTMLElement>('.app-settings-nav')!
+              container.scrollTop += target.getBoundingClientRect().top
+                - container.getBoundingClientRect().top - nav.offsetHeight - 8
+            })
+            await expect(previews.getByRole('heading', { name: 'Preview features', exact: true })).toBeInViewport()
+            await expect(previews.getByRole('checkbox', { name: 'Notification panel', exact: true })).toBeEnabled()
+            await expect(previews.getByRole('checkbox', { name: 'Host monitor', exact: true })).toBeDisabled()
+            await expect(previews.getByText('Turned off on this hub', { exact: false })).toHaveCount(2)
+          }
         }
       } else if (name === 'runtime-dialog') {
         await page.getByRole('button', { name: 'Configure model, effort, and context', exact: true }).click()

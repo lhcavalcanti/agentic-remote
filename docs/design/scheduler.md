@@ -149,6 +149,8 @@ The client refreshes on typed `schedules.changed` invalidations, hub reconnects 
 
 History reads are fenced to the selected schedule, including refresh callbacks retained by an in-flight mutation. Closing the view aborts reads and prevents late callbacks from starting new ones. Model effort/context settings absent from a refreshed catalog remain explicitly labeled rather than appearing as a different selected value.
 
+The list also reads pending Oracle proposals when that API is available, refreshes them on `schedule-proposals.changed`, and links to Oracle's existing exact-payload approval cards. It never approves or rejects from the schedule list. An unavailable proposal API does not disable ordinary schedule management. Same-hub `/?schedule=<id>&run=<id>` links, including canonical scheduled notifications, open the selected history and highlight the retained run only when the scheduler preview and hub flag permit it; missing schedules/runs are reported explicitly.
+
 ## Oracle proposals
 
 The scheduler transaction also retains at most 1,000 typed proposals (24-hour pending lifetime). Each binds an immutable operation, normalized payload, and existing schedule revision, with Oracle attribution and a pending/approved/rejected/expired/applied/failed lifecycle. Terminal proposals are evicted oldest-first; unresolved approvals are never evicted. Storing proposals with scheduler state makes schedule application and proposal settlement atomic, including the Run now admission fence. Repeated approvals, concurrent clicks, and restarts cannot apply a proposal twice.

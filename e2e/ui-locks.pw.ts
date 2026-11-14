@@ -562,4 +562,48 @@ test.describe('browser interaction contracts', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
   })
+
+  test('opens a scheduled notification in its scheduler run history when available', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'notification-panel')
+    await page.evaluate(async () => {
+      const { settings } = await fetch('/api/settings').then((response) => response.json())
+      const response = await fetch('/api/settings', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: {
+          value: { ...settings.values.previewFeatures, schedulerView: true }, baseRevision: settings.revision,
+        } } }),
+      })
+      if (!response.ok) throw new Error('Synthetic scheduler preview update failed')
+    })
+    await page.getByRole('dialog', { name: 'Notifications', exact: true })
+      .getByRole('button', { name: 'Daily workspace review · missed', exact: true }).click()
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await expect(scheduler).toBeVisible()
+    await expect(scheduler.locator('li[data-linked="true"]')).toContainText('missed')
+    await expect(scheduler.locator('li[data-linked="true"]')).toBeInViewport()
+    expect(handle.requests).toContainEqual({ method: 'GET', path: '/api/schedules/fixture-daily-review/runs' })
+  })
+
+  test('hands a pending schedule proposal to Oracle without approving it', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'scheduler')
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await scheduler.getByRole('region', { name: 'Pending Oracle proposals' })
+      .getByRole('button', { name: 'Review in Oracle', exact: true }).click()
+    await expect(scheduler).toBeHidden()
+    await expect(page.getByRole('region', { name: 'Schedule approvals' })).toContainText('Morning workspace review')
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
+    expect(handle.requests.some((request) => request.method === 'POST' && request.path.includes('/proposals/'))).toBe(false)
+  })
+
+  test('opens canonical schedule links directly without relying on a session selection', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'scheduler')
+    const url = new URL(page.url())
+    url.searchParams.delete('session')
+    url.searchParams.set('schedule', 'fixture-daily-review')
+    url.searchParams.set('run', 'fictional-run-1')
+    await page.goto(url.href)
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await expect(scheduler).toBeVisible()
+    await expect(scheduler.locator('li[data-linked="true"]')).toContainText('missed')
+  })
 })

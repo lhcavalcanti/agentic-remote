@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { Schedule, ScheduleRun } from '../../shared/schedules'
+import type { ScheduleProposal } from '../../shared/schedule-proposals'
 import { SubmissionError } from '../../shared/submission-error'
 import { getProviderRuntimeOptions, listDirectories, request } from '../api'
 import { publishFeatureEvent } from '../features/events'
@@ -23,7 +24,7 @@ beforeEach(() => {
   }] })
   vi.mocked(listDirectories).mockResolvedValue({ path: '/fictional', directories: [{ name: 'notes', path: '/fictional/notes' }] })
   vi.mocked(request).mockImplementation(async (path) =>
-    path === '/api/schedules' ? { schedules: [schedule] } : path.includes('/runs') ? { runs: [] } : { schedule })
+    path === '/api/schedules/proposals' ? { proposals: [] } : path === '/api/schedules' ? { schedules: [schedule] } : path.includes('/runs') ? { runs: [] } : { schedule })
 })
 
 it('defaults to Ask, previews five occurrences and requires explicit Allow-all confirmation', async () => {
@@ -70,15 +71,15 @@ it('refreshes live schedule invalidations only when enabled', async () => {
   await waitFor(() => expect(result.current.schedules).toHaveLength(1))
   const calls = vi.mocked(request).mock.calls.length
   act(() => publishFeatureEvent({ type: 'schedules.changed', scheduleId: 'review', revision: 2 }))
-  await waitFor(() => expect(request).toHaveBeenCalledTimes(calls + 2))
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(calls + 3))
   unmount()
   act(() => publishFeatureEvent({ type: 'schedules.changed', scheduleId: 'review', revision: 3 }))
   await result.current.refresh()
-  expect(request).toHaveBeenCalledTimes(calls + 2)
+  expect(request).toHaveBeenCalledTimes(calls + 3)
 })
 
 it('refreshes the current history after a mutation callback outlives a selection change', async () => {
-  vi.mocked(request).mockImplementation(async (path) => path === '/api/schedules' ? { schedules: [schedule] } : {
+  vi.mocked(request).mockImplementation(async (path) => path === '/api/schedules/proposals' ? { proposals: [] } : path === '/api/schedules' ? { schedules: [schedule] } : {
     runs: [{ id: 'one', scheduleId: path.includes('/first/') ? 'first' : 'second', computerId: 'studio',
       occurrenceAt: '2026-11-14T18:00:00Z', trigger: 'manual', status: 'running', launchId: 'launch-one' }],
   })
@@ -101,6 +102,7 @@ it('sends only changed fields with the original revision, preserves conflicts an
   vi.mocked(request).mockImplementation(async (path, init) => {
     if (init?.method === 'PATCH') throw new SubmissionError('Revision conflict', 409)
     if (path === '/api/schedules/review') return { schedule: latest }
+    if (path === '/api/schedules/proposals') return { proposals: [] }
     return path === '/api/schedules' ? { schedules: [historical] } : { runs: [] }
   })
   render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
@@ -150,15 +152,44 @@ it('shows nonterminal and interrupted history without inventing success and open
     id: String(index), scheduleId: 'review', computerId: 'studio', occurrenceAt: '2026-11-14T18:00:00Z',
     trigger: 'manual', status, launchId: `launch-${index}`, ...(index === 0 ? { sessionId: 'session-one' } : {}),
   }))
-  vi.mocked(request).mockImplementation(async (path) => path === '/api/schedules' ? { schedules: [schedule] } : { runs })
+  vi.mocked(request).mockImplementation(async (path) => path === '/api/schedules/proposals' ? { proposals: [] } : path === '/api/schedules' ? { schedules: [schedule] } : { runs })
   const onOpen = vi.fn()
-  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={onOpen} />)
-  fireEvent.click(await screen.findByRole('button', { name: 'History for Morning review' }))
+  render(<SchedulerView computers={[computer]} enabled initialScheduleId="review" initialRunId="0" onClose={vi.fn()} onOpenSession={onOpen} />)
   const history = await screen.findByRole('region', { name: 'Run history for Morning review' })
   await waitFor(() => expect(within(history).getByText('interrupted', { exact: true })).toBeTruthy())
   for (const status of statuses) expect(within(history).getByText(status, { exact: true })).toBeTruthy()
+  expect(history.querySelector('li[data-linked="true"]')?.textContent).toContain('launching')
   fireEvent.click(within(history).getByRole('button', { name: 'Open session' }))
   expect(onOpen).toHaveBeenCalledWith('studio', 'session-one')
   fireEvent.click(screen.getByRole('button', { name: 'Run Morning review now' }))
   await waitFor(() => expect(request).toHaveBeenCalledWith('/api/schedules/review/run', expect.objectContaining({ method: 'POST', body: '{}' })))
+})
+
+it('shows pending Oracle proposals without approving them and refreshes approval invalidations', async () => {
+  const proposal: ScheduleProposal = { id: 'proposal-one', operation: 'create', payload: { ...definition, name: 'Suggested review' },
+    createdBy: 'oracle', status: 'pending', createdAt: '2026-11-14T18:00:00Z', expiresAt: '2030-01-01T00:00:00Z' }
+  let pending = true
+  vi.mocked(request).mockImplementation(async (path) => path === '/api/schedules/proposals'
+    ? { proposals: pending ? [proposal] : [] } : path === '/api/schedules' ? { schedules: [schedule] } : { runs: [] })
+  const onOpenOracle = vi.fn()
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} onOpenOracle={onOpenOracle} />)
+  const proposals = await screen.findByRole('region', { name: 'Pending Oracle proposals' })
+  expect(proposals.textContent).toContain('Suggested review')
+  fireEvent.click(within(proposals).getByRole('button', { name: 'Review in Oracle' }))
+  expect(onOpenOracle).toHaveBeenCalledOnce()
+  expect(vi.mocked(request).mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+  pending = false
+  act(() => publishFeatureEvent({ type: 'schedule-proposals.changed', revision: 2, proposalId: proposal.id }))
+  await waitFor(() => expect(screen.queryByRole('region', { name: 'Pending Oracle proposals' })).toBeNull())
+})
+
+it('keeps schedule management available on hubs without the optional proposal API', async () => {
+  vi.mocked(request).mockImplementation(async (path) => {
+    if (path === '/api/schedules/proposals') throw new SubmissionError('Not found', 404)
+    return path === '/api/schedules' ? { schedules: [schedule] } : { runs: [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  expect(await screen.findByRole('button', { name: 'Edit Morning review' })).toBeTruthy()
+  expect(screen.queryByRole('region', { name: 'Pending Oracle proposals' })).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
 })

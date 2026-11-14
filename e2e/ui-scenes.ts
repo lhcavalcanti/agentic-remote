@@ -1,6 +1,6 @@
 import { expect, type BrowserContextOptions, type Page } from '@playwright/test'
 import { oracleHostStatusFixture } from './oracle-host-status-fixture'
-import { fixtureNotifications, fixtureScheduleRuns, fixtureSchedules } from './shell-fixtures'
+import { fixtureNotifications, fixtureScheduleProposals, fixtureScheduleRuns, fixtureSchedules } from './shell-fixtures'
 import {
   FIXTURE_NOW,
   SELECTED_SESSION_ID,
@@ -164,18 +164,10 @@ export function createUIScenes(
         hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes',
         hostMonitorWsl: name === 'host-monitor' || name === 'host-processes',
         scheduler: name === 'oracle-schedule-approval' ? {
-          schedules: [], runs: [], proposals: [{
-            id: 'fictional-morning-review', operation: 'create', createdBy: 'oracle', status: 'pending',
-            createdAt: FIXTURE_NOW, expiresAt: new Date(Date.parse(FIXTURE_NOW) + 86_400_000).toISOString(),
-            payload: {
-              name: 'Morning workspace review', prompt: 'Review the fictional guide and summarize outstanding checks.',
-              target: { computerId: 'fixture-studio', folder: '/fictional/workspace', provider: 'copilot', mode: 'autopilot', permissionPolicy: 'ask', folderTrust: 'ask' },
-              recurrence: { type: 'weekdays', time: '09:00' }, timezone: 'America/Los_Angeles', workspace: 'checkout',
-              catchUp: 'skip', overlap: 'skip', maxRuntimeMin: 60, notify: 'attention', enabled: true,
-            },
-          }],
-        } : name === 'scheduler' || name === 'scheduler-form' ? { schedules: fixtureSchedules, runs: fixtureScheduleRuns } : undefined,
-        manager: hostStatus?.manager ?? (name === 'oracle-panel' || name === 'oracle-schedule-approval' ? {
+          schedules: [], runs: [], proposals: fixtureScheduleProposals,
+        } : name === 'scheduler' || name === 'scheduler-form' || name === 'notification-panel'
+          ? { schedules: fixtureSchedules, runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals } : undefined,
+        manager: hostStatus?.manager ?? (['oracle-panel', 'oracle-schedule-approval', 'scheduler', 'scheduler-form'].includes(name) ? {
           available: true,
           status: 'idle',
           queued: 0,
@@ -259,6 +251,7 @@ export function createUIScenes(
         await page.getByRole('button', { name: 'Scheduler', exact: true }).click()
         const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
         await expect(scheduler).toContainText('Daily workspace review')
+        await expect(scheduler.getByRole('button', { name: 'Review in Oracle', exact: true })).toBeEnabled()
         if (name === 'scheduler-form') {
           await scheduler.getByRole('button', { name: 'Create schedule', exact: true }).click()
           await scheduler.getByRole('textbox', { name: 'Name', exact: true }).fill('Morning field guide check')

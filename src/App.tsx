@@ -3789,6 +3789,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const notifications = useNotifications(notificationPanel)
   const [scheduleLink, setScheduleLink] = useState(() => readScheduleLink(window.location.href))
   const [shellView, setShellView] = useState<string>()
+  const initialScheduleLink = useRef(scheduleLink)
+  useEffect(() => {
+    if (!schedulerView || !initialScheduleLink.current) return
+    setScheduleLink(initialScheduleLink.current)
+    setShellView('scheduler')
+    initialScheduleLink.current = undefined
+  }, [schedulerView])
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -14466,7 +14473,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         onClose={closeShellView} onOpenSession={(computerId, sessionId) => {
           if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
         }} />}
-      {shellView === 'scheduler' && <SchedulerView key={scheduleLink?.scheduleId ?? shellView} enabled={schedulerView} computers={computers}
+      {shellView === 'scheduler' && <SchedulerView key={`${scheduleLink?.scheduleId ?? shellView}:${scheduleLink?.runId ?? ''}`} enabled={schedulerView} computers={computers}
+        initialScheduleId={scheduleLink?.scheduleId} initialRunId={scheduleLink?.runId}
+        onOpenOracle={oracleIndicator.available ? () => { setShellView(undefined); setOracleOpen(true) } : undefined}
         onClose={closeShellView} onOpenSession={(computerId, sessionId) => {
           if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
         }} />}

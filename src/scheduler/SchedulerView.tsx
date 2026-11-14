@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CalendarClock, History, Plus } from 'lucide-react'
 import type { ComputerSummary } from '../../shared/contracts'
 import { nextOccurrences } from '../../shared/schedule-recurrence'
 import type { Schedule, ScheduleRun } from '../../shared/schedules'
+import { scheduleProposalSummary } from '../../shared/schedule-proposals'
 import { request } from '../api'
 import { DialogFrame } from '../components/DialogFrame'
 import { editableSchedule, recurrenceSummary, runDuration, scheduleError, scheduleTime } from './format'
@@ -17,19 +18,29 @@ function nextRun(schedule: Schedule, now: Date): string {
   } catch { return 'Invalid recurrence — edit this schedule' }
 }
 
-export function SchedulerView({ enabled, computers, onClose, onOpenSession }: {
+export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOpenOracle, initialScheduleId, initialRunId }: {
   enabled: boolean
   computers: ComputerSummary[]
   onClose(): void
   onOpenSession(computerId: string, sessionId: string): void
+  onOpenOracle?: () => void
+  initialScheduleId?: string
+  initialRunId?: string
 }) {
-  const [historyId, setHistoryId] = useState<string>()
+  const [historyId, setHistoryId] = useState(initialScheduleId)
   const scheduler = useScheduler(enabled, historyId)
   const [form, setForm] = useState<{ initial?: ScheduleDefinition; editing?: Schedule }>()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
   const [showArchived, setShowArchived] = useState(false)
   const [now, setNow] = useState(() => new Date())
+  const linkedRun = useRef<HTMLLIElement>(null)
+  const followedLink = useRef(false)
+  useEffect(() => {
+    if (!initialRunId || !scheduler.historyLoaded || followedLink.current || !linkedRun.current) return
+    linkedRun.current.scrollIntoView?.({ block: 'nearest' })
+    followedLink.current = true
+  }, [initialRunId, scheduler.historyLoaded, scheduler.history])
   useEffect(() => {
     if (!enabled) return
     const timer = setInterval(() => setNow(new Date()), 30_000)
@@ -56,6 +67,16 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession }: {
         <p className="schedule-caption">Run saved prompts on your computers. Permissions default to Ask.</p>
         {!form && <button className="primary-button" type="button" onClick={() => { setError(undefined); setForm({}) }}><Plus size={17} />Create schedule</button>}
       </div>
+      {!form && scheduler.proposalError && <p role="status" className="schedule-caption">{scheduler.proposalError}</p>}
+      {!form && scheduler.proposals.length > 0 && <section className="scheduler-pending" aria-label="Pending Oracle proposals">
+        <h3>Pending Oracle proposals · {scheduler.proposals.length}</h3>
+        <p className="schedule-caption">Review the exact request in Oracle before approving. No proposal is approved here.</p>
+        <ul>{scheduler.proposals.map((proposal) => <li key={proposal.id}>
+          <div><strong>{scheduleProposalSummary(proposal)}</strong><small>Expires {new Date(proposal.expiresAt).toLocaleString()}</small></div>
+          <button type="button" className="secondary-button" disabled={!onOpenOracle} onClick={onOpenOracle}>Review in Oracle</button>
+        </li>)}</ul>
+        {!onOpenOracle && <p className="schedule-caption">Oracle is unavailable. Reconnect it to review approvals.</p>}
+      </section>}
       {(error || scheduler.error) && <div role="alert" className="error-banner">
         <p>{error ?? scheduler.error}</p>
         <button type="button" className="secondary-button" disabled={pending} onClick={async () => {
@@ -83,6 +104,8 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession }: {
             setForm(undefined)
           }} />
       </> : <>
+        {initialScheduleId && historyId === initialScheduleId && !scheduler.loading && !historySchedule &&
+          <p role="status">The linked schedule is no longer available. <button className="secondary-button" onClick={() => setHistoryId(undefined)}>Show all schedules</button></p>}
         <label className="schedule-check"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Show archived schedules</label>
         {scheduler.loading && <p role="status">Loading schedules…</p>}
         {!list.length && !scheduler.loading && <p className="scheduler-empty">{showArchived ? 'No archived schedules.' : 'No schedules yet. Create a saved prompt to get started.'}</p>}
@@ -115,8 +138,11 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession }: {
         {historySchedule && <section className="schedule-history" aria-label={`Run history for ${historySchedule.name}`}>
           <h3>Run history · {historySchedule.name}</h3>
           <p className="schedule-caption">Up to 200 retained runs. Launching and stopping are not terminal outcomes.</p>
-          {!scheduler.history.length && <p>No runs yet.</p>}
-          <ul>{scheduler.history.map((run) => <li key={run.id}>
+          {!scheduler.historyLoaded && <p role="status">Loading run history…</p>}
+          {scheduler.historyLoaded && !scheduler.history.length && <p>No runs yet.</p>}
+          {initialRunId && scheduler.historyLoaded && !scheduler.history.some((run) => run.id === initialRunId) &&
+            <p role="status">The linked run is no longer in retained history.</p>}
+          <ul>{scheduler.history.map((run) => <li key={run.id} data-linked={run.id === initialRunId} ref={run.id === initialRunId ? linkedRun : undefined}>
             <div><RunStatus run={run} /><small>{scheduleTime(run.occurrenceAt, historySchedule.timezone)} · {historySchedule.timezone} · {run.trigger} · {runDuration(run, now)}</small>
               {(run.error || run.summary) && <p>{run.error ?? run.summary}</p>}</div>
             {run.sessionId && <button type="button" className="secondary-button" onClick={() => onOpenSession(run.computerId, run.sessionId!)}>Open session</button>}

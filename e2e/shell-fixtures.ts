@@ -1,5 +1,6 @@
 import type { NotificationRecord } from '../shared/notification-center'
 import type { Schedule, ScheduleRun } from '../shared/schedules'
+import type { ScheduleProposal } from '../shared/schedule-proposals'
 import { FIXTURE_NOW, SELECTED_SESSION_ID } from './workspace-fixtures'
 
 export const fixtureNotifications: NotificationRecord[] = [
@@ -42,3 +43,14 @@ export const fixtureScheduleRuns: ScheduleRun[] = (['succeeded', 'missed', 'inte
     ...(status === 'succeeded' ? { sessionId: SELECTED_SESSION_ID, summary: 'Fictional checks completed.' } : {}),
   }
 })
+
+export const fixtureScheduleProposals: ScheduleProposal[] = [{
+  id: 'fictional-morning-review', operation: 'create', createdBy: 'oracle', status: 'pending',
+  createdAt: FIXTURE_NOW, expiresAt: new Date(Date.parse(FIXTURE_NOW) + 86_400_000).toISOString(),
+  payload: {
+    name: 'Morning workspace review', prompt: 'Review the fictional guide and summarize outstanding checks.',
+    target: { computerId: 'fixture-studio', folder: '/fictional/workspace', provider: 'copilot', mode: 'autopilot', permissionPolicy: 'ask', folderTrust: 'ask' },
+    recurrence: { type: 'weekdays', time: '09:00' }, timezone: 'America/Los_Angeles', workspace: 'checkout',
+    catchUp: 'skip', overlap: 'skip', maxRuntimeMin: 60, notify: 'attention', enabled: true,
+  },
+}]

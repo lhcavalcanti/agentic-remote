@@ -897,7 +897,7 @@ voice_install() {
   print_voice_configuration "$profile_id"
 }
 
-append_preserved_configuration() {
+append_preserved_voice_configuration() {
   local destination="$1"
   declare -A voice_configuration=()
   local line key value
@@ -1330,7 +1330,7 @@ setup_service() {
   if [[ -n "$manager_structured_memory" ]]; then
     printf 'AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY=%s\n' "$manager_structured_memory" >>"$environment_tmp"
   fi
-  append_preserved_configuration "$environment_tmp"
+  append_preserved_voice_configuration "$environment_tmp"
   printf 'AGENTIC_REMOTE_ALLOWED_ORIGINS=%s\n' "$allowed_origins" >>"$environment_tmp"
   install -m 0600 "$environment_tmp" "$ENV_FILE"
   rm -f -- "$environment_tmp"

@@ -78,7 +78,7 @@ async function setupFixture() {
     'validate_role',
     'validate_name',
     'derived_origins',
-    'append_preserved_configuration',
+    'append_preserved_voice_configuration',
     'setup_service',
     'update_service',
   ].map((name) => shellFunction(script, name)).filter(Boolean).join('\n')

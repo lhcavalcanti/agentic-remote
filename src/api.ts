@@ -1316,6 +1316,13 @@ export async function listScheduleProposals(): Promise<import('../shared/schedul
   return response.proposals
 }
 
+export async function getSchedule(id: string): Promise<import('../shared/schedules').Schedule> {
+  const response = await request<{ schedule: import('../shared/schedules').Schedule }>(
+    `/api/schedules/${encodeURIComponent(id)}`, { cache: 'no-store' },
+  )
+  return response.schedule
+}
+
 export async function resolveScheduleProposal(id: string, approve: boolean): Promise<import('../shared/schedule-proposals').ScheduleProposal> {
   const response = await request<{ proposal: import('../shared/schedule-proposals').ScheduleProposal }>(
     `/api/schedules/proposals/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`,

@@ -141,7 +141,7 @@ export function createUIScenes(
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: [{
             id: 'fictional-morning-review', operation: 'create', createdBy: 'oracle', status: 'pending',
-            createdAt: FIXTURE_NOW, expiresAt: '2026-10-16T12:00:00.000Z',
+            createdAt: FIXTURE_NOW, expiresAt: new Date(Date.parse(FIXTURE_NOW) + 86_400_000).toISOString(),
             payload: {
               name: 'Morning workspace review', prompt: 'Review the fictional guide and summarize outstanding checks.',
               target: { computerId: 'fixture-studio', folder: '/fictional/workspace', provider: 'copilot', mode: 'autopilot', permissionPolicy: 'ask', folderTrust: 'ask' },
@@ -230,6 +230,8 @@ export function createUIScenes(
           ? 'Studio is under resource pressure.' : 'Review the recovery checklist on Studio')
         if (name === 'oracle-schedule-approval') {
           await expect(page.getByRole('region', { name: 'Schedule approvals' })).toContainText('Morning workspace review')
+          await expect(page.getByRole('region', { name: 'Schedule approvals' })).toContainText('Weekdays at 9:00 AM PT · next Mon, Sep 7, 9:00 AM PDT')
+          await expect(page.getByRole('region', { name: 'Schedule approvals' })).toContainText('Permissions: Ask · Folder trust: Ask · Workspace: checkout')
           await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
         }
       }

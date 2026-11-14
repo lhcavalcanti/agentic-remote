@@ -4,12 +4,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultHubFeatureFlags, effectivePreviewFeatures } from '../shared/feature-flags'
 import { scheduleProposalSchema } from '../shared/schedule-proposals'
-import { listScheduleProposals, resolveScheduleProposal } from './api'
+import { scheduleSchema } from '../shared/schedules'
+import { getSchedule, listScheduleProposals, resolveScheduleProposal } from './api'
 import { PreviewFeaturesContext } from './preview-features'
 import { ScheduleProposalCards } from './ScheduleProposalCards'
 import { SchedulerPermissionSettings } from './settings/SchedulerPermissionSettings'
 
-vi.mock('./api', () => ({ listScheduleProposals: vi.fn(), resolveScheduleProposal: vi.fn() }))
+vi.mock('./api', () => ({ getSchedule: vi.fn(), listScheduleProposals: vi.fn(), resolveScheduleProposal: vi.fn() }))
 const proposal = scheduleProposalSchema.parse({
   id: 'proposal-review', operation: 'create', createdBy: 'oracle', status: 'pending',
   createdAt: '2026-11-14T18:00:00Z', expiresAt: '2026-11-15T18:00:00Z',
@@ -19,11 +20,17 @@ const proposal = scheduleProposalSchema.parse({
     recurrence: { type: 'daily', time: '09:00' },
   },
 })
+const base = scheduleSchema.parse({
+  ...proposal.payload, id: 'existing-review', revision: 7, createdBy: 'user', archived: false,
+  createdAt: proposal.createdAt, updatedAt: proposal.createdAt,
+})
 beforeEach(() => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-04T16:20:00Z'))
+  vi.mocked(getSchedule).mockReset().mockResolvedValue(base)
   vi.mocked(listScheduleProposals).mockReset().mockResolvedValue([proposal])
   vi.mocked(resolveScheduleProposal).mockReset().mockResolvedValue({ ...proposal, status: 'applied' })
 })
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.restoreAllMocks() })
 const context = (flag = true, preview = true) => {
   const hubFlags = { ...defaultHubFeatureFlags, scheduler: flag }
   const preferences = { schedulerView: preview }
@@ -41,9 +48,90 @@ describe('schedule confirmation cards', () => {
   it('renders the exact proposal, revision and expiry', async () => {
     cards()
     expect(await screen.findByText(/Create “Fictional review”/)).toBeVisible()
+    expect(screen.getByText(/^Computer:/)).toHaveTextContent('Computer: fictional-studio · Folder: /fictional/repo · Permissions: Ask · Folder trust: Ask · Workspace: checkout')
+    expect(screen.getByText('Prompt: Review the fictional guide.')).toBeVisible()
     fireEvent.click(screen.getByText('Exact payload to approve'))
     expect(screen.getByText(/"permissionPolicy": "ask"/)).toBeVisible()
-    expect(screen.getByText(/Review the fictional guide/, { exact: false })).toBeVisible()
+    expect(getSchedule).not.toHaveBeenCalled()
+  })
+  it('shows human recurrence, timezone and the next weekday without opening the payload', async () => {
+    const weekdays = scheduleProposalSchema.parse({ ...proposal, payload: { ...proposal.payload, recurrence: { type: 'weekdays', time: '09:00' } } })
+    vi.mocked(listScheduleProposals).mockResolvedValue([weekdays])
+    cards()
+    expect(await screen.findByText('Weekdays at 9:00 AM PT · next Mon, Sep 7, 9:00 AM PDT')).toBeVisible()
+    expect(screen.getByText('Exact payload to approve').closest('details')).not.toHaveAttribute('open')
+  })
+  it('uses the recurrence engine first-occurrence DST rule in the visible next run', async () => {
+    vi.mocked(Date.now).mockReturnValue(Date.parse('2026-10-31T12:00:00Z'))
+    const weekly = scheduleProposalSchema.parse({ ...proposal, payload: {
+      ...proposal.payload, recurrence: { type: 'weekly', days: [0], time: '01:30' },
+    } })
+    vi.mocked(listScheduleProposals).mockResolvedValue([weekly])
+    cards()
+    expect(await screen.findByText(/next Sun, Nov 1, 1:30 AM PDT/)).toBeVisible()
+  })
+  it('shows compact before-to-after changes and an explicit allow-all warning', async () => {
+    const update = scheduleProposalSchema.parse({
+      ...proposal, operation: 'update', scheduleId: base.id, baseRevision: base.revision,
+      payload: { prompt: 'Review the revised guide.', target: { ...base.target, permissionPolicy: 'allow-all' } },
+    })
+    vi.mocked(listScheduleProposals).mockResolvedValue([update])
+    cards()
+    const changes = await screen.findByRole('list', { name: 'Changes to approve' })
+    expect(changes).toHaveTextContent('Prompt: Review the fictional guide. → Review the revised guide.')
+    expect(changes).toHaveTextContent('Permissions: Ask → Allow all')
+    expect(changes).not.toHaveTextContent('Computer:')
+    expect(screen.getByText('Runs tools without asking')).toBeVisible()
+    expect(screen.getByText(/^Computer:/)).toHaveTextContent('Permissions: Allow all')
+    expect(getSchedule).toHaveBeenCalledExactlyOnceWith(base.id)
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    expect(screen.getByText('Exact payload to approve').closest('details')).not.toHaveAttribute('open')
+  })
+  it.each([
+    ['enable', 'Enables automatic runs on fictional-studio; accepted runs are unchanged.'],
+    ['disable', 'Pauses future automatic runs; accepted runs continue.'],
+    ['run-now', 'Runs once now on fictional-studio.'],
+    ['archive', 'Archives and disables automatic runs; unlaunched runs stop, running sessions continue.'],
+  ] as const)('explains the %s consequence without opening the payload', async (operation, consequence) => {
+    vi.mocked(listScheduleProposals).mockResolvedValue([scheduleProposalSchema.parse({
+      ...proposal, operation, scheduleId: base.id, baseRevision: base.revision, payload: {},
+    })])
+    cards()
+    expect(await screen.findByText(consequence)).toBeVisible()
+    expect(screen.getByText(/^Computer:/)).toHaveTextContent('Folder trust: Ask')
+  })
+  it('includes optional target fields removed by replacing the target in its diff', async () => {
+    vi.mocked(getSchedule).mockResolvedValue({ ...base, target: { ...base.target, model: 'fictional-model', effort: 'high' } })
+    vi.mocked(listScheduleProposals).mockResolvedValue([scheduleProposalSchema.parse({
+      ...proposal, operation: 'update', scheduleId: base.id, baseRevision: base.revision, payload: { target: base.target },
+    })])
+    cards()
+    const changes = await screen.findByRole('list', { name: 'Changes to approve' })
+    expect(changes).toHaveTextContent('Model: fictional-model → Default')
+    expect(changes).toHaveTextContent('Effort: high → Default')
+  })
+  it('distinguishes one-off timestamps in a recurrence diff', async () => {
+    vi.mocked(getSchedule).mockResolvedValue({ ...base, recurrence: { type: 'once', at: '2026-09-07T16:00:00Z' } })
+    vi.mocked(listScheduleProposals).mockResolvedValue([scheduleProposalSchema.parse({
+      ...proposal, operation: 'update', scheduleId: base.id, baseRevision: base.revision,
+      payload: { recurrence: { type: 'once', at: '2026-09-08T17:00:00Z' } },
+    })])
+    cards()
+    const changes = await screen.findByRole('list', { name: 'Changes to approve' })
+    expect(changes).toHaveTextContent('Sep 7, 2026, 9:00 AM PDT')
+    expect(changes).toHaveTextContent('Sep 8, 2026, 10:00 AM PDT')
+  })
+  it.each(['stale', 'unavailable'] as const)('refuses approval when before-state is %s', async (state) => {
+    vi.mocked(listScheduleProposals).mockResolvedValue([scheduleProposalSchema.parse({
+      ...proposal, operation: 'update', scheduleId: base.id, baseRevision: base.revision, payload: { enabled: false },
+    })])
+    if (state === 'stale') vi.mocked(getSchedule).mockResolvedValue({ ...base, revision: base.revision + 1 })
+    else vi.mocked(getSchedule).mockRejectedValue(new Error('Offline'))
+    cards()
+    expect(await screen.findByRole('alert')).toHaveTextContent(state === 'stale' ? 'Schedule changed since revision 7' : 'Cannot verify')
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled()
+    expect(resolveScheduleProposal).not.toHaveBeenCalled()
   })
   it.each([['Approve', true], ['Reject', false]] as const)('sends only the exact proposal id when clicking %s', async (label, approve) => {
     cards()

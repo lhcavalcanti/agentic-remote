@@ -2061,11 +2061,19 @@ describe('ManagerAssistant', () => {
     const taskFollowUp = (id: string, overrides: Partial<ManagerMessage> = {}): ManagerMessage => ({
       id,
       role: 'user',
-      content: ['Investigate the gate', '', 'Durable task: Ship docs', 'Next action: Review the draft'].join('\n'),
+      // The prompt carries free text; only the recorded title names the row.
+      content: [
+        'Investigate the gate',
+        '',
+        'Durable task: Ship',
+        'docs',
+        'Next action: Review the draft',
+        'Durable task: not the title',
+      ].join('\n'),
       createdAt: '2026-11-07T09:02:00.000Z',
       state: 'done',
       source: 'task',
-      automatic: { kind: 'task', taskId: 't1', sessionRefs: [] },
+      automatic: { kind: 'task', taskId: 't1', title: 'Ship\ndocs', sessionRefs: [] },
       ...overrides,
     })
     const rowWith = (scope: HTMLElement, label: string) => within(scope).getByText(label).closest('li')!
@@ -2098,21 +2106,26 @@ describe('ManagerAssistant', () => {
       fireEvent.click(within(update).getByRole('button', { name: 'Open session' }))
       expect(onOpenSession).toHaveBeenLastCalledWith(docs)
 
-      const details = within(update).getByRole('button', { name: 'Prompt Oracle received', expanded: false })
+      const details = within(update).getByRole('button', { name: 'Details', expanded: false })
       fireEvent.click(details)
       expect(details).toHaveAttribute('aria-expanded', 'true')
       expect(within(update).getByText(/Review these durable manager-owned lifecycle events/)).toBeInTheDocument()
 
+      // More than one session keeps the row to one line: their Open buttons
+      // wait under Details.
       const updates = rowWith(conversation, 'Session updates')
       expect(updates).toHaveTextContent('Session updates · 1 failed, 1 finished')
-      expect(within(updates).getAllByRole('button', { name: /^Open session \d of 2$/ })).toHaveLength(2)
+      expect(within(updates).queryAllByRole('button', { name: /^Open session/ })).toHaveLength(0)
+      fireEvent.click(within(updates).getByRole('button', { name: 'Details' }))
+      fireEvent.click(within(updates).getByRole('button', { name: 'Open session 2 of 2' }))
+      expect(onOpenSession).toHaveBeenLastCalledWith(tests)
 
       const task = rowWith(conversation, 'Task follow-up')
       expect(task).toHaveTextContent('Task follow-up · Ship docs')
       expect(within(task).queryByRole('button', { name: /^Open/ })).not.toBeInTheDocument()
     })
 
-    it('names an update it cannot read by its event count', async () => {
+    it('names an update it cannot read by its event count, and an untitled task plainly', async () => {
       setup({
         ...empty,
         messages: [
@@ -2121,7 +2134,8 @@ describe('ManagerAssistant', () => {
             automatic: { kind: 'proactive', eventIds: [finished.id, failed.id], sessionRefs: [] },
           }),
           { id: 'p2', role: 'user', content: 'from an older hub', createdAt: 't', state: 'done', source: 'proactive' },
-          taskFollowUp('k1', { content: 'Investigate the gate' }),
+          // Queued before titles were recorded: its prompt text is not read for one.
+          taskFollowUp('k1', { automatic: { kind: 'task', taskId: 't1', sessionRefs: [] } }),
         ],
       })
       const panel = await openPanel()
@@ -2180,6 +2194,32 @@ describe('ManagerAssistant', () => {
       expect(task).toHaveTextContent('Task follow-up · Ship docs')
       expect(within(task).queryByRole('button')).not.toBeInTheDocument()
     })
+
+    for (const state of ['queued', 'done'] as const) {
+      it(`drops an edit an older version saved for a ${state} one instead of reopening its prompt`, async () => {
+        localStorage.setItem('agentic-remote:oracle-draft-v1', JSON.stringify({
+          version: 1,
+          draft: '',
+          editing: { id: 'p1', text: 'Review these durable manager-owned lifecycle events, edited' },
+        }))
+        setup({
+          ...empty,
+          status: state === 'queued' ? 'working' : 'idle',
+          queued: state === 'queued' ? 1 : 0,
+          messages: [
+            { id: 'r0', role: 'user', content: 'being answered', createdAt: 't', state: state === 'queued' ? 'running' : 'done' },
+            sessionUpdate('p1', { state }),
+          ],
+        })
+        const panel = await openPanel()
+        expect(within(panel).queryByRole('textbox', { name: /^Edit queued message/ })).not.toBeInTheDocument()
+        expect(within(panel).queryByText('Recovered saved edit')).not.toBeInTheDocument()
+        expect(within(panel).queryByText(/before your edit was saved/)).not.toBeInTheDocument()
+        expect(within(panel).queryByText(/Review these durable/)).not.toBeInTheDocument()
+        expect(within(panel).getByRole('textbox', { name: 'Message Oracle' })).toHaveValue('')
+        await waitFor(() => expect(localStorage.getItem('agentic-remote:oracle-draft-v1')).toBeNull())
+      })
+    }
   })
 
   it('closes a session only when you confirm the request', async () => {

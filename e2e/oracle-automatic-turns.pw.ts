@@ -18,6 +18,11 @@ function automaticTurns(): ManagerSnapshot {
   const finished = event('a', 'finished')
   const failed = event('b', 'failed')
   const blocked = event('c', 'blocked')
+  const many = Array.from({ length: 20 }, (_, index) => ({
+    ...event('f', 'finished'),
+    id: index.toString(16).padStart(2, '0').repeat(32),
+    sessionId: `session-${index}`,
+  }))
   const refs = (...events: ReturnType<typeof event>[]) =>
     events.map(({ computerId, sessionId }) => ({ computerId, sessionId }))
   const messages: ManagerMessage[] = [
@@ -52,7 +57,19 @@ function automaticTurns(): ManagerSnapshot {
         'Durable task: Stabilise the merge gate',
         'Next action: Compare the failing runs',
       ].join('\n'),
-      automatic: { kind: 'task', taskId: 'merge-gate', sessionRefs: [] },
+      automatic: { kind: 'task', taskId: 'merge-gate', title: 'Stabilise the merge gate', sessionRefs: [] },
+    },
+    // The limits a row must hold to one line: a 120-character task title and
+    // a batch naming 20 sessions.
+    {
+      id: 'long-task', role: 'user', state: 'done', createdAt: at(1), source: 'task',
+      content: 'Compare every flaky run.\n\nDurable task: (see title)',
+      automatic: { kind: 'task', taskId: 'long-task', title: 'Compare the flaky gate runs '.repeat(5).slice(0, 120), sessionRefs: [] },
+    },
+    {
+      id: 'many', role: 'user', state: 'done', createdAt: FIXTURE_NOW, source: 'proactive', answerOnly: true,
+      content: formatProactivePrompt(many),
+      automatic: { kind: 'proactive', eventIds: many.map(({ id }) => id), sessionRefs: refs(...many) },
     },
   ]
   return { available: true, status: 'idle', messages, queued: 0, managedSessions: [] }
@@ -73,18 +90,31 @@ for (const viewport of [
       const transcript = page.getByRole('list', { name: 'Oracle conversation' })
       const fitsWidth = () => transcript.evaluate((list) => list.scrollWidth <= list.clientWidth)
       const update = transcript.getByRole('listitem').filter({ hasText: 'Session update · finished' })
-      const toggle = update.getByRole('button', { name: 'Prompt Oracle received' })
+      const toggle = update.getByRole('button', { name: 'Details' })
       await expect(update).toBeVisible()
       await expect(transcript.getByRole('listitem').filter({ hasText: 'Task follow-up · Stabilise the merge gate' })).toBeVisible()
 
-      // One line no taller than its own controls, and nothing wider than the panel.
-      const [row, control] = await Promise.all([update.boundingBox(), toggle.boundingBox()])
-      expect(row!.height).toBeLessThanOrEqual(control!.height + 1)
+      // Every automatic row keeps to one line no taller than its own controls,
+      // up to a 120-character title and 20 sessions, and nothing is wider
+      // than the panel.
+      const rows = transcript.locator('.manager-activity--automatic')
+      await expect(rows).toHaveCount(5)
+      for (const row of await rows.all()) {
+        const [line, control] = await Promise.all([
+          row.locator('.manager-activity__line').boundingBox(),
+          row.getByRole('button', { name: 'Details' }).boundingBox(),
+        ])
+        expect(line!.height).toBeLessThanOrEqual(control!.height + 1)
+      }
       expect(await fitsWidth()).toBe(true)
 
       await toggle.click()
       await expect(toggle).toHaveAttribute('aria-expanded', 'true')
       await expect(update.getByText(/^Review these durable manager-owned lifecycle events/)).toBeVisible()
+
+      const many = rows.filter({ hasText: 'Session updates · 20 finished' })
+      await many.getByRole('button', { name: 'Details' }).click()
+      await expect(many.getByRole('button', { name: /^Open session \d+ of 20$/ })).toHaveCount(20)
       expect(await fitsWidth()).toBe(true)
     } finally {
       fixture.assertHealthy()

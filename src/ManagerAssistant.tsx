@@ -314,7 +314,7 @@ const ActivityRow = memo(function ActivityRow({
 /**
  * A turn the hub started for Oracle, such as a session update or a task
  * follow-up: shown by what prompted it, in the activity rhythm, rather than
- * as a message from you. The prompt itself stays one tap away.
+ * as a message from you. Its sessions and prompt stay one tap away.
  */
 const AutomaticTurn = memo(function AutomaticTurn({
   message,
@@ -328,9 +328,13 @@ const AutomaticTurn = memo(function AutomaticTurn({
   retrying: boolean
 }) {
   const summary = automaticTurnSummary(message)!
-  const [showPrompt, setShowPrompt] = useState(false)
-  const promptId = useId()
+  const text = automaticTurnText(summary)
+  const [showDetails, setShowDetails] = useState(false)
+  const detailsId = useId()
   const refs = message.automatic?.sessionRefs ?? []
+  // One session opens from the row itself; several wait under Details, so
+  // the row keeps to one line however many a batch names.
+  const inlineRef = refs.length === 1 ? refs[0] : undefined
   const task = message.source === 'task'
   // A task's turn is retried from its task card, which owns its identity.
   const retryable = !task
@@ -340,41 +344,60 @@ const AutomaticTurn = memo(function AutomaticTurn({
       <div className="manager-activity__line">
         <span className="manager-activity__summary">
           <span aria-hidden="true" className="manager-activity__mark" />
-          <span className="manager-activity__text">
+          {/* One line: a long title ends in an ellipsis; Details has it all. */}
+          <span className="manager-activity__text" title={text}>
             <span className="manager-activity__label">{summary.label}</span>
             {summary.detail ? <> · {summary.detail}</> : null}
           </span>
         </span>
-        {/* Wraps as one group, so the summary keeps its line on a narrow panel. */}
         <span className="manager-activity__controls">
           {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
           <MessageTime value={message.createdAt} />
-          {refs.map((ref, index) => (
+          {inlineRef ? (
             <button
-              aria-label={refs.length > 1 ? `Open session ${index + 1} of ${refs.length}` : 'Open session'}
+              aria-label="Open session"
               className="manager-activity__open"
-              key={`${ref.computerId}:${ref.sessionId}`}
-              onClick={() => onOpenSession(ref)}
+              onClick={() => onOpenSession(inlineRef)}
               type="button"
             >
               Open
               <ExternalLink aria-hidden="true" size={12} />
             </button>
-          ))}
+          ) : null}
           <button
-            aria-controls={showPrompt ? promptId : undefined}
-            aria-expanded={showPrompt}
-            aria-label="Prompt Oracle received"
+            aria-controls={showDetails ? detailsId : undefined}
+            aria-expanded={showDetails}
+            aria-label="Details"
             className="icon-button manager-activity__toggle"
-            onClick={() => setShowPrompt((value) => !value)}
-            title={showPrompt ? 'Hide the prompt Oracle received' : 'Show the prompt Oracle received'}
+            onClick={() => setShowDetails((value) => !value)}
+            title={showDetails ? 'Hide details' : 'Show details'}
             type="button"
           >
             <ChevronDown aria-hidden="true" size={14} />
           </button>
         </span>
       </div>
-      {showPrompt ? <p className="manager-activity__prompt" id={promptId}>{message.content}</p> : null}
+      {showDetails ? (
+        <div className="manager-activity__details" id={detailsId}>
+          {refs.length > 1 ? (
+            <div className="manager-activity__sessions">
+              {refs.map((ref, index) => (
+                <button
+                  aria-label={`Open session ${index + 1} of ${refs.length}`}
+                  className="manager-activity__open"
+                  key={`${ref.computerId}:${ref.sessionId}`}
+                  onClick={() => onOpenSession(ref)}
+                  type="button"
+                >
+                  Session {index + 1}
+                  <ExternalLink aria-hidden="true" size={12} />
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <p className="manager-activity__prompt">{message.content}</p>
+        </div>
+      ) : null}
       {message.state === 'failed' && message.error ? (
         <p className="manager-message__error" role="alert">
           {message.error}
@@ -909,10 +932,18 @@ export function ManagerAssistant({
     && authoritativeEdit.state !== 'queued'
     && authoritativeEdit.content.trim() === editing?.text.trim(),
   )
-  // Oracle started on a message while it was being edited, or it left the
-  // queue another way. Keep unsaved words in the message bar, but retire an
-  // edit whose exact content is already authoritative so it cannot be resent.
-  if (editing && !savingEdit && snapshot && !snapshot.messages.some(
+  // The hub never lets you edit Oracle's own turns, so an edit an older
+  // version saved for one is dropped, never reopened or moved to the bar.
+  const editsAutomaticTurn = Boolean(editing && snapshot?.messages.some(
+    (message) => message.id === editing.id && isAutomaticTurn(message),
+  ))
+  if (editsAutomaticTurn) {
+    setEditing(undefined)
+    setRecoveredEdit(false)
+  } else if (editing && !savingEdit && snapshot && !snapshot.messages.some(
+    // Oracle started on a message while it was being edited, or it left the
+    // queue another way. Keep unsaved words in the message bar, but retire an
+    // edit whose exact content is already authoritative so it cannot be resent.
     (message) => message.id === editing.id && message.role === 'user' && message.state === 'queued',
   )) {
     const kept = editing.text.trim()

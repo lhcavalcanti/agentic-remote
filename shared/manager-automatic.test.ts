@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  DURABLE_TASK_LINE_PREFIX,
-  durableTaskTitle,
   formatProactivePrompt,
   proactivePromptEvents,
 } from './manager-automatic.js'
@@ -32,16 +30,5 @@ describe('Oracle automatic turn prompts', () => {
     ])
     expect(proactivePromptEvents(content, [failed.id])).toEqual([{ id: failed.id, kind: 'failed' }])
     expect(proactivePromptEvents('Docs finished', [finished.id])).toEqual([])
-  })
-
-  it('finds the durable task title after the execution prompt', () => {
-    const content = [
-      'Durable task: quoted inside the execution prompt',
-      '',
-      `${DURABLE_TASK_LINE_PREFIX}Ship docs`,
-      'Next action: Review the draft',
-    ].join('\n')
-    expect(durableTaskTitle(content)).toBe('Ship docs')
-    expect(durableTaskTitle('Investigate the gate')).toBeUndefined()
   })
 })

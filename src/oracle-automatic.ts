@@ -1,7 +1,6 @@
 import type { ManagerMessage } from '../shared/manager'
 import {
   MANAGER_PROACTIVE_EVENT_KINDS,
-  durableTaskTitle,
   proactivePromptEvents,
 } from '../shared/manager-automatic'
 
@@ -19,7 +18,10 @@ export function isAutomaticTurn(message: ManagerMessage): boolean {
 export function automaticTurnSummary(message: ManagerMessage): AutomaticTurnSummary | undefined {
   if (!isAutomaticTurn(message)) return undefined
   if (message.source === 'task') {
-    return { label: 'Task follow-up', detail: durableTaskTitle(message.content) }
+    // Only the title recorded when the turn was queued names it; the prompt
+    // carries free text that cannot be read for one reliably.
+    const title = message.automatic?.title?.replace(/\s+/g, ' ').trim()
+    return title ? { label: 'Task follow-up', detail: title } : { label: 'Task follow-up' }
   }
   if (message.source !== 'proactive') return undefined
   const admitted = message.automatic?.eventIds

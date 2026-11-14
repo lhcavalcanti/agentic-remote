@@ -1,7 +1,7 @@
 /**
- * The text of Oracle's automatic turns. The hub writes these prompts; the
- * panel reads back what prompted each turn to show it as one thin row rather
- * than as a message from you.
+ * The prompt of Oracle's proactive turns. The hub writes it entirely from
+ * structured lifecycle events, so the panel can read back which events
+ * prompted a turn to name its row rather than show it as a message from you.
  */
 
 export const MANAGER_PROACTIVE_EVENT_KINDS = ['failed', 'blocked', 'finished'] as const
@@ -42,12 +42,4 @@ export function proactivePromptEvents(
     events.push({ id, kind: kind as ManagerProactiveEventKind })
   }
   return events
-}
-
-export const DURABLE_TASK_LINE_PREFIX = 'Durable task: '
-
-/** The task title the hub appends after a task's execution prompt. */
-export function durableTaskTitle(content: string): string | undefined {
-  const line = content.split('\n').findLast((candidate) => candidate.startsWith(DURABLE_TASK_LINE_PREFIX))
-  return line?.slice(DURABLE_TASK_LINE_PREFIX.length).trim() || undefined
 }

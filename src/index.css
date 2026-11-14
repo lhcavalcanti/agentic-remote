@@ -8170,7 +8170,9 @@ button {
 /*
  * A turn the hub started for Oracle, such as a session update: one line in
  * the activity rhythm, never a bubble of yours. Its hollow mark tells it from
- * Oracle's own actions; the prompt and any failure sit indented beneath it.
+ * Oracle's own actions. The line never wraps: a long summary ends in an
+ * ellipsis, and the controls stay bounded because several sessions open from
+ * Details. Details and any failure sit indented beneath it.
  */
 .manager-activity--automatic {
   flex-direction: column;
@@ -8181,9 +8183,8 @@ button {
 .manager-activity__line {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 8px;
+  gap: 8px;
 }
 
 .manager-activity--automatic .manager-activity__mark {
@@ -8199,12 +8200,17 @@ button {
   gap: 8px;
 }
 
+.manager-activity--automatic .manager-activity__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .manager-activity__controls {
   display: flex;
   flex: none;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
 
 .manager-activity__label {
@@ -8226,9 +8232,23 @@ button {
   transform: rotate(180deg);
 }
 
+.manager-activity__details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 14px;
+}
+
+.manager-activity__sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .manager-activity__prompt {
   max-height: 16rem;
-  margin: 0 0 0 14px;
+  margin: 0;
   padding: 6px 10px;
   overflow: auto;
   border-left: 2px solid var(--border);

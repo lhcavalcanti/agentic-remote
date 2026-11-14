@@ -1056,6 +1056,17 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   end; collapsing MUST bring the message back into view. The full text MUST
   remain in the page. Oracle's narrow panel MUST keep folding a message sent
   to it past 12 lines or 600 characters to eight lines on every device.
+- Oracle's automatic turns, a proactive session update or a durable task
+  follow-up that the hub queues itself, MUST NOT appear as a message the user
+  sent. Each MUST be one line in the rhythm of Oracle's tool activity, with its
+  time, naming what prompted it (**Session update · finished**, **Session
+  updates · 1 failed, 1 finished**, **Task follow-up · *title*** with the title
+  recorded when it was queued); a long summary ends in an ellipsis. **Open**
+  sits on the line for one session; several, and the prompt Oracle received,
+  are under **Details**. A failed update keeps its error and **Retry**; a
+  failed task turn keeps its error and points to its task card. Oracle's queue
+  MUST show a waiting one by the same summary, without **Edit**, and a task
+  turn also without **Remove**; an edit saved for one is discarded.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
 - Parallel tools MUST retain independent running/completed/failed states.

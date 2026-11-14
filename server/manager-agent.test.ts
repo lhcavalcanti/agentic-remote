@@ -522,6 +522,43 @@ describe('ManagerAgent', () => {
     })).rejects.toMatchObject({ statusCode: 409 })
   })
 
+  it('records a task turn title for display without making it part of the turn identity', async () => {
+    await start()
+    const input = {
+      id: 'oracle-task-message-legacy',
+      content: 'Run the focused queue test.',
+      source: 'task' as const,
+      answerOnly: false,
+      automatic: { kind: 'task' as const, taskId: 'oracle-task-a' },
+    }
+    const title = 'Run the focused queue test'
+    // Queued by a hub that did not record titles; its re-dispatch still matches.
+    const legacy = await agent!.enqueueInternal(input)
+    const replay = await agent!.enqueueInternal({ ...input, automatic: { ...input.automatic, title } })
+    expect(replay.id).toBe(legacy.id)
+
+    const titled = await agent!.enqueueInternal({
+      ...input,
+      id: 'oracle-task-message-titled',
+      automatic: { ...input.automatic, title },
+    })
+    expect(titled.automatic).toEqual({ kind: 'task', taskId: 'oracle-task-a', title })
+
+    for (const invalid of [
+      { ...input, id: 'oracle-task-blank-title', automatic: { ...input.automatic, title: ' ' } },
+      { ...input, id: 'oracle-task-long-title', automatic: { ...input.automatic, title: 'x'.repeat(121) } },
+      {
+        id: 'oracle-proactive-titled',
+        content: 'Review the batch.',
+        source: 'proactive' as const,
+        answerOnly: true,
+        automatic: { kind: 'proactive' as const, eventIds: ['a'.repeat(64)], title: 'Not a task' },
+      },
+    ]) {
+      await expect(agent!.enqueueInternal(invalid)).rejects.toMatchObject({ statusCode: 400 })
+    }
+  })
+
   it('refuses generic edits of queued deterministic proactive messages', async () => {
     sdk.behaviors.push(async () => new Promise<void>(() => undefined))
     await start()

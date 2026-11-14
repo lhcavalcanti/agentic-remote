@@ -38,6 +38,7 @@ import {
   type ManagerStatus,
   type UpdateManagerSettingsInput,
 } from '../shared/manager.js'
+import { ORACLE_TASK_TITLE_MAX_LENGTH } from '../shared/oracle-task.js'
 import type { DreamerProgressView } from './dreamer-service.js'
 import {
   buildTurnContext,
@@ -252,11 +253,13 @@ function messagePriority(message: ManagerMessage): number {
 }
 
 function automaticPayload(message: ManagerMessage): string {
+  // A task turn's title is shown, not part of its identity, which the prompt
+  // already carries; a turn queued before titles were kept still matches.
   return JSON.stringify({
     content: message.content,
     source: message.source,
     answerOnly: message.answerOnly === true,
-    automatic: message.automatic,
+    automatic: message.automatic && { ...message.automatic, title: undefined },
   })
 }
 
@@ -729,6 +732,16 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
           input.answerOnly ||
           !input.automatic.taskId ||
           !/^[A-Za-z0-9][A-Za-z0-9._~+=:@-]{0,127}$/.test(input.automatic.taskId)
+        )
+      ) ||
+      (
+        input.automatic.title !== undefined &&
+        (
+          input.source !== 'task' ||
+          typeof input.automatic.title !== 'string' ||
+          !input.automatic.title.trim() ||
+          input.automatic.title.length > ORACLE_TASK_TITLE_MAX_LENGTH ||
+          input.automatic.title.includes('\0')
         )
       )
     ) {

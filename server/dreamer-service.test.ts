@@ -185,6 +185,11 @@ describe('DreamerService', () => {
     })
 
     expect(enqueueManagerTask).toHaveBeenCalledTimes(1)
+    expect(enqueueManagerTask.mock.calls[0]![0].automatic).toMatchObject({
+      kind: 'task',
+      taskId: task.id,
+      title: 'Run the focused queue test',
+    })
     expect(replay.tasks![0]!.attempts).toHaveLength(1)
     const attempt = replay.tasks![0]!.attempts[0]!
     const managerMessage = managerMessages[0]!

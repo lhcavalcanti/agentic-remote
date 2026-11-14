@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { SessionStore } from './session-store.js'
 
 const temporaryDirectories: string[] = []
@@ -19,12 +19,21 @@ async function createStore(): Promise<{
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
       rm(directory, { recursive: true, force: true }),
     ),
   )
 })
+
+function lifecycleLines(info: MockInstance<typeof console.info>): unknown[] {
+  return info.mock.calls.flatMap(([line]) => {
+    if (typeof line !== 'string' || !line.startsWith('{')) return []
+    const parsed = JSON.parse(line) as { sessionLifecycle?: string }
+    return parsed.sessionLifecycle ? [parsed] : []
+  })
+}
 
 describe('SessionStore', () => {
   describe('SDK restart recovery', () => {
@@ -76,6 +85,7 @@ describe('SessionStore', () => {
         interruption: {
           detectedAt: '2026-10-24T00:01:00.000Z',
           previousStatus: 'waiting',
+          cause: 'restart',
         },
         restartRecovery: {
           state: 'interrupted',
@@ -231,7 +241,7 @@ describe('SessionStore', () => {
       await restarted.initialize()
       expect(restarted.get('finished-before-reply-settlement')).toMatchObject({
         status: 'error',
-        interruption: { previousStatus: 'idle' },
+        interruption: { previousStatus: 'idle', cause: 'restart' },
         restartRecovery: { state: 'interrupted' },
         pendingUserInput: { requestId: 'public-question', stale: true },
       })
@@ -383,11 +393,151 @@ describe('SessionStore', () => {
       expect(cancelled).toMatchObject({
         status: 'error',
         pendingUserInput: undefined,
+        interruption: {
+          detectedAt: '2026-10-24T00:01:00.000Z',
+          previousStatus: 'waiting',
+          cause: 'recovery-cancelled',
+        },
         restartRecovery: {
           state: 'interrupted',
           message: expect.stringMatching(/cancelled/i),
         },
       })
+    })
+  })
+
+  describe('interruption causes', () => {
+    const at = '2026-11-14T06:00:00.000Z'
+
+    async function storeAt(directory?: string): Promise<{ directory: string; store: SessionStore }> {
+      const owned = directory ?? await mkdtemp(path.join(tmpdir(), 'agentic-remote-test-'))
+      if (!directory) temporaryDirectories.push(owned)
+      const store = new SessionStore(owned, () => Date.parse(at))
+      await store.initialize()
+      return { directory: owned, store }
+    }
+
+    async function terminal(
+      store: SessionStore,
+      id: string,
+      options: { managedOpen?: boolean; status?: 'idle' | 'running' } = {},
+    ): Promise<void> {
+      await store.create({
+        id, cwd: `/tmp/${id}`, title: id, updatedAt: '2026-11-14T05:00:00.000Z',
+        status: options.status ?? 'idle', isOpen: true, messages: [],
+      }, { managedOpen: options.managedOpen ?? true, backend: 'terminal' })
+    }
+
+    it('keeps the first cause it records, across a reload', async () => {
+      const { directory, store } = await storeAt()
+      await terminal(store, 'stopped')
+
+      const interrupted = await store.markInterrupted('stopped', 'terminal-stopped')
+      await store.markInterrupted('stopped', 'queue-held', { message: 'Not the reason' })
+
+      const expected = { detectedAt: at, previousStatus: 'idle', cause: 'terminal-stopped' }
+      expect(interrupted.interruption).toEqual(expected)
+      expect(store.get('stopped')?.interruption).toEqual(expected)
+      await store.close()
+      const reloaded = await storeAt(directory)
+      expect(reloaded.store.get('stopped')?.interruption).toEqual(expected)
+    })
+
+    it('lets a failed relaunch explain an earlier interruption with its bounded error', async () => {
+      const { store } = await storeAt()
+      await terminal(store, 'relaunch')
+      await store.markInterrupted('relaunch', 'terminal-stopped')
+
+      const failed = await store.markInterrupted('relaunch', 'relaunch-failed', {
+        message: `  tmux refused\n  ${'x'.repeat(400)}  `,
+        replace: true,
+      })
+
+      expect(failed.interruption).toMatchObject({
+        detectedAt: at, previousStatus: 'idle', cause: 'relaunch-failed',
+        message: expect.stringMatching(/^tmux refused x+…$/),
+      })
+      expect(failed.interruption?.message?.length).toBeLessThanOrEqual(200)
+    })
+
+    it('says a live owner holding queued work waits for Reopen', async () => {
+      const { store } = await storeAt()
+      await terminal(store, 'held')
+      await store.enqueuePrompt('held', {
+        id: 'queued', content: 'Wait for Reopen', createdAt: '2026-11-14T05:00:01.000Z',
+      })
+      await store.setOpen('held', false, true)
+
+      await store.syncOpen(['held'])
+
+      expect(store.get('held')).toMatchObject({
+        isOpen: true,
+        interruption: { detectedAt: at, previousStatus: 'idle', cause: 'queue-held' },
+      })
+    })
+
+    it('loads interruptions recorded before causes and rejects a malformed cause', async () => {
+      const { directory, store } = await storeAt()
+      await terminal(store, 'legacy')
+      await store.close()
+      const filename = path.join(directory, 'state.json')
+      const saved = JSON.parse(await readFile(filename, 'utf8'))
+      saved.sessions.legacy.interruption = { detectedAt: at, previousStatus: 'running' }
+      await writeFile(filename, JSON.stringify(saved))
+
+      const legacy = await storeAt(directory)
+      expect(legacy.store.get('legacy')?.interruption).toEqual({ detectedAt: at, previousStatus: 'running' })
+      await legacy.store.close()
+
+      for (const malformed of [{ cause: 7 }, { cause: 'restart', message: { text: 'No' } }]) {
+        saved.sessions.legacy.interruption = { detectedAt: at, previousStatus: 'running', ...malformed }
+        await writeFile(filename, JSON.stringify(saved))
+        await expect(new SessionStore(directory).initialize())
+          .rejects.toThrow('Invalid session interruption metadata')
+      }
+    })
+
+    it('logs one line for each interruption it records', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      const { directory, store } = await storeAt()
+      await terminal(store, 'viewed', { managedOpen: false })
+      await terminal(store, 'missing')
+      await terminal(store, 'working', { status: 'running' })
+
+      await store.markInterrupted('viewed', 'terminal-stopped')
+      await store.markInterrupted('viewed', 'queue-held')
+      await store.markInterrupted('viewed', 'relaunch-failed', { message: 'Launch refused', replace: true })
+      await store.markInterrupted('viewed', 'relaunch-failed', { message: 'Launch refused', replace: true })
+      await store.syncOpen(['viewed', 'working'])
+      await store.syncOpen(['viewed', 'working'])
+      await store.close()
+      await storeAt(directory)
+
+      expect(lifecycleLines(info)).toEqual([
+        { sessionLifecycle: 'interrupted', sessionId: 'viewed', cause: 'terminal-stopped', at },
+        {
+          sessionLifecycle: 'interrupted', sessionId: 'viewed', cause: 'relaunch-failed', at,
+          message: 'Launch refused',
+        },
+        { sessionLifecycle: 'interrupted', sessionId: 'missing', cause: 'terminal-stopped', at },
+        { sessionLifecycle: 'interrupted', sessionId: 'working', cause: 'restart', at },
+      ])
+    })
+
+    it('logs each completed suspend and resume once', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+      const { store } = await storeAt()
+      await terminal(store, 'resting')
+
+      await store.setSuspended('resting', true)
+      await store.setSuspended('resting', true)
+      await store.setSuspended('resting', false)
+      await store.setSuspended('resting', false)
+
+      expect(lifecycleLines(info)).toEqual([
+        { sessionLifecycle: 'suspended', sessionId: 'resting', at },
+        { sessionLifecycle: 'resumed', sessionId: 'resting', at },
+      ])
     })
   })
 
@@ -1186,7 +1336,7 @@ describe('SessionStore', () => {
 
     expect(store.get('closed-queued-terminal')).toMatchObject({
       isOpen: true,
-      interruption: expect.any(Object),
+      interruption: { cause: 'queue-held' },
     })
     expect(store.isManagedOpen('closed-queued-terminal')).toBe(false)
     const revision = store.get('closed-queued-terminal')!.revision
@@ -1201,7 +1351,7 @@ describe('SessionStore', () => {
 
     expect(restarted.get('closed-queued-terminal')).toMatchObject({
       isOpen: true,
-      interruption: expect.any(Object),
+      interruption: { cause: 'queue-held' },
       queuedPrompts: [expect.objectContaining({ id: 'queued-prompt' })],
     })
     expect(restarted.isManagedOpen('closed-queued-terminal')).toBe(false)
@@ -1686,7 +1836,7 @@ describe('SessionStore', () => {
     })
     expect(reloaded.get('managed-terminal-session')).toMatchObject({
       isOpen: true,
-      interruption: expect.any(Object),
+      interruption: { cause: 'terminal-stopped' },
     })
     expect(reloaded.get('managed-sdk-session')).not.toHaveProperty('managedOpen')
   })
@@ -1877,7 +2027,7 @@ describe('SessionStore', () => {
       Object.assign(session, { recoverySeed: { prompt: 'Brief', state: 'pending' } })
       if (state === 'archived') Object.assign(session, { isOpen: false, archivedAt: '2026-07-26T00:00:00.000Z' })
     })
-    if (state === 'interrupted') await store.markInterrupted('retained')
+    if (state === 'interrupted') await store.markInterrupted('retained', 'terminal-stopped')
     const refused = { statusCode: 409, message: expect.stringMatching(/Reopen/) }
     await expect(store.removeQueuedPrompt('retained', 'first')).rejects.toMatchObject(refused)
     await expect(store.updateQueuedPrompt('retained', 'first', 'Rewritten')).rejects.toMatchObject(refused)
@@ -1895,7 +2045,7 @@ describe('SessionStore', () => {
     })
     const queued = ['first', 'second'].map((id) => ({ id, content: id, createdAt: '2026-07-25T01:00:01.000Z' }))
     for (const prompt of queued) await store.enqueuePrompt('retained', prompt)
-    if (state === 'interrupted') await store.markInterrupted('retained')
+    if (state === 'interrupted') await store.markInterrupted('retained', 'terminal-stopped')
     else await store.update('retained', (session) => { session.archivedAt = '2026-07-26T00:00:00.000Z' })
     const refused = { statusCode: 409, message: expect.stringMatching(/Reopen/) }
     await expect(store.claimTerminalQueuedPrompt('retained', queued[0], () => true)).rejects.toMatchObject(refused)

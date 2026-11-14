@@ -181,7 +181,7 @@ describe('ClaudeAgentService', () => {
     )
     services.add(restarted)
     await restarted.start()
-    expect(restarted.getSession(id)?.interruption).toBeDefined()
+    expect(restarted.getSession(id)?.interruption).toMatchObject({ cause: 'restart' })
     const queries = f.queryCalls.length
     await restarted.activateSession(id)
     expect(f.queryCalls).toHaveLength(queries)
@@ -251,7 +251,7 @@ describe('ClaudeAgentService', () => {
       session.status = 'error'
       session.failedPrompt = { content: 'Lost', failedAt: 'token-1' }
     })
-    await f.service.store.markInterrupted(created.id)
+    await f.service.store.markInterrupted(created.id, 'restart')
     await expect(f.service.sendMessage(created.id, 'Lost', true, 'token-1')).rejects.toMatchObject({ statusCode: 409 })
     await expect(f.service.sendMessage(created.id, 'Queued', true)).rejects.toMatchObject({ statusCode: 409 })
     expect(f.service.store.get(created.id)?.failedPrompt).toEqual({ content: 'Lost', failedAt: 'token-1' })
@@ -286,7 +286,7 @@ describe('ClaudeAgentService', () => {
         session.archivedAt = '2026-10-19T00:00:00Z'
       }
     })
-    if (state === 'interrupted') await f.service.store.markInterrupted(created.id)
+    if (state === 'interrupted') await f.service.store.markInterrupted(created.id, 'restart')
     const before = f.service.store.get(created.id)?.runtime
     await expect(f.service.configureRuntime(created.id, {
       model: 'provider-model', reasoningEffort: 'low', contextTier: 'default', mode: 'plan',
@@ -332,7 +332,7 @@ describe('ClaudeAgentService', () => {
       session.queuedPrompts = queued
       session.queuedCount = 2
     })
-    await f.service.store.markInterrupted(created.id)
+    await f.service.store.markInterrupted(created.id, 'restart')
     const queries = f.queryCalls.length
     const attempts = [
       () => f.service.updateQueuedPrompt(created.id, 'first', 'Rewritten'),
@@ -1222,6 +1222,23 @@ describe('ClaudeAgentService', () => {
     expect(service.getSession(session.id)?.suspended).toBeFalsy()
   })
 
+  it('logs each completed suspend and resume once', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    await service.suspendSession(session.id)
+    await service.suspendSession(session.id)
+    await service.resumeSession(session.id)
+    await service.resumeSession(session.id)
+
+    expect(info.mock.calls.flat().filter((line) => typeof line === 'string' && line.includes('sessionLifecycle')))
+      .toEqual([
+        expect.stringContaining(`"sessionLifecycle":"suspended","sessionId":"${session.id}"`),
+        expect.stringContaining(`"sessionLifecycle":"resumed","sessionId":"${session.id}"`),
+      ])
+  })
+
   it('leaves a suspended session where it was when the send is refused', async () => {
     // A refused admission must not change either the transcript or recency.
     const { directory, service } = await fixture(async function* () {})
@@ -1247,4 +1264,78 @@ describe('ClaudeAgentService', () => {
   })
 
 
+})
+
+describe('ClaudeAgentService recoverable close', () => {
+  it('stops a running turn but keeps the session and its Claude transcript to reopen', async () => {
+    let sessionId = ''
+    let aborted = false
+    const f = await fixture(async function* (options) {
+      yield textResult(sessionId)[0]
+      await new Promise<void>((resolve) => {
+        const signal = options.abortController!.signal
+        if (signal.aborted) resolve()
+        else signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      aborted = true
+    })
+    const created = await f.service.createSession(f.directory, false, true, 'claude')
+    sessionId = created.id
+    const events: unknown[] = []
+    f.service.on('event', (event) => events.push(event))
+    await f.service.sendMessage(sessionId, 'Summarize the open issues')
+    await vi.waitFor(() =>
+      expect(f.service.getSession(sessionId)?.messages.at(-1)?.content).toBe('Hello from Claude'))
+
+    const closed = await f.service.closeSession(sessionId)
+
+    expect(aborted).toBe(true)
+    expect(f.deleteSession).not.toHaveBeenCalled()
+    expect(closed).toMatchObject({
+      isOpen: false,
+      status: 'idle',
+      closedAt: expect.any(String),
+      closedContext: { prompts: ['Summarize the open issues'], reply: 'Hello from Claude' },
+    })
+    expect(f.service.listSessions()).toEqual([])
+    expect(f.service.listClosedSessions()).toEqual([expect.objectContaining({ id: sessionId })])
+    expect(events).toContainEqual({ type: 'session.removed', sessionId, closed: true })
+    await expect(f.service.sendMessage(sessionId, 'Late follow-up'))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen the closed session/) })
+
+    const queries = f.queryCalls.length
+    const reopened = await f.service.activateSession(sessionId)
+
+    expect(reopened).toMatchObject({ isOpen: true })
+    expect(reopened.closedAt).toBeUndefined()
+    expect(f.queryCalls).toHaveLength(queries)
+  })
+
+  it('deletes a closed session for good only after its retention ends', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory, false, true, 'claude')
+    const closed = await f.service.closeSession(created.id)
+    const closedAt = Date.parse(closed.closedAt!)
+
+    await expect(f.service.deleteExpiredClosedSession(created.id, closedAt - 1)).resolves.toBe(false)
+    await expect(f.service.deleteExpiredClosedSession(created.id, closedAt)).resolves.toBe(true)
+
+    expect(f.deleteSession).toHaveBeenCalledWith(created.id, { dir: f.directory })
+    expect(f.service.getSession(created.id)).toBeUndefined()
+  })
+
+  it('keeps an expired session closed when Claude cannot delete it, so the next sweep retries', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory, false, true, 'claude')
+    const closed = await f.service.closeSession(created.id)
+    const closedAt = Date.parse(closed.closedAt!)
+    f.deleteSession.mockRejectedValueOnce(new Error('transcript is locked'))
+
+    await expect(f.service.deleteExpiredClosedSession(created.id, closedAt)).rejects.toThrow('transcript is locked')
+    expect(f.service.listClosedSessions()).toEqual([expect.objectContaining({ id: created.id })])
+    await expect(f.service.deleteExpiredClosedSession(created.id, closedAt)).resolves.toBe(true)
+
+    expect(f.deleteSession).toHaveBeenCalledTimes(2)
+    expect(f.service.getSession(created.id)).toBeUndefined()
+  })
 })

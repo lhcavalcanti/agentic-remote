@@ -120,6 +120,7 @@ const slowTests = [
   'src/OracleSettings.test.tsx',
   'src/OracleDreamer.test.tsx',
   'src/ReaderWorkspace.test.tsx',
+  'src/RecentlyClosed.test.tsx',
   'src/SessionActions.test.tsx',
   'src/SessionNavigation.test.tsx',
   'src/SessionResources.test.tsx',

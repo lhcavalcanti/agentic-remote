@@ -485,6 +485,10 @@ export async function registerHubRoutes(
     sessions: await manager.listHistory(),
   }))
 
+  app.get('/api/closed-sessions', async () => ({
+    sessions: await manager.listClosedSessions(),
+  }))
+
   app.get('/api/knowledge/roots', async () => ({
     roots: knowledge.listRoots(),
   }))
@@ -1138,6 +1142,18 @@ export async function registerHubRoutes(
         request.params.sessionId,
         request.params.taskId,
       ),
+  )
+
+  // Recoverable: the owning computer keeps the session to reopen. DELETE
+  // below stays the permanent delete existing clients rely on.
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/close',
+    async (request) => ({
+      session: await manager.closeSession(
+        request.params.computerId,
+        request.params.sessionId,
+      ),
+    }),
   )
 
   app.delete<{ Params: SessionParams }>(

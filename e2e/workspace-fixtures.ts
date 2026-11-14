@@ -33,6 +33,7 @@ import {
   joinKnowledgeRelativePath,
   rebaseKnowledgeRelativePath,
 } from '../shared/knowledge-path'
+import { closedSessionContext } from '../shared/closed-sessions'
 
 export const FIXTURE_NOW = '2026-09-04T16:20:00.000Z'
 export const SELECTED_SESSION_ID = 'fixture-plan-workspace'
@@ -61,12 +62,14 @@ export const fixtureComputers: ComputerSummary[] = [
         terminalBacked: true,
         supportsTmuxMigration: true,
         supportsBackgroundTasks: true,
+        supportsRecoverableClose: true,
       },
       {
         id: 'claude',
         name: 'Claude Agent',
         available: true,
         terminalBacked: false,
+        supportsRecoverableClose: true,
       },
     ],
   },
@@ -82,12 +85,14 @@ export const fixtureComputers: ComputerSummary[] = [
         available: true,
         terminalBacked: true,
         supportsBackgroundTasks: true,
+        supportsRecoverableClose: true,
       },
       {
         id: 'claude',
         name: 'Claude Agent',
         available: true,
         terminalBacked: false,
+        supportsRecoverableClose: true,
       },
     ],
   },
@@ -455,6 +460,7 @@ export const fixtureEndpoints = [
   'GET /api/computers',
   'GET /api/sessions',
   'GET /api/history',
+  'GET /api/closed-sessions',
   'GET /api/push/settings',
   'GET /api/version',
   'GET /api/knowledge/roots',
@@ -469,6 +475,8 @@ export const fixtureEndpoints = [
   'GET /api/computers/:computerId/sessions/:sessionId/workspace?path=.',
   'GET /api/computers/:computerId/sessions/:sessionId/workspace/file?path=handbook/agent-workspace.md',
   'POST /api/computers/:computerId/sessions/:sessionId/open',
+  'POST /api/computers/:computerId/sessions/:sessionId/close',
+  'DELETE /api/computers/:computerId/sessions/:sessionId',
   'WS /api/events',
 ] as const
 
@@ -493,6 +501,8 @@ export interface WorkspaceFixtureOptions {
 export interface WorkspaceFixtureState {
   roots: KnowledgeRoot[]
   sessions: ManagedSession[]
+  /** Closed and still reopenable, newest first. */
+  closedSessions: ManagedSession[]
   bindings: Map<string, SessionKnowledgeBinding>
   sessionOrder: SessionOrderSnapshot
   eventSockets: Set<WebSocketRoute>
@@ -508,6 +518,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
   return {
     roots,
     sessions,
+    closedSessions: [],
     bindings: new Map(sessions.map((session) => [
       `${session.computerId}:${session.id}`,
       {
@@ -861,6 +872,10 @@ export async function setupWorkspaceFixture(
       await respond({ sessions })
       return
     }
+    if (method === 'GET' && path === '/api/closed-sessions') {
+      await respond({ sessions: state.closedSessions })
+      return
+    }
     if (method === 'GET' && path === '/api/session-order') {
       await respond({ sessionOrder: state.sessionOrder })
       return
@@ -1107,8 +1122,51 @@ export async function setupWorkspaceFixture(
     const session = match
       ? sessions.find((entry) => entry.computerId === match[1] && entry.id === match[2])
       : undefined
+    // A closed session answers only to reopening and to deleting, as on a hub.
+    const closedIndex = match
+      ? state.closedSessions.findIndex((entry) => entry.computerId === match[1] && entry.id === match[2])
+      : -1
+    if (match && closedIndex >= 0) {
+      const action = match[3] ?? ''
+      if (method === 'POST' && action === '/open') {
+        const [closed] = state.closedSessions.splice(closedIndex, 1)
+        const { closedAt: _closedAt, closedContext: _closedContext, ...kept } = closed!
+        const reopened: ManagedSession = { ...kept, isOpen: true }
+        sessions.push(reopened)
+        emit({ type: 'session.upserted', session: reopened })
+        await respond({ session: reopened })
+        return
+      }
+      if (method === 'DELETE' && action === '') {
+        state.closedSessions.splice(closedIndex, 1)
+        emit({ type: 'session.removed', computerId: match[1], sessionId: match[2] })
+        await route.fulfill({ status: 204 })
+        return
+      }
+    }
     if (session && match) {
       const action = match[3] ?? ''
+      if (method === 'POST' && action === '/close') {
+        const closed: ManagedSession = {
+          ...session,
+          isOpen: false,
+          status: 'idle',
+          messages: [],
+          closedAt: options.realClock ? new Date().toISOString() : FIXTURE_NOW,
+          closedContext: closedSessionContext(session),
+        }
+        sessions.splice(sessions.indexOf(session), 1)
+        state.closedSessions.unshift(closed)
+        emit({ type: 'session.removed', computerId: session.computerId, sessionId: session.id, closed: true })
+        await respond({ session: closed })
+        return
+      }
+      if (method === 'DELETE' && action === '') {
+        sessions.splice(sessions.indexOf(session), 1)
+        emit({ type: 'session.removed', computerId: session.computerId, sessionId: session.id })
+        await route.fulfill({ status: 204 })
+        return
+      }
       const commitSession = () => {
         session.revision = (session.revision ?? 0) + 1
         session.updatedAt = FIXTURE_NOW

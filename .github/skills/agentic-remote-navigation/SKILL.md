@@ -99,6 +99,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Claude Agent lifecycle | `server/claude-agent-service.ts` |
 | Provider aggregation | `server/provider-session-service.ts` |
 | Session persistence | `server/session-store.ts` |
+| Recoverable close, Recently closed, 14-day expiry | `shared/closed-sessions.ts`, `server/closed-session-sweeper.ts`, `src/RecentlyClosed.tsx` |
 | Side questions (`/ask`) | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
 | Oracle (session manager agent; "manager" internally) | `src/ManagerAssistant.tsx` (panel, bubble, mode switch, resizer, queue editing), `src/voice-recorder.ts` (dictation), `src/OracleSettings.tsx` (model and folder-status parts placed in App settings groups), `src/use-oracle-settings.ts` (`useOracleSettings`); `server/manager-agent.ts` (runtime, queue, recovery, settings, session folders), `manager-tools.ts`, `manager-context.ts` (system prompt, including model routing: a named model stays on Copilot, otherwise `create_session` reads App settings → Models from the hub's settings profile), `manager-journal.ts`, `manager-store.ts`; `docs/design/session-manager.md` |
 | Copilot event log reading | `server/event-log.ts` |
@@ -431,29 +432,30 @@ unowned worktrees without explicit approval.
 
 ### Test session cleanup
 
-Close every session a test or verification creates as soon as its evidence is
-recorded, on development and production hubs alike. In Agentic Remote,
-closing a session permanently deletes it.
+Delete every session a test or verification creates as soon as its evidence is
+recorded, on development and production hubs alike. **Close** keeps a session
+reopenable under Recently closed for 14 days; only Delete permanently, the
+`DELETE` route, removes it at once.
 
 1. Record each test session's ID when it is created, and give it a disposable
    prompt that says it is a synthetic check.
-2. Before closing, verify that provenance: the expected title or prompt, the
+2. Before deleting, verify that provenance: the expected title or prompt, the
    expected working folder, and no real user work in the transcript.
-3. Close it with `DELETE /api/computers/:computerId/sessions/:sessionId` on
-   the owning hub. Then confirm it has no tmux pane, Copilot process, or
-   session-state directory under the owning runtime's Copilot home
-   (`$COPILOT_HOME/session-state/<id>`, which defaults to
+3. Delete it with `DELETE /api/computers/:computerId/sessions/:sessionId` on
+   the owning hub, not `POST .../close`. Then confirm it has no tmux pane,
+   Copilot process, or session-state directory under the owning runtime's
+   Copilot home (`$COPILOT_HOME/session-state/<id>`, which defaults to
    `~/.copilot/session-state/<id>`).
 4. A production hub can rediscover a development fixture or SDK smoke session
    from shared provider history. After any restart or discovery interval,
-   check the open and history lists for the recorded IDs and close any that
-   reappear.
-5. Close stalled test probes created by other tooling, such as evaluation
+   check the open, history, and Recently closed (`GET /api/closed-sessions`)
+   lists for the recorded IDs and delete any that reappear.
+5. Delete stalled test probes created by other tooling, such as evaluation
    scenarios stuck on a trust prompt, only when their prompt proves they are
    disposable. Archive their transcripts first if their results may matter.
 
-Never close a session only because its title looks like a test, and never
-close user work.
+Never delete a session only because its title looks like a test, and never
+close or delete user work.
 
 ## Rolling out
 

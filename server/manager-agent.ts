@@ -39,6 +39,7 @@ import {
   type UpdateManagerSettingsInput,
 } from '../shared/manager.js'
 import { ORACLE_TASK_TITLE_MAX_LENGTH } from '../shared/oracle-task.js'
+import { CLOSED_SESSION_RETENTION_DAYS } from '../shared/closed-sessions.js'
 import type { DreamerProgressView } from './dreamer-service.js'
 import {
   buildTurnContext,
@@ -77,6 +78,8 @@ export interface ManagerHub {
   listSessionsWithAuthority(): Promise<{ sessions: ManagedSession[]; answeredComputerIds: string[] }>
   listSessions(): Promise<ManagedSession[]>
   listHistory(): Promise<ManagedSession[]>
+  /** Sessions closed through the app that can still be reopened. */
+  listClosedSessions(): Promise<ManagedSession[]>
   /** A session as recorded, never opened or resumed, so reading cannot change it. */
   readSession(computerId: string, sessionId: string): Promise<ManagedSession>
   askSession(computerId: string, sessionId: string, question: string): Promise<string>
@@ -95,7 +98,8 @@ export interface ManagerHub {
   suspendSession(computerId: string, sessionId: string): Promise<ManagedSession>
   resumeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
-  deleteSession(computerId: string, sessionId: string): Promise<void>
+  /** Closes a session so it can be reopened; Oracle never deletes one for good. */
+  closeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   /** Background work in a session; without it Oracle always asks before closing one. */
   listBackgroundTasks?(computerId: string, sessionId: string): Promise<BackgroundTaskSnapshot>
 }
@@ -1027,7 +1031,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   }
 
   /**
-   * Deletes a session you confirmed closing, or one Oracle closed without
+   * Closes a session you confirmed closing, or one Oracle closed without
    * asking, and records how it went. `announce: false` leaves the note out
    * when Oracle learns the outcome from its tool result instead.
    */
@@ -1037,15 +1041,25 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     let next: ManagerMessage
     let note: string
     try {
-      await this.hub.deleteSession(confirmation.computerId, confirmation.sessionId).catch((error: unknown) => {
-        // Deleted already, as when a restart came between the deletion and
-        // recording it, or the session was closed elsewhere meanwhile.
-        if (!isNotFound(error)) throw error
-      })
-      next = { ...message, updatedAt: this.now().toISOString(), confirmation: { ...confirmation, state: 'confirmed' } }
+      const recoverable = await this.hub.closeSession(confirmation.computerId, confirmation.sessionId).then(
+        () => true,
+        (error: unknown) => {
+          // Gone already, as when it was deleted elsewhere meanwhile.
+          if (!isNotFound(error)) throw error
+          return false
+        },
+      )
+      next = {
+        ...message,
+        updatedAt: this.now().toISOString(),
+        confirmation: { ...confirmation, state: 'confirmed', ...(recoverable ? { recoverable: true } : {}) },
+      }
+      const outcome = recoverable
+        ? `it can be reopened for ${CLOSED_SESSION_RETENTION_DAYS} days`
+        : 'it was already gone'
       note = confirmation.decidedBy === 'oracle'
-        ? `You closed ${name} without asking, as the user's setting allows; it is deleted.`
-        : `The user confirmed closing ${name}; it is deleted.`
+        ? `You closed ${name} without asking, as the user's setting allows; ${outcome}.`
+        : `The user confirmed closing ${name}; ${outcome}.`
     } catch (error) {
       next = {
         ...message,
@@ -1078,7 +1092,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.flushDelta()
     const question = reason?.trim()
       ? `Close "${session.title}"? ${reason.trim()}`
-      : `Close "${session.title}"? This permanently deletes it and its history.`
+      : `Close "${session.title}"? You can reopen it from Recently closed for ${CLOSED_SESSION_RETENTION_DAYS} days.`
     await this.updateMessage({
       id: randomUUID(),
       role: 'activity',
@@ -1099,7 +1113,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
 
   /**
    * Closes a session the user's setting lets Oracle close itself. Recorded
-   * as closing before anything is deleted, like a close you confirmed, so a
+   * as closing before anything is closed, like a close you confirmed, so a
    * restart finishes it rather than claiming it happened.
    */
   private async closeWithoutAsking(session: ManagedSession, reason?: string): Promise<ManagerConfirmation> {
@@ -1148,6 +1162,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       findComputer: (nameOrId) => hub.findComputer(nameOrId),
       listSessions: () => hub.listSessions(),
       listHistory: () => hub.listHistory(),
+      listClosedSessions: () => hub.listClosedSessions(),
       readSession: (computerId, sessionId) => hub.readSession(computerId, sessionId),
       askSession: (computerId, sessionId, question) => hub.askSession(computerId, sessionId, question),
       createSession: (computerId, input) => hub.createSession(computerId, input),

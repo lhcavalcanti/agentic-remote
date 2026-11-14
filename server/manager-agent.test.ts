@@ -167,6 +167,7 @@ describe('ManagerAgent', () => {
       listSessionsWithAuthority: vi.fn(async () => ({ sessions, answeredComputerIds: ['hub'] })),
       listSessions: vi.fn(async () => sessions),
       listHistory: vi.fn(async () => []),
+      listClosedSessions: vi.fn(async () => []),
       readSession: vi.fn(async (_computerId: string, id: string) => session(id)),
       validateSessionDirectory: vi.fn(async (_computerId: string, folder: string) => {
         if (folder.includes('missing')) throw Object.assign(new Error('That folder does not exist'), { statusCode: 400 })
@@ -186,7 +187,8 @@ describe('ManagerAgent', () => {
       suspendSession: vi.fn(async (_computerId: string, id: string) => session(id, { suspended: true })),
       resumeSession: vi.fn(async (_computerId: string, id: string) => session(id)),
       cancel: vi.fn(async () => undefined),
-      deleteSession: vi.fn(async () => undefined),
+      closeSession: vi.fn(async (_computerId: string, id: string) =>
+        session(id, { isOpen: false, closedAt: '2026-10-15T12:00:00.000Z' })),
       providerRuntimeOptions: vi.fn(async (): Promise<ProviderRuntimeOptions> => ({
         models: [{ id: 'model-a', name: 'Model A', reasoningEfforts: [], contextTiers: ['default'] }],
       })),
@@ -271,7 +273,7 @@ describe('ManagerAgent', () => {
     expect(input.prompt).toContain('without an explicit request in the user message')
     expect(input.prompt).not.toContain(malicious)
     expect(input.prompt).not.toContain(path.join(store.directory, 'uploads'))
-    expect(hub.deleteSession).not.toHaveBeenCalled()
+    expect(hub.closeSession).not.toHaveBeenCalled()
     expect(hub.sendMessage).not.toHaveBeenCalled()
   })
 
@@ -1520,18 +1522,19 @@ describe('ManagerAgent', () => {
     await settled()
     const request = agent!.snapshot().messages.find((message) => message.confirmation)!
     expect(request.confirmation).toMatchObject({ kind: 'close-session', sessionId: 'existing', state: 'pending' })
-    expect(hub.deleteSession).not.toHaveBeenCalled()
+    expect(hub.closeSession).not.toHaveBeenCalled()
 
     const answered = await agent!.resolveConfirmation(request.id, true)
-    expect(answered.confirmation!.state).toBe('confirmed')
-    expect(hub.deleteSession).toHaveBeenCalledTimes(1)
-    expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'existing')
+    expect(answered.confirmation).toMatchObject({ state: 'confirmed', recoverable: true })
+    expect(request.content).toBe('Close "Session existing"? You can reopen it from Recently closed for 14 days.')
+    expect(hub.closeSession).toHaveBeenCalledTimes(1)
+    expect(hub.closeSession).toHaveBeenCalledWith('hub', 'existing')
     await expect(agent!.resolveConfirmation(request.id, true)).rejects.toMatchObject({ statusCode: 409 })
-    expect(hub.deleteSession).toHaveBeenCalledTimes(1)
+    expect(hub.closeSession).toHaveBeenCalledTimes(1)
 
     await agent!.send('anything else?')
     await settled()
-    expect(sdk.prompts.at(-1)).toContain('The user confirmed closing "Session existing" (existing); it is deleted.')
+    expect(sdk.prompts.at(-1)).toContain('The user confirmed closing "Session existing" (existing); it can be reopened for 14 days.')
     await agent!.send('and now?')
     await settled()
     expect(sdk.prompts.at(-1)).not.toContain('The user confirmed closing')
@@ -1548,7 +1551,7 @@ describe('ManagerAgent', () => {
     await settled()
     const [first, second] = agent!.snapshot().messages.filter((message) => message.confirmation)
     expect((await agent!.resolveConfirmation(first.id, false)).confirmation!.state).toBe('declined')
-    vi.mocked(hub.deleteSession).mockRejectedValueOnce(new Error('node offline'))
+    vi.mocked(hub.closeSession).mockRejectedValueOnce(new Error('node offline'))
     const failed = await agent!.resolveConfirmation(second.id, true)
     expect(failed.confirmation).toMatchObject({ state: 'failed', error: 'node offline' })
     expect(store.state().pendingNotes).toEqual([
@@ -1566,18 +1569,19 @@ describe('ManagerAgent', () => {
     await store.upsertMessage(closing('c1', 'gone-now'))
     await store.upsertMessage(closing('c2', 'unreachable'))
     await store.upsertMessage(closing('c3', 'deleted-before-restart'))
-    vi.mocked(hub.deleteSession).mockImplementation(async (_computerId, sessionId) => {
+    vi.mocked(hub.closeSession).mockImplementation(async (_computerId, sessionId) => {
       if (sessionId === 'unreachable') throw new Error('node offline')
       if (sessionId === 'deleted-before-restart') {
         throw Object.assign(new Error('Session not found'), { statusCode: 404 })
       }
+      return session(sessionId, { isOpen: false })
     })
     await start()
     await vi.waitFor(() => {
       const states = agent!.snapshot().messages.map((message) => message.confirmation?.state)
       expect(states).toEqual(['confirmed', 'failed', 'confirmed'])
     })
-    expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'gone-now')
+    expect(hub.closeSession).toHaveBeenCalledWith('hub', 'gone-now')
     await expect(agent!.resolveConfirmation('c1', true)).rejects.toMatchObject({ statusCode: 409 })
   })
 
@@ -1635,9 +1639,10 @@ describe('ManagerAgent', () => {
 
     it('records the close before deleting, keeps it out of your hands, and tells Oracle in its tool result', async () => {
       await startedByOracle(['existing'])
-      vi.mocked(hub.deleteSession).mockImplementation(async () => {
+      vi.mocked(hub.closeSession).mockImplementation(async (_computerId, sessionId) => {
         const recorded = store.messages().find((message) => message.confirmation)
         expect(recorded?.confirmation).toMatchObject({ state: 'closing', decidedBy: 'oracle' })
+        return session(sessionId, { isOpen: false })
       })
       let result: unknown
       sdk.behaviors.push(async (fakeSession) => {
@@ -1650,8 +1655,8 @@ describe('ManagerAgent', () => {
       await settled()
 
       expect(String(result)).toContain('without asking')
-      expect(hub.deleteSession).toHaveBeenCalledTimes(1)
-      expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'existing')
+      expect(hub.closeSession).toHaveBeenCalledTimes(1)
+      expect(hub.closeSession).toHaveBeenCalledWith('hub', 'existing')
       const closed = agent!.snapshot().messages.find((message) => message.confirmation)!
       expect(closed).toMatchObject({
         role: 'activity', tool: 'close_session', replyTo: sent.id, content: 'Close "Session existing": Its PR merged.',
@@ -1659,6 +1664,7 @@ describe('ManagerAgent', () => {
       })
       expect(closed.confirmation).toEqual({
         kind: 'close-session', computerId: 'hub', sessionId: 'existing', title: 'Session existing', state: 'confirmed', decidedBy: 'oracle',
+        recoverable: true,
       })
       const closedAt = events.findIndex((event) => event.type === 'manager.message' && event.message.confirmation?.state === 'confirmed')
       expect(events.slice(closedAt).some((event) => event.type === 'manager.sessions')).toBe(true)
@@ -1680,12 +1686,12 @@ describe('ManagerAgent', () => {
       await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
       await agent!.send('close my finished sessions')
       await settled()
-      expect(hub.deleteSession).toHaveBeenCalledTimes(5)
+      expect(hub.closeSession).toHaveBeenCalledTimes(5)
       expect(results.filter((result) => result.includes('because Oracle already closed 5 sessions without asking this turn'))).toHaveLength(1)
       const pending = agent!.snapshot().messages.filter((message) => message.confirmation?.state === 'pending')
       expect(pending).toHaveLength(1)
       expect(pending[0].content).toMatch(
-        /^Close "Session mine-[0-5]"\? This permanently deletes it and its history\. Asked because Oracle already closed 5 sessions without asking this turn\.$/,
+        /^Close "Session mine-[0-5]"\? You can reopen it from Recently closed for 14 days\. Asked because Oracle already closed 5 sessions without asking this turn\.$/,
       )
 
       sdk.behaviors.push(async (fakeSession) => {
@@ -1694,7 +1700,7 @@ describe('ManagerAgent', () => {
       })
       await agent!.send('and the last one')
       await settled()
-      expect(hub.deleteSession).toHaveBeenCalledTimes(6)
+      expect(hub.closeSession).toHaveBeenCalledTimes(6)
       expect(results[6]).toContain('without asking')
     })
 
@@ -1708,7 +1714,7 @@ describe('ManagerAgent', () => {
       await agent!.updateSettings({ sessionClosePolicy: 'oracle-started' })
       await agent!.send('close it')
       await settled()
-      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(hub.closeSession).not.toHaveBeenCalled()
       const request = agent!.snapshot().messages.find((message) => message.confirmation)!
       expect(request.confirmation).toMatchObject({ state: 'pending' })
       expect(request.confirmation).not.toHaveProperty('decidedBy')
@@ -1749,8 +1755,8 @@ describe('ManagerAgent', () => {
       release()
       await settled()
 
-      expect(hub.deleteSession).toHaveBeenCalledTimes(5)
-      expect(hub.deleteSession).not.toHaveBeenCalledWith('hub', 'mine-5')
+      expect(hub.closeSession).toHaveBeenCalledTimes(5)
+      expect(hub.closeSession).not.toHaveBeenCalledWith('hub', 'mine-5')
       expect(result).toContain('because Oracle is no longer answering the message that asked for it')
       const asked = agent!.snapshot().messages.find((message) => message.confirmation?.sessionId === 'mine-5')!
       expect(asked).toMatchObject({ replyTo: typed.id, confirmation: { state: 'pending' } })
@@ -1779,7 +1785,7 @@ describe('ManagerAgent', () => {
       await agent!.send('close worker-1, the task is done')
       await settled()
 
-      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(hub.closeSession).not.toHaveBeenCalled()
       expect(String(result)).toContain('because an unfinished Oracle task uses it')
     })
 
@@ -1825,7 +1831,7 @@ describe('ManagerAgent', () => {
       deliver()
       await late()
 
-      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(hub.closeSession).not.toHaveBeenCalled()
       expect(String(result)).toContain('because Oracle may still be finishing work for an earlier message')
     })
 
@@ -1850,7 +1856,7 @@ describe('ManagerAgent', () => {
       write()
       await vi.waitFor(() => expect(store.messages().some((message) => message.tool === 'create_session')).toBe(true))
 
-      expect(hub.deleteSession).not.toHaveBeenCalled()
+      expect(hub.closeSession).not.toHaveBeenCalled()
       expect(String(result)).toContain('because an unfinished Oracle task uses it')
     })
 
@@ -1863,9 +1869,9 @@ describe('ManagerAgent', () => {
       await vi.waitFor(() => {
         expect(agent!.snapshot().messages[0].confirmation).toMatchObject({ state: 'confirmed', decidedBy: 'oracle' })
       })
-      expect(hub.deleteSession).toHaveBeenCalledWith('hub', 'mine')
+      expect(hub.closeSession).toHaveBeenCalledWith('hub', 'mine')
       expect(store.state().pendingNotes).toEqual([
-        'You closed "Mine" (mine) without asking, as the user\'s setting allows; it is deleted.',
+        'You closed "Mine" (mine) without asking, as the user\'s setting allows; it can be reopened for 14 days.',
       ])
     })
   })

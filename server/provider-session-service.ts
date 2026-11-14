@@ -35,6 +35,7 @@ import {
   ResourceReads,
 } from './session-resources.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
+import { ClosedSessionSweeper } from './closed-session-sweeper.js'
 
 interface ProviderSessionServiceEvents {
   event: [event: ServerEvent]
@@ -47,6 +48,7 @@ export class ProviderSessionService
   private resourcesStopped = false
   private resourceEpoch = 0
   private readonly resourceReads = new ResourceReads()
+  private readonly closedSessions = new ClosedSessionSweeper(this)
 
   constructor(
     private readonly copilot: SessionService,
@@ -72,12 +74,14 @@ export class ProviderSessionService
       await this.copilot.stop()
       throw error
     }
+    this.closedSessions.start()
   }
 
   async stop(): Promise<void> {
     this.resourceReads.stop()
     this.resourcesStopped = true
     this.resourceEpoch += 1
+    await this.closedSessions.stop()
     const results = await Promise.allSettled([
       this.claude.stop(),
       this.copilot.stop(),
@@ -104,6 +108,13 @@ export class ProviderSessionService
       ...this.copilot.listHistory(),
       ...this.claude.listHistory(),
     ])
+  }
+
+  listClosedSessions(): SessionDetail[] {
+    return [
+      ...(this.copilot.listClosedSessions?.() ?? []),
+      ...(this.claude.listClosedSessions?.() ?? []),
+    ].sort((left, right) => (right.closedAt ?? '').localeCompare(left.closedAt ?? ''))
   }
 
   getSession(id: string): SessionDetail | undefined {
@@ -370,6 +381,21 @@ export class ProviderSessionService
 
   deleteSession(sessionId: string): Promise<void> {
     return this.serviceFor(sessionId).deleteSession(sessionId)
+  }
+
+  async closeSession(sessionId: string): Promise<SessionDetail> {
+    const service = this.serviceFor(sessionId)
+    if (!service.closeSession) {
+      throw Object.assign(new Error('This provider cannot keep a closed session to reopen.'), { statusCode: 409 })
+    }
+    return service.closeSession(sessionId)
+  }
+
+  async deleteExpiredClosedSession(sessionId: string, closedBefore: number): Promise<boolean> {
+    const service = this.copilot.getSession(sessionId)
+      ? this.copilot
+      : this.claude.getSession(sessionId) ? this.claude : undefined
+    return service?.deleteExpiredClosedSession?.(sessionId, closedBefore) ?? false
   }
 
   replyPermission(

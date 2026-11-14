@@ -715,6 +715,19 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
+  async closeSession(sessionId: string): Promise<SessionDetail> {
+    const response = await this.request<{ session: SessionDetail }>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/close`,
+      { method: 'POST', body: '{}' },
+    )
+    return response.session
+  }
+
+  async listClosedSessions(): Promise<SessionDetail[]> {
+    const response = await this.request<{ sessions: SessionDetail[] }>('/node-api/closed-sessions')
+    return response.sessions
+  }
+
   async replyPermission(
     sessionId: string,
     requestId: string,

@@ -90,6 +90,8 @@ function NavigationHarness({
   pendingCreations,
   closingSessions = new Set<string>(),
   suspendingSessions = new Set<string>(),
+  recentlyClosedCount,
+  onOpenRecentlyClosed,
 }: {
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
@@ -106,6 +108,8 @@ function NavigationHarness({
   pendingCreations?: PendingSessionCreation[]
   closingSessions?: ReadonlySet<string>
   suspendingSessions?: ReadonlySet<string>
+  recentlyClosedCount?: number
+  onOpenRecentlyClosed?: () => void
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
@@ -157,6 +161,8 @@ function NavigationHarness({
         pendingCreations={pendingCreations}
         selectedKey="studio:review"
         sort={sort}
+        recentlyClosedCount={recentlyClosedCount}
+        onOpenRecentlyClosed={onOpenRecentlyClosed}
       />
     </DndContext>
   )
@@ -727,6 +733,39 @@ describe('session navigation', () => {
     )
     // Another session's suspend or resume does not hold this one back.
     expect(suspendTitle('Waiting agent')).toBeEnabled()
+  })
+
+  it('says Close keeps a session reopenable where its computer keeps closed sessions', () => {
+    const keeping = computers.map((computer) => computer.id === 'studio'
+      ? {
+          ...computer,
+          providers: [{
+            id: 'copilot' as const, name: 'GitHub Copilot', available: true,
+            terminalBacked: true, supportsRecoverableClose: true,
+          }],
+        }
+      : computer)
+    render(<NavigationHarness computerList={keeping} />)
+
+    expect(screen.getByRole('button', { name: 'Close Review the release' })).toHaveAttribute(
+      'title', 'Close this session; you can reopen it from Recently closed',
+    )
+    expect(screen.getByRole('button', { name: 'Close Build docs' })).toHaveAttribute(
+      'title', 'Permanently delete this session and its history',
+    )
+  })
+
+  it('ends the list with Recently closed and how many it holds', () => {
+    const onOpen = vi.fn()
+    const { rerender } = render(<NavigationHarness onOpenRecentlyClosed={onOpen} recentlyClosedCount={3} />)
+    const entry = screen.getByRole('button', { name: 'Recently closed, 3 sessions' })
+    const lastGroup = screen.getByRole('region', { name: 'Travel laptop' })
+
+    expect(lastGroup.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    fireEvent.click(entry)
+    expect(onOpen).toHaveBeenCalledOnce()
+    rerender(<NavigationHarness onOpenRecentlyClosed={onOpen} />)
+    expect(screen.getByRole('button', { name: 'Recently closed' })).toBeInTheDocument()
   })
 
   it('holds back only the session that is closing', () => {

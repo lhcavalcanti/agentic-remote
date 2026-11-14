@@ -10,6 +10,8 @@ import type {
   QueuedPrompt,
   SessionFileUpload,
   SessionDetail,
+  SessionInterruption,
+  SessionInterruptionCause,
   SessionRuntimeInfo,
   SessionRecoveryReason,
   SessionStatus,
@@ -250,6 +252,43 @@ function activityDuration(startedAt: string, completedAt: string): number | unde
 function activityResultPreview(value: string): string {
   const normalized = value.replace(/\s+/g, ' ').trim()
   return normalized.length > 320 ? `${normalized.slice(0, 319)}…` : normalized
+}
+
+const INTERRUPTION_MESSAGE_LIMIT = 200
+
+function interruptionMessage(value: string | undefined): string | undefined {
+  const normalized = value?.replace(/\s+/g, ' ').trim()
+  if (!normalized) return undefined
+  return normalized.length > INTERRUPTION_MESSAGE_LIMIT
+    ? `${normalized.slice(0, INTERRUPTION_MESSAGE_LIMIT - 1)}…`
+    : normalized
+}
+
+function isSameInterruption(left: SessionInterruption | undefined, right: SessionInterruption): boolean {
+  return left?.detectedAt === right.detectedAt && left.cause === right.cause &&
+    left.message === right.message
+}
+
+function logInterruption(sessionId: string, interruption: SessionInterruption): void {
+  console.info(JSON.stringify({
+    sessionLifecycle: 'interrupted',
+    sessionId,
+    cause: interruption.cause,
+    at: interruption.detectedAt,
+    ...(interruption.message ? { message: interruption.message } : {}),
+  }))
+}
+
+// Every interruption is recorded through a commit, so comparing what each one
+// installed logs each newly recorded interruption once, whichever path made it.
+function logRecordedInterruptions(previous: StoredState, committed: StoredState): void {
+  for (const [id, session] of Object.entries(committed.sessions)) {
+    const before = previous.sessions[id]
+    if (session === before || !session?.interruption) continue
+    if (!isSameInterruption(before?.interruption, session.interruption)) {
+      logInterruption(id, session.interruption)
+    }
+  }
 }
 
 function archivedMessage(message: ChatMessage): ChatMessage {
@@ -571,6 +610,7 @@ export class SessionStore {
     for (const recovery of Object.values(recoveries)) validateSdkRestartRecovery(recovery)
     for (const reply of Object.values(replies)) validateSdkAcceptedReply(reply)
     const legacyRetirements: string[] = []
+    const interrupted: string[] = []
     let staleSdkInteractionMarked = Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
       Object.keys(replies).some((id) => !Object.hasOwn(loaded.sessions, id))
     for (const [id, session] of Object.entries(loaded.sessions)) {
@@ -603,7 +643,11 @@ export class SessionStore {
       if (session.interruption !== undefined && (
         !session.interruption || typeof session.interruption !== 'object' ||
         !Number.isFinite(Date.parse(session.interruption.detectedAt)) ||
-        !['idle', 'running', 'waiting', 'error'].includes(session.interruption.previousStatus)
+        !['idle', 'running', 'waiting', 'error'].includes(session.interruption.previousStatus) ||
+        // An unknown cause is kept: a newer release may have recorded it.
+        (session.interruption.cause !== undefined &&
+          (typeof session.interruption.cause !== 'string' || !session.interruption.cause)) ||
+        (session.interruption.message !== undefined && typeof session.interruption.message !== 'string')
       )) throw new Error('Invalid session interruption metadata')
       if (session.sdkRestartRecovery !== undefined) {
         validateSdkRestartRecovery(session.sdkRestartRecovery)
@@ -644,8 +688,9 @@ export class SessionStore {
           session.isOpen && Boolean(session.sdkAcceptedReply))
       )) {
         session.interruption = {
-          detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+          detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status, cause: 'restart',
         }
+        interrupted.push(id)
         staleSdkInteractionMarked = true
       }
       if (session.backend === 'sdk' && session.interruption) {
@@ -784,6 +829,10 @@ export class SessionStore {
     this.state = loaded
     this.checkpoint = loaded
     this.liveMutableSessions = new WeakSet()
+    for (const id of interrupted) {
+      const interruption = loaded.sessions[id]?.interruption
+      if (interruption) logInterruption(id, interruption)
+    }
   }
 
   list(): SessionDetail[] {
@@ -1147,6 +1196,7 @@ export class SessionStore {
           : isOpen && session.backend === 'terminal' && !session.suspended
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+              cause: retainQueuedTerminal ? 'queue-held' : 'terminal-stopped',
             }
             : session.interruption
         const stalePermission = Boolean(interruption && session.pendingPermission && !session.pendingPermission.stale)
@@ -1196,6 +1246,7 @@ export class SessionStore {
           const interruption = retainQueuedTerminal
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+              cause: 'queue-held',
             }
             : undefined
           if (
@@ -1308,15 +1359,31 @@ export class SessionStore {
   }
 
   /**
+   * Records why a session was interrupted. An existing interruption keeps its
+   * cause unless `replace` is set: a failed relaunch explains an interruption
+   * discovery already recorded better, so it takes over the cause and keeps
+   * when the interruption was detected.
+   *
    * `retainedQueueOnly` re-checks at commit that the record still holds a
    * queue it may not deliver, so a Reopen or recovery grant that landed after
    * the caller decided is not interrupted again.
    */
-  async markInterrupted(sessionId: string, retainedQueueOnly = false): Promise<SessionDetail> {
+  async markInterrupted(
+    sessionId: string,
+    cause: SessionInterruptionCause,
+    options: { message?: string; replace?: boolean; retainedQueueOnly?: boolean } = {},
+  ): Promise<SessionDetail> {
+    const message = interruptionMessage(options.message)
+    const replaces = (session: StoredSession) => Boolean(options.replace && session.interruption &&
+      (session.interruption.cause !== cause || session.interruption.message !== message))
     return this.mutate(sessionId, (session) => {
-      session.interruption ??= {
-        detectedAt: new Date(this.now()).toISOString(),
-        previousStatus: session.status,
+      if (!session.interruption || replaces(session)) {
+        session.interruption = {
+          detectedAt: session.interruption?.detectedAt ?? new Date(this.now()).toISOString(),
+          previousStatus: session.interruption?.previousStatus ?? session.status,
+          cause,
+          ...(message ? { message } : {}),
+        }
       }
       if (session.backend === 'sdk') {
         session.sdkRestartRecovery ??= {
@@ -1328,8 +1395,8 @@ export class SessionStore {
       }
       if (session.pendingPermission) session.pendingPermission.stale = true
       if (session.pendingUserInput) session.pendingUserInput.stale = true
-    }, (session) => (!retainedQueueOnly || requiresExplicitTerminalReopen(session)) && (
-      !session.interruption ||
+    }, (session) => (!options.retainedQueueOnly || requiresExplicitTerminalReopen(session)) && (
+      !session.interruption || replaces(session) ||
       Boolean(session.pendingPermission && !session.pendingPermission.stale) ||
       Boolean(session.pendingUserInput && !session.pendingUserInput.stale)))
   }
@@ -1592,6 +1659,7 @@ export class SessionStore {
       session.interruption = {
         detectedAt: session.sdkRestartRecovery.detectedAt,
         previousStatus: session.sdkRestartRecovery.previousStatus,
+        cause: 'recovery-cancelled',
       }
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
       state.sessions[sessionId] = session
@@ -1652,7 +1720,9 @@ export class SessionStore {
     sessionId: string,
     suspended: boolean,
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    let changed = false
+    const session = await this.mutate(sessionId, (session) => {
+      changed = Boolean(session.suspended) !== suspended
       session.suspended = suspended
       // A suspended session is put down on purpose, not found missing, and it
       // keeps its place in the list either way. Written here so the state is
@@ -1671,6 +1741,15 @@ export class SessionStore {
       // it here would send a session to the top of the list for being put
       // down -- the opposite of keeping the place it had.
     })
+    // Both providers suspend and resume through here, once the change is durable.
+    if (changed) {
+      console.info(JSON.stringify({
+        sessionLifecycle: suspended ? 'suspended' : 'resumed',
+        sessionId,
+        at: new Date(this.now()).toISOString(),
+      }))
+    }
+    return session
   }
 
   async setBackend(
@@ -3313,9 +3392,10 @@ export class SessionStore {
       // I/O belongs to the next write, never to this write's acknowledgement.
       this.pendingPersist = undefined
       const changes = this.takeBatch()
+      const previous = this.checkpoint
       let candidate = {
-        ...this.checkpoint,
-        sessions: { ...this.checkpoint.sessions },
+        ...previous,
+        sessions: { ...previous.sessions },
       }
       const mutableSessions = new WeakSet<StoredSession>()
       const applied: (() => void)[] = []
@@ -3378,6 +3458,7 @@ export class SessionStore {
       } finally {
         this.writingState = undefined
       }
+      logRecordedInterruptions(previous, candidate)
       // Read results only after installation, including newer live deltas and
       // the rest of this successful batch, never a later uncommitted mutation.
       for (const resolve of applied) {

@@ -181,7 +181,7 @@ describe('ClaudeAgentService', () => {
     )
     services.add(restarted)
     await restarted.start()
-    expect(restarted.getSession(id)?.interruption).toBeDefined()
+    expect(restarted.getSession(id)?.interruption).toMatchObject({ cause: 'restart' })
     const queries = f.queryCalls.length
     await restarted.activateSession(id)
     expect(f.queryCalls).toHaveLength(queries)
@@ -251,7 +251,7 @@ describe('ClaudeAgentService', () => {
       session.status = 'error'
       session.failedPrompt = { content: 'Lost', failedAt: 'token-1' }
     })
-    await f.service.store.markInterrupted(created.id)
+    await f.service.store.markInterrupted(created.id, 'restart')
     await expect(f.service.sendMessage(created.id, 'Lost', true, 'token-1')).rejects.toMatchObject({ statusCode: 409 })
     await expect(f.service.sendMessage(created.id, 'Queued', true)).rejects.toMatchObject({ statusCode: 409 })
     expect(f.service.store.get(created.id)?.failedPrompt).toEqual({ content: 'Lost', failedAt: 'token-1' })
@@ -286,7 +286,7 @@ describe('ClaudeAgentService', () => {
         session.archivedAt = '2026-10-19T00:00:00Z'
       }
     })
-    if (state === 'interrupted') await f.service.store.markInterrupted(created.id)
+    if (state === 'interrupted') await f.service.store.markInterrupted(created.id, 'restart')
     const before = f.service.store.get(created.id)?.runtime
     await expect(f.service.configureRuntime(created.id, {
       model: 'provider-model', reasoningEffort: 'low', contextTier: 'default', mode: 'plan',
@@ -332,7 +332,7 @@ describe('ClaudeAgentService', () => {
       session.queuedPrompts = queued
       session.queuedCount = 2
     })
-    await f.service.store.markInterrupted(created.id)
+    await f.service.store.markInterrupted(created.id, 'restart')
     const queries = f.queryCalls.length
     const attempts = [
       () => f.service.updateQueuedPrompt(created.id, 'first', 'Rewritten'),
@@ -1220,6 +1220,23 @@ describe('ClaudeAgentService', () => {
       })
     }
     expect(service.getSession(session.id)?.suspended).toBeFalsy()
+  })
+
+  it('logs each completed suspend and resume once', async () => {
+    const { directory, service } = await fixture(async function* () {})
+    const session = await service.createSession(directory, false, true, 'claude')
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    await service.suspendSession(session.id)
+    await service.suspendSession(session.id)
+    await service.resumeSession(session.id)
+    await service.resumeSession(session.id)
+
+    expect(info.mock.calls.flat().filter((line) => typeof line === 'string' && line.includes('sessionLifecycle')))
+      .toEqual([
+        expect.stringContaining(`"sessionLifecycle":"suspended","sessionId":"${session.id}"`),
+        expect.stringContaining(`"sessionLifecycle":"resumed","sessionId":"${session.id}"`),
+      ])
   })
 
   it('leaves a suspended session where it was when the send is refused', async () => {

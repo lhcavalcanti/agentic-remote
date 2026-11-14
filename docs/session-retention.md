@@ -62,9 +62,11 @@ Lifecycle upserts carry interruption/archive metadata to all connected clients,
 including patched connections. Retention-capable nodes include archival metadata
 in authenticated snapshots, so reconnect distinguishes retained history from
 explicit deletion without fetching each archived transcript. Metadata-only lifecycle logs identify the
-session, transition, and UTC detection time; they contain no prompts or provider
-credentials. Concurrent lifecycle changes invalidate stale discovery; retention
-is decided against the current durable record, not a previously read snapshot.
+session, transition, interruption cause, and UTC detection time (with a failed
+relaunch's bounded error), and record each completed suspend and resume; they
+contain no prompts or provider credentials. Concurrent lifecycle changes
+invalidate stale discovery; retention is decided against the current durable
+record, not a previously read snapshot.
 An authoritative refresh keeps an unlisted archived row only while it is the
 open conversation, and drops it when its detail is gone, so a missed deletion
 event cannot leave a deleted session selected.

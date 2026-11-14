@@ -16,7 +16,19 @@ interface SessionOrderState {
    */
   bootstrapped: boolean
   showSuspended: boolean
+  showHidden: boolean
+  /**
+   * Sessions left out of the Sessions list. A key is only added while its
+   * lane holds it, and leaves with it, so this never outgrows the order.
+   */
+  hidden: string[]
   order: Record<string, string[]>
+}
+
+/** The shared list visibility a client may change; omitted fields keep their value. */
+export interface SessionVisibility {
+  showSuspended?: boolean
+  showHidden?: boolean
 }
 
 export function sessionOrderKey(computerId: string, sessionId: string): string {
@@ -51,6 +63,8 @@ export class SessionOrderStore {
     revision: 0,
     bootstrapped: false,
     showSuspended: true,
+    showHidden: false,
+    hidden: [],
     order: {},
   }
   /**
@@ -59,6 +73,13 @@ export class SessionOrderStore {
    * disk, or undo a newer write while restoring their own.
    */
   private commits: Promise<unknown> = Promise.resolve()
+  /**
+   * Hidden sessions a plain removal took out of the list. A node that
+   * predates replacement links reports a clear that way before its response
+   * names the successor, which then inherits this; a Show in between clears
+   * it. Nothing else reads it, so it stays in memory and small.
+   */
+  private retiredHidden = new Set<string>()
 
   constructor(private readonly directory: string) {
     this.statePath = path.join(directory, 'session-order.json')
@@ -103,6 +124,9 @@ export class SessionOrderStore {
       revision: typeof parsed.revision === 'number' && parsed.revision >= 0 ? parsed.revision : 0,
       bootstrapped: parsed.bootstrapped === true,
       showSuspended: parsed.showSuspended !== false,
+      // A file from before sessions could be hidden has neither field.
+      showHidden: parsed.showHidden === true,
+      hidden: laneFrom(parsed.hidden) ?? [],
       order,
     }
   }
@@ -112,6 +136,8 @@ export class SessionOrderStore {
       revision: this.state.revision,
       bootstrapped: this.state.bootstrapped,
       showSuspended: this.state.showSuspended,
+      showHidden: this.state.showHidden,
+      hidden: [...this.state.hidden],
       order: structuredClone(this.state.order),
     }
   }
@@ -121,11 +147,52 @@ export class SessionOrderStore {
     return this.state.bootstrapped
   }
 
-  /** Shares suspended-session visibility across every browser on this hub. */
-  async setShowSuspended(showSuspended: boolean): Promise<SessionOrderSnapshot> {
+  /** Shares suspended- and hidden-session visibility across every browser on this hub. */
+  async setVisibility(visibility: SessionVisibility): Promise<SessionOrderSnapshot> {
     return this.commit((_order, state) => {
-      if (state.showSuspended === showSuspended) return false
-      state.showSuspended = showSuspended
+      let changed = false
+      if (
+        visibility.showSuspended !== undefined &&
+        state.showSuspended !== visibility.showSuspended
+      ) {
+        state.showSuspended = visibility.showSuspended
+        changed = true
+      }
+      if (visibility.showHidden !== undefined && state.showHidden !== visibility.showHidden) {
+        state.showHidden = visibility.showHidden
+        changed = true
+      }
+      return changed
+    })
+  }
+
+  /**
+   * Leaves a session out of the Sessions list, or puts it back. Nothing about
+   * the session itself changes. Only a session its lane holds can be hidden,
+   * so a forged or stale key cannot accumulate; showing one is always safe.
+   */
+  async setSessionHidden(
+    computerId: string,
+    sessionId: string,
+    hidden: boolean,
+  ): Promise<SessionOrderSnapshot> {
+    const key = sessionOrderKey(computerId, sessionId)
+    return this.commit((order, state) => {
+      if (!hidden) this.retiredHidden.delete(key)
+      if (state.hidden.includes(key) === hidden) return false
+      if (!hidden) {
+        state.hidden = state.hidden.filter((entry) => entry !== key)
+        return true
+      }
+      // Checked inside the commit: a removal queued ahead of this hide has
+      // already retired the key, and hiding it would bring it back.
+      if (!(order[computerId] ?? []).includes(key)) {
+        throw Object.assign(
+          new Error(`Session ${key} is not in the session list; reload the session list`),
+          { statusCode: 409 },
+        )
+      }
+      state.hidden = [...state.hidden, key]
       return true
     })
   }
@@ -230,7 +297,8 @@ export class SessionOrderStore {
    *
    * `fallbackIndex` covers a legacy node whose plain removal already retired
    * the predecessor before the clear response named its successor: the slot is
-   * read before the clear and restored here.
+   * read before the clear and restored here. Whether it was hidden is what
+   * that removal retired.
    */
   async replaceSession(
     computerId: string,
@@ -241,7 +309,15 @@ export class SessionOrderStore {
     if (previousSessionId === nextSessionId) return this.snapshot()
     const previous = sessionOrderKey(computerId, previousSessionId)
     const next = sessionOrderKey(computerId, nextSessionId)
-    return this.commit((order) => {
+    return this.commit((order, state) => {
+      // Clearing replaces the identity, not the decision to keep it out of
+      // the list.
+      const retired = this.retiredHidden.delete(previous)
+      const carried = state.hidden.includes(previous) || retired
+      const hidden = state.hidden.filter((key) => key !== previous)
+      if (carried && !hidden.includes(next)) hidden.push(next)
+      const hiddenChanged = !sameLane(state.hidden, hidden)
+      state.hidden = hidden
       const lane = order[computerId] ?? []
       const index = lane.indexOf(previous)
       if (index >= 0) {
@@ -257,12 +333,12 @@ export class SessionOrderStore {
       if (already >= 0) {
         // The successor is present. Only move it if the remembered slot is a
         // better answer than where a plain append happened to leave it.
-        if (fallbackIndex === undefined || fallbackIndex >= lane.length) return false
+        if (fallbackIndex === undefined || fallbackIndex >= lane.length) return hiddenChanged
         const without = lane.filter((key) => key !== next)
         const target = Math.min(Math.max(fallbackIndex, 0), without.length)
         const restored = [...without]
         restored.splice(target, 0, next)
-        if (sameLane(lane, restored)) return false
+        if (sameLane(lane, restored)) return hiddenChanged
         order[computerId] = restored
         return true
       }
@@ -279,20 +355,36 @@ export class SessionOrderStore {
 
   async removeSession(computerId: string, sessionId: string): Promise<SessionOrderSnapshot> {
     const key = sessionOrderKey(computerId, sessionId)
-    return this.commit((order) => {
+    return this.commit((order, state) => {
       const lane = order[computerId]
-      if (!lane?.includes(key)) return false
-      const next = lane.filter((entry) => entry !== key)
-      if (next.length === 0) delete order[computerId]
-      else order[computerId] = next
+      const listed = lane?.includes(key) === true
+      const hidden = state.hidden.includes(key)
+      if (!listed && !hidden) return false
+      if (lane && listed) {
+        const next = lane.filter((entry) => entry !== key)
+        if (next.length === 0) delete order[computerId]
+        else order[computerId] = next
+      }
+      if (hidden) {
+        state.hidden = state.hidden.filter((entry) => entry !== key)
+        this.retiredHidden.add(key)
+        // Only a clear's own response comes back for one, moments later.
+        const [oldest] = this.retiredHidden
+        if (this.retiredHidden.size > 64 && oldest !== undefined) {
+          this.retiredHidden.delete(oldest)
+        }
+      }
       return true
     })
   }
 
   async removeComputer(computerId: string): Promise<SessionOrderSnapshot> {
-    return this.commit((order) => {
-      if (!(computerId in order)) return false
+    return this.commit((order, state) => {
+      const hidden = state.hidden.filter((key) => !key.startsWith(`${computerId}:`))
+      const hiddenChanged = hidden.length !== state.hidden.length
+      if (!(computerId in order) && !hiddenChanged) return false
       delete order[computerId]
+      state.hidden = hidden
       return true
     })
   }
@@ -311,8 +403,14 @@ export class SessionOrderStore {
   ): Promise<SessionOrderSnapshot> {
     const run = this.commits.then(async () => {
       const previous = this.state
+      // Restored with the state, so a refused write can be retried.
+      const retired = new Set(this.retiredHidden)
       const draft = structuredClone(previous.order)
-      const staged: SessionOrderState = { ...previous, order: draft }
+      const staged: SessionOrderState = {
+        ...previous,
+        hidden: [...previous.hidden],
+        order: draft,
+      }
       if (!mutate(draft, staged)) {
         return this.snapshot()
       }
@@ -321,6 +419,8 @@ export class SessionOrderStore {
         revision: previous.revision + 1,
         bootstrapped: staged.bootstrapped,
         showSuspended: staged.showSuspended,
+        showHidden: staged.showHidden,
+        hidden: staged.hidden,
         order: draft,
       }
       try {
@@ -330,6 +430,7 @@ export class SessionOrderStore {
         // clients would converge on an order the hub forgets on restart.
         // Nothing else is in flight, so the previous state is still current.
         this.state = previous
+        this.retiredHidden = retired
         throw error
       }
       return this.snapshot()

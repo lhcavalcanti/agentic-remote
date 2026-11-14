@@ -66,6 +66,8 @@ import {
   listComputers,
   fetchSessionOrder,
   saveSessionVisibility,
+  saveHiddenSessionVisibility,
+  saveSessionHidden,
   saveSessionOrderLane,
   bootstrapSessionOrder,
   fetchSettingsProfile,
@@ -147,6 +149,8 @@ let hubSessionOrder: {
   revision: number
   bootstrapped: boolean
   showSuspended: boolean
+  showHidden?: boolean
+  hidden?: string[]
   order: Record<string, string[]>
 } = { revision: 0, bootstrapped: false, showSuspended: true, order: {} }
 
@@ -230,6 +234,8 @@ vi.mock('./api', async (importOriginal) => ({
   listSessionListing: vi.fn(),
   fetchSessionOrder: vi.fn(),
   saveSessionVisibility: vi.fn(),
+  saveHiddenSessionVisibility: vi.fn(),
+  saveSessionHidden: vi.fn(),
   saveSessionOrderLane: vi.fn(),
   bootstrapSessionOrder: vi.fn(),
   fetchSettingsProfile: vi.fn(),
@@ -2117,9 +2123,9 @@ describe('App', () => {
     vi.mocked(bootstrapSessionOrder).mockImplementation(async (order) => {
       if (!hubSessionOrder.bootstrapped) {
         hubSessionOrder = {
+          ...hubSessionOrder,
           revision: hubSessionOrder.revision + 1,
           bootstrapped: true,
-          showSuspended: hubSessionOrder.showSuspended,
           order: { ...hubSessionOrder.order, ...structuredClone(order) },
         }
       }
@@ -2127,9 +2133,8 @@ describe('App', () => {
     })
     vi.mocked(saveSessionOrderLane).mockImplementation(async (computerId, lane) => {
       hubSessionOrder = {
+        ...hubSessionOrder,
         revision: hubSessionOrder.revision + 1,
-        bootstrapped: hubSessionOrder.bootstrapped,
-        showSuspended: hubSessionOrder.showSuspended,
         order: { ...hubSessionOrder.order, [computerId]: [...lane] },
       }
       return structuredClone(hubSessionOrder)
@@ -2139,6 +2144,24 @@ describe('App', () => {
         ...hubSessionOrder,
         revision: hubSessionOrder.revision + 1,
         showSuspended,
+      }
+      return structuredClone(hubSessionOrder)
+    })
+    vi.mocked(saveHiddenSessionVisibility).mockImplementation(async (showHidden) => {
+      hubSessionOrder = {
+        ...hubSessionOrder,
+        revision: hubSessionOrder.revision + 1,
+        showHidden,
+      }
+      return structuredClone(hubSessionOrder)
+    })
+    vi.mocked(saveSessionHidden).mockImplementation(async (computerId, sessionId, hidden) => {
+      const key = `${computerId}:${sessionId}`
+      const others = (hubSessionOrder.hidden ?? []).filter((entry) => entry !== key)
+      hubSessionOrder = {
+        ...hubSessionOrder,
+        revision: hubSessionOrder.revision + 1,
+        hidden: hidden ? [...others, key] : others,
       }
       return structuredClone(hubSessionOrder)
     })
@@ -21209,6 +21232,384 @@ describe('App', () => {
     await waitFor(() => expect(saveSessionVisibility).toHaveBeenLastCalledWith(true))
     await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'))
     expect(screen.getByRole('searchbox', { name: 'Search sessions' })).toHaveValue('')
+  })
+
+  it('hides the open session from the list without changing it, and follows other devices', async () => {
+    const other = { ...session, id: 'other-work', title: 'Other work', messages: [] }
+    const items = [session, other]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    hubSessionOrder = {
+      revision: 3,
+      bootstrapped: true,
+      showSuspended: true,
+      order: { [computer.id]: items.map((item) => `${computer.id}:${item.id}`) },
+    }
+    window.history.replaceState({}, '', `/?computer=${computer.id}&session=${session.id}`)
+
+    render(<App />)
+    const draft = await screen.findByLabelText('Message')
+    fireEvent.change(draft, { target: { value: 'Keep this draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Hide Project chat from the list' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull(),
+    )
+    expect(saveSessionHidden).toHaveBeenCalledWith(computer.id, session.id, true)
+    expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden1')
+    expect(screen.getByRole('button', { name: /^Other work,/ })).toBeVisible()
+    expect(screen.getByLabelText('Message')).toHaveValue('Keep this draft')
+    expect(window.location.search).toContain(`session=${session.id}`)
+
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.order.updated',
+          order: { ...hubSessionOrder, revision: hubSessionOrder.revision + 1, hidden: [] },
+        }),
+      } as MessageEvent)
+    })
+    expect(screen.getByRole('button', { name: /^Project chat,/ })).toHaveAttribute(
+      'aria-current', 'page',
+    )
+    expect(screen.queryByRole('button', { name: 'Include hidden sessions' })).toBeNull()
+  })
+
+  it('keeps a session listed and reports it when the hub refuses to hide it', async () => {
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(saveSessionHidden).mockRejectedValueOnce(new Error('Hub unavailable'))
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Hide Project chat from the list' }))
+
+    expect(await within(screen.getByRole('main'))
+      .findByText('Could not hide Project chat from the list: Hub unavailable')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^Project chat,/ })).not
+      .toHaveAccessibleName(/hidden from the list/)
+    expect(screen.getByRole('button', { name: 'Hide Project chat from the list' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Include hidden sessions' })).toBeNull()
+  })
+
+  it('shows hidden sessions on every device, and keeps the committed choice when saving fails', async () => {
+    const tucked = { ...session, id: 'tucked', title: 'Tucked away', messages: [] }
+    const items = [session, tucked]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      showSuspended: true,
+      hidden: [`${computer.id}:tucked`],
+      order: { [computer.id]: items.map((item) => `${computer.id}:${item.id}`) },
+    }
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    const toggle = await screen.findByRole('button', { name: 'Include hidden sessions' })
+    await waitFor(() => expect(toggle).toHaveTextContent('Hidden1'))
+    expect(screen.queryByRole('button', { name: /^Tucked away,/ })).toBeNull()
+
+    vi.mocked(saveHiddenSessionVisibility).mockRejectedValueOnce(new Error('Hub unavailable'))
+    fireEvent.click(toggle)
+    expect(await screen.findAllByText(
+      'Could not save hidden-session visibility: Hub unavailable',
+    )).not.toHaveLength(0)
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('button', { name: /^Tucked away,/ })).toBeNull()
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(saveHiddenSessionVisibility).toHaveBeenLastCalledWith(true))
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.getByRole('button', { name: /^Tucked away,/ }))
+      .toHaveAccessibleName(/hidden from the list/)
+
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.order.updated',
+          order: { ...hubSessionOrder, revision: hubSessionOrder.revision + 1, showHidden: false },
+        }),
+      } as MessageEvent)
+    })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('button', { name: /^Tucked away,/ })).toBeNull()
+  })
+
+  it('keeps a cleared hidden session out of the list under its new identity', async () => {
+    const tucked = { ...session, id: 'tucked', title: 'Tucked away', messages: [] }
+    const items = [session, tucked]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? items[0],
+    )
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      showSuspended: true,
+      hidden: [`${computer.id}:tucked`],
+      order: { [computer.id]: items.map((item) => `${computer.id}:${item.id}`) },
+    }
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    const toggle = await screen.findByRole('button', { name: 'Include hidden sessions' })
+    await waitFor(() => expect(toggle).toHaveTextContent('Hidden1'))
+
+    // The hub's own snapshot follows; the replacement must not show meanwhile.
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.removed',
+          computerId: computer.id,
+          sessionId: 'tucked',
+          replacedBy: 'tucked-cleared',
+        }),
+      } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({
+          type: 'session.upserted',
+          session: { ...tucked, id: 'tucked-cleared', replacedSessionIds: ['tucked'] },
+        }),
+      } as MessageEvent)
+    })
+    expect(screen.queryByRole('button', { name: /^Tucked away,/ })).toBeNull()
+    expect(toggle).toHaveTextContent('Hidden1')
+  })
+
+  it('keeps a hidden session cleared on a node without replacement links out of the list', async () => {
+    const other = { ...session, id: 'other-work', title: 'Other work', messages: [] }
+    const items = [session, other]
+    const replacement = { ...session, id: 'session-1-cleared', messages: [] }
+    const created = { ...session, id: 'fresh-work', title: 'Fresh work', messages: [] }
+    const key = (id: string) => `${computer.id}:${id}`
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = [...items, replacement, created].find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      showSuspended: true,
+      hidden: [key(session.id)],
+      order: { [computer.id]: items.map((item) => key(item.id)) },
+    }
+    window.history.replaceState({}, '', `/?computer=${computer.id}&session=${session.id}`)
+    let answerClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(() =>
+      new Promise((resolve) => { answerClear = resolve }),
+    )
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden1'))
+
+    fireEvent.click(sessionAction('Clear conversation'))
+    await waitFor(() => expect(answerClear).toBeDefined())
+    // Such a node reports a plain removal, then a session nothing links to it.
+    act(() => {
+      for (const event of [
+        { type: 'session.removed', computerId: computer.id, sessionId: session.id },
+        { type: 'session.upserted', session: replacement },
+        { type: 'session.upserted', session: created },
+      ]) {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify(event),
+        } as MessageEvent)
+      }
+    })
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+
+    // The hub hides the successor once the clear's response names it.
+    hubSessionOrder = {
+      ...hubSessionOrder,
+      revision: 6,
+      hidden: [key(replacement.id)],
+      order: { [computer.id]: [key(replacement.id), key(other.id), key(created.id)] },
+    }
+    await act(async () => {
+      answerClear?.(replacement)
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Fresh work,/ })).toBeVisible(),
+    )
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden1')
+    confirmSpy.mockRestore()
+  })
+
+  it('keeps holding one hidden replacement while another overlaps it', async () => {
+    const errored = { ...session, id: 'errored-work', title: 'Errored work', status: 'error' as const, messages: [] }
+    const items = [session, errored]
+    const cleared = { ...session, id: 'session-1-cleared', messages: [] }
+    const recovered = {
+      ...errored, id: 'errored-recovered', status: 'idle' as const, replacedSessionIds: [errored.id],
+    }
+    const key = (id: string) => `${computer.id}:${id}`
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = [...items, cleared, recovered].find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      showSuspended: true,
+      hidden: items.map((item) => key(item.id)),
+      order: { [computer.id]: items.map((item) => key(item.id)) },
+    }
+    window.history.replaceState({}, '', `/?computer=${computer.id}&session=${session.id}`)
+    let answerClear: ((value: ManagedSession) => void) | undefined
+    vi.mocked(clearConversation).mockImplementation(() =>
+      new Promise((resolve) => { answerClear = resolve }),
+    )
+    let answerRecover: ((value: ManagedSession) => void) | undefined
+    vi.mocked(recoverConversation).mockImplementation(() =>
+      new Promise((resolve) => { answerRecover = resolve }),
+    )
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const emit = (event: unknown) => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify(event),
+    } as MessageEvent)
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden2'))
+
+    fireEvent.click(sessionAction('Clear conversation'))
+    await waitFor(() => expect(answerClear).toBeDefined())
+    act(() => {
+      emit({ type: 'session.removed', computerId: computer.id, sessionId: session.id })
+      emit({ type: 'session.upserted', session: cleared })
+    })
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+
+    // The errored session needs you, so it is listed and can be recovered.
+    fireEvent.click(screen.getByRole('button', { name: /^Errored work,/ }))
+    await waitFor(() => expect(window.location.search).toContain(`session=${errored.id}`))
+    fireEvent.click(await findSessionAction('Recover conversation'))
+    await waitFor(() => expect(answerRecover).toBeDefined())
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+
+    hubSessionOrder = {
+      ...hubSessionOrder,
+      revision: 7,
+      hidden: [key(cleared.id), key(recovered.id)],
+      order: { [computer.id]: [key(cleared.id), key(recovered.id)] },
+    }
+    await act(async () => {
+      answerClear?.(cleared)
+    })
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+    await act(async () => {
+      answerRecover?.(recovered)
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Include hidden sessions' }))
+      .toHaveTextContent('Hidden2'))
+    expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Errored work,/ })).toBeNull()
+    confirmSpy.mockRestore()
+  })
+
+  it('skips hidden sessions in keyboard navigation but still opens them by address', async () => {
+    const items = [
+      { ...session, id: 'nav-first', title: 'First', messages: [] },
+      { ...session, id: 'nav-tucked', title: 'Tucked away', messages: [] },
+      { ...session, id: 'nav-last', title: 'Last', messages: [] },
+    ]
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => {
+      const item = items.find((candidate) => candidate.id === id)
+      if (!item) throw new Error(`Unexpected fixture session ${id}`)
+      return item
+    })
+    hubSessionOrder = {
+      revision: 2,
+      bootstrapped: true,
+      showSuspended: true,
+      hidden: [`${computer.id}:nav-tucked`],
+      order: { [computer.id]: items.map((item) => `${computer.id}:${item.id}`) },
+    }
+    window.history.replaceState({}, '', `/?computer=${computer.id}&session=nav-tucked`)
+
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toBeVisible()
+    expect(document.querySelector('.conversation-header')).toHaveTextContent('Tucked away')
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Tucked away,/ })).toBeNull(),
+    )
+
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=nav-first'))
+    fireEvent.keyDown(window, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=nav-last'))
+    fireEvent.keyDown(window, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
+    await waitFor(() => expect(window.location.search).toContain('session=nav-first'))
+  })
+
+  it('reorders listed sessions with the hidden sessions that follow them', async () => {
+    const alpha = { ...session, id: 'hide-alpha', title: 'Alpha' }
+    const alphaTucked = { ...session, id: 'hide-alpha-tucked', title: 'Alpha tucked', messages: [] }
+    const bravo = { ...session, id: 'hide-bravo', title: 'Bravo', messages: [] }
+    const bravoTucked = { ...session, id: 'hide-bravo-tucked', title: 'Bravo tucked', messages: [] }
+    const charlie = { ...session, id: 'hide-charlie', title: 'Charlie', messages: [] }
+    const items = [alpha, alphaTucked, bravo, bravoTucked, charlie]
+    const keys = items.map((item) => `${computer.id}:${item.id}`)
+    vi.mocked(listSessions).mockResolvedValue(items)
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+      items.find((candidate) => candidate.id === id) ?? alpha,
+    )
+    hubSessionOrder = {
+      revision: 5,
+      bootstrapped: true,
+      showSuspended: true,
+      hidden: [keys[1], keys[3]],
+      order: { [computer.id]: keys },
+    }
+
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /^Alpha tucked,/ })).toBeNull(),
+    )
+    expect(screen.getByLabelText('Reorder Alpha')).not
+      .toHaveAttribute('aria-disabled', 'true')
+
+    act(() => {
+      finishReorder('session-navigation', `session:${keys[0]}`, `session:${keys[2]}`)
+    })
+
+    await waitFor(() =>
+      expect(saveSessionOrderLane).toHaveBeenCalledWith(
+        computer.id,
+        [keys[2], keys[3], keys[0], keys[1], keys[4]],
+      ),
+    )
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('.session-item__open strong')]
+          .map((element) => element.textContent),
+      ).toEqual(['Bravo', 'Alpha', 'Charlie']),
+    )
   })
 
   it('renders a reorder committed by another client, and ignores a stale one', async () => {

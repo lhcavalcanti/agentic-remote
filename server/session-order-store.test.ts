@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -24,13 +24,18 @@ describe('SessionOrderStore', () => {
   it('starts empty and advances a revision only when something changes', async () => {
     const { store: order } = await store()
     expect(order.snapshot()).toEqual({
-      revision: 0, bootstrapped: false, showSuspended: true, order: {},
+      revision: 0, bootstrapped: false, showSuspended: true, showHidden: false, hidden: [], order: {},
     })
     expect(order.isBootstrapped()).toBe(false)
 
     const first = await order.appendSession('pc', 'a')
     expect(first).toEqual({
-      revision: 1, bootstrapped: false, showSuspended: true, order: { pc: ['pc:a'] },
+      revision: 1,
+      bootstrapped: false,
+      showSuspended: true,
+      showHidden: false,
+      hidden: [],
+      order: { pc: ['pc:a'] },
     })
 
     // Discovering the same session again is not news.
@@ -50,6 +55,8 @@ describe('SessionOrderStore', () => {
       revision: 3,
       bootstrapped: false,
       showSuspended: true,
+      showHidden: false,
+      hidden: [],
       order: { pc: ['pc:b', 'pc:a'] },
     })
   })
@@ -87,6 +94,7 @@ describe('SessionOrderStore', () => {
       JSON.stringify({
         version: 1,
         revision: 4,
+        hidden: ['pc:b', 'pc:b', 7, ''],
         order: { pc: ['pc:a', 'pc:a', 7, '', 'pc:b'], empty: [] },
       }),
     )
@@ -96,19 +104,144 @@ describe('SessionOrderStore', () => {
       revision: 4,
       bootstrapped: false,
       showSuspended: true,
+      showHidden: false,
+      hidden: ['pc:b'],
       order: { pc: ['pc:a', 'pc:b'] },
     })
   })
 
   it('shares suspended visibility durably and advances only on a change', async () => {
     const { store: order, directory } = await store()
-    const hidden = await order.setShowSuspended(false)
+    const hidden = await order.setVisibility({ showSuspended: false })
     expect(hidden).toMatchObject({ revision: 1, showSuspended: false })
-    expect((await order.setShowSuspended(false)).revision).toBe(1)
+    expect((await order.setVisibility({ showSuspended: false })).revision).toBe(1)
 
     const reloaded = new SessionOrderStore(directory)
     await reloaded.initialize()
     expect(reloaded.snapshot()).toEqual(hidden)
+  })
+
+  it('hides a session and shows hidden sessions durably, advancing only on a change', async () => {
+    const { store: order, directory } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+
+    const hidden = await order.setSessionHidden('pc', 'b', true)
+    expect(hidden).toMatchObject({ revision: 3, hidden: ['pc:b'], showHidden: false })
+    expect((await order.setSessionHidden('pc', 'b', true)).revision).toBe(3)
+
+    const shown = await order.setVisibility({ showHidden: true })
+    expect(shown).toMatchObject({ revision: 4, showHidden: true, showSuspended: true })
+    expect((await order.setVisibility({ showHidden: true })).revision).toBe(4)
+    // Hiding never reorders: the lane keeps the hidden session where it was.
+    expect(shown.order).toEqual({ pc: ['pc:a', 'pc:b'] })
+
+    const reloaded = new SessionOrderStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.snapshot()).toEqual(shown)
+
+    const unhidden = await reloaded.setSessionHidden('pc', 'b', false)
+    expect(unhidden).toMatchObject({ revision: 5, hidden: [] })
+    expect((await reloaded.setSessionHidden('pc', 'b', false)).revision).toBe(5)
+  })
+
+  it('applies both visibility preferences in one commit', async () => {
+    const { store: order } = await store()
+    const committed = await order.setVisibility({ showSuspended: false, showHidden: true })
+    expect(committed).toMatchObject({ revision: 1, showSuspended: false, showHidden: true })
+  })
+
+  it('refuses to hide a session its lane does not hold, but unhides one freely', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+
+    await expect(order.setSessionHidden('pc', 'missing', true)).rejects.toMatchObject({
+      statusCode: 409,
+    })
+    await expect(order.setSessionHidden('laptop', 'a', true)).rejects.toMatchObject({
+      statusCode: 409,
+    })
+    expect(order.snapshot()).toMatchObject({ revision: 1, hidden: [] })
+
+    // Unhiding something never hidden is not news, and never an error.
+    expect((await order.setSessionHidden('pc', 'missing', false)).revision).toBe(1)
+  })
+
+  it('forgets a hidden session when it is deleted or its computer is unpaired', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.appendSession('laptop', 'x')
+    await order.setSessionHidden('pc', 'a', true)
+    await order.setSessionHidden('pc', 'b', true)
+    await order.setSessionHidden('laptop', 'x', true)
+
+    expect((await order.removeSession('pc', 'a')).hidden).toEqual(['pc:b', 'laptop:x'])
+    const unpaired = await order.removeComputer('laptop')
+    expect(unpaired.hidden).toEqual(['pc:b'])
+    expect(unpaired.order).toEqual({ pc: ['pc:b'] })
+  })
+
+  it('keeps a cleared session hidden under its replacement identity', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.setSessionHidden('pc', 'a', true)
+
+    const replaced = await order.replaceSession('pc', 'a', 'a2')
+    expect(replaced.hidden).toEqual(['pc:a2'])
+    expect(replaced.order).toEqual({ pc: ['pc:a2', 'pc:b'] })
+  })
+
+  it('restores hidden onto a replacement after a plain removal retired the predecessor', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.setSessionHidden('pc', 'a', true)
+    const slot = order.indexOf('pc', 'a')
+
+    // A legacy node reports the clear as a plain removal first.
+    expect((await order.removeSession('pc', 'a')).hidden).toEqual([])
+    const restored = await order.replaceSession('pc', 'a', 'a2', slot)
+    expect(restored.hidden).toEqual(['pc:a2'])
+    expect(restored.order).toEqual({ pc: ['pc:a2', 'pc:b'] })
+
+    // Reported again, the same clear changes nothing.
+    expect((await order.replaceSession('pc', 'a', 'a2', slot)).revision)
+      .toBe(restored.revision)
+  })
+
+  it('keeps what a removal retired for a retry when saving its replacement fails', async () => {
+    const { store: order, directory } = await store()
+    await order.appendSession('pc', 'a')
+    await order.setSessionHidden('pc', 'a', true)
+    await order.removeSession('pc', 'a')
+
+    // Replacing the directory with a file makes the temporary write fail.
+    await rm(directory, { recursive: true, force: true })
+    await writeFile(directory, 'blocked')
+    await expect(order.replaceSession('pc', 'a', 'a2', 0)).rejects.toThrow()
+    await rm(directory, { force: true })
+    await mkdir(directory)
+
+    expect((await order.replaceSession('pc', 'a', 'a2', 0)).hidden).toEqual(['pc:a2'])
+  })
+
+  it('does not hide a replacement whose predecessor was shown again before it was replaced', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.setSessionHidden('pc', 'a', true)
+    await order.setSessionHidden('pc', 'b', true)
+
+    // Shown after a legacy node's plain removal already retired it.
+    await order.removeSession('pc', 'a')
+    await order.setSessionHidden('pc', 'a', false)
+    expect((await order.replaceSession('pc', 'a', 'a2', 0)).hidden).toEqual(['pc:b'])
+
+    // Shown before the clear's link arrives.
+    await order.setSessionHidden('pc', 'b', false)
+    expect((await order.replaceSession('pc', 'b', 'b2')).hidden).toEqual([])
   })
 
   it('reorders one lane without touching another', async () => {
@@ -340,13 +473,18 @@ describe('SessionOrderStore', () => {
   it('keeps the last committed order when a write fails', async () => {
     const { store: order, directory } = await store()
     await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.setSessionHidden('pc', 'a', true)
     const committed = order.snapshot()
 
     // Replacing the directory with a file makes the temporary write fail.
     await rm(directory, { recursive: true, force: true })
     await writeFile(directory, 'blocked')
 
-    await expect(order.appendSession('pc', 'b')).rejects.toThrow()
+    await expect(order.appendSession('pc', 'c')).rejects.toThrow()
+    await expect(order.setSessionHidden('pc', 'b', true)).rejects.toThrow()
+    await expect(order.setSessionHidden('pc', 'a', false)).rejects.toThrow()
+    await expect(order.setVisibility({ showHidden: true })).rejects.toThrow()
     expect(order.snapshot()).toEqual(committed)
 
     await rm(directory, { force: true })
@@ -363,6 +501,8 @@ describe('SessionOrderStore', () => {
       revision: 1,
       bootstrapped: false,
       showSuspended: true,
+      showHidden: false,
+      hidden: [],
       order: { pc: ['pc:a'] },
     })
   })

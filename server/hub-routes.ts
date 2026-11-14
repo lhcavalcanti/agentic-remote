@@ -46,9 +46,22 @@ const sessionOrderKeys = z.array(z.string().trim().min(1).max(300)).max(2000)
 
 const sessionOrderLaneSchema = z.object({ order: sessionOrderKeys })
 
-const sessionOrderPreferencesSchema = z.object({
-  showSuspended: z.boolean(),
+const sessionOrderPreferencesSchema = z
+  .object({
+    showSuspended: z.boolean().optional(),
+    showHidden: z.boolean().optional(),
+  })
+  .refine(
+    (input) => input.showSuspended !== undefined || input.showHidden !== undefined,
+    'Choose suspended or hidden session visibility',
+  )
+
+const sessionOrderEntryParamsSchema = z.object({
+  computerId: z.string().min(1).max(200),
+  sessionId: z.string().min(1).max(200),
 })
+
+const sessionOrderEntrySchema = z.object({ hidden: z.boolean() })
 
 const sessionOrderBootstrapSchema = z.object({
   order: z.record(z.string().trim().min(1).max(200), sessionOrderKeys),
@@ -737,9 +750,7 @@ export async function registerHubRoutes(
   app.put('/api/session-order', async (request) => {
     const input = sessionOrderPreferencesSchema.parse(request.body)
     return {
-      sessionOrder: await commitOrder((store) =>
-        store.setShowSuspended(input.showSuspended),
-      ),
+      sessionOrder: await commitOrder((store) => store.setVisibility(input)),
     }
   })
 
@@ -754,6 +765,18 @@ export async function registerHubRoutes(
       }
     },
   )
+
+  // Hiding only leaves a session out of the Sessions list; it keeps running,
+  // notifying, and answering Oracle exactly as before.
+  app.put('/api/session-order/:computerId/:sessionId', async (request) => {
+    const { computerId, sessionId } = sessionOrderEntryParamsSchema.parse(request.params)
+    const input = sessionOrderEntrySchema.parse(request.body)
+    return {
+      sessionOrder: await commitOrder((store) =>
+        store.setSessionHidden(computerId, sessionId, input.hidden),
+      ),
+    }
+  })
 
   // One-time seed from a browser that ordered its sessions before the hub
   // owned the order. It is ignored once any lane exists, so the first device

@@ -65,9 +65,14 @@ const actions = {
   onToggleSessionSuspended: vi.fn(),
   closingSessions: new Set<string>(),
   suspendingSessions: new Set<string>(),
+  hiddenSessions: new Set<string>(),
+  hidingSessions: new Set<string>(),
+  onToggleSessionHidden: vi.fn(),
   onSortChange: vi.fn(),
   onNewSession: vi.fn(),
 }
+const hiddenVisibility = vi.fn()
+const sessionHidden = vi.fn()
 
 function NavigationHarness({
   sessions = sessionsByComputer,
@@ -78,6 +83,10 @@ function NavigationHarness({
   loadingError,
   initialShowSuspended = true,
   showSuspendedSaving = false,
+  initialHidden = [],
+  initialShowHidden = false,
+  showHiddenSaving = false,
+  hidingSessions = new Set<string>(),
   pendingCreations,
   closingSessions = new Set<string>(),
   suspendingSessions = new Set<string>(),
@@ -90,6 +99,10 @@ function NavigationHarness({
   loadingError?: string
   initialShowSuspended?: boolean
   showSuspendedSaving?: boolean
+  initialHidden?: string[]
+  initialShowHidden?: boolean
+  showHiddenSaving?: boolean
+  hidingSessions?: ReadonlySet<string>
   pendingCreations?: PendingSessionCreation[]
   closingSessions?: ReadonlySet<string>
   suspendingSessions?: ReadonlySet<string>
@@ -97,12 +110,25 @@ function NavigationHarness({
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
   const [showSuspended, setShowSuspended] = useState(initialShowSuspended)
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set(initialHidden))
+  const [showHidden, setShowHidden] = useState(initialShowHidden)
   return (
     <DndContext>
       <SessionNavigation
         {...actions}
         closingSessions={closingSessions}
         suspendingSessions={suspendingSessions}
+        hiddenSessions={hidden}
+        hidingSessions={hidingSessions}
+        onToggleSessionHidden={(target) => {
+          sessionHidden(target)
+          const key = `${target.computerId}:${target.id}`
+          setHidden((current) => {
+            const next = new Set(current)
+            if (!next.delete(key)) next.add(key)
+            return next
+          })
+        }}
         backgroundTasks={snapshots}
         view={sessionNavigationView(
           computerList,
@@ -111,14 +137,21 @@ function NavigationHarness({
           query,
           filter,
           showSuspended,
+          { keys: hidden, shown: showHidden },
         )}
         query={query}
         filter={filter}
         showSuspended={showSuspended}
         showSuspendedSaving={showSuspendedSaving}
+        showHidden={showHidden}
+        showHiddenSaving={showHiddenSaving}
         onQueryChange={setQuery}
         onFilterChange={setFilter}
         onShowSuspendedChange={setShowSuspended}
+        onShowHiddenChange={(show) => {
+          hiddenVisibility(show)
+          setShowHidden(show)
+        }}
         loading={loading}
         loadingError={loadingError}
         pendingCreations={pendingCreations}
@@ -157,9 +190,12 @@ describe('session navigation', () => {
           filter="all"
           showSuspended
           showSuspendedSaving={false}
+          showHidden={false}
+          showHiddenSaving={false}
           onQueryChange={vi.fn()}
           onFilterChange={vi.fn()}
           onShowSuspendedChange={vi.fn()}
+          onShowHiddenChange={vi.fn()}
           loading={false}
           loadingError="The gateway could not reach Agentic Remote."
           selectedKey={undefined}
@@ -191,9 +227,12 @@ describe('session navigation', () => {
           filter="all"
           showSuspended
           showSuspendedSaving={false}
+          showHidden={false}
+          showHiddenSaving={false}
           onQueryChange={vi.fn()}
           onFilterChange={vi.fn()}
           onShowSuspendedChange={vi.fn()}
+          onShowHiddenChange={vi.fn()}
           loading={false}
           onRefresh={onRefresh}
           refreshState="stale"
@@ -433,6 +472,112 @@ describe('session navigation', () => {
     fireEvent.click(clear)
     expect(screen.getByRole('button', { name: 'Include suspended sessions' }))
       .toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('hides a session from the list without a filter, and shows it again on request', () => {
+    render(navigation())
+    // Nothing to show until something is hidden.
+    expect(screen.queryByRole('button', { name: 'Include hidden sessions' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide Build docs from the list' }))
+
+    expect(sessionHidden).toHaveBeenCalledWith(worker)
+    expect(screen.queryByRole('button', { name: /^Build docs,/ })).toBeNull()
+    const toggle = screen.getByRole('button', { name: 'Include hidden sessions' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).toHaveTextContent('Hidden1')
+    const node = screen.getByRole('region', { name: 'Build node' })
+    expect(node).toBeVisible()
+    expect(node).toHaveTextContent('1 hidden session')
+    expect(screen.getByRole('heading', { name: 'Sessions 3' })).toBeVisible()
+    // Leaving a session out is curation, not a filter that needs clearing.
+    expect(screen.queryByRole('status', { name: 'Session filter results' })).toBeNull()
+    expect(screen.getByRole('button', { name: /^Review the release,/ }))
+      .toHaveAttribute('aria-current', 'page')
+    expect(actions.onSelectSession).not.toHaveBeenCalled()
+
+    fireEvent.click(toggle)
+
+    expect(hiddenVisibility).toHaveBeenCalledWith(true)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    const shown = screen.getByRole('button', { name: /^Build docs,/ })
+    expect(shown).toHaveAccessibleName(/hidden from the list/)
+    expect(within(shown).getByText('Hidden')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Show Build docs in the list' }))
+    expect(within(screen.getByRole('button', { name: /^Build docs,/ })).queryByText('Hidden'))
+      .toBeNull()
+    // Still offered while it is on, so it can be turned off again.
+    expect(toggle).toHaveTextContent(/^Hidden$/)
+    fireEvent.click(toggle)
+    expect(screen.queryByRole('button', { name: 'Include hidden sessions' })).toBeNull()
+  })
+
+  it('keeps a hidden session that needs you listed, tagged, and counted', () => {
+    render(<NavigationHarness initialHidden={['studio:question']} />)
+
+    const waiting = screen.getByRole('button', { name: /^Choose a direction,/ })
+    expect(waiting).toHaveAccessibleName(/hidden from the list/)
+    expect(within(waiting).getByText('Hidden')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Show Choose a direction in the list' }))
+      .toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Needs you' })).toHaveTextContent('Needs you1')
+    fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
+    expect(screen.getByRole('button', { name: /^Choose a direction,/ })).toBeVisible()
+  })
+
+  it('says how many sessions are hidden rather than that there are none', () => {
+    render(
+      <NavigationHarness
+        initialHidden={['studio:review']}
+        sessions={new Map([['studio', [session]]])}
+      />,
+    )
+    expect(screen.queryByText('No sessions here.')).toBeNull()
+    expect(screen.getByRole('region', { name: 'Studio' })).toHaveTextContent('1 hidden session')
+    expect(screen.getByRole('region', { name: 'Build node' })).toHaveTextContent('No open sessions')
+  })
+
+  it('keeps hidden sessions hidden when filters are cleared', () => {
+    render(<NavigationHarness initialHidden={['worker:build']} />)
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), {
+      target: { value: 'docs' },
+    })
+    expect(screen.getByRole('region', { name: 'Build node' }))
+      .toHaveTextContent('No matching sessions')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+
+    expect(hiddenVisibility).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: /^Build docs,/ })).toBeNull()
+  })
+
+  it('places Hide after Close and Pause, and keeps it usable while a computer is offline', () => {
+    render(<NavigationHarness hidingSessions={new Set(['studio:question'])} />)
+    const close = screen.getByRole('button', { name: 'Close Review the release' })
+    const pause = screen.getByRole('button', { name: 'Suspend Review the release' })
+    const hide = screen.getByRole('button', { name: 'Hide Review the release from the list' })
+    expect(pause.compareDocumentPosition(hide) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(close.compareDocumentPosition(hide) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(hide).toHaveAttribute('title', 'Hide from the list; the session keeps running')
+    expect(hide.closest('.session-item__open')).toBeNull()
+
+    expect(screen.getByRole('button', { name: 'Close Last known work' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Hide Last known work from the list' }))
+      .toBeEnabled()
+
+    // Only the session being saved waits.
+    const saving = screen.getByRole('button', { name: 'Hide Choose a direction from the list' })
+    expect(saving).toBeDisabled()
+    expect(saving).toHaveAttribute('aria-busy', 'true')
+    expect(saving).toHaveAttribute('title', 'Hiding this session from the list')
+  })
+
+  it('holds the Hidden toggle while its visibility is being saved', () => {
+    render(<NavigationHarness initialHidden={['worker:build']} showHiddenSaving />)
+    const toggle = screen.getByRole('button', { name: 'Include hidden sessions' })
+    expect(toggle).toBeDisabled()
+    expect(toggle).toHaveAttribute('aria-busy', 'true')
+    expect(toggle).toHaveAttribute('title', 'Saving hidden-session visibility')
   })
 
   it('keeps the session time and opens background tasks from the status chip', () => {

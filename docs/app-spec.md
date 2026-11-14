@@ -62,18 +62,28 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Selecting, creating, or opening a session MUST NOT hide other computers.
 - Sessions MUST offer metadata search and All, Needs you, and Working filters,
   plus a hub-owned Suspended visibility toggle that defaults to showing sessions
-  paused through Agentic Remote. A committed visibility change MUST survive hub
-  restarts and update every connected browser; a failed save MUST leave the last
-  committed state visible and report the failure. Filtering MUST keep every
-  configured computer visible and MUST NOT change the selected session, its
-  draft, or its Knowledge position. Hidden suspended sessions MUST also be
+  paused through Agentic Remote. A committed visibility change, including hiding
+  or showing one session, MUST survive hub restarts and update every connected
+  browser; a failed save MUST leave the last committed state visible and report
+  the failure. Filtering and hiding MUST keep every configured computer visible
+  and MUST NOT change the selected session, its draft, or its Knowledge
+  position. Suspended or hidden sessions the list leaves out MUST also be
   excluded from keyboard next/previous navigation. Search and the Needs you or
   Working filters MUST disable reordering. With Custom order, All selected and
-  no search, active sessions MAY still be reordered while suspended sessions
-  are hidden: each active session MUST move with the contiguous suspended
-  sessions immediately following it, while leading suspended sessions without
-  an active predecessor retain their position. Clearing filters MUST restore
-  and persist suspended-session visibility.
+  no search, listed sessions MAY still be reordered while suspended or hidden
+  sessions are left out: each listed session MUST move with the contiguous
+  left-out sessions immediately following it, while leading left-out sessions
+  without a listed predecessor retain their position. Clearing filters MUST
+  restore and persist suspended-session visibility.
+- Any session MAY be hidden from the Sessions list. Hiding changes nothing else
+  about it: it keeps running, notifying, and answering Oracle, and it stays
+  openable by address and from Oracle. The list MUST leave hidden sessions out
+  of its rows and counts unless a hub-owned Hidden visibility toggle, off by
+  default, shows them; hiding is not filtering, so Clear filters leaves it
+  alone. A hidden session MUST stay listed and counted while it needs you.
+  Listed hidden sessions MUST carry a **Hidden** tag. The toggle MUST show the
+  hidden count, and MAY be omitted while nothing is hidden and it is off.
+  Discovery MUST NOT unhide a session.
 - Session ordering MUST be explicit. Custom order remains the backward-
   compatible default; Recent activity, Attention first, and Name views MAY
   reorder the displayed sessions within each computer without rewriting the
@@ -86,9 +96,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   holds. A drag MAY be applied optimistically, but a refused write MUST restore
   the last acknowledged order and report the failure rather than claim a local
   save. A drag MUST submit only the dragged computer's lane, and a session MUST
-  NOT move between computers. Suspended visibility shares the same revisioned
-  hub snapshot; computer-group order, sort mode, search, and the three primary
-  filters remain browser-local.
+  NOT move between computers. Suspended visibility, hidden sessions, and Hidden
+  visibility share the same revisioned hub snapshot; computer-group order, sort
+  mode, search, and the three primary filters remain browser-local.
 - Search, the three primary filters, the selected session, and session-list
   scroll position MUST survive browser reloads and responsive layout changes.
   Sessions MUST expose one accessible **Refresh** action that reloads
@@ -106,15 +116,19 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   reconnects MUST pause until a request gets through again, which MUST resume
   them and refresh authoritative state.
 - Clearing a session replaces its identity, and the replacement MUST take the
-  predecessor's exact position in the custom order. Deleting a session MUST
-  remove it, and removing a computer MUST remove its lane; a partial or offline
-  session listing MUST NOT be treated as evidence that an entry is gone. A
-  browser-local order from before the hub owned it MAY seed an empty hub once,
-  after which the hub snapshot is authoritative.
+  predecessor's exact position in the custom order and stay hidden if it was.
+  Deleting a session MUST remove it, and removing a computer MUST remove its
+  lane, hidden entries included; a partial or offline session listing MUST NOT
+  be treated as evidence that an entry is gone. A browser-local order from
+  before the hub owned it MAY seed an empty hub once, after which the hub
+  snapshot is authoritative.
 - Each session row MUST place **Close** above **Pause**/**Resume** in its
-  lifecycle controls. Close MUST use the same confirmed, permanently deleting
+  lifecycle controls, followed by **Hide**/**Show** beside that pair so the row
+  does not grow. Close MUST use the same confirmed, permanently deleting
   close lifecycle and owning-computer route as **Close session**; Pause and
   Resume retain their existing suspend lifecycle, availability, and labels.
+  Hide and Show MUST stay available while the owning computer is offline, since
+  the hub keeps them.
   While a session closes, only its own Close waits and its row is dimmed;
   every other session MUST remain closable, since the owning computer
   serializes lifecycle work per session.

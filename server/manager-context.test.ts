@@ -193,6 +193,14 @@ describe('manager turn context', () => {
     expect(rule).toMatch(/resume_session, or send_to_session/)
   })
 
+  it('tells Oracle closing keeps a session reopenable, and how to find and reopen one', () => {
+    const rule = MANAGER_SYSTEM_PROMPT.split('\n').find((line) => line.includes('list_closed_sessions'))
+    expect(rule).toBeDefined()
+    expect(rule).toMatch(/reopen_session/)
+    expect(rule).toMatch(/14 days/)
+    expect(MANAGER_SYSTEM_PROMPT).toMatch(/close_session asks the user[^\n]*reopenable/)
+  })
+
   it('collapses status churn and asks for memory upkeep after removals', () => {
     const registry: ManagerRegistry = {
       'hub:a': { computerId: 'hub', sessionId: 'a', title: 'Alpha', origin: 'manager', firstSeenAt: 't' },

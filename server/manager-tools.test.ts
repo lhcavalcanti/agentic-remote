@@ -78,6 +78,17 @@ describe('manager tools', () => {
       findComputer: (nameOrId) => computers.find((computer) => computer.id === nameOrId || computer.name === nameOrId),
       listSessions: vi.fn(async () => [session('abc12345-aaaa'), session('def67890-bbbb', { status: 'running' })]),
       listHistory: vi.fn(async () => [session('old99999-cccc', { isOpen: false })]),
+      listClosedSessions: vi.fn(async () => [session('old99999-cccc', {
+        isOpen: false,
+        title: 'Migration plan',
+        closedAt: '2026-10-14T09:00:00.000Z',
+        closedContext: {
+          title: 'Migration plan',
+          cwd: '/home/me/src/app',
+          prompts: ['Draft the database migration plan', 'Add a rollback <step>'],
+          reply: 'The plan has "three" phases.',
+        },
+      })]),
       readSession: vi.fn(async (_computerId: string, id: string) => session(id, {
         messages: Array.from({ length: 12 }, (_, index) => ({
           id: `${index}`, role: index % 2 ? 'assistant' : 'user', content: `message ${index} ${'x'.repeat(index === 11 ? 3000 : 1)}`, createdAt: 't',
@@ -146,10 +157,10 @@ describe('manager tools', () => {
   it('offers only management tools, none of which prompt for permission', () => {
     expect([...tools.keys()].sort()).toEqual([
       'answer_session', 'ask_session', 'cancel_session', 'close_session', 'create_session', 'get_session',
-      'list_computers', 'list_models', 'list_sessions', 'list_skills', 'memory_append', 'memory_delete',
-      'memory_list', 'memory_read', 'memory_write', 'record_proactive_outcomes',
-      'rename_session', 'resume_session', 'send_to_session', 'set_session_backend', 'set_session_folder',
-      'suspend_session',
+      'list_closed_sessions', 'list_computers', 'list_models', 'list_sessions', 'list_skills', 'memory_append',
+      'memory_delete', 'memory_list', 'memory_read', 'memory_write', 'record_proactive_outcomes',
+      'rename_session', 'reopen_session', 'resume_session', 'send_to_session', 'set_session_backend',
+      'set_session_folder', 'suspend_session',
     ])
     for (const tool of tools.values()) {
       expect(tool.skipPermission).toBe(true)
@@ -1079,6 +1090,61 @@ describe('manager tools', () => {
     expect(host.sendMessage).toHaveBeenLastCalledWith('hub', 'abc12345-aaaa', 'Carry on.')
   })
 
+  it('finds a recently closed session by what it was about', async () => {
+    vi.mocked(host.listClosedSessions).mockResolvedValue([
+      ...await host.listClosedSessions(),
+      session('zzz11111-dddd', {
+        isOpen: false,
+        title: 'Docs',
+        closedAt: '2026-10-13T09:00:00.000Z',
+        closedContext: { title: 'Docs', cwd: '/home/me/src/docs', prompts: ['Fix the README'] },
+      }),
+    ])
+
+    const found = String(await call('list_closed_sessions', { query: 'Rollback MIGRATION' }))
+
+    expect(found).toContain('old99999-cccc')
+    expect(found).toContain('closed 2026-10-14T09:00:00.000Z')
+    expect(found).toContain('reopenable until 2026-10-28T09:00:00.000Z')
+    expect(found).toContain('"Draft the database migration plan"')
+    expect(found).toContain('"Add a rollback &lt;step&gt;"')
+    expect(found).toContain('"The plan has &quot;three&quot; phases."')
+    expect(found).not.toContain('zzz11111-dddd')
+    expect(String(await call('list_closed_sessions', {}))).toContain('zzz11111-dddd')
+    expect(String(await call('list_closed_sessions', { query: 'kubernetes' }))).toContain('none match')
+    vi.mocked(host.readSession).mockResolvedValueOnce(session('old99999-cccc', {
+      isOpen: false, closedAt: '2026-10-14T09:00:00.000Z',
+    }))
+    expect(String(await call('get_session', { sessionId: 'old99999' })))
+      .toContain('reopenable until 2026-10-28T09:00:00.000Z')
+  })
+
+  it('reopens a closed session without sending it anything', async () => {
+    const result = String(await call('reopen_session', { sessionId: 'old99999' }))
+
+    expect(host.reopenSession).toHaveBeenCalledWith('hub', 'old99999-cccc')
+    expect(host.sendMessage).not.toHaveBeenCalled()
+    expect(result).toContain('Reopened [Session old99999-cccc](?computer=hub&session=old99999-cccc)')
+    expect(activities).toEqual([{
+      tool: 'reopen_session',
+      content: 'Reopened "Session old99999-cccc"',
+      sessionRefs: [{ computerId: 'hub', sessionId: 'old99999-cccc', title: 'Session old99999-cccc' }],
+    }])
+    expect(String(await call('reopen_session', { sessionId: 'abc12345' }))).toContain('already open')
+    expect(host.reopenSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes on why a closed session could not be reopened', async () => {
+    vi.mocked(host.reopenSession).mockRejectedValueOnce(new Error('Unable to reopen terminal session from its saved Copilot state'))
+
+    const result = await call('reopen_session', { sessionId: 'old99999' })
+
+    expect(result).toMatchObject({ resultType: 'failure' })
+    expect(JSON.stringify(result)).toContain('Could not reopen [Session old99999-cccc]')
+    expect(JSON.stringify(result)).toContain('saved Copilot state')
+    expect(activities).toEqual([])
+  })
+
   it('suspends a session through its owning computer and shows it', async () => {
     const result = String(await call('suspend_session', { sessionId: 'abc12345' }))
     expect(host.suspendSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
@@ -1202,7 +1268,7 @@ describe('manager tools', () => {
       expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
       expect(host.readSession).toHaveBeenCalledWith('hub', 'abc12345-aaaa')
       expect(String(result)).toContain('Closed "Session abc12345-aaaa" (abc12345-aaaa) without asking')
-      expect(String(result)).toContain('permanently deleted')
+      expect(String(result)).toContain('reopen_session brings it back within 14 days')
     })
 
     it('asks instead, and says why, whenever a boundary is not met', async () => {
@@ -1460,6 +1526,7 @@ describe('manager tools', () => {
       ['answer_session', { sessionId: 'abc12345', response: 'approve' }],
       ['suspend_session', { sessionId: 'abc12345' }],
       ['resume_session', { sessionId: 'abc12345' }],
+      ['reopen_session', { sessionId: 'old99999' }],
     ] as const) {
       const result = await call(name, args)
       expect(result, name).toMatchObject({ resultType: 'failure' })
@@ -1473,10 +1540,12 @@ describe('manager tools', () => {
     expect(host.requestCloseConfirmation).not.toHaveBeenCalled()
     expect(host.suspendSession).not.toHaveBeenCalled()
     expect(host.resumeSession).not.toHaveBeenCalled()
+    expect(host.reopenSession).not.toHaveBeenCalled()
     expect(activities).toEqual([])
     // Reading, side questions, which fork the session's history rather than
     // prompt it, and Oracle's own memory leave running work alone.
     expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
+    expect(String(await call('list_closed_sessions', {}))).toContain('old99999-cccc')
     expect(String(await call('get_session', { sessionId: 'abc12345' }))).toContain('message 11')
     expect(await call('ask_session', { sessionId: 'abc12345', question: 'What did you find?' }))
       .toBe('It fixed the bug and opened PR #12.')
@@ -1511,6 +1580,7 @@ describe('manager tools', () => {
       ['close_session', { sessionId: 'abc12345' }],
       ['suspend_session', { sessionId: 'abc12345' }],
       ['resume_session', { sessionId: 'abc12345' }],
+      ['reopen_session', { sessionId: 'old99999' }],
       ['memory_write', { path: 'MEMORY.md', content: '# Replaced' }],
       ['memory_append', { path: 'MEMORY.md', content: '\n- planted' }],
       ['memory_delete', { path: 'MEMORY.md' }],
@@ -1537,6 +1607,8 @@ describe('manager tools', () => {
     expect(String(await call('list_computers', {}))).toContain('development')
     expect(String(await call('list_models', {}))).toContain('model-a')
     expect(String(await call('list_sessions', {}))).toContain('abc12345-aaaa')
+    expect(String(await call('list_closed_sessions', {}))).toContain('old99999-cccc')
+    expect(host.reopenSession).not.toHaveBeenCalled()
     expect(String(await call('get_session', { sessionId: 'abc12345' })))
       .toContain('Run npm publish')
     expect(await call('ask_session', {
@@ -1680,6 +1752,7 @@ describe('manager tools', () => {
       // Refused even for the task's own session.
       ['suspend_session', { sessionId: 'def67890' }],
       ['resume_session', { sessionId: 'def67890' }],
+      ['reopen_session', { sessionId: 'old99999' }],
       ['memory_write', { path: 'MEMORY.md', content: '# Task mutation' }],
       ['record_proactive_outcomes', { outcomes: [{
         kind: 'no-action',
@@ -1693,6 +1766,7 @@ describe('manager tools', () => {
     }
     expect(host.suspendSession).not.toHaveBeenCalled()
     expect(host.resumeSession).not.toHaveBeenCalled()
+    expect(host.reopenSession).not.toHaveBeenCalled()
   })
 
   it('classifies unknown future tools as mutations so voice fails closed', () => {

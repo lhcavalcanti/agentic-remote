@@ -190,9 +190,14 @@ describe('canonical API origin enforcement', () => {
     expect(response.statusCode).toBe(200)
     const socket = await runtime.app.injectWS('/%61pi/events', { headers: trusted })
     try {
-      const received = new Promise<string>((resolve) =>
-        socket.once('message', (data) => resolve(data.toString())),
-      )
+      const received = new Promise<string>((resolve) => {
+        socket.on('message', function readSessionEvent(data) {
+          const message = JSON.parse(data.toString())
+          if (message.type !== 'session.upserted' || message.session?.id !== session.id) return
+          socket.off('message', readSessionEvent)
+          resolve(data.toString())
+        })
+      })
       runtime.manager?.emit('event', {
         type: 'session.upserted',
         session: {

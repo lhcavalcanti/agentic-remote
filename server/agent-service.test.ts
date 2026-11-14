@@ -14149,6 +14149,280 @@ function messagesAsEvents(
   ) as SessionEvent[]
 }
 
+describe('AgentService recoverable close', () => {
+  async function closableService(options: {
+    terminal?: Parameters<typeof terminalFake>[0]
+    activeSessions?: () => Promise<{ id: string; cwd: string; title: string; updatedAt: string }[]>
+    store?: SessionStore
+    directory?: string
+  } = {}) {
+    const directory = options.directory ?? await mkdtemp(path.join(tmpdir(), 'agent-service-close-'))
+    directories.push(directory)
+    vi.stubEnv('COPILOT_HOME', path.join(directory, 'copilot'))
+    const store = options.store ?? new SessionStore(path.join(directory, 'state'))
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const terminal = terminalFake(options.terminal)
+    const stopper = vi.fn(async () => undefined)
+    const service = new AgentService(
+      store,
+      client,
+      options.activeSessions ?? (async () => []),
+      stopper,
+      async () => [],
+      async () => undefined,
+      terminal,
+    )
+    const events: ServerEvent[] = []
+    service.on('event', (event) => events.push(event))
+    await service.start()
+    return { directory, store, client, terminal, stopper, service, events }
+  }
+
+  function terminalFake(overrides: Partial<{
+    has: () => Promise<boolean>
+  }> = {}) {
+    return {
+      create: vi.fn(async () => ({ sessionName: 'fixture', windowId: '@1' })),
+      reopen: vi.fn(async () => ({ sessionName: 'fixture', windowId: '@2' })),
+      has: vi.fn(overrides.has ?? (async () => false)),
+      // Nothing to type into: a send falls through to the SDK owner.
+      send: vi.fn(async () => false),
+      cancel: vi.fn(async () => true),
+      rename: vi.fn(async () => true),
+    }
+  }
+
+  async function sessionState(directory: string, id: string) {
+    const state = path.join(directory, 'copilot', 'session-state', id)
+    await mkdir(state, { recursive: true })
+    return state
+  }
+
+  it('stops an SDK session but keeps its record and provider data to reopen', async () => {
+    const { client, service, store, events } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    await store.addMessage(created.id, {
+      id: 'ask', role: 'user', content: 'Draft the migration plan', createdAt: new Date().toISOString(),
+    })
+
+    const closed = await service.closeSession(created.id)
+
+    expect(closed).toMatchObject({
+      id: created.id,
+      isOpen: false,
+      closedAt: expect.any(String),
+      closedContext: { prompts: ['Draft the migration plan'] },
+    })
+    expect(client.session.disconnectCount).toBe(1)
+    expect(client.deletedSessionIds).toEqual([])
+    expect(service['sessions'].has(created.id)).toBe(false)
+    expect(service.listSessions()).toEqual([])
+    expect(service.listClosedSessions()).toEqual([
+      expect.objectContaining({ id: created.id, closedAt: closed.closedAt, messages: [] }),
+    ])
+    expect(events).toContainEqual({ type: 'session.removed', sessionId: created.id, closed: true })
+  })
+
+  it('aborts a running SDK turn and never reports the closed session again', async () => {
+    const { client, service, store, events } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    const abort = vi.spyOn(client.session, 'abort')
+    await service.sendMessage(created.id, 'Keep working')
+    await vi.waitFor(() => expect(client.session.sentPrompts).toEqual(['Keep working']))
+
+    await service.closeSession(created.id)
+    const after = events.length
+    client.session.resolvePrompt()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(abort).toHaveBeenCalled()
+    expect(store.get(created.id)).toMatchObject({ isOpen: false, closedAt: expect.any(String) })
+    expect(events.slice(after).filter((event) =>
+      event.type === 'session.upserted' && event.session.id === created.id)).toEqual([])
+  })
+
+  it('stops a terminal session, keeps its Copilot files, and reopens the same id without sending', async () => {
+    const { directory, service, store, stopper, terminal } = await closableService({
+      terminal: { has: async () => false },
+    })
+    const created = await service.createSession(directory, true)
+    const files = await sessionState(directory, created.id)
+    await store.enqueuePrompt(created.id, {
+      id: 'queued', content: 'Queued before closing', createdAt: new Date().toISOString(),
+    })
+
+    await service.closeSession(created.id)
+
+    expect(stopper).toHaveBeenCalledWith(created.id)
+    expect(existsSync(files)).toBe(true)
+    expect(store.isManagedOpen(created.id)).toBe(false)
+    expect(service['externalSessionIds'].has(created.id)).toBe(false)
+
+    const reopened = await service.activateSession(created.id)
+
+    expect(terminal.reopen).toHaveBeenCalledWith(
+      created.id, directory, created.title, true, expect.anything(),
+    )
+    expect(reopened).toMatchObject({ id: created.id, isOpen: true })
+    expect(reopened.closedAt).toBeUndefined()
+    expect(reopened.closedContext).toBeUndefined()
+    expect(store.isManagedOpen(created.id)).toBe(true)
+    expect(reopened.queuedPrompts).toEqual([])
+    expect(terminal.send).not.toHaveBeenCalled()
+  })
+
+  it('lets no SDK owner attach while it closes', async () => {
+    const { service, store } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    await service.closeSession(created.id)
+    await service.activateSession(created.id)
+    const commit = store.closeSession.bind(store)
+    let reading: Promise<unknown> | undefined
+    vi.spyOn(store, 'closeSession').mockImplementationOnce(async (id) => {
+      // A read that would attach the session arrives while the close is recorded.
+      reading = service.openSession(id).catch((error: unknown) => error)
+      await new Promise((resolve) => setImmediate(resolve))
+      return commit(id)
+    })
+
+    await service.closeSession(created.id)
+    await reading
+
+    expect(service['sessions'].has(created.id)).toBe(false)
+    expect(store.get(created.id)).toMatchObject({ isOpen: false, closedAt: expect.any(String) })
+  })
+
+  it('keeps a late SDK owner it could not detach where Close finds it', async () => {
+    const { client, service } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    await service.closeSession(created.id)
+    await service.activateSession(created.id)
+    let attach!: () => void
+    const attaching = new Promise<void>((resolve) => { attach = resolve })
+    const resume = client.resumeSession.bind(client)
+    vi.spyOn(client, 'resumeSession').mockImplementationOnce(async (...args) => {
+      await attaching
+      return resume(...args)
+    })
+    const disconnect = vi.spyOn(client.session, 'disconnect').mockRejectedValueOnce(new Error('provider busy'))
+
+    const reading = service.openSession(created.id).catch((error: unknown) => error)
+    await vi.waitFor(() => expect(client.resumeSession).toHaveBeenCalled())
+    const closing = service.closeSession(created.id)
+    await vi.waitFor(() => expect(service['closingSessions'].has(created.id)).toBe(true))
+    attach()
+
+    await expect(closing).resolves.toMatchObject({ closedAt: expect.any(String) })
+    await reading
+    expect(disconnect).toHaveBeenCalledTimes(2)
+    expect(service['sessions'].has(created.id)).toBe(false)
+  })
+
+  it('reopens an SDK session lazily under the same id', async () => {
+    const { client, service } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    await service.closeSession(created.id)
+
+    const reopened = await service.activateSession(created.id)
+    expect(reopened).toMatchObject({ id: created.id, isOpen: true })
+    expect(reopened.closedAt).toBeUndefined()
+    await service.openSession(created.id)
+
+    expect(client.resumedSessionIds).toEqual([created.id])
+    expect(client.session.sentPrompts).toEqual([])
+  })
+
+  it('refuses work on a closed session and reads it without starting a runtime', async () => {
+    const { client, service } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    await service.closeSession(created.id)
+
+    await expect(service.sendMessage(created.id, 'Late follow-up'))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen the closed session/) })
+    await expect(service.suspendSession(created.id))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.restartSession(created.id))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.openSession(created.id))
+      .resolves.toMatchObject({ isOpen: false, closedAt: expect.any(String) })
+    expect(client.resumedSessionIds).toEqual([])
+  })
+
+  it('keeps a closed session closed when discovery still finds its process', async () => {
+    let live: string | undefined
+    const { service, store } = await closableService({
+      terminal: { has: async () => false },
+      activeSessions: async () => live
+        ? [{ id: live, cwd: tmpdir(), title: 'Active Copilot session', updatedAt: new Date().toISOString() }]
+        : [],
+    })
+    const created = await service.createSession(tmpdir(), true)
+    await service.closeSession(created.id)
+    live = created.id
+
+    await service.refreshDiscovery()
+
+    expect(service.listSessions()).toEqual([])
+    expect(store.get(created.id)).toMatchObject({ isOpen: false, closedAt: expect.any(String) })
+    expect(service['externalSessionIds'].has(created.id)).toBe(false)
+  })
+
+  it('does not recover a closed terminal session after a restart', async () => {
+    const first = await closableService({ terminal: { has: async () => false } })
+    const created = await first.service.createSession(first.directory, true)
+    await first.service.closeSession(created.id)
+    await first.service.stop()
+
+    const restarted = await closableService({
+      directory: first.directory,
+      terminal: { has: async () => false },
+    })
+
+    expect(restarted.terminal.create).not.toHaveBeenCalled()
+    expect(restarted.terminal.reopen).not.toHaveBeenCalled()
+    expect(restarted.service.listSessions()).toEqual([])
+    expect(restarted.service.listClosedSessions()).toEqual([
+      expect.objectContaining({ id: created.id }),
+    ])
+  })
+
+  it('deletes a closed session only once its retention has ended', async () => {
+    const { service, store, client } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    const closed = await service.closeSession(created.id)
+    const closedAt = Date.parse(closed.closedAt!)
+
+    await expect(service.deleteExpiredClosedSession(created.id, closedAt - 1)).resolves.toBe(false)
+    expect(store.get(created.id)).toBeDefined()
+    await expect(service.deleteExpiredClosedSession(created.id, closedAt)).resolves.toBe(true)
+    expect(store.get(created.id)).toBeUndefined()
+    expect(client.deletedSessionIds).toEqual([created.id])
+  })
+
+  it('never expires a session that was reopened', async () => {
+    const { service, store } = await closableService()
+    const created = await service.createSession(tmpdir(), false)
+    await service.closeSession(created.id)
+    await service.activateSession(created.id)
+
+    await expect(service.deleteExpiredClosedSession(created.id, Date.now() + 1_000)).resolves.toBe(false)
+    expect(store.get(created.id)).toMatchObject({ isOpen: true })
+  })
+
+  it('still deletes a session permanently, closed or not', async () => {
+    const { directory, service, store } = await closableService({ terminal: { has: async () => false } })
+    const created = await service.createSession(directory, true)
+    const files = await sessionState(directory, created.id)
+    await service.closeSession(created.id)
+
+    await service.deleteSession(created.id)
+
+    expect(store.get(created.id)).toBeUndefined()
+    expect(existsSync(files)).toBe(false)
+  })
+})
+
 describe('foregroundTurnOpen', () => {
   const event = (type: string, agentId?: string): SessionEvent =>
     ({ type, ...(agentId ? { agentId } : {}), data: {} }) as unknown as SessionEvent

@@ -1,9 +1,9 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionDetail } from '../shared/contracts.js'
-import { SessionStore } from './session-store.js'
+import { assertSessionNotRetained, SessionStore } from './session-store.js'
 
 const directories: string[] = []
 const now = Date.parse('2026-10-19T06:52:00.000Z')
@@ -27,6 +27,7 @@ async function fixture(overrides: Partial<SessionDetail> = {}, managedOpen = tru
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -391,4 +392,184 @@ describe('retention settings merge per field', () => {
       await store.close()
     },
   )
+})
+
+describe('closed sessions stay reopenable without running', () => {
+  const prompt = (id: string, content: string) => ({
+    id, role: 'user' as const, content, createdAt: '2026-10-18T00:00:00.000Z',
+  })
+
+  it('leaves the open list and recovery set, keeping history and what it was about', async () => {
+    const { store, directory, advance } = await fixture({
+      suspended: true,
+      queuedPrompts: [{ id: 'queued', content: 'Queued follow-up', createdAt: '2026-10-18T00:00:00Z' }],
+      pendingUserInput: { requestId: 'question', question: 'Continue?', choices: [], allowFreeform: true },
+      messages: [
+        prompt('ask', 'Review the release notes'),
+        { id: 'final', role: 'assistant', content: 'Synthetic final status', createdAt: '2026-10-18T00:00:00.000Z' },
+      ],
+    })
+    advance(60_000)
+
+    const closed = await store.closeSession('retained')
+
+    expect(closed).toMatchObject({
+      isOpen: false,
+      status: 'idle',
+      closedAt: '2026-10-19T06:53:00.000Z',
+      closedContext: {
+        title: 'Review implementation',
+        cwd: '/tmp/project/worktree',
+        prompts: ['Review the release notes'],
+        reply: 'Synthetic final status',
+      },
+      queuedPrompts: [],
+      messages: [expect.objectContaining({ id: 'ask' }), expect.objectContaining({ id: 'final' })],
+    })
+    expect(closed.suspended).toBeUndefined()
+    expect(closed.pendingUserInput).toBeUndefined()
+    expect(store.isManagedOpen('retained')).toBe(false)
+    expect(store.terminalRecoverySessions()).toEqual([])
+    await store.close()
+    const restored = new SessionStore(directory, () => now)
+    await restored.initialize()
+    expect(restored.get('retained')).toMatchObject({
+      isOpen: false, closedAt: closed.closedAt, closedContext: closed.closedContext,
+    })
+    expect(restored.terminalRecoverySessions()).toEqual([])
+    await restored.close()
+  })
+
+  it('stays closed through discovery, a live process, and archival', async () => {
+    const { store, advance } = await fixture()
+    await store.configureRetention('retained', { idleDays: 7, pinned: false })
+    await store.closeSession('retained')
+    const closed = store.get('retained')
+    advance(365 * day)
+
+    await store.syncDiscovered([{
+      id: 'retained', cwd: '/tmp/elsewhere', title: 'Provider title', updatedAt: '2027-01-01T00:00:00.000Z',
+    }])
+    await store.syncBackends(['retained'], ['retained'])
+    await store.syncOpen(['retained'])
+    await store.syncOpen([])
+    await store.claimTerminalRecovery('retained')
+
+    expect(store.archivalCandidates([])).toEqual([])
+    expect(store.get('retained')).toEqual(closed)
+    await store.close()
+  })
+
+  it('closes once, keeping when it first closed', async () => {
+    const { store, advance } = await fixture()
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const first = await store.closeSession('retained')
+    advance(day)
+
+    const again = await store.closeSession('retained')
+    await store.setOpen('retained', true, true)
+
+    expect(again.closedAt).toBe(first.closedAt)
+    expect(again.revision).toBe(first.revision)
+    expect(info.mock.calls.flat().filter((line) => typeof line === 'string' && line.includes('sessionLifecycle')))
+      .toEqual([
+        JSON.stringify({ sessionLifecycle: 'closed', sessionId: 'retained', at: first.closedAt }),
+        JSON.stringify({ sessionLifecycle: 'reopened', sessionId: 'retained', at: new Date(now + day).toISOString() }),
+      ])
+    await store.close()
+  })
+
+  it('refuses new queued work while closed without changing the record', async () => {
+    const { store } = await fixture()
+    const closed = await store.closeSession('retained')
+
+    await expect(store.enqueuePrompt('retained', {
+      id: 'late', content: 'Late follow-up', createdAt: '2026-10-19T06:52:00Z',
+    })).rejects.toThrow('Reopen the closed session before queueing work. Nothing was changed.')
+    expect(() => assertSessionNotRetained(store.get('retained'), 'sending'))
+      .toThrow('Reopen the closed session before sending.')
+    expect(store.get('retained')).toEqual(closed)
+    await store.close()
+  })
+
+  it('is never marked interrupted while closed', async () => {
+    const { store } = await fixture()
+    const closed = await store.closeSession('retained')
+
+    await store.markInterrupted('retained', 'terminal-stopped')
+
+    expect(store.get('retained')).toEqual(closed)
+    await store.close()
+  })
+
+  it('forgets the closure when it is reopened', async () => {
+    const { store } = await fixture()
+    await store.closeSession('retained')
+
+    const reopened = await store.setOpen('retained', true, true)
+
+    expect(reopened.isOpen).toBe(true)
+    expect(reopened.closedAt).toBeUndefined()
+    expect(reopened.closedContext).toBeUndefined()
+    expect(store.isManagedOpen('retained')).toBe(true)
+    await store.close()
+  })
+
+  it('treats a record an older release reopened as open again', async () => {
+    const { store, directory } = await fixture()
+    await store.closeSession('retained')
+    await store.close()
+    const file = path.join(directory, 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    // What an older release's reopen writes: it keeps fields it does not know.
+    Object.assign(state.sessions.retained, { isOpen: true, managedOpen: true })
+    await writeFile(file, JSON.stringify(state))
+
+    const restored = new SessionStore(directory, () => now)
+    await restored.initialize()
+
+    expect(restored.get('retained')?.isOpen).toBe(true)
+    expect(restored.get('retained')?.closedAt).toBeUndefined()
+    expect(restored.get('retained')?.closedContext).toBeUndefined()
+    await restored.close()
+  })
+
+  it('keeps a closed record loadable and expiring when what it stored is unreadable', async () => {
+    const { store, directory } = await fixture()
+    await store.closeSession('retained')
+    await store.close()
+    const file = path.join(directory, 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    state.sessions.retained.closedContext = { prompts: 'not a list' }
+    state.sessions.retained.closedAt = 'not a time'
+    await writeFile(file, JSON.stringify(state))
+
+    const restored = new SessionStore(directory, () => now + day)
+    await restored.initialize()
+
+    expect(restored.get('retained')).toMatchObject({
+      isOpen: false, closedAt: new Date(now + day).toISOString(),
+    })
+    expect(restored.get('retained')?.closedContext).toBeUndefined()
+    await restored.close()
+  })
+
+  it('keeps a record closed when an older release only saw its process', async () => {
+    const { store, directory } = await fixture()
+    await store.configureRetention('retained', { pinned: true })
+    const closed = await store.closeSession('retained')
+    await store.close()
+    const file = path.join(directory, 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    // An older release lists a live process as open without managing it, and
+    // a pinned record that it lists stays open across a restart.
+    state.sessions.retained.isOpen = true
+    await writeFile(file, JSON.stringify(state))
+
+    const restored = new SessionStore(directory, () => now)
+    await restored.initialize()
+
+    expect(restored.get('retained')).toMatchObject({ isOpen: false, closedAt: closed.closedAt })
+    await restored.close()
+  })
 })

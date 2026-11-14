@@ -99,6 +99,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
         supportsBackgroundTasks: true,
         supportsQueuedPromptDispatch: true,
         supportsContextRecovery: true,
+        supportsRecoverableClose: true,
       },
     ]
   }
@@ -627,6 +628,22 @@ class FakeSessionService extends EventEmitter implements SessionService {
       throw new Error('Session not found')
     }
     this.emitEvent({ type: 'session.removed', sessionId })
+  }
+
+  async closeSession(sessionId: string): Promise<SessionDetail> {
+    const session = this.sessions.get(sessionId)
+    if (!session) {
+      throw new Error('Session not found')
+    }
+    session.isOpen = false
+    session.closedAt ??= new Date().toISOString()
+    session.closedContext ??= { title: session.title, cwd: session.cwd, prompts: [] }
+    this.emitEvent({ type: 'session.removed', sessionId, closed: true })
+    return structuredClone(session)
+  }
+
+  listClosedSessions(): SessionDetail[] {
+    return this.listHistory().filter((session) => session.closedAt)
   }
 
   async replyPermission(
@@ -1456,6 +1473,133 @@ describe('multi-node hub', () => {
       expect(response.statusCode).toBe(409)
       expect(response.json().error).toContain('does not support conversation recovery yet')
       expect(recover).not.toHaveBeenCalled()
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
+  it('closes sessions to reopen on their own computer while DELETE still deletes', async () => {
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    const remoteService = new FakeSessionService(
+      session('remote-session', 'Remote'),
+      session('remote-kept', 'Kept'),
+    )
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-close-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-close-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    let socket: WebSocket | undefined
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      await hub.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address() as AddressInfo
+      const hubId = hub.identity.info.id
+      const remoteId = remote.identity.info.id
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: { baseUrl: `http://127.0.0.1:${address.port}`, token: remote.identity.token, name: 'worker-node' },
+      })).statusCode).toBe(201)
+      await vi.waitFor(async () => {
+        const computers = (await hub.app.inject({ method: 'GET', url: '/api/computers' })).json().computers
+        expect(computers.find((computer: { id: string }) => computer.id === remoteId)?.online).toBe(true)
+      })
+      socket = new WebSocket(`ws://127.0.0.1:${(hub.app.server.address() as AddressInfo).port}/api/events`)
+      await new Promise<void>((resolve, reject) => {
+        socket!.once('open', resolve)
+        socket!.once('error', reject)
+      })
+      const removal = waitForEvent(socket, (event) =>
+        event.type === 'session.removed' && event.sessionId === 'remote-session')
+      expect((await remote.app.inject({
+        method: 'POST', url: '/node-api/sessions/remote-session/close',
+      })).statusCode).toBe(401)
+      expect((await remote.app.inject({ method: 'GET', url: '/node-api/closed-sessions' })).statusCode).toBe(401)
+
+      const closed = await hub.app.inject({
+        method: 'POST', url: `/api/computers/${remoteId}/sessions/remote-session/close`,
+      })
+      expect(closed.statusCode).toBe(200)
+      expect(closed.json().session).toMatchObject({
+        id: 'remote-session', computerId: remoteId, computerName: 'worker-node',
+        isOpen: false, closedAt: expect.any(String),
+      })
+      expect(await removal).toMatchObject({ computerId: remoteId, closed: true })
+      expect((await hub.app.inject({
+        method: 'POST', url: `/api/computers/${hubId}/sessions/local-session/close`,
+      })).statusCode).toBe(200)
+
+      const listed = await hub.app.inject({ method: 'GET', url: '/api/closed-sessions' })
+      expect(listed.statusCode).toBe(200)
+      expect(listed.json().sessions.map((entry: { computerId: string; id: string }) =>
+        `${entry.computerId}:${entry.id}`).sort())
+        .toEqual([`${hubId}:local-session`, `${remoteId}:remote-session`].sort())
+      expect((await hub.app.inject({ method: 'GET', url: '/api/sessions' })).json().sessions
+        .map((entry: { id: string }) => entry.id)).toEqual(['remote-kept'])
+
+      expect((await hub.app.inject({
+        method: 'DELETE', url: `/api/computers/${remoteId}/sessions/remote-session`,
+      })).statusCode).toBe(204)
+      expect(remoteService.getSession('remote-session')).toBeUndefined()
+      expect((await hub.app.inject({ method: 'GET', url: '/api/closed-sessions' })).json().sessions
+        .map((entry: { id: string }) => entry.id)).toEqual(['local-session'])
+    } finally {
+      socket?.close()
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
+  it('refuses a recoverable close on a node that cannot keep one', async () => {
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
+    const olderProviders = remoteService.providers().map(
+      ({ supportsRecoverableClose: _close, ...provider }) => provider,
+    )
+    vi.spyOn(remoteService, 'providers').mockReturnValue(
+      olderProviders as unknown as ReturnType<FakeSessionService['providers']>,
+    )
+    const close = vi.spyOn(remoteService, 'closeSession')
+    const listClosed = vi.spyOn(remoteService, 'listClosedSessions')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-older-close-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-older-close-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address() as AddressInfo
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: { baseUrl: `http://127.0.0.1:${address.port}`, token: remote.identity.token, name: 'older-node' },
+      })).statusCode).toBe(201)
+
+      const response = await hub.app.inject({
+        method: 'POST', url: `/api/computers/${remote.identity.info.id}/sessions/remote-session/close`,
+      })
+      const listed = await hub.app.inject({ method: 'GET', url: '/api/closed-sessions' })
+
+      expect(response.statusCode).toBe(409)
+      expect(response.json().error).toContain('older-node cannot keep closed sessions')
+      expect(close).not.toHaveBeenCalled()
+      expect(listed.json().sessions).toEqual([])
+      expect(listClosed).not.toHaveBeenCalled()
+      expect(remoteService.getSession('remote-session')).toMatchObject({ isOpen: true })
     } finally {
       await Promise.all([hub.app.close(), remote.app.close()])
     }

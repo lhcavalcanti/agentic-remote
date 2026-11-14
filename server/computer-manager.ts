@@ -1052,6 +1052,48 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     await this.requireClient(computerId).deleteSession(sessionId)
   }
 
+  /** Stops a session on its own computer but keeps it, for 14 days, to reopen. */
+  async closeSession(computerId: string, sessionId: string): Promise<ManagedSession> {
+    const computer = this.requireComputer(computerId)
+    const local = computerId === this.identity.info.id
+    if (
+      (local && !this.localService.closeSession) ||
+      !computer.providers?.some((provider) => provider.supportsRecoverableClose === true)
+    ) {
+      throw Object.assign(
+        new Error(`${computer.name} cannot keep closed sessions to reopen yet. Update it, or delete the session permanently.`),
+        { statusCode: 409 },
+      )
+    }
+    const session = local
+      ? await this.localService.closeSession!(sessionId)
+      : await this.requireClient(computerId).closeSession(sessionId)
+    return managedSession(session, computer)
+  }
+
+  /**
+   * Closed sessions every reachable computer still keeps, newest closure
+   * first. A computer that cannot keep them, or does not answer, adds none.
+   */
+  async listClosedSessions(): Promise<ManagedSession[]> {
+    const localComputer = this.localComputer()
+    const local = (this.localService.listClosedSessions?.() ?? [])
+      .map((session) => managedSession(session, localComputer))
+    const remote = await Promise.all(
+      this.registry.list().map(async (computer) => {
+        const client = this.clients.get(computer.id)
+        if (!client?.providers.some((provider) => provider.supportsRecoverableClose === true)) return []
+        try {
+          return (await client.listClosedSessions()).map((session) => managedSession(session, computer))
+        } catch {
+          return []
+        }
+      }),
+    )
+    return [...local, ...remote.flat()].sort((left, right) =>
+      (right.closedAt ?? '').localeCompare(left.closedAt ?? ''))
+  }
+
   async replyPermission(
     computerId: string,
     sessionId: string,
@@ -1345,6 +1387,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         computerId: computer.id,
         sessionId: event.sessionId,
         replacedBy: event.replacedBy,
+        ...(event.closed ? { closed: true } : {}),
       })
       return
     }

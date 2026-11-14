@@ -94,6 +94,8 @@ export interface ManagerConfirmation {
    * close is never pending. Absent when the user answered.
    */
   decidedBy?: 'oracle'
+  /** The close kept the session reopenable; absent on closes that deleted it. */
+  recoverable?: true
 }
 
 export interface ManagerMessage {

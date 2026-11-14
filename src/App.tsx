@@ -243,6 +243,7 @@ import {
   configureRetention,
   createSession,
   deleteSession,
+  closeSession,
   executeCommand,
   getPushSettings,
   getSession,
@@ -371,6 +372,9 @@ import {
   type SessionNotificationState,
 } from './shell-notifications'
 import { DialogFrame } from './components/DialogFrame'
+import { CloseSessionDialog, RecentlyClosedDialog } from './RecentlyClosed'
+import { useRecentlyClosed } from './use-recently-closed'
+import { CLOSED_SESSION_RETENTION_DAYS } from '../shared/closed-sessions'
 import { MessageTime } from './MessageTime'
 import { drawnInParts } from './markdown-document/drawing'
 import { useMarkdownDocument } from './markdown-document/use-markdown-document'
@@ -7523,6 +7527,8 @@ function App() {
   // Sessions somebody said outright are gone, as opposed to ones a list did
   // not mention. Absence and removal are different things.
   const removedSessions = useRef(new Set<string>())
+  // Of those, the ones closed to reopen: coming back lifts their removal.
+  const closedSessionKeys = useRef(new Set<string>())
   // One reorder at a time for a session, so a second drag does not take its
   // snapshot from a queue the server has not accepted yet.
   const reorderInFlight = useRef(new Map<string, Promise<void>>())
@@ -7639,6 +7645,12 @@ function App() {
     () => new Set(),
   )
   const closingSessionsRef = useRef(new Set<string>())
+  // The session whose Close is being confirmed.
+  const [closeRequest, setCloseRequest] = useState<ManagedSession>()
+  const recentlyClosed = useRecentlyClosed()
+  const recentlyClosedRef = useRef(recentlyClosed)
+  recentlyClosedRef.current = recentlyClosed
+  const [recentlyClosedOpen, setRecentlyClosedOpen] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [restarting, setRestarting] = useState(false)
@@ -8810,8 +8822,19 @@ function App() {
     selectedSideThread?.entries.some((entry) => entry.status === 'pending'),
   )
   const sideQuestionDraft = askingAside ? selectedSideThread?.draft || '' : undefined
+  // The confirmation lasts only while its session is still listed, so a session
+  // closed elsewhere does not bring it back when it is reopened. Settled while
+  // rendering, before anything can show the stale question.
+  const closeRequestSession = closeRequest
+    ? sessions.find((session) => sessionKey(session) === sessionKey(closeRequest))
+    : undefined
+  if (closeRequest && !closeRequestSession) {
+    setCloseRequest(undefined)
+  }
   const hasBlockingUi =
     newSessionOpen ||
+    Boolean(closeRequestSession) ||
+    recentlyClosedOpen ||
     computersOpen ||
     statuslineOpen ||
     settingsOpen ||
@@ -10857,6 +10880,9 @@ function App() {
       authoritativeRefreshGeneration.current = generation
       setRefreshState('refreshing')
       setRefreshMessage(undefined)
+      // Beside the snapshot, not part of it: an unreadable list of closed
+      // sessions must not mark the open ones stale.
+      void recentlyClosedRef.current.refresh()
       try {
         const settled = await Promise.allSettled([
           refreshSnapshot((caught) => {
@@ -10943,6 +10969,11 @@ function App() {
             eventSequenceRef.current,
           )
           pendingReplacements.current.delete(sessionKey(event.session))
+          // A closed session reopened, here or on another device.
+          if (closedSessionKeys.current.delete(sessionKey(event.session))) {
+            removedSessions.current.delete(sessionKey(event.session))
+          }
+          recentlyClosedRef.current.forget(sessionKey(event.session))
           // Written straight through as well as scheduled. The ref is assigned
           // during render, so a request that finishes before React commits
           // would reconcile against a list this event is not in yet and drop
@@ -10972,6 +11003,13 @@ function App() {
           // is not what settles it, and a delayed clear response must not put
           // it back.
           removedSessions.current.add(removedKey)
+          if (event.closed) {
+            closedSessionKeys.current.add(removedKey)
+            void recentlyClosedRef.current.refresh()
+          } else {
+            closedSessionKeys.current.delete(removedKey)
+            recentlyClosedRef.current.forget(removedKey)
+          }
           // Whatever this session was itself promised as, it is not on its way
           // any more. Left pending, selection cleanup went on preserving a
           // session that had been deleted and the reader sat on a blank
@@ -12768,6 +12806,8 @@ function App() {
       return true
     }
     const dialogs: [boolean, () => void][] = [
+      [Boolean(closeRequestSession), () => setCloseRequest(undefined)],
+      [recentlyClosedOpen, () => setRecentlyClosedOpen(false)],
       [newSessionOpen, closeNewSession],
       [computersOpen, () => setComputersOpen(false)],
       [settingsOpen, () => setSettingsOpen(false)],
@@ -16071,24 +16111,49 @@ function App() {
     }
   }
 
-  async function closeSelectedSession(session?: ManagedSession) {
+  /** Whether the session's computer keeps a closed session to reopen. */
+  function keepsClosedSessions(session: ManagedSession): boolean {
+    return computers.find((computer) => computer.id === session.computerId)?.providers?.some(
+      (provider) => provider.supportsRecoverableClose === true,
+    ) === true
+  }
+
+  /** Asks how to close a session: to reopen later, or for good. */
+  function requestSessionClose(session?: ManagedSession) {
     const target = session || selected
-    if (
-      !target ||
-      closingSessionsRef.current.has(sessionKey(target)) ||
-      !window.confirm(
-        `Close "${target.title}" on ${target.computerName}?\n\nThis permanently deletes the ${providerName(target.provider)} session and its history from that computer.`,
-      )
-    ) {
+    if (!target || closingSessionsRef.current.has(sessionKey(target))) {
       return
     }
+    setCloseRequest(target)
+  }
 
+  async function closeSelectedSession(target: ManagedSession, permanently: boolean) {
     const closedKey = sessionKey(target)
+    if (closingSessionsRef.current.has(closedKey)) {
+      return
+    }
     closingSessionsRef.current.add(closedKey)
     setClosingSessions(new Set(closingSessionsRef.current))
     setError(undefined)
     try {
-      await deleteSession(target.computerId, target.id)
+      if (permanently) {
+        await deleteSession(target.computerId, target.id)
+        closedSessionKeys.current.delete(closedKey)
+      } else {
+        const closed = await closeSession(target.computerId, target.id)
+        const startedAt = sessionResponseStartedAt(closed)
+        // Announced again after this close left, and not removed since: it
+        // was reopened, here or elsewhere, and is open now.
+        if (
+          startedAt !== undefined &&
+          (sessionEventSequenceRef.current.get(closedKey) || 0) > startedAt &&
+          !removedSessions.current.has(closedKey)
+        ) {
+          return
+        }
+        recentlyClosed.remember(closed)
+        closedSessionKeys.current.add(closedKey)
+      }
       removedSessions.current.add(closedKey)
       forgetAttachments(closedKey)
       updateComposerDrafts([closedKey], (current) => {
@@ -16129,6 +16194,27 @@ function App() {
       closingSessionsRef.current.delete(closedKey)
       setClosingSessions(new Set(closingSessionsRef.current))
     }
+  }
+
+  function openRecentlyClosed() {
+    setRecentlyClosedOpen(true)
+    void recentlyClosed.refresh()
+  }
+
+  async function reopenClosedSession(session: ManagedSession) {
+    const opened = await activateSession(session.computerId, session.id)
+    const key = sessionKey(opened)
+    closedSessionKeys.current.delete(key)
+    removedSessions.current.delete(key)
+    recentlyClosed.forget(key)
+    setRecentlyClosedOpen(false)
+    created(opened)
+  }
+
+  async function deleteClosedSession(session: ManagedSession) {
+    await deleteSession(session.computerId, session.id)
+    closedSessionKeys.current.delete(sessionKey(session))
+    recentlyClosed.forget(sessionKey(session))
   }
 
   async function applyPwaUpdate() {
@@ -16471,9 +16557,7 @@ function App() {
                 loading={loading}
                 pendingCreations={placedSessionCreations}
                 onOpenSessionTasks={openTasksForSession}
-                onCloseSession={(session) =>
-                  void closeSelectedSession(session)
-                }
+                onCloseSession={requestSessionClose}
                 onSelectSession={selectSession}
                 onToggleSessionSuspended={(session) =>
                   void toggleSelectedSessionSuspended(session)
@@ -16486,6 +16570,8 @@ function App() {
                 hiddenSessions={hiddenSessionKeys}
                 hidingSessions={hidingSessions}
                 onToggleSessionHidden={toggleSessionHidden}
+                recentlyClosedCount={recentlyClosed.sessions?.length}
+                onOpenRecentlyClosed={openRecentlyClosed}
               />
             </DndContext>
         </div>
@@ -16978,13 +17064,17 @@ function App() {
                 aria-label="Close session"
                 className="session-action session-action--danger"
                 disabled={selectedClosing || !selectedComputerOnline}
-                onClick={() => void closeSelectedSession()}
+                onClick={() => requestSessionClose()}
                 type="button"
               >
                 <Trash2 size={18} />
                 <span>
                   Close session
-                  <small id="close-session-description">Permanently deletes this session and history</small>
+                  <small id="close-session-description">
+                    {selected && keepsClosedSessions(selected)
+                      ? `Stops it; reopen it from Recently closed for ${CLOSED_SESSION_RETENTION_DAYS} days`
+                      : 'Permanently deletes this session and history'}
+                  </small>
                 </span>
               </button>
             </SessionActions>
@@ -18091,6 +18181,33 @@ function App() {
         </DialogFrame>
       ) : null}
 
+      {closeRequestSession ? (
+        <CloseSessionDialog
+          onCancel={() => setCloseRequest(undefined)}
+          onCloseSession={() => {
+            setCloseRequest(undefined)
+            void closeSelectedSession(closeRequestSession, false)
+          }}
+          onDelete={() => {
+            setCloseRequest(undefined)
+            void closeSelectedSession(closeRequestSession, true)
+          }}
+          recoverable={keepsClosedSessions(closeRequestSession)}
+          session={closeRequestSession}
+        />
+      ) : null}
+      {recentlyClosedOpen ? (
+        <RecentlyClosedDialog
+          computers={computers}
+          error={recentlyClosed.error}
+          loading={recentlyClosed.loading}
+          onClose={() => setRecentlyClosedOpen(false)}
+          onDelete={deleteClosedSession}
+          onReopen={reopenClosedSession}
+          onRetry={() => void recentlyClosed.refresh()}
+          sessions={recentlyClosed.sessions}
+        />
+      ) : null}
       <NewSessionDialog
         computers={computers}
         creationError={newSessionOpen ? sessionCreationError : undefined}

@@ -597,7 +597,8 @@ function deterministicManagerHub(): ManagerHub {
     suspendSession: vi.fn(async (_computerId, sessionId) => managed(sessionId, { suspended: true })),
     resumeSession: vi.fn(async (_computerId, sessionId) => managed(sessionId)),
     cancel: vi.fn(async () => undefined),
-    deleteSession: vi.fn(async () => undefined),
+    closeSession: vi.fn(async (_computerId, sessionId) => managed(sessionId, { isOpen: false })),
+    listClosedSessions: vi.fn(async () => []),
     providerRuntimeOptions: vi.fn(async () => ({ models: [] })),
   }
 }

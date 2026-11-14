@@ -109,6 +109,14 @@ schema versions rather than guessing a migration. Switching from `on` or
 Journal entries stay unacknowledged until a manager turn that included them
 completes, so a failed turn shows them again next time.
 
+### Session launch boundary
+
+`server/session-launcher.ts` provides creation, prompt delivery, passive observation, explicit permission/question replies, and cancellation over a narrow `ComputerManager` interface. It does not choose providers, models, folders, ownership, or permission defaults. Both `permissionPolicy` (`ask` or `allow-all`) and `folderTrust` (`ask` or `auto-approve`) are required; permission approval and folder trust are independent choices.
+
+Oracle resolves its existing runtime and backend preferences, then explicitly requests `allow-all` and `auto-approve`. A caller-owned provenance recorder keeps Oracle's existing manager origin, task, and journal handling after best-effort naming and before delivery. Provenance failures are distinguished from pre-creation refusals so runtime fallback cannot create another session after one already exists.
+
+Folder trust is checked only during non-steering delivery, never during creation or observation. Automatic approval recognizes only the genuine terminal trust prompt for the session's own folder; `ask` leaves it unanswered and does not retry a refused send. Steering retains its existing uncertainty check before falling back to the queue. Cancellation only signals the current turn to stop; it is not proof that queued or background work has terminated. Local and paired-node routing remain owned by `ComputerManager`; no route or wire contract changes.
+
 ## Turn context
 
 Every prompt sent to the SDK is the user's text wrapped like this:

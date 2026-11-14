@@ -7901,6 +7901,7 @@ button {
 
 .manager-composer__send:focus-visible,
 .manager-activity__open:focus-visible,
+.manager-activity__toggle:focus-visible,
 .oracle-runtime:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -8190,6 +8191,115 @@ button {
 
 .manager-activity__open:hover {
   border-color: var(--accent);
+}
+
+/*
+ * A turn the hub started for Oracle, such as a session update: one line in
+ * the activity rhythm, never a bubble of yours. Its hollow mark tells it from
+ * Oracle's own actions. The line never wraps: a long summary ends in an
+ * ellipsis, and the controls stay bounded because several sessions open from
+ * Details. Details and any failure sit indented beneath it.
+ */
+.manager-activity--automatic {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.manager-activity__line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.manager-activity--automatic .manager-activity__mark {
+  border: 1.5px solid var(--accent);
+  background: none;
+}
+
+.manager-activity__summary {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.manager-activity--automatic .manager-activity__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manager-activity__controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.manager-activity__label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.manager-activity__toggle {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}
+
+.manager-activity__toggle svg {
+  transition: transform 150ms ease;
+}
+
+.manager-activity__toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.manager-activity__details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 14px;
+}
+
+.manager-activity__sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.manager-activity__prompt {
+  max-height: 16rem;
+  margin: 0;
+  padding: 6px 10px;
+  overflow: auto;
+  border-left: 2px solid var(--border);
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.manager-activity--automatic .manager-message__error {
+  margin-left: 14px;
+  text-align: left;
+}
+
+.manager-activity--automatic .manager-message__retry {
+  align-self: flex-start;
+  margin-left: 14px;
+}
+
+@media (pointer: coarse) {
+  .manager-activity__toggle {
+    width: 40px;
+    height: 40px;
+  }
 }
 
 .manager-confirmation {

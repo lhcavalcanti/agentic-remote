@@ -1298,6 +1298,7 @@ export class DreamerService {
       automatic: {
         kind: 'task',
         taskId: task.id,
+        title: task.title,
         sessionRefs: priorSessionRefs,
       },
       content: [

@@ -1,6 +1,7 @@
 import type { ManagerSessionRef } from './manager.js'
 
 export const ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH = 4_000
+export const ORACLE_TASK_TITLE_MAX_LENGTH = 120
 
 export type OracleTaskOwner = 'oracle' | 'user'
 export type OracleTaskStatus =

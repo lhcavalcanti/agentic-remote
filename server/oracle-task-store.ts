@@ -10,7 +10,7 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import type { ManagerMessage, ManagerSessionRef } from '../shared/manager.js'
-import { ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH } from '../shared/oracle-task.js'
+import { ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH, ORACLE_TASK_TITLE_MAX_LENGTH } from '../shared/oracle-task.js'
 import type {
   OracleTask,
   OracleTaskAttempt,
@@ -266,7 +266,7 @@ function validateTask(
   return isId(task.id) &&
     Number.isSafeInteger(task.revision) &&
     (task.revision as number) > 0 &&
-    isText(task.title, 120) &&
+    isText(task.title, ORACLE_TASK_TITLE_MAX_LENGTH) &&
     isText(task.summary, 1_000) &&
     isText(task.nextAction, 1_000) &&
     (task.owner === 'oracle' || task.owner === 'user') &&
@@ -408,7 +408,7 @@ export class OracleTaskStore {
       sourceEventIds.length === 0 ||
       sourceEventIds.length > ORACLE_TASK_MAX_SOURCE_EVENTS ||
       !sourceEventIds.every((id) => EVENT_ID_PATTERN.test(id)) ||
-      !isText(input.title, 120) ||
+      !isText(input.title, ORACLE_TASK_TITLE_MAX_LENGTH) ||
       !isText(input.summary, 1_000) ||
       !isText(input.nextAction, 1_000) ||
       (input.owner !== 'oracle' && input.owner !== 'user') ||

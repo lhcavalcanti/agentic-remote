@@ -29,6 +29,11 @@ export type ManagerMessageSource =
 export interface ManagerAutomaticContext {
   kind: 'proactive' | 'task'
   taskId?: string
+  /**
+   * A task turn's title as it was queued, shown in its row. Display only: it
+   * is not part of the turn's identity, which its task and prompt carry.
+   */
+  title?: string
   eventIds?: string[]
   sessionRefs?: ManagerSessionRef[]
 }

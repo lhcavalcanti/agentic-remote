@@ -12,6 +12,10 @@ import {
 } from 'node:fs/promises'
 import path from 'node:path'
 import type { SessionStatus } from '../shared/contracts.js'
+import {
+  MANAGER_PROACTIVE_EVENT_KINDS,
+  type ManagerProactiveEventKind,
+} from '../shared/manager-automatic.js'
 import type { SessionOrigin } from './manager-store.js'
 
 export const MANAGER_PROACTIVE_INBOX_MAX_PENDING_EVENTS = 1_000
@@ -27,7 +31,6 @@ const STATE_FILE_NAME = 'manager-proactive-inbox.json'
 const STAGING_FILE_PATTERN =
   /^manager-proactive-inbox\.json\.[A-Za-z0-9-]+\.(?:pending|rollback\.pending)$/
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~+=:@-]{0,127}$/
-const EVENT_KINDS = ['failed', 'blocked', 'finished'] as const
 const DISPOSITIONS = [
   'handled',
   'irrelevant',
@@ -35,7 +38,7 @@ const DISPOSITIONS = [
   'expired',
 ] as const
 
-export type ManagerProactiveInboxEventKind = (typeof EVENT_KINDS)[number]
+export type ManagerProactiveInboxEventKind = ManagerProactiveEventKind
 export type ManagerProactiveInboxDisposition = (typeof DISPOSITIONS)[number]
 
 export interface ManagerProactiveInboxObservation {
@@ -271,7 +274,7 @@ function isOrigin(value: unknown): value is SessionOrigin {
 }
 
 function isEventKind(value: unknown): value is ManagerProactiveInboxEventKind {
-  return value === 'failed' || value === 'blocked' || value === 'finished'
+  return (MANAGER_PROACTIVE_EVENT_KINDS as readonly unknown[]).includes(value)
 }
 
 function isDisposition(

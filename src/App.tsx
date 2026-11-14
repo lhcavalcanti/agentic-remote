@@ -182,15 +182,12 @@ import {
   SIDE_QUESTION_MAX_LENGTH,
 } from '../shared/side-question'
 import type {
-  AgentMode,
   AgentProvider,
-  AgentProviderCapability,
   ActivityKind,
   ActivityStatus,
   BackgroundTaskSnapshot,
   ChatMessage,
   ComputerSummary,
-  ConfigureRuntimeInput,
   DirectoryListing,
   HubWireEvent,
   ManagedSession,
@@ -199,9 +196,7 @@ import type {
   SessionOrderSnapshot,
   QueuedPrompt,
   UserInputReplyInput,
-  RuntimeOptions,
   RuntimeModelOption,
-  RuntimeReasoningEffort,
   SlashCommand,
   WorkspaceFile,
   WorkspaceListing,
@@ -241,9 +236,7 @@ import {
   checkHubSignIn,
   clearConversation,
   recoverConversation,
-  configureRuntime,
   configureRetention,
-  createSession,
   deleteSession,
   closeSession,
   executeCommand,
@@ -251,11 +244,9 @@ import {
   getSession,
   SessionKnowledgeRequestError,
   getProviderRuntimeOptions,
-  getRuntimeOptions,
   listComputers,
   listCommands,
   listBackgroundTasks,
-  listHistory,
   listKnowledgeEntries,
   listKnowledgeRoots,
   addKnowledgeRoot,
@@ -325,7 +316,6 @@ import {
   type NotificationScope,
 } from '../shared/notifications'
 import {
-  DEFAULT_SESSION_PROVIDER,
   type AppearanceSetting,
   type NewSessionBackendSetting,
   type OracleResponseStyle,
@@ -389,6 +379,22 @@ import {
   StaleInteractionRecoveryCard,
   UserInputCard,
 } from './features/prompts/PromptCards'
+import { NewSessionDialog } from './session-setup/NewSessionDialog'
+import { RuntimeDialog } from './session-setup/RuntimeDialog'
+import {
+  agentModeName,
+  compactTokens,
+  computerProviders,
+  contextSizeLabel,
+  isRuntimeReasoningEffort,
+  normalizedRuntimeSelection,
+} from './session-setup/runtime-presentation'
+import type {
+  DefaultRuntimeSelection,
+  DefaultRuntimeSettings,
+  DefaultSessionFolders,
+  SessionCreationHandle,
+} from './session-setup/types'
 
 function scopedKnowledgeRoot(
   root: KnowledgeRoot,
@@ -622,16 +628,6 @@ type StatuslineSettings = {
   update: boolean
 }
 
-type DefaultRuntimeSelection = {
-  model: string
-  reasoningEffort: RuntimeReasoningEffort | ''
-  contextTier: 'default' | 'long_context'
-  /** Blank starts Interactive, as a provider does without one. */
-  mode: Exclude<AgentMode, 'interactive'> | ''
-}
-
-type DefaultRuntimeSettings = Record<AgentProvider, DefaultRuntimeSelection>
-
 const emptyRuntimeSelection: DefaultRuntimeSelection = {
   model: '',
   reasoningEffort: '',
@@ -642,16 +638,6 @@ const emptyRuntimeSelection: DefaultRuntimeSelection = {
 function defaultAgentMode(value: unknown): DefaultRuntimeSelection['mode'] {
   return value === 'plan' || value === 'autopilot' ? value : ''
 }
-
-function agentModeName(mode: AgentMode, provider: AgentProvider): string {
-  return mode === 'plan'
-    ? 'Plan'
-    : mode === 'autopilot'
-      ? provider === 'claude' ? 'Auto' : 'Autopilot'
-      : 'Interactive'
-}
-
-type DefaultSessionFolders = Record<string, string>
 
 const accentThemes = [
   { id: 'agentic', name: 'Agentic', color: '#b8f36b' },
@@ -2128,18 +2114,6 @@ type KnowledgePosition = {
   file?: string
 }
 
-function isRuntimeReasoningEffort(
-  value: unknown,
-): value is RuntimeReasoningEffort {
-  return (
-    value === 'low' ||
-    value === 'medium' ||
-    value === 'high' ||
-    value === 'xhigh' ||
-    value === 'max'
-  )
-}
-
 const defaultStatusline: StatuslineSettings = {
   enabled: true,
   computer: true,
@@ -2286,39 +2260,6 @@ function supportsBackgroundTasks(
   return capability?.supportsBackgroundTasks === true
 }
 
-function computerProviders(
-  computer: ComputerSummary | undefined,
-): AgentProviderCapability[] {
-  return (
-    computer?.providers || [
-      {
-        id: 'copilot',
-        name: 'GitHub Copilot',
-        available: true,
-        terminalBacked: true,
-      },
-    ]
-  )
-}
-
-function compactTokens(value: number): string {
-  if (value < 1_000) {
-    return String(value)
-  }
-  if (value < 1_000_000) {
-    return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`
-  }
-  return `${(value / 1_000_000).toFixed(1)}m`
-}
-
-function contextSizeLabel(
-  model: RuntimeOptions['models'][number],
-  tier: 'default' | 'long_context',
-): string {
-  const limit = model.contextTokenLimits?.[tier]
-  return limit ? `${compactTokens(limit)} tokens` : 'Automatic'
-}
-
 interface SessionResourcesView {
   id: number
   ownerKey: string
@@ -2373,615 +2314,6 @@ function SessionResourcesDialog({
         session={session}
         supported={supported}
       />
-    </DialogFrame>
-  )
-}
-
-type SessionCreationHandle = {
-  id: string
-  intent: number
-  selectionIntent: number
-  selectedKey?: string
-  /** Settles once earlier creations on the same computer have finished. */
-  turn: Promise<void>
-  /** Lets the next creation on the same computer go ahead. */
-  finish: () => void
-}
-
-
-function NewSessionDialog({
-  open,
-  computers,
-  defaultComputerId,
-  defaultRuntimes,
-  defaultSessionFolders,
-  defaultBackend,
-  creationError,
-  onClose,
-  onCreating,
-  onCreationFailed,
-  onCreated,
-}: {
-  open: boolean
-  computers: ComputerSummary[]
-  defaultComputerId?: string
-  defaultRuntimes: DefaultRuntimeSettings
-  defaultSessionFolders: DefaultSessionFolders
-  defaultBackend: NewSessionBackendSetting
-  creationError?: string
-  onClose: () => void
-  onCreating: (
-    creation: Omit<PendingSessionCreation, 'id'>,
-  ) => SessionCreationHandle
-  onCreationFailed: (
-    creation: SessionCreationHandle,
-    message: string,
-  ) => void
-  onCreated: (
-    session: ManagedSession,
-    creation?: SessionCreationHandle,
-  ) => void
-}) {
-  const [computerId, setComputerId] = useState('')
-  const [provider, setProvider] = useState<AgentProvider>(DEFAULT_SESSION_PROVIDER)
-  const [cwd, setCwd] = useState('~')
-  const [directoryListing, setDirectoryListing] =
-    useState<DirectoryListing>()
-  const [loadingDirectories, setLoadingDirectories] = useState(false)
-  const [directoryComputerId, setDirectoryComputerId] = useState<string>()
-  const directoryRequest = useRef(0)
-  const [terminalBacked, setTerminalBacked] = useState(true)
-  const [allowAllPermissions, setAllowAllPermissions] = useState(true)
-  const [mode, setMode] = useState<'new' | 'previous'>('new')
-  const [history, setHistory] = useState<ManagedSession[]>([])
-  const [historyKey, setHistoryKey] = useState('')
-  const [loadingHistory, setLoadingHistory] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string>()
-  const [runtimeLoading, setRuntimeLoading] = useState(false)
-  const [runtimeError, setRuntimeError] = useState<string>()
-  const [providerRuntimeModels, setProviderRuntimeModels] =
-    useState<RuntimeModelOption[]>()
-  const available = useMemo(
-    () => computers.filter((computer) => computer.online),
-    [computers],
-  )
-  const initialized = useRef(false)
-  const initialSelection = useRef<string | undefined>(undefined)
-  const dialogGeneration = useRef(0)
-
-  useEffect(() => {
-    if (!open) {
-      dialogGeneration.current += 1
-      return
-    }
-    setSubmitting(false)
-  }, [open])
-
-  useEffect(() => {
-    if (!open) {
-      initialized.current = false
-      initialSelection.current = undefined
-      return
-    }
-    // Opening the dialog is what fills it in. `available` and the stored
-    // folders are rebuilt whenever any computer event arrives -- a node going
-    // online, a status refresh on returning to the tab -- and re-running this
-    // while the dialog is open threw away the provider, mode, folder, and
-    // previous session the reader had already chosen.
-    if (initialized.current) {
-      return
-    }
-    const initialComputerId =
-      available.find((computer) => computer.id === defaultComputerId)?.id ||
-      available[0]?.id || ''
-    // Opening before the first computer snapshot has landed leaves nothing to
-    // choose. Marking the dialog filled in at that point stranded it: the
-    // computers arrived, this returned at the guard above, and Create stayed
-    // disabled with no computer selected until the dialog was reopened.
-    if (!initialComputerId) {
-      return
-    }
-    initialized.current = true
-    initialSelection.current = initialComputerId
-    setComputerId(initialComputerId)
-    setProvider(DEFAULT_SESSION_PROVIDER)
-    setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
-    setDirectoryComputerId(initialComputerId)
-    setDirectoryListing(undefined)
-    setTerminalBacked(defaultBackend !== 'sdk')
-    setAllowAllPermissions(true)
-    setMode('new')
-    setHistoryKey('')
-    setError(undefined)
-    setLoadingHistory(true)
-    void listHistory()
-      .then(setHistory)
-      .catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      })
-      .finally(() => setLoadingHistory(false))
-  }, [open, defaultComputerId, defaultSessionFolders, defaultBackend, available])
-
-  // The chosen computer can be unpaired, or go offline, while the dialog is
-  // still open. Left alone the selection stays truthy and Create stays
-  // enabled, so submitting aimed at a computer that is no longer there. Only
-  // the computer and its folder are reconciled; provider and mode remain
-  // what the reader chose.
-  useEffect(() => {
-    if (!open || !initialized.current) {
-      return
-    }
-    if (initialSelection.current !== undefined) {
-      if (computerId !== initialSelection.current) return
-      initialSelection.current = undefined
-    }
-    if (available.some((computer) => computer.id === computerId)) {
-      return
-    }
-    const nextComputerId =
-      available.find((computer) => computer.id === defaultComputerId)?.id ||
-      available[0]?.id || ''
-    directoryRequest.current += 1
-    setComputerId(nextComputerId)
-    setCwd('')
-    setDirectoryListing(undefined)
-    setDirectoryComputerId(undefined)
-    setLoadingDirectories(Boolean(nextComputerId))
-    setHistoryKey('')
-  }, [open, computerId, available, defaultComputerId])
-
-  useEffect(() => {
-    if (!open || mode !== 'new' || !computerId) {
-      return
-    }
-    let active = true
-    const request = ++directoryRequest.current
-    const initialPath = defaultSessionFolders[computerId]?.trim() || '~'
-    setLoadingDirectories(true)
-    setError(undefined)
-    const listingRequest = initialPath.startsWith('/')
-      ? listDirectories(computerId, initialPath, 'all')
-      : listDirectories(computerId, initialPath)
-    void listingRequest
-      .then((listing) => {
-        if (active && request === directoryRequest.current) {
-          setDirectoryListing(listing)
-          setCwd(listing.path)
-          setDirectoryComputerId(computerId)
-        }
-      })
-      .catch((caught: unknown) => {
-        if (active && request === directoryRequest.current) {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        }
-      })
-      .finally(() => {
-        if (active && request === directoryRequest.current) {
-          setLoadingDirectories(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [computerId, defaultSessionFolders, mode, open])
-
-  useEffect(() => {
-    if (!open || mode !== 'new' || !computerId) {
-      return
-    }
-    let active = true
-    setRuntimeLoading(true)
-    setRuntimeError(undefined)
-    setProviderRuntimeModels(undefined)
-    void getProviderRuntimeOptions(computerId, provider)
-      .then(({ models }) => {
-        if (active) {
-          setProviderRuntimeModels(models)
-        }
-      })
-      .catch((caught: unknown) => {
-        if (active) {
-          setRuntimeError(
-            caught instanceof Error ? caught.message : String(caught),
-          )
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setRuntimeLoading(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [
-    computerId,
-    mode,
-    open,
-    provider,
-  ])
-
-  if (!open) {
-    return null
-  }
-
-  async function browseDirectory(path: string) {
-    const request = ++directoryRequest.current
-    setLoadingDirectories(true)
-    setError(undefined)
-    try {
-      const listing = await (cwd.startsWith('/')
-        ? listDirectories(computerId, path, 'all')
-        : listDirectories(computerId, path))
-      if (request === directoryRequest.current) {
-        setDirectoryListing(listing)
-        setCwd(listing.path)
-        setDirectoryComputerId(computerId)
-      }
-    } catch (caught) {
-      if (request === directoryRequest.current) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      }
-    } finally {
-      if (request === directoryRequest.current) {
-        setLoadingDirectories(false)
-      }
-    }
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    const submittedGeneration = dialogGeneration.current
-    setSubmitting(true)
-    setError(undefined)
-    let pendingCreation: SessionCreationHandle | undefined
-    try {
-      if (
-        !available.some((computer) => computer.id === computerId) ||
-        (mode === 'new' && (
-          directoryComputerId !== computerId || !cwd.trim()
-        ))
-      ) {
-        throw new Error('Choose an available computer and wait for its folder to load.')
-      }
-      if (mode === 'new') {
-        const defaultRuntime = providerRuntimeModels
-          ? normalizedRuntimeSelection(
-              defaultRuntimes[provider],
-              providerRuntimeModels,
-            )
-          : undefined
-        const defaultModel = defaultRuntime?.model.trim()
-        const createInTmux =
-          computerProviders(
-            available.find((computer) => computer.id === computerId),
-          ).find((entry) => entry.id === provider)?.terminalBacked === true
-            ? terminalBacked
-            : false
-        pendingCreation = onCreating({
-          computerId,
-          cwd,
-          executionMode: createInTmux ? 'tmux' : 'sdk',
-          provider,
-        })
-        setSubmitting(false)
-        await pendingCreation.turn
-        onCreated(
-          await createSession(computerId, {
-            cwd,
-            provider,
-            terminalBacked: createInTmux,
-            allowAllPermissions,
-            ...(defaultModel && defaultRuntime
-              ? {
-                  model: defaultModel,
-                  ...(defaultRuntime.reasoningEffort
-                    ? {
-                        reasoningEffort: defaultRuntime.reasoningEffort,
-                      }
-                    : {}),
-                  contextTier: defaultRuntime.contextTier,
-                }
-              : {}),
-            ...(defaultRuntimes[provider].mode
-              ? { mode: defaultRuntimes[provider].mode }
-              : {}),
-          }),
-          pendingCreation,
-        )
-        if (dialogGeneration.current === submittedGeneration) {
-          setCwd('')
-        }
-      } else {
-        const previous = history.find(
-          (session) =>
-            sessionKey(session) === historyKey &&
-            session.computerId === computerId &&
-            available.some((computer) => computer.id === session.computerId) &&
-            !session.isOpen,
-        )
-        if (!previous) {
-          throw new Error('Choose a previous session')
-        }
-
-        const opened = await activateSession(previous.computerId, previous.id)
-        if (dialogGeneration.current === submittedGeneration) {
-          onCreated(opened)
-        }
-      }
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught)
-      if (pendingCreation) {
-        onCreationFailed(pendingCreation, message)
-      } else if (dialogGeneration.current === submittedGeneration) {
-        setError(message)
-      }
-    } finally {
-      if (dialogGeneration.current === submittedGeneration) {
-        setSubmitting(false)
-      }
-    }
-  }
-
-  const previousSessions = history.filter(
-    (session) => session.computerId === computerId && !session.isOpen,
-  )
-  const selectedComputer = available.find(
-    (computer) => computer.id === computerId,
-  )
-  const providers = computerProviders(selectedComputer)
-  const selectedProvider = providers.find((entry) => entry.id === provider)
-  const savedDefaultRuntime = defaultRuntimes[provider]
-  const defaultRuntime = providerRuntimeModels
-    ? normalizedRuntimeSelection(savedDefaultRuntime, providerRuntimeModels)
-    : savedDefaultRuntime
-  const defaultModel = defaultRuntime?.model.trim() || ''
-
-  return (
-    <DialogFrame
-      className="new-session-dialog"
-      eyebrow="Conversation"
-      onClose={onClose}
-      title={mode === 'new' ? 'Choose a folder' : 'Open previous session'}
-    >
-      <form onSubmit={submit}>
-        <div className="dialog-tabs" role="tablist" aria-label="Session type">
-          <button
-            aria-selected={mode === 'new'}
-            className={mode === 'new' ? 'dialog-tab dialog-tab--active' : 'dialog-tab'}
-            onClick={() => setMode('new')}
-            role="tab"
-            type="button"
-          >
-            <Plus size={15} />
-            New session
-          </button>
-          <button
-            aria-selected={mode === 'previous'}
-            className={
-              mode === 'previous' ? 'dialog-tab dialog-tab--active' : 'dialog-tab'
-            }
-            onClick={() => setMode('previous')}
-            role="tab"
-            type="button"
-          >
-            <History size={15} />
-            Open previous
-          </button>
-        </div>
-        <label className="field">
-          <span>Computer</span>
-          <select
-            className="dialog-select"
-            onChange={(event) => {
-              const nextComputerId = event.target.value
-              directoryRequest.current += 1
-              setComputerId(nextComputerId)
-              setProvider(DEFAULT_SESSION_PROVIDER)
-              setHistoryKey('')
-              setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
-              setDirectoryListing(undefined)
-              setDirectoryComputerId(nextComputerId || undefined)
-              setLoadingDirectories(Boolean(nextComputerId))
-            }}
-            value={computerId}
-          >
-            {available.map((computer) => (
-              <option key={computer.id} value={computer.id}>
-                {computer.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {mode === 'new' ? (
-          <label className="field">
-            <span>Agent provider</span>
-            <select
-              aria-label="Agent provider"
-              className="dialog-select"
-              onChange={(event) =>
-                setProvider(event.target.value as AgentProvider)
-              }
-              value={provider}
-            >
-              {providers.map((entry) => (
-                <option
-                  disabled={!entry.available}
-                  key={entry.id}
-                  value={entry.id}
-                >
-                  {entry.name}
-                  {entry.available ? '' : ' — unavailable'}
-                </option>
-              ))}
-            </select>
-            {!selectedProvider?.available && selectedProvider?.unavailableReason ? (
-              <small className="field__hint">
-                {selectedProvider.unavailableReason}
-              </small>
-            ) : null}
-            {defaultModel ? (
-              <small className="field__hint">
-                New sessions use <strong>{defaultModel}</strong> with{' '}
-                {defaultRuntime?.reasoningEffort ? (
-                  <>
-                    <strong>{defaultRuntime.reasoningEffort}</strong> effort and{' '}
-                  </>
-                ) : null}
-                <strong>
-                  {defaultRuntime?.contextTier.replace('_', ' ')}
-                </strong>{' '}
-                context.
-              </small>
-            ) : null}
-            {savedDefaultRuntime.mode ? (
-              <small className="field__hint">
-                New sessions start in{' '}
-                <strong>{agentModeName(savedDefaultRuntime.mode, provider)}</strong>{' '}
-                mode.
-              </small>
-            ) : null}
-            {runtimeError ? (
-              <small className="field__hint">{runtimeError}</small>
-            ) : null}
-          </label>
-        ) : null}
-        {mode === 'new' ? (
-          <div className="folder-picker">
-            <div className="folder-picker__toolbar">
-              <button
-                aria-label="Parent folder"
-                className="icon-button"
-                disabled={!directoryListing?.parent || loadingDirectories}
-                onClick={() =>
-                  void browseDirectory(directoryListing?.parent || '~')
-                }
-                type="button"
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <div className="folder-picker__path">
-                <Folder size={15} />
-                <strong>{directoryListing?.path || '~'}</strong>
-              </div>
-            </div>
-            <div
-              aria-label="Folders"
-              className="folder-picker__list"
-              role="listbox"
-            >
-              {loadingDirectories ? (
-                <p>Loading folders…</p>
-              ) : directoryListing?.directories.length ? (
-                directoryListing.directories.map((directory) => (
-                  <button
-                    key={`${directory.name}:${directory.path}`}
-                    onClick={() => void browseDirectory(directory.path)}
-                    role="option"
-                    type="button"
-                  >
-                    <FolderOpen size={17} />
-                    <span>{directory.name}</span>
-                    <ChevronLeft
-                      className="folder-picker__chevron"
-                      size={15}
-                    />
-                  </button>
-                ))
-              ) : (
-                <p>No subfolders here.</p>
-              )}
-            </div>
-            <p className="folder-picker__hint">
-              The session will start in <strong>{cwd || '~'}</strong>.
-            </p>
-            {selectedProvider?.terminalBacked ? (
-              <label className="tmux-session-option">
-                <input
-                  checked={terminalBacked}
-                  onChange={(event) => setTerminalBacked(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>
-                  <strong>Create in tmux</strong>
-                  <small>
-                    Opens a new window that remains accessible from SSH.
-                  </small>
-                </span>
-              </label>
-            ) : null}
-            <label className="tmux-session-option">
-              <input
-                checked={allowAllPermissions}
-                onChange={(event) =>
-                  setAllowAllPermissions(event.target.checked)
-                }
-                type="checkbox"
-              />
-              <span>
-                <strong>Allow all permissions</strong>
-                <small>
-                  Runs tools without asking for individual approval.
-                </small>
-              </span>
-            </label>
-          </div>
-        ) : (
-          <label className="field">
-            <span>Previous session</span>
-            <select
-              className="dialog-select history-select"
-              disabled={loadingHistory || previousSessions.length === 0}
-              onChange={(event) => setHistoryKey(event.target.value)}
-              value={historyKey}
-            >
-              <option value="">
-                {loadingHistory
-                  ? 'Loading sessions…'
-                  : previousSessions.length === 0
-                    ? 'No closed sessions on this computer'
-                    : 'Choose a session'}
-              </option>
-              {previousSessions.map((session) => (
-                <option key={sessionKey(session)} value={sessionKey(session)}>
-                  {session.title} — {providerName(session.provider)} —{' '}
-                  {shortPath(session.cwd)}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {error || creationError ? (
-          <p className="form-error" role="alert">
-            {error || creationError}
-          </p>
-        ) : null}
-        <button
-          className="primary-button dialog__submit"
-          disabled={
-            submitting ||
-            !selectedComputer ||
-            Boolean(defaultModel && runtimeLoading) ||
-            Boolean(defaultModel && runtimeError) ||
-            (mode === 'new' && (
-              !selectedProvider?.available || directoryComputerId !== computerId
-            )) ||
-            (mode === 'new'
-              ? !cwd.trim()
-              : !previousSessions.some((session) => sessionKey(session) === historyKey))
-          }
-          type="submit"
-        >
-          {submitting
-            ? mode === 'new'
-              ? 'Creating…'
-              : 'Opening…'
-            : mode === 'new'
-              ? 'Create session'
-              : 'Open session'}
-        </button>
-      </form>
     </DialogFrame>
   )
 }
@@ -3328,35 +2660,6 @@ function StatuslineControls({
       </div>
     </>
   )
-}
-
-function normalizedRuntimeSelection(
-  selection: DefaultRuntimeSelection,
-  models: RuntimeModelOption[],
-): DefaultRuntimeSelection | undefined {
-  const modelId = selection.model.trim()
-  if (!modelId) {
-    return undefined
-  }
-
-  const model =
-    models.find((candidate) => candidate.id === modelId) || models[0]
-  if (!model) {
-    return undefined
-  }
-
-  return {
-    model: model.id,
-    reasoningEffort:
-      selection.reasoningEffort !== '' &&
-      model.reasoningEfforts.includes(selection.reasoningEffort)
-      ? selection.reasoningEffort
-      : model.reasoningEfforts[0] || '',
-    contextTier: model.contextTiers.includes(selection.contextTier)
-      ? selection.contextTier
-      : 'default',
-    mode: selection.mode,
-  }
 }
 
 function mergeRuntimeModelOptions(
@@ -5423,256 +4726,6 @@ function StatuslineDialog({
       title="Status line"
     >
       <StatuslineControls onChange={onChange} settings={settings} />
-    </DialogFrame>
-  )
-}
-
-function RuntimeDialog({
-  open,
-  session,
-  onClose,
-  onConfigured,
-}: {
-  open: boolean
-  session?: ManagedSession
-  onClose: () => void
-  onConfigured: (session: ManagedSession) => void
-}) {
-  const [options, setOptions] = useState<RuntimeOptions>()
-  const [configuration, setConfiguration] = useState<ConfigureRuntimeInput>()
-  const [loading, setLoading] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string>()
-  const [runtimeStatus, setRuntimeStatus] =
-    useState<ManagedSession['status']>()
-  const computerId = session?.computerId
-  const sessionId = session?.id
-  const sessionStatus = session?.status
-
-  useEffect(() => {
-    if (!open || !computerId || !sessionId) {
-      return
-    }
-    let active = true
-    setLoading(true)
-    setOptions(undefined)
-    setConfiguration(undefined)
-    setRuntimeStatus(sessionStatus)
-    setError(undefined)
-    void getRuntimeOptions(computerId, sessionId)
-      .then((loaded) => {
-        if (!active) {
-          return
-        }
-        const model =
-          loaded.models.find((entry) => entry.id === loaded.current.model) ||
-          loaded.models[0]
-        setOptions(loaded)
-        setRuntimeStatus(loaded.status || sessionStatus)
-        if (model) {
-          setConfiguration({
-            model: model.id,
-            reasoningEffort:
-              isRuntimeReasoningEffort(loaded.current.reasoningEffort) &&
-              model.reasoningEfforts.includes(
-                loaded.current.reasoningEffort,
-              )
-                ? loaded.current.reasoningEffort
-                : model.reasoningEfforts[0],
-            contextTier:
-              loaded.current.contextTier === 'long_context' &&
-              model.contextTiers.includes('long_context')
-                ? 'long_context'
-                : 'default',
-            mode:
-              loaded.current.mode === 'plan' ||
-              loaded.current.mode === 'autopilot'
-                ? loaded.current.mode
-                : 'interactive',
-          })
-        }
-      })
-      .catch((caught: unknown) => {
-        if (active) {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [computerId, open, sessionId, sessionStatus])
-
-  if (!open || !session) {
-    return null
-  }
-  const targetSession = session
-
-  const selectedModel = options?.models.find(
-    (model) => model.id === configuration?.model,
-  )
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    if (!configuration) {
-      return
-    }
-    if (runtimeStatus !== 'idle') {
-      setError('Runtime settings can only change while the session is idle')
-      return
-    }
-    setSubmitting(true)
-    setError(undefined)
-    try {
-      onConfigured(
-        await configureRuntime(
-          targetSession.computerId,
-          targetSession.id,
-          configuration,
-        ),
-      )
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <DialogFrame
-      eyebrow={`${providerName(session.provider)} runtime`}
-      onClose={onClose}
-      title="Model and context"
-    >
-      {loading ? <p className="dialog-message">Loading runtime options…</p> : null}
-      {!loading && options?.models.length === 0 ? (
-        <p className="form-error">No runtime models are available.</p>
-      ) : null}
-      {configuration && selectedModel ? (
-        <form onSubmit={submit}>
-          <label className="field">
-            <span>Model</span>
-            <select
-              className="dialog-select"
-              onChange={(event) => {
-                const model = options?.models.find(
-                  (entry) => entry.id === event.target.value,
-                )
-                if (!model) {
-                  return
-                }
-                setConfiguration({
-                  model: model.id,
-                  reasoningEffort: model.reasoningEfforts[0],
-                  contextTier: model.contextTiers.includes('long_context')
-                    ? configuration.contextTier
-                    : 'default',
-                  mode: configuration.mode,
-                })
-              }}
-              value={configuration.model}
-            >
-              {options?.models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedModel.reasoningEfforts.length > 0 ? (
-            <label className="field">
-              <span>Reasoning effort</span>
-              <select
-                className="dialog-select"
-                onChange={(event) => {
-                  if (isRuntimeReasoningEffort(event.target.value)) {
-                    setConfiguration({
-                      ...configuration,
-                      reasoningEffort: event.target.value,
-                    })
-                  }
-                }}
-                value={configuration.reasoningEffort}
-              >
-                {selectedModel.reasoningEfforts.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effort}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <label className="field">
-            <span>Context size</span>
-            <select
-              className="dialog-select"
-              onChange={(event) =>
-                setConfiguration({
-                  ...configuration,
-                  contextTier: event.target.value as
-                    | 'default'
-                    | 'long_context',
-                })
-              }
-              value={configuration.contextTier}
-            >
-              {selectedModel.contextTiers.map((tier) => (
-                <option key={tier} value={tier}>
-                  {contextSizeLabel(selectedModel, tier)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Agent mode</span>
-            <select
-              className="dialog-select"
-              onChange={(event) =>
-                setConfiguration({
-                  ...configuration,
-                  mode: event.target.value as
-                    | 'interactive'
-                    | 'plan'
-                    | 'autopilot',
-                })
-              }
-              value={configuration.mode || 'interactive'}
-            >
-              <option value="interactive">Interactive</option>
-              <option value="plan">Plan</option>
-              <option value="autopilot">
-                {session.provider === 'claude' ? 'Auto' : 'Autopilot'}
-              </option>
-            </select>
-          </label>
-          <p className="runtime-dialog__hint">
-            {session.provider === 'claude'
-              ? 'Claude settings apply to the next turn. Change settings only while the agent is idle.'
-              : 'Tmux sessions restart their Copilot pane with the same session ID. Change settings only while the agent is idle.'}
-          </p>
-          {runtimeStatus !== 'idle' ? (
-            <p className="form-error" role="status">
-              Finish or stop the current response before changing runtime
-              settings.
-            </p>
-          ) : null}
-          {error ? <p className="form-error">{error}</p> : null}
-          <button
-            className="primary-button dialog__submit"
-            disabled={submitting || runtimeStatus !== 'idle'}
-            type="submit"
-          >
-            {submitting ? 'Applying…' : 'Apply runtime settings'}
-          </button>
-        </form>
-      ) : null}
-      {!loading && error && !configuration ? (
-        <p className="form-error">{error}</p>
-      ) : null}
     </DialogFrame>
   )
 }

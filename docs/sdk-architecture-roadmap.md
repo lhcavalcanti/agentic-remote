@@ -132,11 +132,7 @@ bundled into S3.
 
 ### Refactor and scale slice boundaries
 
-U1/U2 should follow the existing top-level component pattern, for example
-`src/RuntimeDialog.tsx` and `src/NewSessionDialog.tsx`. Move shared presentation
-helpers to a small shared module when necessary; never import `App.tsx` back
-into an extracted component. Keep provider state on the owning computer and
-browser preferences with their existing owner.
+The U1/U2 presentation components live in `src/session-setup/RuntimeDialog.tsx` and `src/session-setup/NewSessionDialog.tsx`, with their required shared runtime presentation helpers and types alongside them. `App.tsx` retains application state and callbacks; dialog-local state remains with each component. The extracted components never import `App.tsx`. Provider state stays on the owning computer and browser preferences with their existing owner.
 
 U3 first extracts pure decisions, not a new global state-management framework.
 Keep Knowledge panel layout ownership distinct from per-session reader

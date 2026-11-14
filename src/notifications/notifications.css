@@ -1,7 +1,7 @@
 .notification-panel { width: min(460px, calc(100vw - 24px)); max-height: 85dvh; overflow-y: auto; }
 .notification-tools { display: grid; gap: 12px; }
 .notification-search { display: grid; gap: 6px; font-size: 13px; }
-.notification-search input { width: 100%; }
+.notification-search input { width: 100%; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
 .notification-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .notification-tabs button { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text); background: transparent; }
 .notification-tabs button[aria-selected='true'] { background: var(--accent-tint-strong); border-color: var(--accent-foreground); }

@@ -34,6 +34,8 @@ import {
 } from './manager-structured-memory-search.js'
 import type { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import { registryKey, type ManagerRegistry } from './manager-store.js'
+import { oracleHostStatus } from './host-telemetry/oracle-status.js'
+import type { HostTelemetryTarget } from './host-telemetry/service.js'
 import {
   SessionLauncher,
   SessionLaunchPreparationError,
@@ -53,6 +55,8 @@ export interface ManagerSkillSummary {
 export interface ManagerToolHost {
   computers(): ComputerSummary[]
   findComputer(nameOrId: string): ComputerSummary | undefined
+  /** Undefined targets explicitly report disabled monitoring without reading the host. */
+  hostTelemetryTarget?(computerId: string): Promise<HostTelemetryTarget | undefined>
   listSessions(): Promise<ManagedSession[]>
   listHistory(): Promise<ManagedSession[]>
   /** Sessions closed through the app that can still be reopened, newest first. */
@@ -195,6 +199,7 @@ export type ManagerToolMutability = 'read' | 'mutation'
 
 const VOICE_READ_ONLY_TOOLS = new Set([
   'list_computers',
+  'get_host_status',
   'list_models',
   'list_sessions',
   'list_closed_sessions',
@@ -959,6 +964,18 @@ export function createManagerTools(
 
   return [
     ...proactiveTools,
+    ...(host.hostTelemetryTarget ? [define(
+      'get_host_status',
+      'Read host CPU, memory, data-mount disk space, load, sample age, and the top 5 processes with proven owner labels. Use this when the user asks why the hub or a computer is slow. Omit computerId for a bounded summary across computers. Read-only; requires host monitoring on the hub and owning computer.',
+      z.object({
+        computerId: computerField.optional().describe('Computer id or name; omit for a summary across computers.'),
+      }).strict(),
+      async ({ computerId }) => oracleHostStatus(
+        computerId ? [requireComputer(computerId, false)] : host.computers(),
+        (id) => host.hostTelemetryTarget!(id),
+        () => host.now().getTime(),
+      ),
+    )] : []),
     define(
       'list_computers',
       'List the computers sessions can run on, whether each is online, and which providers it offers.',

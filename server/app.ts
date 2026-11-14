@@ -468,6 +468,9 @@ export async function buildApp(
         store: managerStore,
         recorder,
         hub: manager,
+        hostTelemetryTarget: async (computerId) => hostTelemetry
+          ? manager!.hostTelemetryTarget(computerId, hostTelemetry)
+          : undefined,
         clientFactory: createManagerSdkClient,
         excludeFromDiscovery: (ids) => agent.excludeFromDiscovery(ids),
         model: managerSettings.model,

@@ -165,6 +165,7 @@ export interface ManagerAgentOptions {
   store: ManagerStore
   recorder: JournalRecorder
   hub: ManagerHub
+  hostTelemetryTarget?: ManagerToolHost['hostTelemetryTarget']
   clientFactory: () => ManagerSdkClient
   /** Keeps SDK sessions out of the session lists before they exist. */
   excludeFromDiscovery?: (ids: string[]) => void
@@ -356,6 +357,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly structuredMemory?: ManagerStructuredMemoryRuntime
   private readonly recordProactiveOutcomes?: ManagerAgentOptions['recordProactiveOutcomes']
   private readonly tools: ManagerTool[]
+  private readonly hostTelemetryTarget?: ManagerToolHost['hostTelemetryTarget']
   private client?: ManagerSdkClient
   private session?: ManagerSdkSession
   private status: ManagerStatus = 'idle'
@@ -433,6 +435,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.structuredMemory = options.structuredMemory
     this.recordProactiveOutcomes = options.recordProactiveOutcomes
     this.unfinishedTaskSessions = options.unfinishedTaskSessions
+    this.hostTelemetryTarget = options.hostTelemetryTarget
     // A call keeps the turn it started in, so one that outlives a stopped
     // turn is filed under that turn and cannot act for the next one.
     this.tools = createManagerTools(this.toolHost(), (activity) => this.recordActivity(activity))
@@ -1160,6 +1163,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     return {
       computers: () => hub.listComputers(),
       findComputer: (nameOrId) => hub.findComputer(nameOrId),
+      hostTelemetryTarget: this.hostTelemetryTarget,
       listSessions: () => hub.listSessions(),
       listHistory: () => hub.listHistory(),
       listClosedSessions: () => hub.listClosedSessions(),

@@ -492,7 +492,7 @@ test.describe('browser interaction contracts', () => {
     await monitor.getByRole('button', { name: 'Agent sessions', exact: true }).click()
     await expect(monitor.getByText('editor', { exact: true })).toBeHidden()
     expect(handle.requests.filter((request) => request.path.endsWith('/host/processes'))).toHaveLength(1)
-    await monitor.getByRole('combobox', { name: 'Computer', exact: true }).selectOption('fixture-offline')
+    await monitor.getByRole('combobox', { name: 'Computer', exact: true }).selectOption('fixture-travel')
     await expect(monitor).toContainText('This computer is offline')
   })
 })

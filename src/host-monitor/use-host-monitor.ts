@@ -42,21 +42,22 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
         accept(initial)
         setError(undefined)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-        socket = new WebSocket(`${protocol}//${window.location.host}${base}/live`)
-        socket.onmessage = (event) => {
-          if (disposed) return
+        const current = new WebSocket(`${protocol}//${window.location.host}${base}/live`)
+        socket = current
+        current.onmessage = (event) => {
+          if (disposed || socket !== current) return
           try {
             const message = HostTelemetryMessageSchema.parse(JSON.parse(String(event.data)))
             accept(message.snapshot)
             setError(undefined)
-          } catch { setError('This computer sent invalid host telemetry. Update this computer.'); socket?.close() }
+          } catch { setError('This computer sent invalid host telemetry. Update this computer.'); current.close() }
         }
-        socket.onclose = () => {
-          if (disposed) return
+        current.onclose = () => {
+          if (disposed || socket !== current) return
           setError('Live connection lost. Reconnecting…')
           retry = setTimeout(() => void connect(), 2000)
         }
-        socket.onerror = () => socket?.close()
+        current.onerror = () => current.close()
       } catch (caught) {
         if (disposed) return
         setError(caught instanceof Error ? caught.message : 'Host monitor is unavailable')

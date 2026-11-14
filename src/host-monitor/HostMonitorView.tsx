@@ -36,6 +36,7 @@ function Sparkline({ label, values, ceiling }: { label: string; values: (number 
   const path = sparkPath(values, ceiling)
   return <svg className="host-spark" viewBox="0 0 120 34" role="img" aria-label={`${label} trend${path ? '' : ' unavailable'}`}>
     <path d={path} fill="none" stroke="currentColor" strokeWidth="2" />
+    {values.length === 1 && path && <circle cx="2" cy={Number(path.split(',')[1])} r="2" fill="currentColor" />}
     {!path && <text x="60" y="22" textAnchor="middle" fill="currentColor" fontSize="10">No data</text>}
   </svg>
 }
@@ -69,7 +70,7 @@ function HostComputerView({ computer, onHostname, onOpenSession }: {
     (filter === 'Agentic Remote' ? row.owner === 'agentic-remote' || row.owner === 'shared-runtime' : row.owner === 'session' || row.owner === 'shared-runtime'))
   return <div>
     <div className="host-heading">
-      <div><strong>{info?.hostname ?? computer.name}</strong><p className="host-caption">{paused ? 'Paused' : 'Live'} · last sampled {latest ? new Date(latest.at).toLocaleTimeString(undefined, { hour12: false }) : 'waiting for a sample'}</p></div>
+      <div><strong>{info?.hostname ?? computer.name}</strong><p className="host-caption">{paused ? 'Paused' : monitor.error ? 'Unavailable' : 'Live'} · last sampled {latest ? new Date(latest.at).toLocaleTimeString(undefined, { hour12: false }) : 'waiting for a sample'}</p></div>
       <button type="button" className="secondary-button" aria-pressed={paused} onClick={() => {
         if (!paused) setFrozen(monitor)
         setPaused(!paused)

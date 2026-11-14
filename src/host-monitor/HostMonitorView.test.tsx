@@ -14,7 +14,8 @@ class Socket {
   onclose?: () => void
   onerror?: () => void
   close = vi.fn()
-  constructor(readonly url: string) { Socket.instances.push(this) }
+  readonly url: string
+  constructor(url: string) { this.url = url; Socket.instances.push(this) }
 }
 const metrics = Object.fromEntries(hostMetricNames.map((metric) => [metric, null]))
 const snapshot = {

@@ -26,7 +26,7 @@ afterEach(() => {
 
 describe('closed session retention sweep', () => {
   it('deletes only sessions closed fourteen days ago or more, oldest first, a bounded number per pass', async () => {
-    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const sessions = closedSessions([
       { id: 'recent', closedAt: closedDaysAgo(13) },
       { id: 'just-expired', closedAt: closedDaysAgo(14) },
@@ -41,6 +41,9 @@ describe('closed session retention sweep', () => {
 
     expect([...sessions.remaining.keys()]).toEqual(['recent'])
     expect(sessions.deleteExpiredClosedSession).toHaveBeenLastCalledWith('just-expired', now - 14 * day)
+    expect(info).toHaveBeenCalledWith(JSON.stringify({
+      sessionLifecycle: 'expired', sessionId: 'oldest', at: new Date(now).toISOString(),
+    }))
   })
 
   it('logs a deletion that fails and tries it again on the next pass', async () => {

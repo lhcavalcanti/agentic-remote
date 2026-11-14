@@ -46,7 +46,8 @@ export class ClosedSessionSweeper {
   }
 
   private async sweepOnce(): Promise<void> {
-    const closedBefore = (this.options.now ?? Date.now)() - CLOSED_SESSION_RETENTION_MS
+    const now = this.options.now ?? Date.now
+    const closedBefore = now() - CLOSED_SESSION_RETENTION_MS
     const expired = this.owner.listClosedSessions()
       .flatMap((session) => {
         const closedAt = Date.parse(session.closedAt ?? '')
@@ -58,12 +59,15 @@ export class ClosedSessionSweeper {
       if (this.stopped) return
       try {
         if (await this.owner.deleteExpiredClosedSession(session.id, closedBefore)) {
-          console.info(JSON.stringify({ sessionLifecycle: 'expired', sessionId: session.id }))
+          console.info(JSON.stringify({
+            sessionLifecycle: 'expired', sessionId: session.id, at: new Date(now()).toISOString(),
+          }))
         }
       } catch (error) {
         console.warn(JSON.stringify({
           sessionLifecycle: 'expiry-failed',
           sessionId: session.id,
+          at: new Date(now()).toISOString(),
           error: error instanceof Error ? error.message : String(error),
         }))
       }

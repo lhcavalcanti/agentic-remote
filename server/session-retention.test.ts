@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionDetail } from '../shared/contracts.js'
 import { assertSessionNotRetained, SessionStore } from './session-store.js'
 
@@ -27,6 +27,7 @@ async function fixture(overrides: Partial<SessionDetail> = {}, managedOpen = tru
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -461,13 +462,20 @@ describe('closed sessions stay reopenable without running', () => {
 
   it('closes once, keeping when it first closed', async () => {
     const { store, advance } = await fixture()
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const first = await store.closeSession('retained')
     advance(day)
 
     const again = await store.closeSession('retained')
+    await store.setOpen('retained', true, true)
 
     expect(again.closedAt).toBe(first.closedAt)
     expect(again.revision).toBe(first.revision)
+    expect(info.mock.calls.flat().filter((line) => typeof line === 'string' && line.includes('sessionLifecycle')))
+      .toEqual([
+        JSON.stringify({ sessionLifecycle: 'closed', sessionId: 'retained', at: first.closedAt }),
+        JSON.stringify({ sessionLifecycle: 'reopened', sessionId: 'retained', at: new Date(now + day).toISOString() }),
+      ])
     await store.close()
   })
 

@@ -1325,10 +1325,13 @@ export class SessionStore {
     isOpen: boolean,
     managedOpen = false,
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    let reopenedAt: string | undefined
+    const updated = await this.mutate(sessionId, (session) => {
       session.isOpen = isOpen
+      reopenedAt = undefined
       if (isOpen) {
         session.retentionLastUsedAt = new Date(this.now()).toISOString()
+        if (session.closedAt) reopenedAt = session.retentionLastUsedAt
         session.closedAt = undefined
         session.closedContext = undefined
         if (session.interruption && (session.backend === 'sdk' ||
@@ -1345,6 +1348,10 @@ export class SessionStore {
         session.managedOpen = isOpen
       }
     })
+    if (reopenedAt) {
+      console.info(JSON.stringify({ sessionLifecycle: 'reopened', sessionId, at: reopenedAt }))
+    }
+    return updated
   }
 
   /**
@@ -1675,13 +1682,15 @@ export class SessionStore {
    * session changes nothing, so its retention keeps counting from the first.
    */
   async closeSession(sessionId: string): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    let closedAt: string | undefined
+    const closed = await this.mutate(sessionId, (session) => {
       session.closedContext = closedSessionContext({
         title: session.title,
         cwd: session.cwd,
         messages: [...(session.archivedMessages || []), ...session.messages],
       })
       session.closedAt = new Date(this.now()).toISOString()
+      closedAt = session.closedAt
       session.isOpen = false
       session.managedOpen = false
       session.suspended = undefined
@@ -1714,6 +1723,8 @@ export class SessionStore {
         }
       }
     }, (session) => !session.closedAt, true)
+    if (closedAt) console.info(JSON.stringify({ sessionLifecycle: 'closed', sessionId, at: closedAt }))
+    return closed
   }
 
   async setSuspended(

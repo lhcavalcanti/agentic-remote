@@ -214,7 +214,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   replaces it. The banner MUST name the cause beside Reopen; one recorded
   without a cause keeps the generic notice. The owning computer MUST log one
   `sessionLifecycle` line for each interruption it records and for each
-  completed suspend and resume.
+  completed suspend, resume, close, reopen of a closed session, and expiry.
 - Session retention MUST be persisted on the owning computer and broadcast to
   connected devices. A user MAY pin a session for review or opt into elapsed-age
   archival; default retention MUST be unlimited for records, not live processes.

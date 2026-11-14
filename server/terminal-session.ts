@@ -10,6 +10,7 @@ import {
   processStartTimeMs,
 } from './active-sessions.js'
 import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
+import { SessionPaneRoots, type SessionPaneRoot } from './host-telemetry/session-pane-roots.js'
 import type {
   ConfigureRuntimeInput,
   PendingPermission,
@@ -75,6 +76,7 @@ export interface TerminalCancelOptions {
 }
 
 export interface TerminalSessionController {
+  listSessionPaneRoots?(): Promise<SessionPaneRoot[]>
   create?(
     sessionId: string,
     cwd: string,
@@ -386,6 +388,7 @@ export function terminalFormReplyBudget(fieldCount: number): number {
 export class TmuxTerminalSessionController
   implements TerminalSessionController
 {
+  private readonly processPaneRoots = new SessionPaneRoots()
   private readonly operations = new Map<string, Promise<unknown>>()
   private readonly inputReadySessions = new Map<
     string,
@@ -408,6 +411,10 @@ export class TmuxTerminalSessionController
   private readonly settledOwnerAgeMs = SETTLED_OWNER_AGE_MS
   /** When Stop last sent each session Ctrl+C. */
   private readonly interruptedAt = new Map<string, number>()
+
+  listSessionPaneRoots(): Promise<SessionPaneRoot[]> {
+    return this.processPaneRoots.listSessionPaneRoots()
+  }
 
   async create(
     sessionId: string,
@@ -504,6 +511,7 @@ export class TmuxTerminalSessionController
       this.inputReadySessions.delete(sessionId)
       this.automaticStartupSessions.delete(sessionId)
       this.knownOwners.delete(sessionId)
+      this.processPaneRoots.forget(sessionId)
       return true
     })
   }
@@ -574,6 +582,7 @@ export class TmuxTerminalSessionController
     this.inputReadySessions.delete(sessionId)
     this.automaticStartupSessions.delete(sessionId)
     this.knownOwners.delete(sessionId)
+    this.processPaneRoots.forget(sessionId)
     // Copilot writes its session files as it shuts down, so they are only the
     // caller's to remove once it has gone.
     const pids = [Number(panePid), ...(owner ? [owner.pid, owner.rootPid] : [])]
@@ -842,6 +851,7 @@ export class TmuxTerminalSessionController
         if (await this.paneStopped(owner)) {
           this.inputReadySessions.delete(sessionId)
           this.automaticStartupSessions.delete(sessionId)
+          this.processPaneRoots.forget(sessionId)
           return true
         }
         await new Promise((resolve) => setTimeout(resolve, 100))
@@ -2420,6 +2430,7 @@ export class TmuxTerminalSessionController
     for (const processInfo of candidates) {
       const pane = await tmuxTargetForPid(processInfo.pid)
       if (pane && (!expectedTarget || pane.target === expectedTarget)) {
+        await this.processPaneRoots.observe(sessionId, pane, processInfo.pid)
         return {
           pid: processInfo.pid,
           target: pane.target,

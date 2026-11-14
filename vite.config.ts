@@ -60,6 +60,7 @@ const slowTests = [
   'server/feature-flags.test.ts',
   'server/full-gate.test.ts',
   'server/history-projection.test.ts',
+  'server/host-telemetry/processes.test.ts',
   'server/host-telemetry/sampler.test.ts',
   'server/hub-routes.test.ts',
   'server/manager-agent.test.ts',

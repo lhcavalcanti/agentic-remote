@@ -50,6 +50,7 @@ async function setupFixture() {
       'AGENTIC_REMOTE_FEATURE_HOST_MONITOR=false',
       'AGENTIC_REMOTE_FEATURE_SCHEDULER=1',
       'AGENTIC_REMOTE_FEATURE_FUTURE_PREVIEW=off',
+      'AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS=/fictional/allowed-worktrees',
       'AGENTIC_REMOTE_ORACLE_VOICE=on',
       'AGENTIC_REMOTE_VOICE_COMPUTER=',
       'AGENTIC_REMOTE_VOICE_STT_PROFILE=nemotron',
@@ -339,19 +340,22 @@ describe('reproducible promotion setup', () => {
       'AGENTIC_REMOTE_FEATURE_HOST_MONITOR=false',
       'AGENTIC_REMOTE_FEATURE_SCHEDULER=1',
       'AGENTIC_REMOTE_FEATURE_FUTURE_PREVIEW=off',
+      'AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS=/fictional/allowed-worktrees',
     ]
     for (const value of values) expect(await readFile(fixture.environment, 'utf8')).toContain(`${value}\n`)
     await fixture.run({
       AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER: 'off',
       AGENTIC_REMOTE_FEATURE_ADDITIONAL: 'true',
+      AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS: '/fictional/reviewed-worktrees',
     }, command)
     // The next setup has only the saved environment, as on downstream promotion.
     await fixture.run({}, command)
     const environment = await readFile(fixture.environment, 'utf8')
     for (const value of [
-      ...values.slice(1),
+      ...values.slice(1).filter((value) => !value.startsWith('AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS=')),
       'AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=off',
       'AGENTIC_REMOTE_FEATURE_ADDITIONAL=true',
+      'AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS=/fictional/reviewed-worktrees',
     ]) expect(environment).toContain(`${value}\n`)
     expect((await stat(fixture.environment)).mode & 0o777).toBe(0o600)
   })

@@ -12,6 +12,8 @@ export interface ScheduleReconciliation {
   state: 'absent' | 'unknown' | 'launching' | 'running' | 'needs-input' | 'stopping' | 'terminated'
   sessionId?: string
   rootPromptReceipt?: string
+  rootPromptAcceptance?: ScheduleRun['rootPromptAcceptance']
+  worktree?: ScheduleRun['worktree']
   /** terminated proves quiescence of foreground, queued, and provider-owned background work. */
   outcome?: 'succeeded' | 'failed' | 'stopped' | 'interrupted'
   summary?: string
@@ -30,6 +32,9 @@ export interface ScheduleLauncher {
 
 /** Only use for a definitive refusal before any launch side effect. Other errors are uncertain. */
 export class ScheduleTargetUnavailableError extends Error {}
+
+/** A definitive pre-session refusal, not a lost creation/delivery response. */
+export class ScheduleLaunchRefusedError extends Error {}
 
 /** Until a runner is installed, no provider or session is touched. */
 export class NoopScheduleLauncher implements ScheduleLauncher {
@@ -241,7 +246,9 @@ export class SchedulerDispatcher {
       if (!this.active) return
       const run = this.store.getRun(id)
       if (!isInFlight(run)) return
-      if (error instanceof ScheduleTargetUnavailableError) {
+      if (error instanceof ScheduleLaunchRefusedError) {
+        await this.finish(run, 'failed', error.message)
+      } else if (error instanceof ScheduleTargetUnavailableError) {
         if (run.status === 'stopping') await this.finish(run, 'stopped')
         else await this.unavailable(run, error.message)
       } else {
@@ -269,6 +276,8 @@ export class SchedulerDispatcher {
     const details = {
       ...(result.sessionId ? { sessionId: result.sessionId } : {}),
       ...(result.rootPromptReceipt ? { rootPromptReceipt: result.rootPromptReceipt } : {}),
+      ...(result.rootPromptAcceptance ? { rootPromptAcceptance: result.rootPromptAcceptance } : {}),
+      ...(result.worktree ? { worktree: result.worktree } : {}),
       ...(result.summary !== undefined ? { summary: result.summary } : {}),
       ...(result.error !== undefined ? { error: result.error } : {}),
     }

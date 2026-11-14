@@ -96,8 +96,10 @@ import { HostAlertMonitor } from './host-telemetry/alerts.js'
 import type { ProcessScanContext } from './host-telemetry/processes.js'
 import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
 import { SchedulerStore } from './scheduler-store.js'
-import { NoopScheduleLauncher, SchedulerDispatcher, type ScheduleLauncher } from './scheduler-dispatcher.js'
+import { SchedulerDispatcher, type ScheduleLauncher } from './scheduler-dispatcher.js'
 import { registerSchedulerRoutes } from './scheduler-routes.js'
+import { SessionScheduleLauncher } from './schedule-launcher.js'
+import { configuredScheduleWorktreeRoots, ScheduleWorktreeService } from './schedule-worktrees.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -268,6 +270,7 @@ export async function buildApp(
       new HostTelemetryService(new HostTelemetrySampler({ dataDirectory }), processContext)
     : undefined
   const hostTelemetryLifetime = hostTelemetry ? new AbortController() : undefined
+  const scheduleWorktrees = new ScheduleWorktreeService(dataDirectory, configuredScheduleWorktreeRoots())
 
   // Registered before any routes: route plugins capture the error handler
   // present when their scope is created, so a later call would leave them
@@ -344,6 +347,7 @@ export async function buildApp(
     voiceService,
     hostTelemetry,
     hostTelemetryLifetime?.signal,
+    scheduleWorktrees,
   )
 
   let manager: ComputerManager | undefined
@@ -377,6 +381,7 @@ export async function buildApp(
         service,
         identity,
         new ComputerRegistry(dataDirectory),
+        scheduleWorktrees,
       )
     await manager.initialize()
     knowledgeStore = options.knowledgeStore ?? new KnowledgeStore(dataDirectory)
@@ -585,9 +590,16 @@ export async function buildApp(
       dreamerUnavailable = 'Dreamer is unavailable because Oracle is not running on this hub.'
     }
     if (hubFlags?.scheduler) {
-      scheduler = new SchedulerDispatcher(new SchedulerStore(dataDirectory, {
+      if (!managerStoreReady) {
+        managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+        await startupPhases.run('scheduler.provenance', () => managerStore!.initialize())
+        managerStoreReady = true
+      }
+      const scheduleStore = new SchedulerStore(dataDirectory, {
         warn: (message) => app.log.warn(message),
-      }), options.scheduleLauncher ?? new NoopScheduleLauncher(), {
+      })
+      scheduler = new SchedulerDispatcher(scheduleStore,
+        options.scheduleLauncher ?? new SessionScheduleLauncher(manager, scheduleStore, managerStore!), {
         targetOnline: (computerId) => manager!.listComputers().some((computer) => computer.id === computerId && computer.online),
         warn: (message) => app.log.warn(message),
       })

@@ -12,7 +12,7 @@ import type {
 import { ManagerMemory } from './manager-memory.js'
 import { ManagerUploads } from './manager-uploads.js'
 
-export type SessionOrigin = 'manager' | 'user' | 'discovered'
+export type SessionOrigin = 'manager' | 'user' | 'discovered' | 'schedule'
 
 export interface ManagerState {
   /** The SDK session holding the manager's conversation. */
@@ -84,6 +84,8 @@ export interface RegistryEntry {
   cwd?: string
   provider?: AgentProvider
   origin: SessionOrigin
+  scheduleId?: string
+  scheduleRunId?: string
   /** What the session was started to do, from its first prompt. */
   task?: string
   firstSeenAt: string
@@ -441,7 +443,7 @@ export class ManagerStore {
   private async writeAtomic(name: string, content: string): Promise<void> {
     const target = path.join(this.directory, name)
     const temporary = `${target}.${randomUUID()}.tmp`
-    await writeFile(temporary, content, 'utf8')
+    await writeFile(temporary, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
     await rename(temporary, target)
   }
 

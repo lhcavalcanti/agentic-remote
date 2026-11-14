@@ -1,15 +1,15 @@
 # Scheduler
 
-Status: shared contracts, pure recurrence, durable storage, hub dispatcher, and HTTP/event contracts. The hub constructs the store and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. The runner, UI, Oracle tools, and notification integration are separate work; the default no-op runner creates no sessions. Dreamer's existing schedule is unchanged.
+Status: shared contracts, pure recurrence, durable storage, hub dispatcher, policy-explicit session runner, and HTTP/event contracts. The hub constructs the store, runner and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. UI, Oracle tools, and notification integration remain separate work. Dreamer's existing schedule is unchanged.
 
 ## Schema
 
 `shared/schedules.ts` exports strict zod schemas and inferred `Schedule`, `ScheduleTarget`, `ScheduleRecurrence`, `ScheduleRun`, and `ScheduleRunStatus` types.
 
 - A schedule has an ID, name (1–200 characters), exact prompt text (1–20,000 characters, not blank), target, workspace, recurrence, timezone, catch-up/overlap/notification policies, 5–480-minute runtime limit, enabled/archive state, creator, positive revision, and creation/update timestamps. Non-archived names are unique case-insensitively.
-- Targets use the existing providers (`copilot`, `claude`), efforts, context tiers (`default`, `long_context`), and modes. Mode defaults to `autopilot`. Permission policy and folder trust independently default to `ask`; neither an Oracle creator nor a worktree changes these defaults. Folder authorization remains the future runner's responsibility.
+- Targets use the existing providers (`copilot`, `claude`), efforts, context tiers (`default`, `long_context`), and modes. Mode defaults to `autopilot`. Permission policy and folder trust independently default to `ask`; neither an Oracle creator nor a worktree changes these defaults. The owner validates the folder against its existing allowed roots. Optional `target.worktreeRoot` selects one of that computer's explicitly configured worktree roots.
 - The default timezone is `America/Los_Angeles`. Validation uses `Intl.DateTimeFormat` and rejects numeric UTC offsets; supported IANA identifiers, aliases, and `UTC` are accepted. Timestamps are ISO strings with an explicit UTC or numeric offset.
-- A run has its own ID, schedule ID, occurrence timestamp, trigger, lifecycle status, launch ID, computer ID, and optional creation time, offline retry deadline, accepted root-prompt receipt, session ID, start/end timestamps, summary, and error. The receipt is an opaque prompt ID, not assistant text or inferred success. A pending launch need not yet have a receipt or session ID.
+- A run has its own ID, schedule ID, occurrence timestamp, trigger, lifecycle status, launch ID, computer ID, and optional creation time, offline retry deadline, accepted root-prompt receipt, session ID, start/end timestamps, summary, and error. The existing `rootPromptReceipt` remains an opaque prompt ID; additive `rootPromptAcceptance` retains the full identified acceptance/outcome receipt. Optional `worktree` records ownership and cleanup state. Older rows without these fields still load. A pending launch need not yet have a receipt or session ID.
 
 ## Recurrence semantics
 
@@ -102,9 +102,34 @@ Manual triggers use unique sub-millisecond occurrence strings so simultaneous cl
 
 After a committed visible mutation the hub event socket broadcasts typed `{ type: 'schedules.changed', revision, scheduleId, runId? }`. The revision is the store's monotonic invalidation revision, distinct from a schedule's optimistic-concurrency revision; clients should refresh authoritative reads. Fictional schedule/run fixtures mock every route and the event contract while keeping the feature off unless explicitly supplied.
 
-## Runner — planned
+## Session runner
 
-Capability-gated launch and prompt acceptance, explicit permissions/folder trust, allowed roots, safe worktree ownership, and prompt-bound terminal outcomes.
+`SessionScheduleLauncher` uses the policy-neutral `SessionLauncher` over `ComputerManager`, for both hub-local and paired-node sessions. It creates an SDK session with the run's `launchId`, the schedule's exact provider/model/effort/context/mode, explicit permission and folder-trust policies, and a title `⏱ <name> · <occurrence date/time and timezone>`. Names are sanitized and shortened to the normal session rename limit. It never uses Oracle defaults or retries an uncertain session creation.
+
+The existing manager registry adds the additive `schedule` origin, plus schedule/run references. This is the authority for provenance, not a second UI-only origin field. Existing `manager`, `user`, and `discovered` records retain their meaning without a destructive migration. Schedule provenance is committed before prompt delivery, restored by launch reconciliation, and follows session replacement. Schedule-created sessions are not Oracle-owned: autonomous close continues to require exactly `manager`, the journal refuses to adopt a `schedule` session, and proactive observations do not make scheduled work Oracle work. The registry remains available with Oracle disabled; scheduler-only initialization is logged under `scheduler.provenance`. Provenance storage is owner-only.
+
+The prompt is delivered through the durable queue with `deliveryId = launchId + ':root'`; the accepted receipt is persisted on the run. Reconciliation queries the owning computer's `reconcileLaunch(launchId)` and reads the bound session passively. A positive launch binding without a receipt can finish idempotent root acceptance after a crash, but never create another session. A negative query for an already-launching run stays unknown because creation may still be in transit; only an unlaunched pending intent is absent. Deleted sessions without termination proof remain unknown.
+
+Idle alone, another root's completion, and unknown outcomes never complete a run. Only the exact accepted root's terminal receipt, with no pending foreground/queue/recovery work and authoritative empty provider-owned background membership, permits success/failure/stopped. Providers unable to enumerate background work retain their slot; current Claude adapters therefore cannot prove full quiescence even after a root result. A pending permission or question becomes `needs-input` without being answered automatically, including before root acceptance. The last non-streaming assistant excerpt is display-only, bounded to 280 characters; it never completes an Oracle task.
+
+Max-runtime and replacement cancellation use `cancelWithAck`, never signal-only `cancel`. Unknown/offline acknowledgements leave the run `stopping` and keep its slot. A stopped acknowledgement is bound to the owning session before releasing capacity. A launch fenced for stopping is never sent a late root.
+
+## Owned worktrees
+
+Each executing computer independently configures `AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS`, a comma-separated list of existing absolute real directories. There is no implicit root, no automatic root creation, and no expansion of `AGENTIC_REMOTE_ALLOWED_ROOTS`. Every configured root and source repository must also pass the existing session-directory authorization. Setup/update preserve the worktree-root variable. `target.worktreeRoot`, when supplied, must resolve to one of the configured roots; otherwise the first configured root is used.
+
+Nodes advertise `scheduleWorktrees: {version: 1, enabled}` on authenticated `/node-api/info`. `ComputerManager` routes local operations to the same owner-side service and remote operations through the authenticated node client. Missing capability fails before session creation with “Update this computer”; there is no hub-side Git fallback.
+
+| Method | Authenticated owner route | Purpose |
+| --- | --- | --- |
+| POST | `/node-api/schedule-worktrees` | `{launchId, folder, root?}`; allocate/recover the launch-owned detached checkout |
+| GET | `/node-api/schedule-worktrees/:launchId` | Read the durable ownership record |
+| POST | `/node-api/schedule-worktrees/:launchId/cleanup` | Attempt conservative cleanup and return its recorded result |
+
+Operations are serialized on the owner. Before `git worktree add --detach`, an owner-only atomic record reserves a deterministic child path below the allowed root. Recovery verifies launch, repository/common-Git-directory, and real root/path identities; it never adopts an unrecorded destination or recreates a removed worktree. Records live under `<data>/schedule-worktrees/` (0700 directory, 0600 files), retain removal tombstones, and use fsync plus atomic replace.
+
+After proven terminal outcome/termination, cleanup checks `git status --porcelain --untracked-files=all --ignored --ignore-submodules=none` and `git rev-list --max-count=1 HEAD --not --remotes`. Modified, untracked, ignored, unpushed, unverifiable, or locked work is retained with a durable `deferred` reason. Missing remote refs are not evidence of a push. Removal uses ordinary `git worktree remove`, never `--force`, and never deletes ownership records. The run carries the cleanup result; an unavailable owner is also recorded as deferred when its ownership record is known. Deferred cleanup requires manual review; no independent cleanup timer is started.
+
 
 ## UI — planned
 

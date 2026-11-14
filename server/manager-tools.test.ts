@@ -1277,6 +1277,9 @@ describe('manager tools', () => {
       const cases: Array<[string, () => void, string, string?]> = [
         ['shortened id', () => undefined, 'it was named by a shortened id', 'abc12345'],
         ['started by the user', () => Object.assign(host, { registry: () => ({}) }), 'it was not started by Oracle'],
+        ['started by a schedule', () => Object.assign(host, { registry: () => ({
+          'hub:abc12345-aaaa': { ...started['hub:abc12345-aaaa'], origin: 'schedule' },
+        }) }), 'it was not started by Oracle'],
         ['turn cap', () => { closes = 5 }, 'Oracle already closed 5 sessions without asking this turn'],
         ['unreadable', () => vi.mocked(host.readSession).mockRejectedValueOnce(new Error('node offline')), 'its current state could not be read'],
         ['running', busy({ status: 'running' }), 'it is still running'],

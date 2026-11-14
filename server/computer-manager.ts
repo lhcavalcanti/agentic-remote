@@ -43,6 +43,8 @@ import { normalizeNodeUrl, RemoteNodeClient } from './remote-node-client.js'
 import { RemoteNodeRequestError } from './remote-node-errors.js'
 import { launchIdentitySchema, cancellationAckSchema, type TerminationAcknowledgement } from '../shared/launch-identity.js'
 import { updateComputerForLaunchIdentity } from './launch-identity.js'
+import { updateComputerForScheduleWorktrees, type ScheduleWorktreeInput } from '../shared/schedule-worktrees.js'
+import type { ScheduleWorktreeService } from './schedule-worktrees.js'
 import type { SessionService } from './session-service.js'
 import type { HostTelemetryService, HostTelemetryTarget } from './host-telemetry/service.js'
 import {
@@ -127,6 +129,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     private readonly localService: SessionService,
     private readonly identity: NodeIdentityStore,
     private readonly registry: ComputerRegistry,
+    private readonly scheduleWorktrees?: ScheduleWorktreeService,
   ) {
     super()
   }
@@ -1034,6 +1037,27 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     if (computerId !== this.identity.info.id) return this.requireClient(computerId).reconcileLaunch(launchId)
     if (!this.localService.reconcileLaunch) throw updateComputerForLaunchIdentity()
     return this.localService.reconcileLaunch(launchId)
+  }
+
+  async allocateScheduleWorktree(computerId: string, input: ScheduleWorktreeInput) {
+    this.requireComputer(computerId)
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).allocateScheduleWorktree(input)
+    if (!this.scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+    return this.scheduleWorktrees.allocate(input)
+  }
+
+  async readScheduleWorktree(computerId: string, launchId: string) {
+    this.requireComputer(computerId)
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).readScheduleWorktree(launchId)
+    if (!this.scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+    return this.scheduleWorktrees.read(launchId)
+  }
+
+  async cleanupScheduleWorktree(computerId: string, launchId: string) {
+    this.requireComputer(computerId)
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).cleanupScheduleWorktree(launchId)
+    if (!this.scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+    return this.scheduleWorktrees.cleanup(launchId)
   }
 
   async cancelWithAck(computerId: string, sessionId: string, timeoutMs = 10_000): Promise<TerminationAcknowledgement> {

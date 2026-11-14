@@ -106,6 +106,7 @@ export class JournalRecorder {
   /** Attributes a session to the manager and remembers what it was asked. */
   async markManaged(session: ManagedSession, task: string): Promise<void> {
     const key = registryKey(session.computerId, session.id)
+    if (this.store.registry()[key]?.origin === 'schedule') throw new Error('Schedule sessions are not owned by Oracle')
     this.observe(session)
     this.changes.push((registry) => {
       const entry = registry[key]

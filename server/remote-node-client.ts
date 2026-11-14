@@ -64,6 +64,10 @@ import {
 } from '../shared/host-telemetry.js'
 import { hostTelemetryError, type HostTelemetryTarget } from './host-telemetry/service.js'
 import { subscribeRemoteHost, HOST_TELEMETRY_REMOTE_TIMEOUT_MS } from './host-telemetry/remote.js'
+import {
+  SCHEDULE_WORKTREE_VERSION, scheduleWorktreeRecordSchema, updateComputerForScheduleWorktrees,
+  type ScheduleWorktreeInput, type ScheduleWorktreeRecord,
+} from '../shared/schedule-worktrees.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -735,6 +739,31 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       throw new RemoteNodeRequestError('The owning computer returned a mismatched launch identity.', 502)
     }
     return launch
+  }
+
+  private async scheduleWorktreeRequest(launchId: string, route: string, body?: unknown): Promise<ScheduleWorktreeRecord | undefined> {
+    const info = await this.getInfo()
+    if (info.scheduleWorktrees?.version !== SCHEDULE_WORKTREE_VERSION) throw updateComputerForScheduleWorktrees()
+    const response = await this.request<{ worktree: unknown }>(route,
+      body === undefined ? undefined : { method: 'POST', body: JSON.stringify(body) }, 35_000)
+    if (response?.worktree === null) return undefined
+    const record = scheduleWorktreeRecordSchema.parse(response?.worktree)
+    if (record.launchId !== launchId) throw new RemoteNodeRequestError('Mismatched worktree ownership evidence.', 502)
+    return record
+  }
+
+  async allocateScheduleWorktree(input: ScheduleWorktreeInput): Promise<ScheduleWorktreeRecord> {
+    const record = await this.scheduleWorktreeRequest(input.launchId, '/node-api/schedule-worktrees', input)
+    if (!record) throw new RemoteNodeRequestError('Missing worktree ownership evidence.', 502)
+    return record
+  }
+
+  readScheduleWorktree(launchId: string): Promise<ScheduleWorktreeRecord | undefined> {
+    return this.scheduleWorktreeRequest(launchId, `/node-api/schedule-worktrees/${encodeURIComponent(launchId)}`)
+  }
+
+  cleanupScheduleWorktree(launchId: string): Promise<ScheduleWorktreeRecord | undefined> {
+    return this.scheduleWorktreeRequest(launchId, `/node-api/schedule-worktrees/${encodeURIComponent(launchId)}/cleanup`, {})
   }
 
   async cancelWithAck(sessionId: string, timeoutMs: number): Promise<TerminationAcknowledgement> {

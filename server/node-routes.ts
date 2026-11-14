@@ -9,6 +9,11 @@ import type { HostTelemetryService } from './host-telemetry/service.js'
 import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
 import { updateComputerForLaunchIdentity } from './launch-identity.js'
 import {
+  SCHEDULE_WORKTREE_VERSION, scheduleWorktreeInputSchema, scheduleWorktreeCleanupSchema,
+  updateComputerForScheduleWorktrees,
+} from '../shared/schedule-worktrees.js'
+import type { ScheduleWorktreeService } from './schedule-worktrees.js'
+import {
   ORACLE_VOICE_PROTOCOL,
   decodeVoiceAudioFrame,
   encodeVoiceAudioFrame,
@@ -327,6 +332,7 @@ export async function registerNodeRoutes(
   voice?: VoiceBackend,
   hostTelemetry?: HostTelemetryService,
   hostTelemetrySignal?: AbortSignal,
+  scheduleWorktrees?: ScheduleWorktreeService,
 ): Promise<void> {
   await app.register(
     async (node) => {
@@ -351,7 +357,25 @@ export async function registerNodeRoutes(
         providers: service.providers(),
         ...(voice ? { voice: voice.capability() } : {}),
         hostTelemetry: { version: HOST_TELEMETRY_CAPABILITY_VERSION, enabled: hostTelemetry !== undefined },
+        scheduleWorktrees: { version: SCHEDULE_WORKTREE_VERSION, enabled: scheduleWorktrees?.enabled === true },
       }))
+
+      node.post('/schedule-worktrees', async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        if (!scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+        return { worktree: await scheduleWorktrees.allocate(scheduleWorktreeInputSchema.parse(request.body)) }
+      })
+      node.get<{ Params: { launchId: string } }>('/schedule-worktrees/:launchId', async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        if (!scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+        return { worktree: await scheduleWorktrees.read(launchIdentitySchema.parse(request.params.launchId)) ?? null }
+      })
+      node.post<{ Params: { launchId: string } }>('/schedule-worktrees/:launchId/cleanup', async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        if (!scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+        const { launchId } = scheduleWorktreeCleanupSchema.parse(request.params)
+        return { worktree: await scheduleWorktrees.cleanup(launchId) ?? null }
+      })
 
       if (hostTelemetry) registerHostTelemetryRoutes(node, '/host', () => hostTelemetry, hostTelemetrySignal)
 

@@ -520,6 +520,7 @@ export interface NodeInfo {
   providers?: AgentProviderCapability[]
   voice?: VoiceBackendCapability
   hostTelemetry?: import('./host-telemetry.js').HostTelemetryCapability
+  scheduleWorktrees?: { version: 1; enabled: boolean }
 }
 
 export type VoiceBackendCapability =

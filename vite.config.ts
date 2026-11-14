@@ -89,6 +89,8 @@ const slowTests = [
   'server/refusal-metrics.test.ts',
   'server/release-publication.test.ts',
   'server/remote-node-client.test.ts',
+  'server/scheduler-routes.test.ts',
+  'server/scheduler.test.ts',
   'server/session-admission-lifecycle.test.ts',
   'server/session-clear-transcript.test.ts',
   'server/session-enqueue-clear.test.ts',

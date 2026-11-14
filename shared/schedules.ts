@@ -66,7 +66,7 @@ export const scheduleTargetSchema = z.object({
 
 export const scheduleSchema = z.object({
   id: identifier,
-  name: z.string().trim().min(1),
+  name: z.string().trim().min(1).max(200),
   prompt: z.string().min(1).max(SCHEDULE_PROMPT_MAX_LENGTH)
     .refine((prompt) => prompt.trim().length > 0, 'Prompt must not be blank'),
   target: scheduleTargetSchema,
@@ -100,12 +100,53 @@ export const scheduleRunSchema = z.object({
   rootPromptReceipt: identifier.optional(),
   sessionId: identifier.optional(),
   computerId: identifier,
+  createdAt: timestamp.optional(),
+  retryUntil: timestamp.optional(),
   startedAt: timestamp.optional(),
   endedAt: timestamp.optional(),
   summary: z.string().optional(),
   error: z.string().optional(),
 }).strict()
 
+export const scheduleCreateSchema = scheduleSchema.omit({
+  id: true, revision: true, createdAt: true, updatedAt: true, createdBy: true, archived: true,
+}).extend({
+  workspace: scheduleSchema.shape.workspace.default('checkout'),
+  catchUp: scheduleSchema.shape.catchUp.default('skip'),
+  overlap: scheduleSchema.shape.overlap.default('skip'),
+  maxRuntimeMin: scheduleSchema.shape.maxRuntimeMin.default(60),
+  notify: scheduleSchema.shape.notify.default('attention'),
+  enabled: z.boolean().default(true),
+})
+export const scheduleUpdateSchema = scheduleSchema.omit({
+  id: true, revision: true, createdAt: true, updatedAt: true, createdBy: true, archived: true,
+}).extend({ timezone: scheduleTimezoneSchema.removeDefault() }).partial().extend({
+  revision: z.number().int().min(1),
+}).strict()
+export const scheduleRevisionSchema = z.object({ revision: z.number().int().min(1) }).strict()
+export const scheduleActionSchema = z.object({}).strict()
+export const scheduleEnabledSchema = scheduleRevisionSchema.extend({ enabled: z.boolean() }).strict()
+export const scheduleArchivedSchema = scheduleRevisionSchema.extend({ archived: z.boolean() }).strict()
+export const scheduleIdParamsSchema = z.object({ id: identifier }).strict()
+export const scheduleRunListSchema = z.object({
+  offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  status: scheduleRunStatusSchema.optional(),
+}).strict()
+export const scheduleListSchema = z.object({
+  archived: z.enum(['true', 'false']).transform((value) => value === 'true').optional(),
+}).strict()
+
+export interface SchedulerChanged {
+  type: 'schedules.changed'
+  revision: number
+  scheduleId: string
+  runId?: string
+}
+
+export type ScheduleCreate = z.input<typeof scheduleCreateSchema>
+export type ScheduleUpdate = z.input<typeof scheduleUpdateSchema>
+export type ScheduleRunPage = z.infer<typeof scheduleRunListSchema>
 export type ScheduleRecurrence = z.infer<typeof scheduleRecurrenceSchema>
 export type ScheduleTarget = z.infer<typeof scheduleTargetSchema>
 export type Schedule = z.infer<typeof scheduleSchema>

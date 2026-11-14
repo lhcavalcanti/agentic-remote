@@ -94,6 +94,9 @@ import { HostTelemetrySampler } from './host-telemetry/sampler.js'
 import { HostTelemetryService } from './host-telemetry/service.js'
 import type { ProcessScanContext } from './host-telemetry/processes.js'
 import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
+import { SchedulerStore } from './scheduler-store.js'
+import { NoopScheduleLauncher, SchedulerDispatcher, type ScheduleLauncher } from './scheduler-dispatcher.js'
+import { registerSchedulerRoutes } from './scheduler-routes.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -128,6 +131,8 @@ export interface BuildAppOptions {
   /** Records the startup work that runs while the server becomes ready. */
   startupPhases?: StartupPhases
   hostTelemetryFactory?: (dataDirectory: string, processContext: ProcessScanContext) => HostTelemetryService
+  /** Runner integration seam; ignored without the hub scheduler flag. */
+  scheduleLauncher?: ScheduleLauncher
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -164,6 +169,7 @@ export async function buildApp(
   voiceEngineFactory?: VoiceEngineFactory
   voiceCapability: VoiceBackendCapability
   dreamerService?: DreamerService
+  scheduler?: SchedulerDispatcher
   proactiveCoordinator?: ManagerProactiveCoordinator
   hostTelemetry?: HostTelemetryService
 }> {
@@ -350,6 +356,7 @@ export async function buildApp(
   let managerStore: ManagerStore | undefined
   let managerStoreReady = false
   let dreamerService: DreamerService | undefined
+  let scheduler: SchedulerDispatcher | undefined
   let proactiveCoordinator: ManagerProactiveCoordinator | undefined
   let proactiveInbox: ManagerProactiveInbox | undefined
   let oracleTaskStore: OracleTaskStore | undefined
@@ -562,6 +569,14 @@ export async function buildApp(
     } else {
       dreamerUnavailable = 'Dreamer is unavailable because Oracle is not running on this hub.'
     }
+    if (hubFlags?.scheduler) {
+      scheduler = new SchedulerDispatcher(new SchedulerStore(dataDirectory, {
+        warn: (message) => app.log.warn(message),
+      }), options.scheduleLauncher ?? new NoopScheduleLauncher(), {
+        targetOnline: (computerId) => manager!.listComputers().some((computer) => computer.id === computerId && computer.online),
+        warn: (message) => app.log.warn(message),
+      })
+    }
     if (notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     await registerHubRoutes(
       app,
@@ -587,6 +602,7 @@ export async function buildApp(
           : voiceCapability.reason,
       },
       notificationCenter,
+      scheduler?.store,
     )
     if (!notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     app.get('/api/features', async (_request, reply) => {
@@ -613,6 +629,7 @@ export async function buildApp(
         computers.hostTelemetryTarget(id!, localTelemetry), hostTelemetryLifetime?.signal)
     }
     await registerNotificationRoutes(app, notificationCenter)
+    if (scheduler) await registerSchedulerRoutes(app, scheduler)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
       ? new DelegatedTranscriptionService({
@@ -675,6 +692,7 @@ export async function buildApp(
     if (hostTelemetry) {
       await startupPhases.run('hostTelemetry.start', async () => hostTelemetry.start())
     }
+    if (scheduler) await startupPhases.run('scheduler.start', () => scheduler!.start())
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
     const starting = managerAgent
@@ -692,6 +710,7 @@ export async function buildApp(
 
   app.addHook('onClose', async () => {
     hostTelemetry?.stop()
+    await scheduler?.stop()
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
     if (forwardToProactive) manager?.off('event', forwardToProactive)
@@ -726,6 +745,7 @@ export async function buildApp(
     voiceEngineFactory,
     voiceCapability,
     dreamerService,
+    scheduler,
     proactiveCoordinator,
     hostTelemetry,
   }

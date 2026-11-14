@@ -30,6 +30,7 @@ import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
 import type { ClientPresence } from './client-presence.js'
 import type { NotificationCenterService } from './notification-center-service.js'
+import type { SchedulerStore } from './scheduler-store.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
@@ -408,6 +409,7 @@ export async function registerHubRoutes(
   presence?: ClientPresence,
   oracleVoice?: OracleVoiceRouteOptions,
   notifications?: NotificationCenterService,
+  scheduler?: SchedulerStore,
 ): Promise<void> {
   const policy = originPolicy()
   // Assigned once the socket set exists further down. Until then a committed
@@ -1289,6 +1291,7 @@ export async function registerHubRoutes(
   manager.on('event', broadcast)
   managerEvents?.on('event', broadcast)
   notifications?.store.on('changed', broadcast)
+  scheduler?.on('changed', broadcast)
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
   publishSettings = (settings) => broadcast({ type: 'settings.updated', settings })
@@ -1398,6 +1401,7 @@ export async function registerHubRoutes(
     manager.off('event', broadcast)
     managerEvents?.off('event', broadcast)
     notifications?.store.off('changed', broadcast)
+    scheduler?.off('changed', broadcast)
     manager.off('event', trackOrder)
     // Drain in-flight order work so a closing app leaves no write behind it.
     await seeding

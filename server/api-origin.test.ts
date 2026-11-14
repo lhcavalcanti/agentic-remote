@@ -1,5 +1,4 @@
 import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from './app.js'
@@ -27,7 +26,8 @@ beforeEach(async () => {
   vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', '')
   vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'on')
   vi.stubEnv('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', 'on')
-  directory = await mkdtemp(path.join(tmpdir(), 'agentic-origin-review-'))
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', 'on')
+  directory = await mkdtemp(path.join(process.cwd(), '.agentic-origin-review-'))
   // Services are never started; no provider process or inference is needed.
   runtime = await buildApp({
     dataDirectory: directory,
@@ -68,6 +68,20 @@ describe('canonical API origin enforcement', () => {
     socket.terminate()
   })
 
+  it.each(prefixes)('guards every schedule and run route through %s', async (prefix) => {
+    for (const [method, suffix] of [
+      ['GET', ''], ['POST', ''], ['GET', '/example'], ['PATCH', '/example'], ['DELETE', '/example'],
+      ['POST', '/example/enabled'], ['POST', '/example/archived'], ['POST', '/example/run'],
+      ['GET', '/example/runs'], ['GET', '/runs'], ['GET', '/runs/run-id'], ['POST', '/runs/run-id/stop'],
+    ] as const) {
+      for (const headers of untrusted) {
+        expect((await runtime.app.inject({ method, url: `${prefix}/schedules${suffix}`, headers })).statusCode).toBe(403)
+      }
+    }
+    const listed = await runtime.app.inject({ url: `${prefix}/schedules`, headers: trusted })
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json()).toEqual({ schedules: [] })
+  })
   it.each(prefixes)('guards notification reads and every mutation through %s', async (prefix) => {
     for (const [method, suffix] of [
       ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'],

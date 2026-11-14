@@ -5,16 +5,24 @@ import { ORACLE_VOICE_PROTOCOL, type VoiceCapabilities } from '../shared/oracle-
 import type { SettingsProfileSnapshot, SettingsUpdateResult } from '../shared/settings-profile'
 import type { NotificationRecord } from '../shared/notification-center'
 import { HostHistorySchema, HostProcessesSchema, HostSnapshotSchema, HostTelemetryMessageSchema } from '../shared/host-telemetry'
+import type { Schedule, ScheduleRun } from '../shared/schedules'
 import {
   createWorkspaceFixtureState,
   fixtureKnowledgeRoots,
+  fixtureSchedules,
+  fixtureScheduleRuns,
   KNOWLEDGE_FILE_PATH,
   KNOWLEDGE_ROOT_ID,
   SELECTED_SESSION_ID,
   setupWorkspaceFixture,
+  type WorkspaceFixtureOptions,
 } from './workspace-fixtures'
 
-async function fixtureApi(notifications?: NotificationRecord[], hostMonitor?: boolean) {
+async function fixtureApi(
+  notifications?: NotificationRecord[],
+  hostMonitor?: boolean,
+  scheduler?: WorkspaceFixtureOptions['scheduler'],
+) {
   let handler!: (route: Route) => Promise<void>
   let socketHandler!: (socket: WebSocketRoute) => void
   const context = {
@@ -28,7 +36,7 @@ async function fixtureApi(notifications?: NotificationRecord[], hostMonitor?: bo
     context: () => context,
   } as unknown as Page
   const state = createWorkspaceFixtureState()
-  const fixture = await setupWorkspaceFixture(page, { baseUrl: 'http://127.0.0.1:4840', state, notifications, hostMonitor })
+  const fixture = await setupWorkspaceFixture(page, { baseUrl: 'http://127.0.0.1:4840', state, notifications, hostMonitor, scheduler })
   async function request<T = Record<string, unknown>>(path: string, method = 'GET', body?: object) {
     const multipart = body instanceof FormData
       ? new Request('http://127.0.0.1:4840', { method: 'POST', body })
@@ -86,7 +94,7 @@ describe('workspace fixture directory routing', () => {
   it('serves changed hub flags independently of preview preferences', async () => {
     const { fixture, request, state } = await fixtureApi()
     state.settings.values.previewFeatures = { notificationPanel: true }
-    state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
+    state.hubFlags = { notificationCenter: true, hostMonitor: true, scheduler: true }
     expect((await request('/api/features')).body).toEqual({ hubFlags: state.hubFlags })
     state.hubFlags = { notificationCenter: false, hostMonitor: false, scheduler: false }
     expect((await request('/api/features')).body).toEqual({ hubFlags: state.hubFlags })
@@ -192,6 +200,46 @@ describe('workspace fixture hub protocol', () => {
     expect((await request('/api/computers/fixture-travel/host')).status).toBe(503)
     expect((await request('/api/computers/unknown/host')).status).toBe(404)
     fixture.assertHealthy()
+  })
+
+  it('mocks every scheduler route, revision conflicts, run paging and typed change events', async () => {
+    const { fixture, request, openEvents } = await fixtureApi(undefined, undefined, { schedules: fixtureSchedules, runs: fixtureScheduleRuns })
+    const events = openEvents()
+    expect((await request('/api/features')).body).toMatchObject({ hubFlags: { scheduler: true } })
+    expect((await request('/api/schedules')).body).toEqual({ schedules: fixtureSchedules })
+    const original = fixtureSchedules[0]
+    const base = `/api/schedules/${original.id}`
+    expect((await request(base)).body).toEqual({ schedule: original })
+    expect((await request('/api/schedules/runs?limit=1')).body).toMatchObject({ total: 1, nextOffset: null })
+    expect((await request(`/api/schedules/runs/${fixtureScheduleRuns[0].id}`)).body).toEqual({ run: fixtureScheduleRuns[0] })
+    expect((await request(`${base}/runs?status=succeeded`)).body).toMatchObject({ total: 1 })
+    expect((await request(`${base}/enabled`, 'POST', { revision: 1, enabled: false })).body)
+      .toMatchObject({ schedule: { revision: 2, enabled: false } })
+    expect((await request(base, 'PATCH', { revision: 1, name: 'Stale' })).status).toBe(409)
+    expect((await request(base, 'PATCH', { revision: 2, name: 'Evening review' })).body)
+      .toMatchObject({ schedule: { revision: 3, name: 'Evening review' } })
+    const run = await request<{ run: ScheduleRun }>(`${base}/run`, 'POST')
+    expect(run.status).toBe(202)
+    expect((await request(`/api/schedules/runs/${run.body.run.id}/stop`, 'POST')).body).toMatchObject({ run: { status: 'stopped' } })
+    const archived = await request<{ schedule: Schedule }>(`${base}/archived`, 'POST', { revision: 3, archived: true })
+    expect(archived.body.schedule).toMatchObject({ archived: true, revision: 4 })
+    expect((await request(base, 'DELETE', { revision: 4 })).status).toBe(200)
+    const { id: _id, revision: _revision, createdAt: _createdAt, updatedAt: _updatedAt, createdBy: _createdBy, archived: _archived, ...create } = original
+    expect((await request('/api/schedules', 'POST', create)).status).toBe(201)
+    expect(events.at(-1)).toMatchObject({ type: 'schedules.changed', scheduleId: expect.any(String), revision: expect.any(Number) })
+    fixture.assertHealthy()
+  })
+
+  it('keeps scheduler fixtures default-off and fails closed for unknown schedule operations', async () => {
+    const { fixture, request } = await fixtureApi()
+    for (const [method, suffix] of [
+      ['GET', ''], ['POST', ''], ['GET', '/id'], ['PATCH', '/id'], ['DELETE', '/id'],
+      ['POST', '/id/enabled'], ['POST', '/id/archived'], ['POST', '/id/run'],
+      ['GET', '/id/runs'], ['GET', '/runs'], ['GET', '/runs/id'], ['POST', '/runs/id/stop'],
+    ]) expect((await request(`/api/schedules${suffix}`, method)).status).toBe(404)
+    fixture.assertHealthy()
+    expect((await request('/api/schedules/id/unknown', 'POST')).status).toBe(501)
+    expect(() => fixture.assertHealthy()).toThrow()
   })
 
   it('mocks disabled notification routes without failing closed on a known feature endpoint', async () => {

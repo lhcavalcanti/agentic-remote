@@ -1,15 +1,15 @@
 # Scheduler
 
-Status: shared contracts and pure recurrence calculation only. Nothing registers a service, creates a session, writes scheduler state, or adds UI. Dreamer's existing schedule is unchanged.
+Status: shared contracts, pure recurrence, durable storage, hub dispatcher, and HTTP/event contracts. The hub constructs the store and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. The runner, UI, Oracle tools, and notification integration are separate work; the default no-op runner creates no sessions. Dreamer's existing schedule is unchanged.
 
 ## Schema
 
 `shared/schedules.ts` exports strict zod schemas and inferred `Schedule`, `ScheduleTarget`, `ScheduleRecurrence`, `ScheduleRun`, and `ScheduleRunStatus` types.
 
-- A schedule has an ID, name, exact prompt text (1–20,000 characters, not blank), target, workspace, recurrence, timezone, catch-up/overlap/notification policies, 5–480-minute runtime limit, enabled/archive state, creator, positive revision, and creation/update timestamps. Name uniqueness belongs to the planned store.
+- A schedule has an ID, name (1–200 characters), exact prompt text (1–20,000 characters, not blank), target, workspace, recurrence, timezone, catch-up/overlap/notification policies, 5–480-minute runtime limit, enabled/archive state, creator, positive revision, and creation/update timestamps. Non-archived names are unique case-insensitively.
 - Targets use the existing providers (`copilot`, `claude`), efforts, context tiers (`default`, `long_context`), and modes. Mode defaults to `autopilot`. Permission policy and folder trust independently default to `ask`; neither an Oracle creator nor a worktree changes these defaults. Folder authorization remains the future runner's responsibility.
 - The default timezone is `America/Los_Angeles`. Validation uses `Intl.DateTimeFormat` and rejects numeric UTC offsets; supported IANA identifiers, aliases, and `UTC` are accepted. Timestamps are ISO strings with an explicit UTC or numeric offset.
-- A run has its own ID, schedule ID, occurrence timestamp, trigger, lifecycle status, launch ID, computer ID, and optional accepted root-prompt receipt, session ID, start/end timestamps, summary, and error. The receipt is an opaque prompt ID, not assistant text or inferred success. A pending launch need not yet have a receipt or session ID. Lifecycle transition enforcement belongs to the planned dispatcher.
+- A run has its own ID, schedule ID, occurrence timestamp, trigger, lifecycle status, launch ID, computer ID, and optional creation time, offline retry deadline, accepted root-prompt receipt, session ID, start/end timestamps, summary, and error. The receipt is an opaque prompt ID, not assistant text or inferred success. A pending launch need not yet have a receipt or session ID.
 
 ## Recurrence semantics
 
@@ -45,13 +45,62 @@ Timezone conversion uses only Gregorian `Date` arithmetic and `Intl.DateTimeForm
 
 Recurring schedules require at least **15 minutes between distinct instants**. Validation checks within-day and cross-midnight spacing over the complete Gregorian weekday/date cycle, including DOM/DOW semantics. For multi-occurrence days it also checks actual instants near timezone transitions over the next 400 calendar years according to the host's Intl timezone data; a nominally safe interval cannot become too short at spring-forward. Offset-transition discovery samples UTC days, and conversion samples offsets every 12 hours around a date. Cached formatters and transition calendars are bounded. Timezone rule updates take effect with the runtime's timezone data.
 
-## Store — planned
+## Durable hub store
 
-Atomic owner-only storage, unique names, revision checks, bounded run history, and durable mutation records.
+`SchedulerStore` writes `<data directory>/scheduler/state.json`. It uses the application's resolved data directory, not a second home-directory lookup. The real directory is owner-only (0700), and state/staging files are owner-only (0600), with owner and symlink checks. A commit writes an exclusive staging file, syncs it, atomically replaces the state, and syncs the directory before publishing a change. Writes are serialized. A post-replace durability failure poisons the writer until restart rather than permitting a second interpretation of an uncertain commit.
 
-## Dispatcher — planned
+The single transaction holds schedules, runs, the `(scheduleId, occurrenceAt) → runId` index, due cursors, and an immutable schedule definition for each retained run. Editing a target or prompt cannot retarget already accepted work. Every mutation checks the submitted schedule revision; conflicts return 409 without a partial update. Names are unique among non-archived schedules, including when restoring an archive. Archive disables recurrence; unarchive stays disabled. Delete requires archive, revision agreement, and no in-flight runs.
 
-Hub-only authority, durable occurrence/launch identity, catch-up, overlap/concurrency policy, crash reconciliation, and authoritative stop acknowledgement.
+Retain at most 200 runs per schedule, newest first in API pages. Evict the oldest terminal row first; never discard an in-flight run or free its slot for retention. If all 200 rows are live or pending, admission returns 409 until work settles. Identity-only occurrence tombstones outlive visible history; due cursors also fence already evaluated time. Delete explicitly removes that schedule's rows, snapshots, cursor, and tombstones. Storage has a 64 MiB safety ceiling; reaching it refuses a write without evicting an identity fence.
+
+Malformed JSON, invalid schema, and inconsistent identities quarantine the complete state as `state.json.corrupt-<uuid>`, log one warning during initialization, and start empty. A repeated initialize/restart does not warn again about the quarantined file. Permission, ownership, or symlink failures fail closed rather than treating an inaccessible file as empty. Abandoned exclusive staging files are removed at startup.
+
+## Hub dispatcher and launcher seam
+
+The `scheduler.start` startup phase initializes storage and reconciles **every** in-flight intent (`pending`, `launching`, `running`, `needs-input`, `stopping`) before evaluating due work. The dispatcher then uses a non-overlapping timer at the next due instant or within 30 seconds. Shutdown stops the timer and joins durable operations; unresolved external calls remain durably reserved for restart, without cancelling sessions as a side effect of hub shutdown.
+
+The runner implements `ScheduleLauncher`:
+
+- `launch(run, schedule): Promise<void>` receives the persisted run identity and its accepted schedule snapshot. Successful return alone does not establish completion or even prompt acceptance.
+- `reconcile(run): Promise<ScheduleReconciliation>` returns `absent`, `unknown`, `launching`, `running`, `needs-input`, `stopping`, or `terminated`, with optional session ID, accepted root-prompt receipt, outcome, and display details. `absent` authoritatively proves no accepted or in-progress launch; a missing session entry while creation may still be in transit, an offline target, or a failed lookup is `unknown`. `terminated` proves foreground, queued, and provider-owned background quiescence; a terminal outcome alone or session idleness is insufficient.
+- `stop(run): Promise<ScheduleStopAcknowledgement>` returns `stopped` only after authoritative termination proof, or `unknown`. A signal-only abort is not proof.
+
+Admission atomically saves the run as `pending`, its fresh launch ID, and its occurrence fence. A second durable write moves it to `launching` **before** calling the launcher. Calls are asynchronous, so an unresolved response cannot block the other global slot or subsequent reconciliation. The default global limit is two; `launching`, `running`, `needs-input`, and `stopping` all hold slots.
+
+On restart an authoritative absent lookup permits a still-`pending` intent to proceed. An already-`launching` absent intent becomes `interrupted`, never relaunched. An unknown lookup retains the slot (even for a recovered pending intent); reconcile errors are unknown, not absent. Only `ScheduleTargetUnavailableError`, a definitive refusal **before any side effect**, permits returning a launch to pending with the same identity. Other exceptions and lost responses are reconciled, never automatically resubmitted. The no-op runner refuses launches definitively, but cannot claim authority to reconcile or stop old work.
+
+Policies:
+
+- **Catch-up:** occurrences more than ten minutes late are `missed` with `skip`; `once` collapses a missed range and any recent due occurrence into one `catch-up` run at the latest due instant. Exactly ten minutes is still eligible. The same cursor-based calculation runs after startup, sleep, and forward clock jumps. Backward jumps never reopen evaluated time. Only the newest 200 missed rows need materializing when a longer range would immediately be evicted.
+- **Overlap:** `skip` records the new run as missed; `queue` keeps it pending FIFO; `replace` stops older pending intents without launching them, moves existing live work to `stopping`, and waits for authoritative termination before the replacement can launch.
+- **Runtime:** the accepted definition's `maxRuntimeMin` moves live work to `stopping`. Offline targets and unknown stop acknowledgements retain the slot until stop/reconcile proves termination. A launch still awaiting its response cannot accept premature negative lookup/stop proof; once reconciliation binds a session, the runner's durable admission fence protects cancellation from late prompt delivery.
+- **Offline launch:** retry a pending occurrence until ten minutes after its occurrence. Manual and catch-up runs use their admission time instead. Persist the deadline so a target returning after expiry cannot launch stale work. Queue/concurrency waiting alone does not consume an offline retry window.
+- **Enable/archive:** disabling stops future recurrence, not accepted work; manual Run now is allowed while disabled. Archive prevents new/manual work and stops never-launched pending intents, without implicitly cancelling live sessions.
+
+## Hub API and events
+
+All routes below inherit the hub's canonical Host/Origin checks, including escaped `/api` path segments. Reads send `Cache-Control: no-store`. With the flag off, routes return 404 and no store, timer, service, or startup phase is constructed.
+
+| Method | Route | Request / response |
+| --- | --- | --- |
+| GET | `/api/schedules` | Optional `archived=true/false`; `{ schedules }` |
+| POST | `/api/schedules` | `scheduleCreateSchema`; 201 `{ schedule }` |
+| GET | `/api/schedules/:id` | `{ schedule }` |
+| PATCH | `/api/schedules/:id` | Partial mutable fields plus `revision`; `{ schedule }` |
+| DELETE | `/api/schedules/:id` | `{ revision }`; archived/resolved only; `{ ok: true }` |
+| POST | `/api/schedules/:id/enabled` | `{ revision, enabled }`; `{ schedule }` |
+| POST | `/api/schedules/:id/archived` | `{ revision, archived }`; `{ schedule }` |
+| POST | `/api/schedules/:id/run` | Empty body; 202 `{ run }`, with manual trigger and normal overlap/concurrency |
+| GET | `/api/schedules/:id/runs` | Per-schedule run page |
+| GET | `/api/schedules/runs` | Global run page |
+| GET | `/api/schedules/runs/:id` | `{ run }` |
+| POST | `/api/schedules/runs/:id/stop` | Empty body; `{ run }`, possibly still `stopping` |
+
+Run pages accept `offset` (0–1,000,000), `limit` (1–200, default 50), and an optional lifecycle `status`, returning `{ runs, total, nextOffset }`. HTTP creation labels the creator as `user`; caller-supplied identity, revision, archive state, timestamps, or Oracle attribution are rejected. Defaults are checkout, skip catch-up/overlap, 60-minute runtime, attention notifications, enabled, and the shared target/timezone defaults. Updates never apply creation defaults to omitted fields.
+
+Manual triggers use unique sub-millisecond occurrence strings so simultaneous clicks do not coalesce with one another or a recurrence's millisecond-canonical key. Each accepted run has a distinct durable launch identity.
+
+After a committed visible mutation the hub event socket broadcasts typed `{ type: 'schedules.changed', revision, scheduleId, runId? }`. The revision is the store's monotonic invalidation revision, distinct from a schedule's optimistic-concurrency revision; clients should refresh authoritative reads. Fictional schedule/run fixtures mock every route and the event contract while keeping the feature off unless explicitly supplied.
 
 ## Runner — planned
 

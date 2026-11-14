@@ -1,0 +1,179 @@
+import { randomUUID } from 'node:crypto'
+import { mkdir, readdir, rm } from 'node:fs/promises'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Schedule, ScheduleRun } from '../shared/schedules.js'
+import { buildApp } from './app.js'
+import { createStartupPhases, type StartupPhaseRecord } from './startup-phases.js'
+import type { ScheduleReconciliation } from './scheduler-dispatcher.js'
+
+const headers = { host: 'localhost', origin: 'http://localhost' }
+const input = () => ({
+  name: 'Fictional review', prompt: 'Review the fictional guide.',
+  target: { computerId: 'offline-studio', folder: '/fictional/repo', provider: 'copilot' },
+  recurrence: { type: 'daily', time: '09:00' },
+})
+let runtime: Awaited<ReturnType<typeof buildApp>>
+const directories: string[] = []
+let directory: string
+let records: StartupPhaseRecord[]
+const launcher = {
+  launch: vi.fn(async () => {}),
+  reconcile: vi.fn(async (): Promise<ScheduleReconciliation> => ({ state: 'running', sessionId: 'fictional-session' })),
+  stop: vi.fn(async () => ({ outcome: 'stopped' as const })),
+}
+
+beforeEach(() => {
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', 'on')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'off')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', 'off')
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+  vi.stubEnv('AGENTIC_REMOTE_ORACLE_VOICE', 'off')
+  vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', '')
+  records = []
+  vi.clearAllMocks()
+})
+afterEach(async () => {
+  await runtime?.app.close()
+  vi.unstubAllEnvs()
+  await Promise.all(directories.splice(0).map((value) => rm(value, { recursive: true, force: true })))
+})
+
+async function app(role: 'hub' | 'node' = 'hub') {
+  directory = path.join(process.cwd(), `.scheduler-routes-${randomUUID()}`)
+  directories.push(directory)
+  await mkdir(directory)
+  runtime = await buildApp({
+    dataDirectory: directory, role, logger: false, managerAgent: false, scheduleLauncher: launcher,
+    startupPhases: createStartupPhases({ write: (line) => records.push(JSON.parse(line)) }),
+    transcriptionService: { initialize: async () => {}, stop: async () => {}, transcribe: vi.fn() },
+  })
+  await runtime.app.ready()
+  return runtime.app
+}
+
+describe('scheduler hub API', () => {
+  it('creates, lists, reads and updates with revision, enable/archive and deletion checks', async () => {
+    const server = await app()
+    const create = await server.inject({ method: 'POST', url: '/api/schedules', headers, payload: input() })
+    expect(create.statusCode).toBe(201)
+    let schedule: Schedule = create.json().schedule
+    const base = `/api/schedules/${schedule.id}`
+    expect(schedule).toMatchObject({ revision: 1, createdBy: 'user', target: { permissionPolicy: 'ask', folderTrust: 'ask' } })
+    expect((await server.inject({ url: '/api/schedules', headers })).json().schedules).toHaveLength(1)
+    const read = await server.inject({ url: base, headers })
+    expect(read.headers['cache-control']).toBe('no-store')
+    expect(read.json()).toEqual({ schedule })
+    expect((await server.inject({ method: 'DELETE', url: base, headers, payload: { revision: 1 } })).statusCode).toBe(409)
+    const updated = await server.inject({ method: 'PATCH', url: base, headers, payload: { revision: 1, name: 'Updated review' } })
+    expect(updated.statusCode).toBe(200)
+    schedule = updated.json().schedule
+    expect(schedule.revision).toBe(2)
+    expect((await server.inject({ method: 'PATCH', url: base, headers, payload: { revision: 1, prompt: 'Stale' } })).statusCode).toBe(409)
+    expect((await server.inject({ method: 'POST', url: '/api/schedules', headers,
+      payload: { ...input(), name: 'UPDATED REVIEW' } })).statusCode).toBe(409)
+    const disabled = await server.inject({ method: 'POST', url: `${base}/enabled`, headers, payload: { revision: 2, enabled: false } })
+    expect(disabled.json().schedule).toMatchObject({ revision: 3, enabled: false })
+    const enabled = await server.inject({ method: 'POST', url: `${base}/enabled`, headers, payload: { revision: 3, enabled: true } })
+    expect(enabled.json().schedule).toMatchObject({ revision: 4, enabled: true })
+    expect((await server.inject({ method: 'POST', url: `${base}/archived`, headers,
+      payload: { revision: 4, archived: true } })).json().schedule).toMatchObject({ revision: 5, archived: true, enabled: false })
+    expect((await server.inject({ method: 'POST', url: `${base}/run`, headers })).statusCode).toBe(409)
+    expect((await server.inject({ url: '/api/schedules?archived=false', headers })).json().schedules).toEqual([])
+    expect((await server.inject({ method: 'POST', url: `${base}/archived`, headers,
+      payload: { revision: 5, archived: false } })).json().schedule).toMatchObject({ revision: 6, archived: false })
+    await server.inject({ method: 'POST', url: `${base}/archived`, headers, payload: { revision: 6, archived: true } })
+    expect((await server.inject({ method: 'DELETE', url: base, headers, payload: { revision: 7 } })).json()).toEqual({ ok: true })
+    expect((await server.inject({ url: base, headers })).statusCode).toBe(404)
+  })
+
+  it('accepts Run now while disabled, respects overlap, and pages/stops runs', async () => {
+    const server = await app()
+    const schedule: Schedule = (await server.inject({ method: 'POST', url: '/api/schedules', headers,
+      payload: { ...input(), enabled: false, target: { ...input().target, computerId: runtime.identity.info.id } } })).json().schedule
+    const base = `/api/schedules/${schedule.id}`
+    const first = await server.inject({ method: 'POST', url: `${base}/run`, headers })
+    expect(first.statusCode).toBe(202)
+    const run: ScheduleRun = first.json().run
+    await runtime.scheduler!.tick()
+    await runtime.scheduler!.tick()
+    const next = await server.inject({ method: 'POST', url: `${base}/run`, headers })
+    expect(next.json().run.status).toBe('missed')
+    const global = await server.inject({ url: '/api/schedules/runs?limit=1', headers })
+    expect(global.headers['cache-control']).toBe('no-store')
+    expect(global.json()).toMatchObject({ total: 2, nextOffset: 1, runs: [expect.objectContaining({ id: next.json().run.id })] })
+    expect((await server.inject({ url: `${base}/runs?offset=1&limit=1`, headers })).json())
+      .toMatchObject({ total: 2, nextOffset: null, runs: [expect.objectContaining({ id: run.id })] })
+    expect((await server.inject({ url: `/api/schedules/runs/${run.id}`, headers })).json().run).toMatchObject({ id: run.id })
+    const stopped = await server.inject({ method: 'POST', url: `/api/schedules/runs/${run.id}/stop`, headers })
+    expect(stopped.json().run.status).toBe('stopped')
+    expect(launcher.stop).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['POST', '', { ...input(), name: '' }],
+    ['POST', '', { ...input(), prompt: 'x'.repeat(20_001) }],
+    ['POST', '', { ...input(), recurrence: { type: 'cron', expression: '*/5 * * * *' } }],
+    ['POST', '', { ...input(), maxRuntimeMin: 481 }],
+    ['POST', '', { ...input(), createdBy: 'oracle' }],
+    ['PATCH', '/missing', { revision: 0 }],
+    ['GET', '/runs?limit=201', undefined],
+    ['GET', '/runs?limit=0', undefined],
+    ['GET', '/runs?offset=-1', undefined],
+    ['GET', '/runs?offset=1000001', undefined],
+    ['GET', '/runs?status=unknown', undefined],
+    ['GET', '?archived=maybe', undefined],
+  ] as const)('rejects invalid %s /api/schedules%s', async (method, suffix, payload) => {
+    const server = await app()
+    const response = await server.inject({ method, url: `/api/schedules${suffix}`, headers, ...(payload ? { payload } : {}) })
+    expect(response.statusCode).toBe(400)
+    expect(runtime.scheduler!.store.list()).toEqual([])
+  })
+
+  it('returns 404 for missing schedules and runs', async () => {
+    const server = await app()
+    for (const url of ['/api/schedules/missing', '/api/schedules/missing/runs', '/api/schedules/runs/missing']) {
+      expect((await server.inject({ url, headers })).statusCode).toBe(404)
+    }
+    expect((await server.inject({ method: 'POST', url: '/api/schedules/runs/missing/stop', headers })).statusCode).toBe(404)
+  })
+
+  it.each(['off', 'on'])('broadcasts durable changes with notification center %s and logs startup', async (notificationFlag) => {
+    vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', notificationFlag)
+    const server = await app()
+    expect(records.filter((record) => record.startupPhase === 'scheduler.start').map((record) => record.event)).toEqual(['begin', 'complete'])
+    const socket = await server.injectWS('/api/events', { headers })
+    try {
+      const event = new Promise<string>((resolve) => socket.once('message', (data) => resolve(data.toString())))
+      const response = await server.inject({ method: 'POST', url: '/api/schedules', headers, payload: input() })
+      expect(JSON.parse(await event)).toMatchObject({
+        type: 'schedules.changed', revision: 1, scheduleId: response.json().schedule.id,
+      })
+    } finally { socket.terminate() }
+  })
+
+  it('constructs no scheduler state or services when the flag is off', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', 'off')
+    const server = await app()
+    expect(runtime.scheduler).toBeUndefined()
+    for (const [method, suffix] of [
+      ['GET', ''], ['POST', ''], ['GET', '/id'], ['PATCH', '/id'], ['DELETE', '/id'],
+      ['POST', '/id/enabled'], ['POST', '/id/archived'], ['POST', '/id/run'],
+      ['GET', '/id/runs'], ['GET', '/runs'], ['GET', '/runs/id'], ['POST', '/runs/id/stop'],
+    ] as const) expect((await server.inject({ method, url: `/api/schedules${suffix}`, headers })).statusCode).toBe(404)
+    expect((await readdir(directory)).includes('scheduler')).toBe(false)
+    expect(records.some((record) => record.startupPhase === 'scheduler.start')).toBe(false)
+    expect(launcher.launch).not.toHaveBeenCalled()
+    expect(launcher.reconcile).not.toHaveBeenCalled()
+    expect(launcher.stop).not.toHaveBeenCalled()
+    expect((await server.inject({ url: '/api/features', headers })).json().hubFlags.scheduler).toBe(false)
+  })
+
+  it('never constructs or dispatches on a node even with the hub flag on', async () => {
+    const server = await app('node')
+    expect(runtime.scheduler).toBeUndefined()
+    expect((await server.inject({ url: '/api/schedules', headers })).statusCode).toBe(404)
+    expect((await readdir(directory)).includes('scheduler')).toBe(false)
+    expect(launcher.reconcile).not.toHaveBeenCalled()
+  })
+})

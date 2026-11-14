@@ -3,6 +3,11 @@ import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-
 import { launchIdentitySchema } from '../shared/launch-identity'
 import type { NotificationRecord } from '../shared/notification-center'
 import { hostMetricNames, type HostSnapshot, type HostMinuteAggregate, type HostProcesses } from '../shared/host-telemetry'
+import {
+  scheduleActionSchema, scheduleArchivedSchema, scheduleCreateSchema, scheduleEnabledSchema, scheduleListSchema,
+  scheduleRevisionSchema, scheduleRunListSchema, scheduleSchema, scheduleUpdateSchema, type Schedule, type ScheduleRun,
+} from '../shared/schedules'
+import { validateRecurrence } from '../shared/schedule-recurrence'
 import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
 import {
@@ -153,6 +158,24 @@ export const fixtureComputers: ComputerSummary[] = [
     ],
   },
 ]
+
+export const fixtureSchedules: Schedule[] = [
+  scheduleSchema.parse({
+    id: 'fixture-morning-review', name: 'Morning field guide review',
+    prompt: 'Review the fictional field guide and summarize outdated links.',
+    target: { computerId: 'fixture-studio', folder: '/home/demo/field-notes', provider: 'copilot' },
+    workspace: 'checkout', recurrence: { type: 'weekdays', time: '09:00' },
+    catchUp: 'skip', overlap: 'queue', maxRuntimeMin: 30, notify: 'attention',
+    enabled: true, archived: false, createdBy: 'user', revision: 1, createdAt: FIXTURE_NOW, updatedAt: FIXTURE_NOW,
+  }),
+]
+export const fixtureScheduleRuns: ScheduleRun[] = [{
+  id: 'fixture-schedule-run', scheduleId: 'fixture-morning-review', occurrenceAt: '2026-09-04T16:00:00.000Z',
+  trigger: 'schedule', status: 'succeeded', launchId: 'fixture-review-launch', computerId: 'fixture-studio',
+  sessionId: SELECTED_SESSION_ID, rootPromptReceipt: 'fixture-review-root',
+  createdAt: '2026-09-04T16:00:00.000Z', startedAt: '2026-09-04T16:00:01.000Z',
+  endedAt: '2026-09-04T16:04:00.000Z', summary: 'Reviewed the field guide links.',
+}]
 
 const runtime = {
   model: 'fixture-model',
@@ -505,6 +528,18 @@ export const fixtureEndpoints = [
   'POST /api/notifications/read-all',
   'POST /api/notifications/:id/read',
   'POST /api/notifications/:id/dismiss',
+  'GET /api/schedules',
+  'POST /api/schedules',
+  'GET /api/schedules/:id',
+  'PATCH /api/schedules/:id',
+  'DELETE /api/schedules/:id',
+  'POST /api/schedules/:id/enabled',
+  'POST /api/schedules/:id/archived',
+  'POST /api/schedules/:id/run',
+  'GET /api/schedules/:id/runs',
+  'GET /api/schedules/runs',
+  'GET /api/schedules/runs/:id',
+  'POST /api/schedules/runs/:id/stop',
   'GET /api/computers',
   'GET /api/computers/:computerId/host',
   'GET /api/computers/:computerId/host/history?range=24h',
@@ -549,6 +584,8 @@ export interface WorkspaceFixtureOptions {
   notifications?: NotificationRecord[]
   /** Omitted keeps host monitoring off; all data is fictional. */
   hostMonitor?: boolean
+  /** Omitted keeps the hub scheduler disabled. All data remains fictional. */
+  scheduler?: { schedules: Schedule[]; runs: ScheduleRun[] }
   /** Use a native event socket only on the already-validated local fixture origin. */
   nativeLocalEvents?: boolean
   realClock?: boolean
@@ -671,6 +708,8 @@ export async function setupWorkspaceFixture(
   const baseUrl = fixtureBaseUrl(options.baseUrl)
   const state = options.state ?? createWorkspaceFixtureState()
   const notifications = structuredClone(options.notifications ?? [])
+  const scheduled = structuredClone(options.scheduler ?? { schedules: [], runs: [] })
+  let scheduleRevision = 0
   let notificationRevision = 0
   const extraKnowledgeFiles = options.extraKnowledgeFiles ?? 0
   const directoryListings = options.directoryListings ?? {}
@@ -854,8 +893,112 @@ export async function setupWorkspaceFixture(
         ...state.hubFlags,
         notificationCenter: state.hubFlags.notificationCenter || options.notifications !== undefined,
         hostMonitor: state.hubFlags.hostMonitor || options.hostMonitor === true,
+        scheduler: state.hubFlags.scheduler || options.scheduler !== undefined,
       } })
       return
+    }
+    if (path === '/api/schedules' || path.startsWith('/api/schedules/')) {
+      const known = (path === '/api/schedules' && ['GET', 'POST'].includes(method)) ||
+        (/^\/api\/schedules\/[^/]+$/.test(path) && ['GET', 'PATCH', 'DELETE'].includes(method)) ||
+        (/^\/api\/schedules\/[^/]+\/(?:enabled|archived|run)$/.test(path) && method === 'POST') ||
+        (/^\/api\/schedules\/(?:[^/]+\/runs|runs\/[^/]+)$/.test(path) && method === 'GET') ||
+        (/^\/api\/schedules\/runs\/[^/]+\/stop$/.test(path) && method === 'POST')
+      if (!known) { await reject(route, `Unmocked schedule request: ${method} ${path}`); return }
+      if (!options.scheduler) { await respond({ error: 'Scheduler is disabled' }, 404); return }
+      const parts = path.split('/').slice(3)
+      const changed = (scheduleId: string, runId?: string) =>
+        emit({ type: 'schedules.changed', revision: ++scheduleRevision, scheduleId, ...(runId ? { runId } : {}) })
+      const pageRuns = async (scheduleId?: string) => {
+        const page = scheduleRunListSchema.parse(Object.fromEntries(url.searchParams))
+        const runs = scheduled.runs.filter((run) => (!scheduleId || run.scheduleId === scheduleId) &&
+          (!page.status || page.status === run.status)).slice().reverse()
+        await respond({ runs: runs.slice(page.offset, page.offset + page.limit), total: runs.length,
+          nextOffset: page.offset + page.limit < runs.length ? page.offset + page.limit : null })
+      }
+      try {
+        const input = request.postDataJSON() ?? {}
+        if (!parts.length) {
+          if (method === 'GET') {
+            const { archived } = scheduleListSchema.parse(Object.fromEntries(url.searchParams))
+            await respond({ schedules: scheduled.schedules.filter((schedule) =>
+              archived === undefined || schedule.archived === archived) })
+            return
+          }
+          if (method === 'POST') {
+            const parsed = scheduleCreateSchema.parse(input)
+            if (!validateRecurrence(parsed.recurrence, parsed.timezone, new Date(FIXTURE_NOW)).valid) {
+              await respond({ error: 'Invalid recurrence' }, 400); return
+            }
+            if (scheduled.schedules.some((schedule) => !schedule.archived && schedule.name.toLowerCase() === parsed.name.toLowerCase())) {
+              await respond({ error: 'A non-archived schedule already has this name' }, 409); return
+            }
+            const schedule = scheduleSchema.parse({ ...parsed, id: `fixture-schedule-${++scheduleRevision}`,
+              revision: 1, archived: false, createdBy: 'user', createdAt: FIXTURE_NOW, updatedAt: FIXTURE_NOW })
+            scheduled.schedules.push(schedule)
+            changed(schedule.id)
+            await respond({ schedule }, 201); return
+          }
+        } else if (parts[0] === 'runs') {
+          if (parts.length === 1 && method === 'GET') { await pageRuns(); return }
+          const run = scheduled.runs.find((run) => run.id === parts[1])
+          if (!run) { await respond({ error: 'Schedule run not found' }, 404); return }
+          if (parts.length === 2 && method === 'GET') { await respond({ run }); return }
+          if (parts.length === 3 && parts[2] === 'stop' && method === 'POST') {
+            scheduleActionSchema.parse(input)
+            if (['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status)) {
+              run.status = 'stopped'; run.endedAt = FIXTURE_NOW; changed(run.scheduleId, run.id)
+            }
+            await respond({ run }); return
+          }
+        } else {
+          const schedule = scheduled.schedules.find((schedule) => schedule.id === parts[0])
+          if (!schedule) { await respond({ error: 'Schedule not found' }, 404); return }
+          if (parts.length === 1 && method === 'GET') { await respond({ schedule }); return }
+          if (parts.length === 2 && parts[1] === 'runs' && method === 'GET') { await pageRuns(schedule.id); return }
+          if (parts.length === 2 && parts[1] === 'run' && method === 'POST') {
+            scheduleActionSchema.parse(input)
+            if (schedule.archived) { await respond({ error: 'Archived schedules cannot run' }, 409); return }
+            const previous = scheduled.runs.filter((run) => run.scheduleId === schedule.id &&
+              ['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status))
+            if (schedule.overlap === 'replace') previous.forEach((run) => { run.status = 'stopped'; run.endedAt = FIXTURE_NOW })
+            const id = `fixture-run-${++scheduleRevision}`
+            const run: ScheduleRun = { id, scheduleId: schedule.id, computerId: schedule.target.computerId,
+              occurrenceAt: FIXTURE_NOW, createdAt: FIXTURE_NOW, launchId: `${id}-launch`, trigger: 'manual',
+              status: previous.length && schedule.overlap === 'skip' ? 'missed' : 'pending' }
+            scheduled.runs.push(run); changed(schedule.id, run.id); await respond({ run }, 202); return
+          }
+          if ((parts.length === 1 && ['PATCH', 'DELETE'].includes(method)) ||
+              (parts.length === 2 && ['enabled', 'archived'].includes(parts[1]) && method === 'POST')) {
+            const mutation = method === 'PATCH' ? scheduleUpdateSchema.parse(input)
+              : parts[1] === 'enabled' ? scheduleEnabledSchema.parse(input)
+              : parts[1] === 'archived' ? scheduleArchivedSchema.parse(input) : scheduleRevisionSchema.parse(input)
+            if (mutation.revision !== schedule.revision) { await respond({ error: 'Schedule revision conflict' }, 409); return }
+            if (method === 'DELETE') {
+              if (!schedule.archived || scheduled.runs.some((run) => run.scheduleId === schedule.id &&
+                  ['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status))) {
+                await respond({ error: 'Archive and resolve in-flight runs before deleting' }, 409); return
+              }
+              scheduled.schedules.splice(scheduled.schedules.indexOf(schedule), 1)
+              scheduled.runs = scheduled.runs.filter((run) => run.scheduleId !== schedule.id)
+              changed(schedule.id); await respond({ ok: true }); return
+            }
+            const candidate = { ...schedule, ...mutation, revision: schedule.revision + 1, updatedAt: FIXTURE_NOW }
+            if (('recurrence' in mutation || 'timezone' in mutation) &&
+                !validateRecurrence(candidate.recurrence, candidate.timezone, new Date(FIXTURE_NOW)).valid) {
+              await respond({ error: 'Invalid recurrence' }, 400); return
+            }
+            if ('archived' in mutation && mutation.archived) candidate.enabled = false
+            if ((candidate.archived && candidate.enabled) || scheduled.schedules.some((other) =>
+              other.id !== candidate.id && !other.archived && !candidate.archived && other.name.toLowerCase() === candidate.name.toLowerCase())) {
+              await respond({ error: 'Schedule state or name conflict' }, 409); return
+            }
+            Object.assign(schedule, candidate); changed(schedule.id); await respond({ schedule }); return
+          }
+        }
+      } catch {
+        await respond({ error: 'Invalid synthetic schedule request' }, 400); return
+      }
+      await reject(route, `Unmocked schedule request: ${method} ${path}`); return
     }
     if ((method === 'GET' && ['/api/notifications', '/api/notifications/unread-count'].includes(path)) ||
         (method === 'POST' && (path === '/api/notifications/read-all' || /^\/api\/notifications\/[a-f0-9]{64}\/(?:read|dismiss)$/.test(path)))) {

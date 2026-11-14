@@ -2112,6 +2112,12 @@ people sharing a hub share its profile. See
 - A device without a copy MUST offer its earlier browser-local settings once;
   the hub MUST keep only settings no device has chosen yet.
 
+### 9.4 Scheduler service preview
+
+- The default-off hub `scheduler` flag MUST gate all scheduler construction, state, timers, routes, and startup work. Nodes MUST NOT dispatch schedules, even with that environment flag enabled.
+- The [scheduler contract](design/scheduler.md) defines revision-checked CRUD, unique active names, paged history, atomic owner-only storage, durable occurrence/launch identity, and typed hub change events. This service-only preview MUST NOT add UI, Oracle tools, or session-launch behavior without a runner.
+- The dispatcher MUST reconcile every in-flight run before catch-up. Unknown launch or termination outcomes MUST retain concurrency slots and MUST NOT cause automatic resubmission. Replace and runtime expiry MUST await authoritative termination proof, not merely an abort acknowledgement or session idleness.
+
 ## 10. Notifications
 
 - The optional default-off hub notification center MUST follow the [durable notification contract](design/notification-center.md). It is API-only until its panel ships; enabling it MUST NOT change push or native-shell delivery policy.

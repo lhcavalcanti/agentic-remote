@@ -240,6 +240,7 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | `send_to_session` | Send a follow-up to any session. A busy session is steered: the message is typed into its running turn (a terminal that is not ready yet takes it as soon as its composer is back). Only a refusal that certainly sent nothing falls back to the session's queue; a possibly-delivered steer is never retried. A closed session is reopened and a suspended one resumed first. A folder-trust prompt is answered only when it is Copilot's genuine terminal prompt (exact options) naming the session's own folder |
 | `answer_session` | Answer what a session waits on, so it carries on without you: a permission request (option by name, or approve/deny), including Copilot's folder trust; a question (a choice or free text), several choices, or a form's values; or dismiss it. An optional `requestId` stops an answer reaching a different prompt |
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
+| `suspend_session`, `resume_session` | Suspend a session when you ask, never on Oracle's own initiative, or resume a suspended one, through the owning computer's Pause/Resume lifecycle. A refusal (not idle, background tasks, a delivery in flight, no terminal suspend) returns the computer's reason; an offline computer is refused without asking it. Suspending a suspended session, or resuming one that is not, changes nothing. Task turns may not use either. An instruction injected through a transcript can at most suspend idle sessions, which keep their history and can be resumed |
 | `close_session` | Ask you to close it. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot delete anything. With `sessionClosePolicy: 'oracle-started'` it closes an idle session Oracle started, named by its full id, without asking, under the checks in [Closing without asking](#closing-without-asking) |
 | `list_skills` | Your skills (name and description) through the runtime's `skills.discover`, so delegated prompts can name them |
 | `memory_list`, `memory_read`, `memory_write`, `memory_append`, `memory_delete` | The agent's memory |
@@ -387,9 +388,9 @@ runtime makes after Stop has drained it belongs to the next turn.
   browser (`/oracle` in a session's message bar asks the same way). **Ask** is a
   conversation about your work while it carries on: Oracle reads and asks side
   questions, and the hub refuses every tool that would start, message, rename,
-  stop, or close a session for that message. Ask questions queue behind
-  Oracle's own work only, never behind sessions. **Delegate** lets Oracle start
-  and steer sessions.
+  suspend, resume, stop, or close a session for that message. Ask questions
+  queue behind Oracle's own work only, never behind sessions. **Delegate** lets
+  Oracle start and steer sessions.
 - The model under the message bar opens **App settings → Oracle → Model**,
   where the model and effort are chosen; each computer's Oracle
   folder sits under **Folders**, beside the folder new sessions use. Both are

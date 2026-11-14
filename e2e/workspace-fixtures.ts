@@ -619,6 +619,23 @@ export async function setupWorkspaceFixture(
   const eventSockets = state.eventSockets
   const context = page.context()
 
+  async function multipartFile(route: Route, field: string): Promise<File | undefined> {
+    const request = route.request()
+    const contentType = request.headers()['content-type'] ?? ''
+    const body = request.postDataBuffer()
+    if (!contentType.startsWith('multipart/form-data;') || !body) return undefined
+    try {
+      const form = await new Response(new Uint8Array(body), {
+        headers: { 'content-type': contentType },
+      }).formData()
+      const file = form.get(field)
+      if (file instanceof File && file.name && !/[\\/]/.test(file.name)) return file
+    } catch {
+      // Malformed multipart data falls through to the fail-closed response.
+    }
+    return undefined
+  }
+
   page.on('pageerror', (error) => failures.push(`Page error: ${error.message}`))
   if (!options.realClock) await page.clock.setFixedTime(new Date(FIXTURE_NOW))
   await context.addInitScript(
@@ -915,6 +932,15 @@ export async function setupWorkspaceFixture(
       await respond({ version: '1.1.0', buildId: '1.1.0' })
       return
     }
+    if (method === 'POST' && path === '/api/transcriptions') {
+      const file = await multipartFile(route, 'audio')
+      if (!file || !file.type.startsWith('audio/')) {
+        await reject(route, 'Unexpected fixture transcription')
+        return
+      }
+      await respond({ transcript: 'Transcribed fixture note', durationSeconds: 2 })
+      return
+    }
     if (method === 'GET' && path === '/api/knowledge/roots') {
       await respond({ roots: state.roots })
       return
@@ -1083,6 +1109,91 @@ export async function setupWorkspaceFixture(
       : undefined
     if (session && match) {
       const action = match[3] ?? ''
+      const commitSession = () => {
+        session.revision = (session.revision ?? 0) + 1
+        session.updatedAt = FIXTURE_NOW
+        emit({ type: 'session.upserted', session })
+      }
+      if (method === 'POST' && action === '/messages') {
+        const input = request.postDataJSON() as { content?: unknown; enqueue?: unknown }
+        if (typeof input.content !== 'string' || !input.content.trim() ||
+          (input.enqueue !== undefined && typeof input.enqueue !== 'boolean')) {
+          await reject(route, 'Unexpected fixture message')
+          return
+        }
+        const id = `fixture-submission-${session.revision}`
+        if (input.enqueue) {
+          session.queuedPrompts = [...(session.queuedPrompts ?? []), { id, content: input.content, createdAt: FIXTURE_NOW }]
+          session.queuedCount = session.queuedPrompts.length
+        } else {
+          session.messages.push({ id, role: 'user', content: input.content, createdAt: FIXTURE_NOW })
+          session.status = 'running'
+          session.activity = 'Working on the follow-up'
+        }
+        commitSession()
+        await respond({ session })
+        return
+      }
+      if (method === 'PUT' && action === '/queue') {
+        const { order } = request.postDataJSON() as { order?: unknown }
+        const prompts = session.queuedPrompts ?? []
+        if (!Array.isArray(order) || order.length !== prompts.length ||
+          new Set(order).size !== prompts.length ||
+          order.some((id) => !prompts.some((prompt) => prompt.id === id))) {
+          await reject(route, 'Unexpected fixture queue order')
+          return
+        }
+        session.queuedPrompts = order.map((id) => prompts.find((prompt) => prompt.id === id)!)
+        commitSession()
+        await respond({ session })
+        return
+      }
+      const queued = action.match(/^\/queue\/([^/]+)$/)
+      if (method === 'PATCH' && queued) {
+        const prompt = session.queuedPrompts?.find((prompt) => prompt.id === queued[1])
+        const { content } = request.postDataJSON() as { content?: unknown }
+        if (!prompt || typeof content !== 'string' || !content.trim()) {
+          await reject(route, 'Unexpected fixture queue edit')
+          return
+        }
+        prompt.content = content
+        commitSession()
+        await respond({ session, prompt })
+        return
+      }
+      if (method === 'POST' && action === '/cancel') {
+        session.status = 'idle'
+        session.activity = undefined
+        commitSession()
+        await respond({ ok: true })
+        return
+      }
+      if (method === 'PATCH' && action === '/runtime') {
+        const input = request.postDataJSON() as {
+          model: string; reasoningEffort: string; contextTier: string; mode: string
+        }
+        if (session.status !== 'idle' || input.model !== fixtureModels[0].id ||
+          !fixtureModels[0].reasoningEfforts.some((effort) => effort === input.reasoningEffort) ||
+          input.contextTier !== 'default' || !['interactive', 'plan', 'autopilot'].includes(input.mode)) {
+          await reject(route, 'Unexpected fixture runtime change')
+          return
+        }
+        session.runtime = { ...session.runtime, ...input }
+        commitSession()
+        await respond({ session })
+        return
+      }
+      if (method === 'POST' && action === '/files') {
+        const file = await multipartFile(route, 'file')
+        if (!file) {
+          await reject(route, 'Unexpected fixture file upload')
+          return
+        }
+        await respond({
+          file: { name: file.name, size: file.size, path: `${session.cwd}/.agentic-remote/uploads/${file.name}` },
+        }, 201)
+        return
+      }
       if (action === '/knowledge-root' && (method === 'GET' || method === 'PUT')) {
         const key = `${session.computerId}:${session.id}`
         const saved = state.bindings.get(key) ?? {

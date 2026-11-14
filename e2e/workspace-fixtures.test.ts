@@ -28,6 +28,10 @@ async function fixtureApi() {
   const state = createWorkspaceFixtureState()
   const fixture = await setupWorkspaceFixture(page, { baseUrl: 'http://127.0.0.1:4840', state })
   async function request<T = Record<string, unknown>>(path: string, method = 'GET', body?: object) {
+    const multipart = body instanceof FormData
+      ? new Request('http://127.0.0.1:4840', { method: 'POST', body })
+      : undefined
+    const data = multipart ? Buffer.from(await multipart.arrayBuffer()) : undefined
     const fulfill = vi.fn<(response: { status?: number; body?: string }) => Promise<void>>()
       .mockResolvedValue(undefined)
     await handler({
@@ -35,6 +39,8 @@ async function fixtureApi() {
         url: () => `http://127.0.0.1:4840${path}`,
         method: () => method,
         postDataJSON: () => body,
+        headers: () => ({ 'content-type': multipart?.headers.get('content-type') ?? 'application/json' }),
+        postDataBuffer: () => data,
       }),
       fulfill,
     } as unknown as Route)
@@ -171,5 +177,58 @@ describe('workspace fixture hub protocol', () => {
     })
     expect(refused.status).toBe(400)
     expect(() => fixture.assertHealthy()).toThrow()
+  })
+})
+
+describe('workspace fixture composer routes', () => {
+  const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
+
+  it.each([
+    ['/messages', 'POST', { content: '' }],
+    ['/messages', 'POST', { content: 'A note', enqueue: 'yes' }],
+    ['/queue', 'PUT', { order: ['first', 'first'] }],
+    ['/queue/missing', 'PATCH', { content: 'A revision' }],
+    ['/runtime', 'PATCH', { model: 'unknown', reasoningEffort: 'high', contextTier: 'default', mode: 'plan' }],
+    ['/files', 'POST', {}],
+  ])('fails closed without mutating state for invalid %s %s', async (action, method, input) => {
+    const { fixture, request, state } = await fixtureApi()
+    const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+    session.queuedPrompts = [
+      { id: 'first', content: 'First note', createdAt: session.updatedAt },
+      { id: 'second', content: 'Second note', createdAt: session.updatedAt },
+    ]
+    const before = structuredClone(session)
+    expect((await request(`${sessionPath}${action}`, method, input)).status).toBe(501)
+    expect(session).toEqual(before)
+    expect(() => fixture.assertHealthy()).toThrow()
+  })
+
+  it('refuses a runtime change while busy', async () => {
+    const { fixture, request, state } = await fixtureApi()
+    state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.status = 'running'
+    const response = await request(`${sessionPath}/runtime`, 'PATCH', {
+      model: 'fixture-model', reasoningEffort: 'high', contextTier: 'default', mode: 'plan',
+    })
+    expect(response.status).toBe(501)
+    expect(() => fixture.assertHealthy()).toThrow('Unexpected fixture runtime change')
+  })
+
+  it('accepts multipart uploads and audio but refuses a non-audio transcription', async () => {
+    const { fixture, request } = await fixtureApi()
+    const document = new FormData()
+    document.set('file', new File(['# Fixture notes'], 'notes.md', { type: 'text/markdown' }))
+    const uploaded = await request(`${sessionPath}/files`, 'POST', document)
+    expect(uploaded).toMatchObject({
+      status: 201,
+      body: { file: { name: 'notes.md', path: '/home/demo/field-notes/.agentic-remote/uploads/notes.md' } },
+    })
+    const audio = new FormData()
+    audio.set('audio', new File(['fixture audio'], 'recording.webm', { type: 'audio/webm' }))
+    expect(await request('/api/transcriptions', 'POST', audio)).toMatchObject({
+      status: 200, body: { transcript: 'Transcribed fixture note' },
+    })
+    fixture.assertHealthy()
+    expect((await request('/api/transcriptions', 'POST', document)).status).toBe(501)
+    expect(() => fixture.assertHealthy()).toThrow('Unexpected fixture transcription')
   })
 })

@@ -340,6 +340,13 @@ The development server uses Vite plus Fastify. Run the complete checks with:
 pnpm check
 ```
 
+- UI locks protect today's conversation, busy queue, session list, settings, setup dialogs, computers, and Oracle at desktop, foldable, and phone sizes.
+- Run `pnpm test:ui-locks` (Chromium only); it builds and serves the fixture frontend on 127.0.0.1:4395, with a fixed clock and mocked API/WebSocket traffic.
+- Update committed snapshots with `pnpm test:ui-locks --update-snapshots` only for reviewed, intentional visual changes; refactors must produce zero diff.
+- Capture PR screenshots with `pnpm screens -- --output-dir ./test-results/screens --scene conversation --viewport desktop --viewport phone`; omit filters to capture every scene and size.
+- The capture command builds once and starts/stops its own loopback frontend; `--no-build` reuses this worktree's Playwright build, and `--base-url <origin>` uses an existing frontend instead.
+- Neither command needs a backend; captures refuse production ports 4317/4318 and output directories under `/tmp` or `/var/tmp`, including symlinks.
+
 `pnpm test` runs every test file once, serially. Two named Vitest projects run
 a subset:
 

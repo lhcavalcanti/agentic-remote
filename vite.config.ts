@@ -35,6 +35,7 @@ const tmuxTests = [
 // the quick subset by default: if it is that slow, add it here. Every file still
 // runs in `pnpm test`, `pnpm test:fast` and the local promotion gate.
 const slowTests = [
+  'e2e/capture-screens.test.ts',
   'graphify/manage.test.ts',
   'server/agent-service-recovery.test.ts',
   'server/agent-service-side-question.test.ts',

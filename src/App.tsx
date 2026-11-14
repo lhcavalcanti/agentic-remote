@@ -63,6 +63,9 @@ import {
 import type { ShortcutBinding, ShortcutId } from './app-shortcuts'
 import { AppSettingsDialog } from './settings/AppSettingsDialog'
 import { ShellNavigation } from './rail/ShellNavigation'
+import { publishFeatureEvent } from './features/events'
+import { NotificationPanel } from './notifications/NotificationPanel'
+import { useNotifications } from './notifications/use-notifications'
 import { usePreviewFeature } from './preview-features'
 import { emptyRuntimeSelection } from './settings/runtime-defaults'
 import { StatuslineControls } from './settings/StatuslineControls'
@@ -3777,6 +3780,8 @@ function fallbackSessionKey(
 
 function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClient }) {
   const desktopRail = usePreviewFeature('desktopRail')
+  const notificationPanel = usePreviewFeature('notificationPanel')
+  const notifications = useNotifications(notificationPanel)
   const [shellView, setShellView] = useState<string>()
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
@@ -7516,6 +7521,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         if (current.readyState === WebSocket.OPEN) current.send(JSON.stringify(request))
       })
       socket.onopen = () => {
+        publishFeatureEvent({ type: 'hub.connected' })
         reportOraclePresenceRef.current()
         reconnectDelay = 1_000
         sessionKnowledgeRootRef.current.refresh()
@@ -7530,6 +7536,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       socket.onmessage = (message) => {
         const event = patches.receive(JSON.parse(message.data as string) as HubWireEvent)
         if (!event) return
+        publishFeatureEvent(event)
         if (isManagerEvent(event)) {
           // The manager's conversation, not session lifecycle: it must not
           // move the transcript sequence either.
@@ -13052,7 +13059,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         tabIndex={0}
       />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
-        <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession}
+        <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession} unreadCount={notifications.unreadCount}
           onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
           onOpen={(id) => { setSidebarOpen(false); setShellView(id) }} />
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>
@@ -14434,7 +14441,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         updateRegistration={updateRegistration}
         updatingApp={updatingApp}
       />
-      {shellView && <DialogFrame title={shellView === 'host' ? 'Host monitor' : shellView === 'scheduler' ? 'Scheduler' : 'Notifications'}
+      {shellView === 'notifications' && <NotificationPanel enabled={notificationPanel} notifications={notifications}
+        onClose={() => setShellView(undefined)} onOpen={(record) => {
+          if (record.kind === 'oracle.message') { setOracleOpen(true); setShellView(undefined) }
+          else if (record.sessionId && record.computerId && openManagedSession({ computerId: record.computerId, sessionId: record.sessionId })) setShellView(undefined)
+        }} />}
+      {shellView && shellView !== 'notifications' && <DialogFrame title={shellView === 'host' ? 'Host monitor' : 'Scheduler'}
         eyebrow="Preview" onClose={() => setShellView(undefined)}>
         <p className="dialog-message">This view is being prepared for the next preview.</p>
       </DialogFrame>}

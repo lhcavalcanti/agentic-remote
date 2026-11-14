@@ -13,22 +13,22 @@ export function ShellNavigation({ displayName, onNewSession, onSettings, onOpen,
 }) {
   const { effective } = usePreviewFeatures()
   const name = useDisplayName(displayName, effective.desktopRail)
-  if (!effective.desktopRail) return null
+  if (!effective.desktopRail && !effective.notificationPanel && !effective.hostMonitorView && !effective.schedulerView) return null
   const features: ClientFeature[] = [
     ...(effective.hostMonitorView ? [{ id: 'host', label: 'Host monitor', icon: Monitor, railEntry: { order: 10 }, open: () => onOpen('host') }] : []),
     ...(effective.notificationPanel ? [{ id: 'notifications', label: 'Notifications', icon: Bell, railEntry: { order: 20, badge: unreadCount }, open: () => onOpen('notifications') }] : []),
     ...(effective.schedulerView ? [{ id: 'scheduler', label: 'Scheduler', icon: CalendarClock, railEntry: { order: 30 }, open: () => onOpen('scheduler') }] : []),
-    { id: 'settings', label: 'App settings', icon: Settings, railEntry: { order: 100 }, open: onSettings },
+    ...(effective.desktopRail ? [{ id: 'settings', label: 'App settings', icon: Settings, railEntry: { order: 100 }, open: onSettings }] : []),
   ]
   return <nav className="shell-rail" aria-label="App navigation">
-    <div className="shell-rail__top">
+    {effective.desktopRail && <div className="shell-rail__top">
       <Sparkles aria-label="Agentic Remote" size={24} />
       <button aria-label="New session" title="New session" onClick={onNewSession} className="icon-button"><Plus size={22} /></button>
-    </div>
+    </div>}
     <div className="shell-rail__footer">
-      <div className="shell-rail__identity" title={name}>
+      {effective.desktopRail && <div className="shell-rail__identity" title={name}>
         <span className="shell-avatar" aria-hidden="true">{initials(name)}</span><span>{name}</span>
-      </div>
+      </div>}
       {railEntries(features).map(({ id, label, icon: Icon, railEntry, open }) =>
         <button key={id} type="button" className="shell-rail__entry" aria-label={label}
           title={label} onClick={open}>

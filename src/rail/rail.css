@@ -11,10 +11,10 @@
   .app-shell--rail.app-shell--oracle-docked { grid-template-columns: calc(var(--sidebar-width) + 64px) minmax(0, 1fr) var(--oracle-panel-width); }
   .app-shell--rail > .sidebar-resizer { left: calc(var(--sidebar-width) + 61px); }
   .app-shell--rail > .sidebar { position: relative; padding-left: 64px; }
-  .shell-rail { position: absolute; inset: 0 auto 0 0; width: 64px; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 6px; border-top: 0; border-right: 1px solid var(--border); }
+  .app-shell--rail .shell-rail { position: absolute; inset: 0 auto 0 0; width: 64px; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 6px; border-top: 0; border-right: 1px solid var(--border); }
   .shell-rail__top { display: flex; align-items: center; flex-direction: column; gap: 20px; }
-  .shell-rail__entry { justify-content: center; }
-  .shell-rail__label { display: none; }
+  .app-shell--rail .shell-rail__entry { justify-content: center; }
+  .app-shell--rail .shell-rail__label { display: none; }
   .shell-rail__identity { flex-direction: column; gap: 4px; text-align: center; }
   .shell-rail__identity > span:last-child { width: 48px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
   .shell-badge { position: absolute; right: 0; top: 0; }

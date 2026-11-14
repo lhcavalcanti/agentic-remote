@@ -1,5 +1,6 @@
 import { expect, type BrowserContextOptions, type Page } from '@playwright/test'
 import { oracleHostStatusFixture } from './oracle-host-status-fixture'
+import { fixtureNotifications } from './shell-fixtures'
 import {
   FIXTURE_NOW,
   SELECTED_SESSION_ID,
@@ -46,6 +47,7 @@ export const uiSceneNames = [
   'oracle-panel',
   'oracle-schedule-approval',
   'desktop-rail',
+  'notification-panel',
 ] as const
 
 export type UISceneName = typeof uiSceneNames[number]
@@ -124,6 +126,10 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
+      if (name === 'notification-panel') {
+        state.settings.values = { previewFeatures: { desktopRail: true, notificationPanel: true }, displayName: 'Alex Morgan' }
+        state.settings.revision = 1
+      }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
@@ -142,6 +148,7 @@ export function createUIScenes(
         knowledgeMode: 'hidden',
         appearance: 'graphite',
         state,
+        notifications: name === 'notification-panel' ? fixtureNotifications : undefined,
         hostMonitor: Boolean(hostStatus),
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: [{
@@ -220,6 +227,10 @@ export function createUIScenes(
             await expect(previews.getByText('Turned off on this hub', { exact: false })).toHaveCount(2)
           }
         }
+      } else if (name === 'notification-panel') {
+        await openSessions(page)
+        await page.getByRole('button', { name: 'Notifications', exact: true }).click()
+        await expect(page.getByRole('dialog', { name: 'Notifications', exact: true })).toContainText('Workspace review complete')
       } else if (name === 'runtime-dialog' || name === 'composer-session-setup') {
         await page.getByRole('button', { name: 'Configure model, effort, and context', exact: true }).click()
         await expect(page.getByRole('dialog', { name: 'Model and context' }).getByRole('combobox', { name: 'Model', exact: true })).toBeVisible()

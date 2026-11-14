@@ -1,6 +1,6 @@
 # Hub notification records
 
-The hub enables this API-only service with `AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on`. The shared hub flag reader owns the startup-only, default-off decision; `/api/features` reports its effective state. With the flag off, the hub creates no notification directory, starts no notification service, and returns `404` from every notification endpoint. Nodes never instantiate it. There is no panel or new native notification producer in this increment.
+The hub enables this API-only service with `AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on`. The shared hub flag reader owns the startup-only, default-off decision; `/api/features` reports its effective state. With the flag off, the hub creates no notification directory, starts no notification service, and returns `404` from every notification endpoint. Nodes never instantiate it. The default-off `notificationPanel` Interface preview adds the client panel; no new native notification producer is added.
 
 ## Classification and delivery
 
@@ -45,8 +45,14 @@ All routes use the hub's existing canonical Host/Origin enforcement, including e
 
 List, unread-count, and read-all accept query filters `unread=true|false`, `failed=true|false`, `kind`, `sessionId`, and `computerId`. `failed` means error severity, including Oracle and health failures. Include the computer when scoping a potentially non-unique session ID. Invalid filters/IDs return `400`; unknown records return `404`.
 
-After a committed visible change, ordinary and patch-enabled hub sockets receive the typed invalidation `{ type: "notifications.changed", revision, unreadCount }`. Clients can refetch their current filtered list; this message is not a second channel delivery signal. Original hub/Oracle signals also wait for their own admission before reaching the socket, so the existing native producer cannot notify before the corresponding record is durable. The current client ignores invalidations until the later panel layer. The fail-closed workspace fixture mocks every route, defaults to disabled, and can opt into fictional records through its `notifications` option.
+After a committed visible change, ordinary and patch-enabled hub sockets receive the typed invalidation `{ type: "notifications.changed", revision, unreadCount }`. Clients can refetch their current filtered list; this message is not a second channel delivery signal. Original hub/Oracle signals also wait for their own admission before reaching the socket, so the existing native producer cannot notify before the corresponding record is durable. The client uses invalidations and reconnects to refetch the authoritative list and badge; no session transcript sequence is advanced. The fail-closed workspace fixture mocks every route, defaults to disabled, and can opt into fictional records through its `notifications` option.
 
 The existing active session GET and explicit session-open POST mark that computer/session's records read after the open succeeds. Passive reads, including Oracle reads and classifier identity enrichment, do not. This does not claim that future events are already read while a session stays visible.
 
 No new node capability is required: classification stays at the hub and consumes the already negotiated session/event protocol and passive reads. Replayed node events, reconnect summaries, and startup pending requests all pass through the same durable reducer.
+
+## Client panel preview
+
+`notificationPanel` requires the hub's effective `notificationCenter` flag. Its bell is available in the rail, or the existing drawer footer if the rail preview is off. The badge counts unread, non-dismissed records. The desktop popover and narrow-screen sheet use the existing modal focus/restore contract. Rows group matching records by computer and session, display the latest record and count, and otherwise retain a record's coalescing identity.
+
+All, Unread, Failed and Oracle tabs combine with case-insensitive title/body search. Mark-all uses the corresponding server filter; with search it marks only the visible matching IDs. Row read/dismiss affects that row's group. Opening a session or Oracle marks its group read without changing Oracle's work queue. Read errors and disabled/empty states are explicit. The global hub socket forwards typed invalidations to a small client event subscription; reconnects refetch too. This never raises a native notification or changes session transcript ordering.

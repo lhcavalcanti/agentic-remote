@@ -17,7 +17,7 @@ import {
   mergeRuntimeModelOptions,
   sameRuntimeSelection,
 } from './runtime-defaults'
-import { navigableSettingsSections, schedulerSettingsSection, settingsSections } from './sections'
+import { navigableSettingsSections, schedulerSettingsSection, settingsSections, skillsSettingsSection } from './sections'
 import { SettingsNavigation } from './SettingsNavigation'
 import { usePreviewFeature } from '../preview-features'
 import type { SettingsSectionProps } from './sections'
@@ -56,9 +56,14 @@ const settingsTakeoverEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown']
 export function AppSettingsDialog(props: AppSettingsDialogProps) {
   const navigation = usePreviewFeature('settingsNavigation')
   const scheduler = usePreviewFeature('schedulerView')
-  const navigationSections = scheduler
+  const schedulerSections = scheduler
     ? [...navigableSettingsSections.slice(0, 5), schedulerSettingsSection, ...navigableSettingsSections.slice(5)]
     : navigableSettingsSections
+  const skills = usePreviewFeature('skillToggles')
+  const legacySections = skills ? [...settingsSections, skillsSettingsSection] : settingsSections
+  const navigationSections = skills
+    ? [...schedulerSections.slice(0, -1), skillsSettingsSection, schedulerSections.at(-1)!]
+    : schedulerSections
   const {
     open,
     computers,
@@ -415,7 +420,7 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
       {navigation ? <SettingsNavigation key={initialSection ?? 'default'} initialSection={initialSection}
         sectionProps={sectionProps} sections={navigationSections} /> : <>
       <nav aria-label="Settings sections" className="app-settings-nav">
-        {settingsSections.map((group) => (
+        {legacySections.map((group) => (
           <button
             key={group.id}
             onClick={() => scrollSettingsTo(group.id, { focus: true })}
@@ -426,7 +431,7 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
         ))}
       </nav>
       <div className="app-settings-dialog__sections">
-        {settingsSections.map((section) => (
+        {legacySections.map((section) => (
           <section
             aria-labelledby={`${section.id}-heading`}
             className="app-settings-group"

@@ -1,4 +1,7 @@
 import { timingSafeEqual } from 'node:crypto'
+import { SKILL_SETTINGS_CAPABILITY } from '../shared/skill-settings.js'
+import type { SkillSettingsService } from './skill-settings.js'
+import { registerSkillSettingsRoutes } from './skill-settings-routes.js'
 import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import type WebSocket from 'ws'
@@ -333,6 +336,7 @@ export async function registerNodeRoutes(
   hostTelemetry?: HostTelemetryService,
   hostTelemetrySignal?: AbortSignal,
   scheduleWorktrees?: ScheduleWorktreeService,
+  skillSettings?: SkillSettingsService,
 ): Promise<void> {
   await app.register(
     async (node) => {
@@ -358,6 +362,7 @@ export async function registerNodeRoutes(
         ...(voice ? { voice: voice.capability() } : {}),
         hostTelemetry: { version: HOST_TELEMETRY_CAPABILITY_VERSION, enabled: hostTelemetry !== undefined },
         scheduleWorktrees: { version: SCHEDULE_WORKTREE_VERSION, enabled: scheduleWorktrees?.enabled === true },
+        ...(skillSettings ? { skillSettings: { version: SKILL_SETTINGS_CAPABILITY } } : {}),
       }))
 
       node.post('/schedule-worktrees', async (request, reply) => {
@@ -377,6 +382,7 @@ export async function registerNodeRoutes(
         return { worktree: await scheduleWorktrees.cleanup(launchId) ?? null }
       })
 
+      if (skillSettings) registerSkillSettingsRoutes(node, '/skills', () => skillSettings, true)
       if (hostTelemetry) registerHostTelemetryRoutes(node, '/host', () => hostTelemetry, hostTelemetrySignal)
 
       node.get<{

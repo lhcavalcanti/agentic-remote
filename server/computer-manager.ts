@@ -1,4 +1,6 @@
 import type { DirectoryScope } from './directory-browser.js'
+import type { SkillSettingsService } from './skill-settings.js'
+import type { SkillSettingsTarget } from './skill-settings-routes.js'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -167,6 +169,11 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       this.localComputer(),
       ...this.registry.list().map((computer) => this.computerSummary(computer)),
     ]
+  }
+
+  async skillSettingsTarget(computerId: string, local: SkillSettingsService): Promise<SkillSettingsTarget> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id ? local : this.requireClient(computerId).skillSettingsTarget()
   }
 
   async hostTelemetryTarget(computerId: string, local: HostTelemetryService): Promise<HostTelemetryTarget> {

@@ -100,6 +100,24 @@ test('settings categories preserve display name, scheduler defaults and the Host
   } finally { fixture.assertHealthy() }
 })
 
+test('skill changes require confirmation and target the selected computer only', async ({ page, baseURL }) => {
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-skill-confirmation')!.setup(page)
+  try {
+    const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+    expect(fixture.requests.filter((entry) => entry.method === 'PATCH' && entry.path.endsWith('/skills'))).toEqual([])
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Disable review-notes', exact: true }).click()
+    const write = page.waitForRequest((request) => request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/computers/fixture-build/skills')
+    await dialog.getByRole('button', { name: 'Confirm change', exact: true }).click()
+    expect((await write).postDataJSON()).toEqual({ name: 'review-notes', enabled: false, confirmed: true, revision: 'a'.repeat(64) })
+    await expect(dialog.getByRole('button', { name: 'Enable review-notes', exact: true })).toBeVisible()
+    await dialog.getByRole('combobox', { name: 'Skills computer' }).selectOption('fixture-studio')
+    await expect(dialog.getByRole('button', { name: 'Disable review-notes', exact: true })).toBeVisible()
+    await dialog.getByRole('combobox', { name: 'Skills computer' }).selectOption('fixture-travel')
+    await expect(dialog.getByRole('status')).toContainText('offline')
+  } finally { fixture.assertHealthy() }
+})
+
 test('settings preview searches fields, navigates by keyboard, deep-links computers and closes with Escape', async ({ page, baseURL }) => {
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-navigation')!.setup(page)
   try {

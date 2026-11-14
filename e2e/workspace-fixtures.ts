@@ -1,6 +1,7 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
 import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
 import { launchIdentitySchema } from '../shared/launch-identity'
+import { skillToggleSchema, type SkillSettingsSnapshot } from '../shared/skill-settings'
 import type { NotificationRecord } from '../shared/notification-center'
 import { hostMetricNames, type HostSnapshot, type HostMinuteAggregate, type HostProcesses } from '../shared/host-telemetry'
 import {
@@ -557,6 +558,9 @@ export const fixtureEndpoints = [
   'GET /api/closed-sessions',
   'GET /api/push/settings',
   'GET /api/version',
+  'GET /api/diagnostics/health',
+  'GET /api/computers/:computerId/skills',
+  'PATCH /api/computers/:computerId/skills',
   'GET /api/knowledge/roots',
   'GET /api/knowledge/roots/:rootId/entries?path=.',
   'GET /api/knowledge/roots/:rootId/file?path=handbook/agent-workspace.md',
@@ -717,6 +721,17 @@ export async function setupWorkspaceFixture(
 ): Promise<WorkspaceFixture> {
   const baseUrl = fixtureBaseUrl(options.baseUrl)
   const state = options.state ?? createWorkspaceFixtureState()
+  const computerSkills = new Map<string, SkillSettingsSnapshot>(fixtureComputers.map((computer) => [computer.id, {
+    revision: 'a'.repeat(64), warnings: [],
+    skills: [
+      { name: 'review-notes', description: 'Review a fictional workspace checklist and summarize the next steps.',
+        source: 'user', location: '~/.copilot/skills/review-notes', enabled: true },
+      { name: 'release-check', description: 'Check the fictional release notes against the workspace plan.',
+        source: 'repository', location: '~/field-notes/.github/skills/release-check', enabled: true },
+      { name: 'draft-summary', description: 'Prepare a short handoff from the fictional review notes.',
+        source: 'configured', location: '~/shared-skills/draft-summary', enabled: false },
+    ],
+  }]))
   const notifications = structuredClone(options.notifications ?? [])
   const scheduled = structuredClone(options.scheduler ?? { schedules: [], runs: [] })
   let scheduleRevision = 0
@@ -905,6 +920,25 @@ export async function setupWorkspaceFixture(
         hostMonitor: state.hubFlags.hostMonitor || options.hostMonitor === true,
         scheduler: state.hubFlags.scheduler || options.scheduler !== undefined,
       } })
+      return
+    }
+    const skillRoute = /^\/api\/computers\/([^/]+)\/skills$/.exec(path)
+    if (skillRoute && ['GET', 'PATCH'].includes(method)) {
+      const computer = fixtureComputers.find((entry) => entry.id === skillRoute[1])
+      const snapshot = computerSkills.get(skillRoute[1])
+      if (!computer || !snapshot) { await respond({ error: 'Computer not found' }, 404); return }
+      if (!computer.online) { await respond({ error: 'This computer is offline.' }, 503); return }
+      if (method === 'GET') { await respond(snapshot); return }
+      const parsed = skillToggleSchema.safeParse(request.postDataJSON())
+      if (!parsed.success) { await respond({ error: 'Confirm the computer-wide CLI effect.' }, 400); return }
+      if (parsed.data.revision !== snapshot.revision) { await respond({ error: 'CLI settings changed. Refresh and confirm again.' }, 409); return }
+      if (!snapshot.skills.some((entry) => entry.name === parsed.data.name)) { await respond({ error: 'Skill not found' }, 404); return }
+      const next = {
+        ...snapshot, revision: (BigInt(`0x${snapshot.revision}`) + 1n).toString(16).padStart(64, '0'),
+        skills: snapshot.skills.map((skill) => skill.name === parsed.data.name ? { ...skill, enabled: parsed.data.enabled } : skill),
+      }
+      computerSkills.set(computer.id, next)
+      await respond(next)
       return
     }
     if (path === '/api/schedules' || path.startsWith('/api/schedules/')) {

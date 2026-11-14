@@ -42,6 +42,10 @@ export const previewFeatureCatalogue = {
     label: 'Health card',
     description: 'View read-only hub startup, version and connection diagnostics.',
   },
+  skillToggles: {
+    label: 'Skill toggles',
+    description: 'Review and explicitly enable or disable skills on each computer.',
+  },
   notificationPanel: {
     label: 'Notification panel',
     description: 'Browse and manage notifications from this hub.',

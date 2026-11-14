@@ -1,4 +1,8 @@
 import type { DirectoryScope } from './directory-browser.js'
+import { SKILL_SETTINGS_CAPABILITY, skillSettingsSchema } from '../shared/skill-settings.js'
+import type { SkillToggle } from '../shared/skill-settings.js'
+import { SkillSettingsError } from './skill-settings.js'
+import type { SkillSettingsTarget } from './skill-settings-routes.js'
 import {
   cancellationAckSchema, launchReconciliationSchema, promptAcceptanceReceiptSchema, terminationAcknowledgementSchema,
   type LaunchReconciliation, type TerminationAcknowledgement,
@@ -165,6 +169,35 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     this._voice = info.voice
     this.setOnline(true)
     return info
+  }
+
+  async skillSettingsTarget(): Promise<SkillSettingsTarget> {
+    const signal = this.resourceLifetime.signal
+    try {
+      const info = await this.getInfo(AbortSignal.any([signal, AbortSignal.timeout(10_000)]))
+      if (info.skillSettings?.version !== SKILL_SETTINGS_CAPABILITY) {
+        throw new SkillSettingsError(`Update this computer (${this.computer.name}) to manage skills.`)
+      }
+    } catch (error) {
+      if (error instanceof SkillSettingsError || error instanceof RemoteNodeRequestError) throw error
+      throw new RemoteNodeTransportError(this.computer.name, error)
+    }
+    const request = async (input?: SkillToggle) => {
+      if (signal.aborted) throw new RemoteNodeTransportError(this.computer.name, signal.reason)
+      try {
+        const result = await this.request('/node-api/skills', {
+          signal, method: input ? 'PATCH' : 'GET',
+          ...(input ? { body: JSON.stringify(input) } : {}),
+        }, 15_000)
+        const parsed = skillSettingsSchema.safeParse(result)
+        if (!parsed.success) throw new SkillSettingsError('This computer returned invalid skill settings.', 502)
+        return parsed.data
+      } catch (error) {
+        if (error instanceof SkillSettingsError || error instanceof RemoteNodeRequestError) throw error
+        throw new RemoteNodeTransportError(this.computer.name, error)
+      }
+    }
+    return { snapshot: () => request(), update: (input) => request(input) }
   }
 
   async hostTelemetryTarget(): Promise<HostTelemetryTarget> {

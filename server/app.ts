@@ -102,6 +102,8 @@ import { registerSchedulerRoutes } from './scheduler-routes.js'
 import { SessionScheduleLauncher } from './schedule-launcher.js'
 import { configuredScheduleWorktreeRoots, ScheduleWorktreeService } from './schedule-worktrees.js'
 import { ScheduleNotificationService } from './schedule-notification-service.js'
+import { SkillSettingsService } from './skill-settings.js'
+import { registerSkillSettingsRoutes } from './skill-settings-routes.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -135,6 +137,7 @@ export interface BuildAppOptions {
   cliCanary?: boolean
   /** Records the startup work that runs while the server becomes ready. */
   startupPhases?: StartupPhases
+  skillSettings?: SkillSettingsService
   hostTelemetryFactory?: (dataDirectory: string, processContext: ProcessScanContext) => HostTelemetryService
   /** Runner integration seam; ignored without the hub scheduler flag. */
   scheduleLauncher?: ScheduleLauncher
@@ -264,6 +267,9 @@ export async function buildApp(
       ),
     )
   const identity = options.identity ?? new NodeIdentityStore(dataDirectory)
+  const skillSettings = options.skillSettings ?? new SkillSettingsService({
+    folders: () => [...service.listSessions(), ...service.listHistory()].map((session) => session.cwd),
+  })
   await identity.initialize()
   const processContext: ProcessScanContext = {
     listSessionPaneRoots: () => service.listSessionPaneRoots?.() ?? Promise.resolve([]),
@@ -351,6 +357,7 @@ export async function buildApp(
     hostTelemetry,
     hostTelemetryLifetime?.signal,
     scheduleWorktrees,
+    skillSettings,
   )
 
   let manager: ComputerManager | undefined
@@ -668,6 +675,8 @@ export async function buildApp(
       reply.header('cache-control', 'no-store')
       return { hubFlags }
     })
+    registerSkillSettingsRoutes(app, '/api/computers/:computerId/skills',
+      (id) => manager!.skillSettingsTarget(id!, skillSettings))
     await registerManagerRoutes(
       app,
       managerAgent,

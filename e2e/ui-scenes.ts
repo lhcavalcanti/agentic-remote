@@ -44,6 +44,8 @@ export const uiSceneNames = [
   'settings-navigation',
   'settings-remote-machines',
   'settings-health',
+  'settings-skills',
+  'settings-skill-confirmation',
   'runtime-dialog',
   'new-session-dialog',
   'computers-dialog',
@@ -145,6 +147,13 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true, schedulerView: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
+      if (name === 'settings-skills' || name === 'settings-skill-confirmation') {
+        state.settings.values = {
+          previewFeatures: { settingsNavigation: true, skillToggles: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
+          displayName: 'Alex Morgan',
+        }
+        state.hubFlags = { ...state.hubFlags, hostMonitor: true, scheduler: true }
+      }
       if (name === 'settings-health') {
         state.settings.values = {
           previewFeatures: { settingsNavigation: true, healthCard: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
@@ -178,7 +187,7 @@ export function createUIScenes(
         appearance: 'graphite',
         state,
         notifications: name === 'notification-panel' ? fixtureNotifications : undefined,
-        hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes' || name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-health',
+        hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes' || name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-health' || name === 'settings-skills' || name === 'settings-skill-confirmation',
         hostMonitorWsl: name === 'host-monitor' || name === 'host-processes',
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: fixtureScheduleProposals,
@@ -221,6 +230,17 @@ export function createUIScenes(
         await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
+      } else if (name === 'settings-skills' || name === 'settings-skill-confirmation') {
+        await openSessions(page)
+        await page.getByRole('button', { name: 'App settings', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+        await dialog.getByRole('button', { name: /^Skills Hub/ }).click()
+        await expect(dialog.getByRole('button', { name: 'Disable review-notes', exact: true })).toBeVisible()
+        if (name === 'settings-skill-confirmation') {
+          await dialog.getByRole('combobox', { name: 'Skills computer' }).selectOption('fixture-build')
+          await dialog.getByRole('button', { name: 'Disable review-notes', exact: true }).click()
+          await expect(dialog.getByRole('group', { name: 'Confirm skill change' })).toContainText('every session on Build node')
+        }
       } else if (name === 'settings-health') {
         await openSessions(page)
         await page.getByRole('button', { name: 'App settings', exact: true }).click()

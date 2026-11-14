@@ -4916,6 +4916,23 @@ button {
 .health-card__facts dt { overflow-wrap: anywhere; }
 .health-card__facts dd { margin: 0; text-align: right; }
 .health-card__computers { padding-left: 18px; font-size: 12px; line-height: 1.8; }
+.skills-settings__list { display: grid; gap: 12px; padding: 0; list-style: none; }
+.skills-settings__list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+.skills-settings__list li > div { min-width: 0; }
+.skills-settings__list p { margin: 8px 0; font-size: 12px; }
+.skills-settings__list small { color: var(--muted-strong); font-size: 11px; overflow-wrap: anywhere; }
+.skills-settings__confirmation { padding: 16px; margin: 16px 0; border: 1px solid var(--border-strong); border-radius: 10px; }
+.skills-settings__confirmation p { font-size: 13px; line-height: 1.6; }
+.skills-settings__confirmation button { margin: 0 8px 8px 0; }
 
 @media (max-width: 599px) {
   .settings-navigation { display: flex; flex-direction: column; gap: 12px; }

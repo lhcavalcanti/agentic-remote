@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { Bell, Bot, Clock, Folder, MessageSquare, MonitorCog, Settings, SlidersHorizontal } from 'lucide-react'
+import { Bell, BookOpen, Bot, Clock, Folder, MessageSquare, MonitorCog, Settings, SlidersHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AgentProvider, RuntimeModelOption } from '../../shared/contracts'
 import type { NewSessionBackendSetting, OracleResponseStyle } from '../../shared/settings-profile'
@@ -17,6 +17,7 @@ import type { AppSettingsDialogProps } from './types'
 import { DisplayNameSetting } from '../rail/DisplayNameSetting'
 import { ComputersBody } from '../computers/ComputersDialog'
 import { HealthCard } from './HealthCard'
+import { SkillsSettings } from './SkillsSettings'
 
 export type SettingsSectionProps = AppSettingsDialogProps & {
   categoryNavigation?: boolean
@@ -611,4 +612,13 @@ export const schedulerSettingsSection: SettingsSection = {
   render: ({ schedulerAllowAllForOracle, onSchedulerAllowAllForOracleChange }) => (
     <SchedulerPermissionSettings allowed={schedulerAllowAllForOracle} onChange={onSchedulerAllowAllForOracleChange} />
   ),
+}
+
+export const skillsSettingsSection: SettingsSection = {
+  id: 'settings-skills',
+  title: 'Skills',
+  icon: BookOpen,
+  scope: 'hub',
+  searchLabels: ['Computer', 'Search skills', 'Enable', 'Disable', 'Refresh skills'],
+  render: ({ computers }) => <SkillsSettings computers={computers} />,
 }

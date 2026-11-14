@@ -6,6 +6,7 @@ import type { SessionDetail } from '../shared/contracts.js'
 import { HostTelemetryService } from './host-telemetry/service.js'
 import { HostTelemetrySampler } from './host-telemetry/sampler.js'
 import { readingFixture } from './host-telemetry/test-fixtures.js'
+import { SkillSettingsService } from './skill-settings.js'
 
 const prefixes = ['/api', '/%61pi', '/a%70i', '/ap%69', '/%61%70%69']
 const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
@@ -32,6 +33,11 @@ beforeEach(async () => {
   runtime = await buildApp({
     dataDirectory: directory,
     logger: false,
+    skillSettings: new SkillSettingsService({
+      home: path.join(directory, 'synthetic-home'),
+      copilotHome: path.join(directory, 'synthetic-home', '.copilot'),
+      folders: () => [],
+    }),
     hostTelemetryFactory: (dataDirectory, context) => new HostTelemetryService(
       new HostTelemetrySampler({ dataDirectory, reader: async () => readingFixture() }), context,
     ),
@@ -52,6 +58,19 @@ afterEach(async () => {
 })
 
 describe('canonical API origin enforcement', () => {
+  it.each(prefixes)('guards skill discovery and confirmed mutations through %s', async (prefix) => {
+    const url = `${prefix}/computers/${runtime.identity.info.id}/skills`
+    for (const headers of untrusted) {
+      expect((await runtime.app.inject({ url, headers })).statusCode).toBe(403)
+      expect((await runtime.app.inject({ method: 'PATCH', url, headers, payload: {} })).statusCode).toBe(403)
+    }
+    const listed = await runtime.app.inject({ url, headers: trusted })
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json().skills).toEqual([])
+    expect((await runtime.app.inject({ method: 'PATCH', url, headers: trusted, payload: {
+      name: 'sample', enabled: false, confirmed: false, revision: listed.json().revision,
+    } })).statusCode).toBe(400)
+  })
   it.each(prefixes)('guards read-only health diagnostics through %s', async (prefix) => {
     for (const headers of untrusted) {
       expect((await runtime.app.inject({ url: `${prefix}/diagnostics/health`, headers })).statusCode).toBe(403)

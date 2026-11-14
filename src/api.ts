@@ -1,5 +1,16 @@
 import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
 import type { HubHealth } from '../shared/hub-health'
+import { skillSettingsSchema, type SkillSettingsSnapshot, type SkillToggle } from '../shared/skill-settings'
+
+export async function listComputerSkills(computerId: string, signal?: AbortSignal): Promise<SkillSettingsSnapshot> {
+  return skillSettingsSchema.parse(await request(`/api/computers/${encodeURIComponent(computerId)}/skills`, { signal, cache: 'no-store' }))
+}
+
+export async function toggleComputerSkill(computerId: string, input: SkillToggle): Promise<SkillSettingsSnapshot> {
+  return skillSettingsSchema.parse(await request(`/api/computers/${encodeURIComponent(computerId)}/skills`, {
+    method: 'PATCH', body: JSON.stringify(input),
+  }))
+}
 
 export async function getHubHealth(signal?: AbortSignal): Promise<HubHealth> {
   return request('/api/diagnostics/health', { signal, cache: 'no-store' })

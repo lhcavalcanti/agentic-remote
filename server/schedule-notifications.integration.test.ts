@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
+import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
 import { buildApp } from './app.js'
 import { PushNotificationService } from './push-notification-service.js'
 
@@ -52,6 +53,88 @@ async function run(notify: 'never' | 'always') {
 }
 
 describe('hub schedule notification integration', () => {
+  it.each(['never', 'always'] as const)('runs an approved Oracle proposal through the real runner with %s notifications and schedule ownership', async (notify) => {
+    await hub()
+    const host = runtime.manager!
+    const computerId = runtime.identity.info.id
+    const session: ManagedSession = {
+      id: 'real-runner-session', computerId, computerName: 'Fictional Studio',
+      title: 'Untitled', cwd: '/fictional/repo', status: 'idle', messages: [], updatedAt: new Date().toISOString(),
+    }
+    let launch: LaunchReconciliation | undefined
+    let earlyUnbound = false
+    vi.spyOn(host, 'listComputers').mockReturnValue([{
+      id: computerId, name: session.computerName, online: true, isLocal: true,
+      providers: [{ id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsLaunchIdentity: true }],
+    }])
+    vi.spyOn(host, 'validateSessionDirectory').mockResolvedValue(session.cwd)
+    const create = vi.spyOn(host, 'createSession').mockImplementation(async (_computerId, input) => {
+      session.launchId = input.launchId
+      launch = { launchId: input.launchId!, sessionId: session.id, receipts: [] }
+      const intent = runtime.scheduler!.store.allRuns().find((run) => run.launchId === input.launchId)
+      expect(intent).toBeDefined()
+      earlyUnbound = intent?.sessionId === undefined
+      host.emit('event', { type: 'session.upserted', session: { ...session, status: 'waiting',
+        pendingPermission: { requestId: 'creation-permission', title: 'Allow folder?', options: [] } } })
+      return session
+    })
+    vi.spyOn(host, 'renameSession').mockImplementation(async (_computerId, _sessionId, input) => {
+      session.title = input.title
+      return session
+    })
+    vi.spyOn(host, 'sendMessage').mockImplementation(async (_computerId, _sessionId, input) => {
+      const receipt: PromptAcceptanceReceipt = {
+        deliveryId: input.deliveryId!, sessionId: session.id, promptId: 'real-runner-root',
+        acceptedAt: new Date().toISOString(), state: 'delivered',
+      }
+      session.promptReceipts = [receipt]
+      session.messages = [{ id: receipt.promptId, role: 'user', content: input.content, createdAt: receipt.acceptedAt }]
+      session.status = 'running'
+      launch!.receipts = [receipt]
+      host.emit('event', { type: 'session.upserted', session: { ...session } })
+      return session
+    })
+    vi.spyOn(host, 'readSession').mockImplementation(async () => session)
+    vi.spyOn(host, 'reconcileLaunch').mockImplementation(async () => launch)
+    vi.spyOn(host, 'listBackgroundTasks').mockResolvedValue({ supported: true, runningCount: 0, tasks: [] })
+    const proposed = await runtime.scheduler!.store.propose({ operation: 'create', payload: {
+      name: 'Approved fictional review', prompt: 'Review the fictional guide.', notify, enabled: false,
+      target: { computerId, folder: session.cwd, provider: 'copilot' }, recurrence: { type: 'daily', time: '09:00' },
+    } })
+    expect(create).not.toHaveBeenCalled()
+    const created = await runtime.app.inject({ method: 'POST', url: `/api/schedules/proposals/${proposed.id}/approve`, headers })
+    expect(created.statusCode).toBe(200)
+    const schedule = runtime.scheduler!.store.get(created.json().proposal.appliedScheduleId)
+    expect(schedule.createdBy).toBe('oracle')
+    const runProposal = await runtime.scheduler!.store.propose({
+      operation: 'run-now', scheduleId: schedule.id, baseRevision: schedule.revision, payload: {},
+    })
+    expect(create).not.toHaveBeenCalled()
+    const approved = await runtime.app.inject({ method: 'POST', url: `/api/schedules/proposals/${runProposal.id}/approve`, headers })
+    expect(approved.statusCode).toBe(200)
+    const runId: string = approved.json().proposal.appliedRunId
+    await vi.waitFor(() => expect(runtime.scheduler!.store.getRun(runId).rootPromptAcceptance?.promptId).toBe('real-runner-root'))
+    expect(earlyUnbound).toBe(true)
+    const registry = JSON.parse(await readFile(path.join(directory, 'manager', 'sessions.json'), 'utf8'))
+    expect(registry[`${computerId}:${session.id}`]).toMatchObject({ origin: 'schedule', scheduleId: schedule.id, scheduleRunId: runId })
+    expect(runtime.managerAgent).toBeUndefined()
+    launch!.receipts[0].outcome = 'succeeded'
+    session.status = 'idle'
+    host.emit('event', { type: 'session.upserted', session: { ...session } })
+    await runtime.scheduler!.tick()
+    await runtime.scheduleNotifications!.flush()
+    await runtime.notificationCenter!.flush()
+    const settled = runtime.scheduler!.store.getRun(runId)
+    expect(settled).toMatchObject({ status: 'succeeded', rootPromptReceipt: 'real-runner-root',
+      rootPromptAcceptance: { outcome: 'succeeded' } })
+    const expected = notify === 'never' ? 0 : 1
+    expect(await runtime.notificationCenter!.store.list()).toHaveLength(expected)
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(expected))
+    if (expected) expect((await runtime.notificationCenter!.store.list())[0].kind).toBe('schedule.run.succeeded')
+    expect((await runtime.app.inject({ method: 'POST', url: `/api/schedules/proposals/${runProposal.id}/approve`, headers })).statusCode).toBe(200)
+    expect(create).toHaveBeenCalledOnce()
+  })
+
   it.each(['on', 'off'] as const)('the never policy suppresses ordinary paths but keeps HTTP/socket state with center %s', async (centerFlag) => {
     vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', centerFlag)
     await hub()

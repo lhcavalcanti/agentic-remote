@@ -1,10 +1,29 @@
 # Host monitor
 
-Status: Linux telemetry sampling and on-demand process inventory are implemented as isolated modules. Transport, UI, and Oracle integration are planned; nothing starts a sampler or process scan at server startup.
+Status: Linux sampling, on-demand process inventory, and authenticated hub/node transport are implemented behind `AGENTIC_REMOTE_FEATURE_HOST_MONITOR=on` (default off). UI and Oracle integration remain planned.
+
+## Lifecycle and transport
+
+Each enabled computer, hub or node, constructs one sampler inside `buildApp`. It starts in `onReady` under startup phase `hostTelemetry.start` and stops in `onClose`. The shared flag parser reads the environment once at startup; client preview settings cannot activate collection. With the flag off, no sampler is constructed, no scans run, and host routes return 404.
+
+The hub exposes the following origin-enforced, uncached endpoints:
+
+| Route | Result |
+| --- | --- |
+| `GET /api/computers/:computerId/host` | `HostSnapshot`, with nullable information/latest sample before the first successful collection |
+| `GET /api/computers/:computerId/host/history?range=24h` | Up to 1,440 one-minute min/avg/max aggregates; the current minute may be partial |
+| `GET /api/computers/:computerId/host/processes` | `{ rows, truncated, othersCount, scannedAt }`, scanned on demand on the owning computer |
+| WebSocket `/api/computers/:computerId/host/live` | Receive-only `{ type: "host.snapshot", snapshot }` messages, initially and after each accepted sample |
+
+WebSockets reuse the application's existing event transport and authenticated node upgrade pattern rather than introducing SSE. A dedicated per-computer route isolates high-frequency telemetry and its viewer lifetime from the global session event socket; opening an ordinary session does not start active sampling. Each viewer calls `setViewers`; the last disconnect restores the 15-second idle interval. The owning computer and each hub proxy cap concurrent viewers at 32; excess upgraded viewers close with code 1013. A consumer may have at most two pending frames and 128 KiB buffered output. A write stalled for five seconds closes with 1013, releases its viewer immediately, and is forcibly terminated after a further second if it does not close cooperatively. Incoming client messages are rejected.
+
+Nodes provide the same routes under `/node-api/host`, `/node-api/host/history`, `/node-api/host/processes`, and `/node-api/host/live`, all requiring the existing bearer token. `ComputerManager` resolves local telemetry or proxies to the registered owning node; credentials are not forwarded to the browser. Node HTTP reads and upgrades have five-second timeouts, streaming frames are size/schema checked, and a remote stream with no samples for 20 seconds is disconnected. Disconnect, shutdown, removal, and re-pairing release subscriptions. The sampler's existing two-second abort timeout and non-overlap rule remain authoritative.
+
+Authenticated `/node-api/info` advertises `hostTelemetry: { version: 1, enabled }` even when collection is off. This small capability metadata addition is necessary to distinguish a supported-but-disabled node from an older release; all telemetry routes remain absent while disabled. The hub returns an actionable 409 saying “Update this computer” when the capability/version is missing or unsupported, or “turned off on this computer” when disabled. Connection failures return 503; malformed peer telemetry returns 502. History accepts only `24h` (also the default); other ranges return 400.
 
 ## Process inventory
 
-`scanProcesses(context)` in `server/host-telemetry/processes.ts` returns `{ rows, truncated, othersCount, scannedAt }`. The caller owns cadence and must reuse its context for CPU deltas. There is no timer, route, provider startup, process control, or persistence. Planned transport should call it at most once every five seconds, only while a Processes view is open, and stop scanning when the last viewer leaves.
+`scanProcesses(context)` in `server/host-telemetry/processes.ts` returns `{ rows, truncated, othersCount, scannedAt }`. Transport reuses one context per computer for CPU deltas. There is no scanning timer: only a Processes HTTP request can request a scan. Requests are limited to once every five seconds per owning computer, even with live viewers; concurrent or early requests return 429 rather than starting extra work. No provider startup, process control, or persistence is involved.
 
 The scanner inspects at most 4,096 numeric `/proc` entries in PID order, using batches of 32 and yielding to the event loop between batches. Its default reader uses synchronous calls only for tiny per-process kernel metadata, avoiding the measured thread-pool overhead of thousands of asynchronous filesystem operations without holding the event loop for the whole scan. It filters by the process directory's UID against the current user's UID before reading details. `othersCount` counts other-user entries encountered within that bound, not an estimate of all processes on a truncated or permission-restricted host. Processes that vanish, become inaccessible, change UID, or change identity during a read are skipped. A scan is a bounded best-effort snapshot, not an atomic kernel view.
 
@@ -23,6 +42,6 @@ Attribution does not initialize providers or call SDK APIs. Terminal observation
 
 ## Planned integration
 
-Transport must enforce the default-off `hostMonitor` hub flag, authenticated node access, Host/Origin checks, viewer bounds, timeouts, slow-consumer handling, and explicit “update this computer” states for older nodes. No transport or environment flag is introduced in this layer.
+The planned Processes UI will request inventory at most every five seconds only while that view is open. It will expose All, Agentic Remote, and Agent sessions filters with session links, executable names only, and no stop action. Oracle's read-only host-status tool, host alerting, final overhead gates, and the 48-hour soak remain planned. Isolated scan measurements do not establish the full sampler's overhead budget.
 
-The planned Processes UI will expose All, Agentic Remote, and Agent sessions filters with session links, executable names only, and no stop action. Oracle's read-only host-status tool, host alerting, final overhead gates, and the 48-hour soak remain planned. Isolated scan measurements do not establish the full sampler's overhead budget.
+Browser fixtures recognize every host endpoint and the live message. `setupWorkspaceFixture(..., { hostMonitor: true })` provides fictional Studio/Build node snapshots, a 60-second ring, 24-hour history, and conservative process attribution; omitted/false keeps all host surfaces unavailable.

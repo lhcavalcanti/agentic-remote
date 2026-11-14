@@ -94,6 +94,7 @@ export class HostTelemetrySampler {
   private errorCount = 0
   private timeoutCount = 0
   private lastError: HostTelemetrySamplerStatus['lastError'] = null
+  private readonly listeners = new Set<(snapshot: HostSnapshot) => void>()
 
   constructor(options: HostTelemetrySamplerOptions) {
     this.reader = options.reader ?? createLinuxHostTelemetryReader({ dataDirectory: options.dataDirectory })
@@ -131,6 +132,11 @@ export class HostTelemetrySampler {
     const wasActive = this.viewers > 0
     this.viewers = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0
     if (wasActive !== (this.viewers > 0)) this.schedule()
+  }
+
+  subscribe(listener: (snapshot: HostSnapshot) => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
   }
 
   snapshot(): HostSnapshot {
@@ -268,6 +274,10 @@ export class HostTelemetrySampler {
     this.pruneLive(monotonicAt)
     this.aggregate(at, sample)
     this.samples += 1
+    if (this.listeners.size) {
+      const snapshot = this.snapshot()
+      for (const listener of this.listeners) listener(snapshot)
+    }
   }
 
   private recordError(message: string): void {

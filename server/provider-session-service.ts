@@ -67,6 +67,13 @@ export class ProviderSessionService
     return [...this.copilot.providers(), ...this.claude.providers()]
   }
 
+  async listSessionPaneRoots() {
+    return [
+      ...await this.copilot.listSessionPaneRoots?.() ?? [],
+      ...await this.claude.listSessionPaneRoots?.() ?? [],
+    ]
+  }
+
   async start(phases: StartupPhases = silentStartupPhases): Promise<void> {
     this.resourceReads.start()
     this.resourcesStopped = false

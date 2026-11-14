@@ -28,12 +28,15 @@ import type {
 import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 import type { StartupPhases } from './startup-phases.js'
 import type { LaunchReconciliation, TerminationAcknowledgement } from '../shared/launch-identity.js'
+import type { SessionPaneRoot } from './host-telemetry/session-pane-roots.js'
 
 export interface SessionService {
   providers(): AgentProviderCapability[]
   /** Starts the provider, labelling its awaited startup phases on `phases`. */
   start(phases?: StartupPhases): Promise<void>
   stop(): Promise<void>
+  /** Read-only ownership observations; must not start providers. */
+  listSessionPaneRoots?(): Promise<SessionPaneRoot[]>
   listSessions(): SessionDetail[]
   listHistory(): SessionDetail[]
   /** Sessions closed through the app that can still be reopened. */

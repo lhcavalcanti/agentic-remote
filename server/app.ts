@@ -7,7 +7,7 @@ import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
-import { readHubFeatureFlags } from '../shared/feature-flags.js'
+import { parseFeatureFlag, readHubFeatureFlags } from '../shared/feature-flags.js'
 import type {
   HubEvent,
   VoiceBackendCapability,
@@ -90,6 +90,10 @@ import {
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 import { registerDreamerRoutes } from './dreamer-routes.js'
 import { DreamerService } from './dreamer-service.js'
+import { HostTelemetrySampler } from './host-telemetry/sampler.js'
+import { HostTelemetryService } from './host-telemetry/service.js'
+import type { ProcessScanContext } from './host-telemetry/processes.js'
+import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -123,6 +127,7 @@ export interface BuildAppOptions {
   cliCanary?: boolean
   /** Records the startup work that runs while the server becomes ready. */
   startupPhases?: StartupPhases
+  hostTelemetryFactory?: (dataDirectory: string, processContext: ProcessScanContext) => HostTelemetryService
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -160,9 +165,12 @@ export async function buildApp(
   voiceCapability: VoiceBackendCapability
   dreamerService?: DreamerService
   proactiveCoordinator?: ManagerProactiveCoordinator
+  hostTelemetry?: HostTelemetryService
 }> {
   const role = options.role ?? 'hub'
   const hubFlags = role === 'hub' ? readHubFeatureFlags(process.env) : undefined
+  const hostMonitorEnabled = hubFlags?.hostMonitor ??
+    parseFeatureFlag('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', process.env.AGENTIC_REMOTE_FEATURE_HOST_MONITOR)
   let publicDirectory: string | undefined
   let appVersion: AppVersion | undefined
   if (role === 'hub' && options.serveStatic) {
@@ -244,6 +252,14 @@ export async function buildApp(
     )
   const identity = options.identity ?? new NodeIdentityStore(dataDirectory)
   await identity.initialize()
+  const processContext: ProcessScanContext = {
+    listSessionPaneRoots: () => service.listSessionPaneRoots?.() ?? Promise.resolve([]),
+  }
+  const hostTelemetry = hostMonitorEnabled
+    ? options.hostTelemetryFactory?.(dataDirectory, processContext) ??
+      new HostTelemetryService(new HostTelemetrySampler({ dataDirectory }), processContext)
+    : undefined
+  const hostTelemetryLifetime = hostTelemetry ? new AbortController() : undefined
 
   // Registered before any routes: route plugins capture the error handler
   // present when their scope is created, so a later call would leave them
@@ -299,6 +315,10 @@ export async function buildApp(
     })
   })
 
+  if (hostTelemetryLifetime) {
+    // Terminate host streams before the generic WebSocket closer waits on unread peers.
+    app.addHook('preClose', async () => hostTelemetryLifetime.abort())
+  }
   await app.register(fastifyWebsocket, {
     options: {
       maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
@@ -314,6 +334,8 @@ export async function buildApp(
     identity,
     localTranscription,
     voiceService,
+    hostTelemetry,
+    hostTelemetryLifetime?.signal,
   )
 
   let manager: ComputerManager | undefined
@@ -584,6 +606,12 @@ export async function buildApp(
       dreamerUnavailable ?? 'Dreamer is unavailable on this hub.',
     )
     await registerPushRoutes(app, pushService)
+    if (hostTelemetry) {
+      const localTelemetry = hostTelemetry
+      const computers = manager
+      registerHostTelemetryRoutes(app, '/api/computers/:computerId/host', (id) =>
+        computers.hostTelemetryTarget(id!, localTelemetry), hostTelemetryLifetime?.signal)
+    }
     await registerNotificationRoutes(app, notificationCenter)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
@@ -644,6 +672,9 @@ export async function buildApp(
   // Ready only once the service has started, so the probe never races the
   // recovery of sessions that were open before a restart.
   app.addHook('onReady', async () => {
+    if (hostTelemetry) {
+      await startupPhases.run('hostTelemetry.start', async () => hostTelemetry.start())
+    }
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
     const starting = managerAgent
@@ -660,6 +691,7 @@ export async function buildApp(
   })
 
   app.addHook('onClose', async () => {
+    hostTelemetry?.stop()
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
     if (forwardToProactive) manager?.off('event', forwardToProactive)
@@ -695,5 +727,6 @@ export async function buildApp(
     voiceCapability,
     dreamerService,
     proactiveCoordinator,
+    hostTelemetry,
   }
 }

@@ -33,6 +33,18 @@ function provider(id: AgentProvider, supported = true) {
 }
 
 describe('provider queued dispatch aggregation', () => {
+  it('forwards only observed pane roots without starting either provider', async () => {
+    const root = { sessionId: 'copilot-session', panePid: 123, paneStartTime: 456 }
+    const copilot = Object.assign(provider('copilot'), {
+      start: vi.fn(), listSessionPaneRoots: vi.fn(async () => [root]),
+    })
+    const claude = Object.assign(provider('claude'), { start: vi.fn() })
+    const aggregate = new ProviderSessionService(copilot as unknown as SessionService, claude as unknown as SessionService)
+    expect(await aggregate.listSessionPaneRoots()).toEqual([root])
+    expect(copilot.start).not.toHaveBeenCalled()
+    expect(claude.start).not.toHaveBeenCalled()
+  })
+
   it('refuses a delivery token concurrently reused by a different provider session', async () => {
     const copilot = provider('copilot')
     const claude = provider('claude')

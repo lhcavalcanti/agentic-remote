@@ -4,6 +4,9 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from './app.js'
 import type { SessionDetail } from '../shared/contracts.js'
+import { HostTelemetryService } from './host-telemetry/service.js'
+import { HostTelemetrySampler } from './host-telemetry/sampler.js'
+import { readingFixture } from './host-telemetry/test-fixtures.js'
 
 const prefixes = ['/api', '/%61pi', '/a%70i', '/ap%69', '/%61%70%69']
 const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
@@ -23,11 +26,15 @@ beforeEach(async () => {
   vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.example.test')
   vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', '')
   vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'on')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', 'on')
   directory = await mkdtemp(path.join(tmpdir(), 'agentic-origin-review-'))
   // Services are never started; no provider process or inference is needed.
   runtime = await buildApp({
     dataDirectory: directory,
     logger: false,
+    hostTelemetryFactory: (dataDirectory, context) => new HostTelemetryService(
+      new HostTelemetrySampler({ dataDirectory, reader: async () => readingFixture() }), context,
+    ),
     transcriptionService: {
       initialize: async () => undefined,
       stop: async () => undefined,
@@ -45,6 +52,22 @@ afterEach(async () => {
 })
 
 describe('canonical API origin enforcement', () => {
+  it.each(prefixes)('guards host reads and live subscriptions through %s', async (prefix) => {
+    const base = `${prefix}/computers/${runtime.identity.info.id}/host`
+    for (const headers of untrusted) {
+      for (const suffix of ['', '/history?range=24h', '/processes', '/live']) {
+        expect((await runtime.app.inject({ url: base + suffix, headers })).statusCode).toBe(403)
+      }
+      await expect(runtime.app.injectWS(`${base}/live`, { headers })).rejects.toThrow('403')
+    }
+    expect(runtime.hostTelemetry!.sampler.status().viewers).toBe(0)
+    expect((await runtime.app.inject({ url: base, headers: trusted })).statusCode).toBe(200)
+    expect((await runtime.app.inject({ url: `${base}/history?range=24h`, headers: trusted })).statusCode).toBe(200)
+    const socket = await runtime.app.injectWS(`${base}/live`, { headers: trusted })
+    expect(runtime.hostTelemetry!.sampler.status().viewers).toBe(1)
+    socket.terminate()
+  })
+
   it.each(prefixes)('guards notification reads and every mutation through %s', async (prefix) => {
     for (const [method, suffix] of [
       ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'],

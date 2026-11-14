@@ -37,6 +37,45 @@ afterEach(async () => {
   }))
 })
 
+describe('host telemetry request safety', () => {
+  const info = { id: 'paired-node', name: 'Fictional node', version: '1.0.0', hostTelemetry: { version: 1, enabled: true } }
+
+  it('rejects malformed peer snapshots, history and inventories as upstream failures', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(info))
+    const target = await client('http://fixture.invalid').hostTelemetryTarget()
+    for (const read of [target.snapshot, target.history, target.processes]) {
+      fetch.mockResolvedValueOnce(Response.json({ unexpected: 'fictional' }))
+      await expect(read()).rejects.toMatchObject({ statusCode: 502 })
+    }
+  })
+
+  it('bounds every telemetry read, refuses redirects and authenticates without forwarding the token', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(info))
+    const owner = client('http://fixture.invalid')
+    const target = await owner.hostTelemetryTarget()
+    fetch.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'http://elsewhere.invalid' } }))
+    await expect(target.snapshot()).rejects.toMatchObject({ statusCode: 502 })
+    expect(fetch).toHaveBeenCalledTimes(2)
+    const init = fetch.mock.calls[1][1]!
+    expect(init.redirect).toBe('manual')
+    expect(new Headers(init.headers).get('authorization')).toBe('Bearer fixture-node-token')
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+    owner.stop()
+    expect(init.signal!.aborted).toBe(true)
+  })
+
+  it('maps connection failures and sampler request timeouts to a retryable computer-unavailable state', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Synthetic disconnect'))
+    const owner = client('http://fixture.invalid')
+    await expect(owner.hostTelemetryTarget()).rejects.toMatchObject({ statusCode: 503 })
+    fetch.mockResolvedValueOnce(Response.json(info))
+    const target = await owner.hostTelemetryTarget()
+    fetch.mockRejectedValueOnce(new DOMException('Synthetic timeout', 'TimeoutError'))
+    await expect(target.snapshot()).rejects.toMatchObject({ statusCode: 503 })
+    owner.stop()
+  })
+})
+
 describe('launch identity response safety', () => {
   it('does not silently accept creation or delivery responses that omitted required identity evidence', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ session }))

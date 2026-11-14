@@ -44,6 +44,7 @@ import { RemoteNodeRequestError } from './remote-node-errors.js'
 import { launchIdentitySchema, cancellationAckSchema, type TerminationAcknowledgement } from '../shared/launch-identity.js'
 import { updateComputerForLaunchIdentity } from './launch-identity.js'
 import type { SessionService } from './session-service.js'
+import type { HostTelemetryService, HostTelemetryTarget } from './host-telemetry/service.js'
 import {
   readSessionSkills,
   readSessionMcpServers,
@@ -163,6 +164,13 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       this.localComputer(),
       ...this.registry.list().map((computer) => this.computerSummary(computer)),
     ]
+  }
+
+  async hostTelemetryTarget(computerId: string, local: HostTelemetryService): Promise<HostTelemetryTarget> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? local
+      : this.requireClient(computerId).hostTelemetryTarget()
   }
 
   async registerComputer(input: AddComputerInput): Promise<ComputerSummary> {

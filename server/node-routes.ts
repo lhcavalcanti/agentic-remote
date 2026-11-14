@@ -4,6 +4,9 @@ import type { FastifyInstance } from 'fastify'
 import type WebSocket from 'ws'
 import { z } from 'zod'
 import { launchIdentitySchema, cancellationAckSchema } from '../shared/launch-identity.js'
+import { HOST_TELEMETRY_CAPABILITY_VERSION } from '../shared/host-telemetry.js'
+import type { HostTelemetryService } from './host-telemetry/service.js'
+import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
 import { updateComputerForLaunchIdentity } from './launch-identity.js'
 import {
   ORACLE_VOICE_PROTOCOL,
@@ -322,6 +325,8 @@ export async function registerNodeRoutes(
   identity: NodeIdentityStore,
   transcription: TranscriptionService,
   voice?: VoiceBackend,
+  hostTelemetry?: HostTelemetryService,
+  hostTelemetrySignal?: AbortSignal,
 ): Promise<void> {
   await app.register(
     async (node) => {
@@ -345,7 +350,10 @@ export async function registerNodeRoutes(
         ...identity.info,
         providers: service.providers(),
         ...(voice ? { voice: voice.capability() } : {}),
+        hostTelemetry: { version: HOST_TELEMETRY_CAPABILITY_VERSION, enabled: hostTelemetry !== undefined },
       }))
+
+      if (hostTelemetry) registerHostTelemetryRoutes(node, '/host', () => hostTelemetry, hostTelemetrySignal)
 
       node.get<{
         Querystring: { protocol?: string; streamId?: string }

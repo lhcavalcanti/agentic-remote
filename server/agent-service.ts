@@ -12398,6 +12398,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     })
   }
 
+  listSessionPaneRoots() {
+    return this.terminalController.listSessionPaneRoots?.() ?? Promise.resolve([])
+  }
+
   /**
    * Starts Copilot in a disposable tmux session to see whether this version
    * still starts in a way the app can drive, then removes it and its files.

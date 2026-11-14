@@ -96,3 +96,21 @@ export const HostMinuteAggregateSchema = z.object({
 })
 export type HostMinuteAggregate = z.infer<typeof HostMinuteAggregateSchema>
 export const HostHistorySchema = z.array(HostMinuteAggregateSchema).max(HOST_TELEMETRY_MAX_MINUTES)
+
+export const HostProcessesSchema = z.object({
+  rows: z.array(ProcessRowSchema).max(4096),
+  truncated: z.boolean(),
+  othersCount: nonnegative.int(),
+  scannedAt: timestamp,
+})
+export type HostProcesses = z.infer<typeof HostProcessesSchema>
+
+export interface HostTelemetryCapability {
+  version: number
+  enabled: boolean
+}
+
+export const HostTelemetryMessageSchema = z.object({
+  type: z.literal('host.snapshot'),
+  snapshot: HostSnapshotSchema,
+})

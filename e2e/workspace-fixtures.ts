@@ -2,6 +2,7 @@ import type { Page, Route, WebSocketRoute } from '@playwright/test'
 import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
 import { launchIdentitySchema } from '../shared/launch-identity'
 import type { NotificationRecord } from '../shared/notification-center'
+import { hostMetricNames, type HostSnapshot, type HostMinuteAggregate, type HostProcesses } from '../shared/host-telemetry'
 import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
 import {
@@ -50,6 +51,44 @@ export const SECOND_KNOWLEDGE_ROOT_ID = 'fixture-build-playbooks'
 export const KNOWLEDGE_FILE_PATH = 'handbook/agent-workspace.md'
 export const KNOWLEDGE_DOCUMENT_TITLE = 'Agent workspace field guide'
 export const CONTEXT_EXAMPLE = '{\n  "computer": "Studio",\n  "folder": "~/field-notes",\n  "mode": "plan"\n}\n'
+
+export const fixtureHostSnapshot: HostSnapshot = {
+  info: {
+    hostname: 'studio-fictional', os: 'Linux', kernel: '6.8.0-fictional',
+    cpuModel: 'Fictional 8-core CPU', logicalCpus: 16, totalMemoryBytes: 32 * 1024 ** 3,
+    uptimeSeconds: 172_800, isWsl: false,
+  },
+  latest: null,
+  live: Array.from({ length: 61 }, (_, index) => ({
+    at: new Date(Date.parse(FIXTURE_NOW) - (60 - index) * 1000).toISOString(),
+    cpuPercent: 18 + index % 12, memoryUsedBytes: 12 * 1024 ** 3 + index * 1024 ** 2,
+    memoryAvailableBytes: 20 * 1024 ** 3 - index * 1024 ** 2, swapUsedBytes: 0,
+    netRxBytesPerSec: 128_000 + index * 1024, netTxBytesPerSec: 64_000,
+    diskReadBytesPerSec: 2 * 1024 ** 2, diskWriteBytesPerSec: 512 * 1024,
+    load1: 1.8, load5: 1.5, load15: 1.2,
+  })),
+  disk: { mount: '/fictional-data', totalBytes: 512 * 1024 ** 3, freeBytes: 320 * 1024 ** 3 },
+}
+fixtureHostSnapshot.latest = fixtureHostSnapshot.live.at(-1)!
+
+export const fixtureHostHistory: HostMinuteAggregate[] = Array.from({ length: 1440 }, (_, index) => ({
+  at: new Date(Math.floor(Date.parse(FIXTURE_NOW) / 60_000) * 60_000 - (1439 - index) * 60_000).toISOString(),
+  samples: 4,
+  ...Object.fromEntries(hostMetricNames.map((metric) => {
+    const value = fixtureHostSnapshot.latest![metric]
+    return [metric, value === null ? null : { min: value * 0.9, avg: value, max: value * 1.1 }]
+  })) as Pick<HostMinuteAggregate, typeof hostMetricNames[number]>,
+}))
+
+export const fixtureHostProcesses: HostProcesses = {
+  scannedAt: FIXTURE_NOW, truncated: false, othersCount: 6,
+  rows: [
+    { pid: 2101, startTime: 123000, executable: 'node', cpuPercent: 1.2, rssBytes: 180 * 1024 ** 2, owner: 'agentic-remote' },
+    { pid: 2130, startTime: 123100, executable: 'copilot', cpuPercent: 24, rssBytes: 420 * 1024 ** 2, owner: 'session', sessionId: SELECTED_SESSION_ID },
+    { pid: 2150, startTime: 123200, executable: 'copilot-runtime', cpuPercent: 3.8, rssBytes: 256 * 1024 ** 2, owner: 'shared-runtime', label: 'Shared Copilot runtime' },
+    { pid: 2200, startTime: 123300, executable: 'editor', cpuPercent: 0.5, rssBytes: 90 * 1024 ** 2, owner: 'other' },
+  ],
+}
 
 export const fixtureComputers: ComputerSummary[] = [
   {
@@ -467,6 +506,10 @@ export const fixtureEndpoints = [
   'POST /api/notifications/:id/read',
   'POST /api/notifications/:id/dismiss',
   'GET /api/computers',
+  'GET /api/computers/:computerId/host',
+  'GET /api/computers/:computerId/host/history?range=24h',
+  'GET /api/computers/:computerId/host/processes',
+  'WS /api/computers/:computerId/host/live',
   'GET /api/sessions',
   'GET /api/history',
   'GET /api/closed-sessions',
@@ -504,6 +547,8 @@ export interface WorkspaceFixtureOptions {
   manager?: ManagerSnapshot
   /** Omitted keeps the hub notification center disabled, as in production. */
   notifications?: NotificationRecord[]
+  /** Omitted keeps host monitoring off; all data is fictional. */
+  hostMonitor?: boolean
   /** Use a native event socket only on the already-validated local fixture origin. */
   nativeLocalEvents?: boolean
   realClock?: boolean
@@ -736,6 +781,23 @@ export async function setupWorkspaceFixture(
         })
         return
       }
+      const hostLive = /^\/api\/computers\/([^/]+)\/host\/live$/.exec(url.pathname)
+      if (hostLive) {
+        const computer = fixtureComputers.find(({ id }) => id === hostLive[1])
+        if (!options.hostMonitor || !computer?.online) {
+          socket.close({ code: 1008, reason: 'Host monitoring is unavailable in this fixture' })
+          return
+        }
+        socket.send(JSON.stringify({
+          type: 'host.snapshot',
+          snapshot: { ...fixtureHostSnapshot, info: { ...fixtureHostSnapshot.info!, hostname: `${computer.id}-fictional` } },
+        }))
+        socket.onMessage(() => {
+          failures.push('Unexpected client message on fixture host stream')
+          socket.close({ code: 1008, reason: 'Host monitoring is receive-only' })
+        })
+        return
+      }
       if (url.pathname === '/' && url.searchParams.has('token')) {
         // Vite HMR is mocked too: never connectToServer(), even for the dev socket.
         socket.send(JSON.stringify({ type: 'connected' }))
@@ -791,6 +853,7 @@ export async function setupWorkspaceFixture(
       await respond({ hubFlags: {
         ...state.hubFlags,
         notificationCenter: state.hubFlags.notificationCenter || options.notifications !== undefined,
+        hostMonitor: state.hubFlags.hostMonitor || options.hostMonitor === true,
       } })
       return
     }
@@ -831,6 +894,26 @@ export async function setupWorkspaceFixture(
     }
     if (method === 'GET' && path === '/api/computers') {
       await respond({ computers: fixtureComputers })
+      return
+    }
+    const hostRoute = /^\/api\/computers\/([^/]+)\/host(?:\/(history|processes|live))?$/.exec(path)
+    if (method === 'GET' && hostRoute) {
+      const computer = fixtureComputers.find(({ id }) => id === hostRoute[1])
+      if (!options.hostMonitor || !computer) {
+        await respond({ error: 'Host monitoring not found' }, 404)
+      } else if (!computer.online) {
+        await respond({ error: 'This computer is unavailable' }, 503)
+      } else if (hostRoute[2] === 'history') {
+        const ranges = url.searchParams.getAll('range')
+        const valid = ranges.length === 0 || (ranges.length === 1 && ranges[0] === '24h')
+        await respond(valid ? fixtureHostHistory : { error: 'Host history range must be 24h' }, valid ? 200 : 400)
+      } else if (hostRoute[2] === 'processes') {
+        await respond(fixtureHostProcesses)
+      } else if (hostRoute[2] === 'live') {
+        await respond({ error: 'WebSocket upgrade required' }, 404)
+      } else {
+        await respond({ ...fixtureHostSnapshot, info: { ...fixtureHostSnapshot.info!, hostname: `${computer.id}-fictional` } })
+      }
       return
     }
     if (method === 'GET' && path === '/api/manager') {

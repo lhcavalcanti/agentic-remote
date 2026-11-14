@@ -4,6 +4,7 @@ import type { KnowledgeRoot, ManagedSession, SessionKnowledgeBinding } from '../
 import { ORACLE_VOICE_PROTOCOL, type VoiceCapabilities } from '../shared/oracle-voice'
 import type { SettingsProfileSnapshot, SettingsUpdateResult } from '../shared/settings-profile'
 import type { NotificationRecord } from '../shared/notification-center'
+import { HostHistorySchema, HostProcessesSchema, HostSnapshotSchema, HostTelemetryMessageSchema } from '../shared/host-telemetry'
 import {
   createWorkspaceFixtureState,
   fixtureKnowledgeRoots,
@@ -13,7 +14,7 @@ import {
   setupWorkspaceFixture,
 } from './workspace-fixtures'
 
-async function fixtureApi(notifications?: NotificationRecord[]) {
+async function fixtureApi(notifications?: NotificationRecord[], hostMonitor?: boolean) {
   let handler!: (route: Route) => Promise<void>
   let socketHandler!: (socket: WebSocketRoute) => void
   const context = {
@@ -27,7 +28,7 @@ async function fixtureApi(notifications?: NotificationRecord[]) {
     context: () => context,
   } as unknown as Page
   const state = createWorkspaceFixtureState()
-  const fixture = await setupWorkspaceFixture(page, { baseUrl: 'http://127.0.0.1:4840', state, notifications })
+  const fixture = await setupWorkspaceFixture(page, { baseUrl: 'http://127.0.0.1:4840', state, notifications, hostMonitor })
   async function request<T = Record<string, unknown>>(path: string, method = 'GET', body?: object) {
     const multipart = body instanceof FormData
       ? new Request('http://127.0.0.1:4840', { method: 'POST', body })
@@ -60,7 +61,16 @@ async function fixtureApi(notifications?: NotificationRecord[]) {
     } as unknown as WebSocketRoute)
     return sent
   }
-  return { fixture, openEvents, request, state }
+  function openHost(computer = 'fixture-studio') {
+    const send = vi.fn()
+    const close = vi.fn()
+    socketHandler({
+      url: () => `ws://127.0.0.1:4840/api/computers/${computer}/host/live`,
+      onClose: vi.fn(), onMessage: vi.fn(), send, close,
+    } as unknown as WebSocketRoute)
+    return { send, close }
+  }
+  return { fixture, openEvents, openHost, request, state }
 }
 
 describe('workspace fixture directory routing', () => {
@@ -151,6 +161,39 @@ describe('workspace fixture directory routing', () => {
 })
 
 describe('workspace fixture hub protocol', () => {
+  it('mocks every disabled host endpoint and refuses a live subscription', async () => {
+    const { fixture, request, openHost } = await fixtureApi()
+    for (const route of ['', '/history?range=24h', '/processes', '/live']) {
+      expect((await request(`/api/computers/fixture-studio/host${route}`)).status).toBe(404)
+    }
+    const socket = openHost()
+    expect(socket.send).not.toHaveBeenCalled()
+    expect(socket.close).toHaveBeenCalledOnce()
+    fixture.assertHealthy()
+  })
+
+  it('mocks realistic validated host snapshots, minute history, processes and live messages', async () => {
+    const { fixture, request, openHost } = await fixtureApi(undefined, true)
+    expect((await request('/api/features')).body).toMatchObject({ hubFlags: { hostMonitor: true } })
+    for (const id of ['fixture-studio', 'fixture-build']) {
+      const base = `/api/computers/${id}/host`
+      const snapshot = await request(base)
+      expect(snapshot.status).toBe(200)
+      expect(HostSnapshotSchema.parse(snapshot.body).info?.hostname).toBe(`${id}-fictional`)
+      const history = await request(`${base}/history?range=24h`)
+      expect(HostHistorySchema.parse(history.body)).toHaveLength(1440)
+      expect(HostProcessesSchema.parse((await request(`${base}/processes`)).body).rows).toHaveLength(4)
+      expect((await request(`${base}/history?range=1h`)).status).toBe(400)
+      const socket = openHost(id)
+      expect(socket.close).not.toHaveBeenCalled()
+      expect(HostTelemetryMessageSchema.parse(JSON.parse(socket.send.mock.calls[0][0])).snapshot.info?.hostname)
+        .toBe(`${id}-fictional`)
+    }
+    expect((await request('/api/computers/fixture-travel/host')).status).toBe(503)
+    expect((await request('/api/computers/unknown/host')).status).toBe(404)
+    fixture.assertHealthy()
+  })
+
   it('mocks disabled notification routes without failing closed on a known feature endpoint', async () => {
     const { fixture, request } = await fixtureApi()
     for (const [route, method] of [

@@ -59,6 +59,11 @@ import {
   ResourceReads,
 } from './session-resources.js'
 import type { SessionKnowledgeBaseLocation } from './session-directory.js'
+import {
+  HOST_TELEMETRY_CAPABILITY_VERSION, HostSnapshotSchema, HostHistorySchema, HostProcessesSchema,
+} from '../shared/host-telemetry.js'
+import { hostTelemetryError, type HostTelemetryTarget } from './host-telemetry/service.js'
+import { subscribeRemoteHost, HOST_TELEMETRY_REMOTE_TIMEOUT_MS } from './host-telemetry/remote.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -154,6 +159,41 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     this._voice = info.voice
     this.setOnline(true)
     return info
+  }
+
+  async hostTelemetryTarget(): Promise<HostTelemetryTarget> {
+    const signal = this.resourceLifetime.signal
+    let info: NodeInfo
+    try {
+      info = await this.getInfo(AbortSignal.any([signal, AbortSignal.timeout(HOST_TELEMETRY_REMOTE_TIMEOUT_MS)]))
+    } catch (error) {
+      if (error instanceof RemoteNodeRequestError) throw error
+      throw new RemoteNodeTransportError(this.computer.name, error)
+    }
+    if (info.hostTelemetry?.version !== HOST_TELEMETRY_CAPABILITY_VERSION) {
+      throw hostTelemetryError(`Update this computer (${this.computer.name}) to use host monitoring.`, 409)
+    }
+    if (info.hostTelemetry.enabled !== true) {
+      throw hostTelemetryError(`Host monitoring is turned off on this computer (${this.computer.name}).`, 409)
+    }
+    const read = async <T>(path: string, schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }): Promise<T> => {
+      let payload: unknown
+      try {
+        payload = await this.request(path, { signal }, HOST_TELEMETRY_REMOTE_TIMEOUT_MS)
+      } catch (error) {
+        if (error instanceof RemoteNodeRequestError) throw error
+        throw new RemoteNodeTransportError(this.computer.name, error)
+      }
+      const parsed = schema.safeParse(payload)
+      if (!parsed.success) throw hostTelemetryError('This computer returned invalid host telemetry', 502)
+      return parsed.data
+    }
+    return {
+      snapshot: () => read('/node-api/host', HostSnapshotSchema),
+      history: () => read('/node-api/host/history?range=24h', HostHistorySchema),
+      processes: () => read('/node-api/host/processes', HostProcessesSchema),
+      subscribe: (sample, ended) => subscribeRemoteHost(this.computer, signal, sample, ended),
+    }
   }
 
   connectVoice(

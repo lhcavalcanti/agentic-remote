@@ -516,6 +516,7 @@ export interface NodeInfo {
   version: string
   providers?: AgentProviderCapability[]
   voice?: VoiceBackendCapability
+  hostTelemetry?: import('./host-telemetry.js').HostTelemetryCapability
 }
 
 export type VoiceBackendCapability =

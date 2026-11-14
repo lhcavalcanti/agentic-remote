@@ -3940,6 +3940,12 @@ button {
   flex: 0 0 auto;
 }
 
+.composer-runtime-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .dialog-message,
 .runtime-dialog__hint {
   color: var(--muted);

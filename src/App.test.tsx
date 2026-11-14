@@ -18867,6 +18867,40 @@ describe('App', () => {
     )
   })
 
+  it.each([
+    { enabled: false, model: 'fixture-claude-99', provider: 'copilot' as const, family: undefined },
+    { enabled: true, model: 'fixture-claude-99', provider: 'copilot' as const, family: 'anthropic' },
+    { enabled: true, model: 'fixture-gpt-99', provider: 'copilot' as const, family: 'openai' },
+    { enabled: true, model: 'fixture-model', provider: 'claude' as const, family: 'generic' },
+  ])('gates the runtime model-family glyph for $model on $provider (preview $enabled)', async ({
+    enabled, model, provider, family,
+  }) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: enabled } })
+    const runtimeSession: ManagedSession = {
+      ...session, provider, runtime: { model, reasoningEffort: 'high' },
+    }
+    vi.mocked(listSessions).mockResolvedValue([runtimeSession])
+    vi.mocked(getSession).mockResolvedValue(runtimeSession)
+    render(<App />)
+    const summary = await screen.findByTestId('composer-runtime')
+    expect(summary).toHaveTextContent(model)
+    expect(summary).toHaveTextContent('effort high')
+    await waitFor(() => {
+      const icon = summary.querySelector('[data-model-family]')
+      if (family) {
+        expect(icon).toHaveAttribute('data-model-family', family)
+        expect(icon).toHaveAttribute('aria-hidden', 'true')
+        expect(icon?.parentElement).toHaveTextContent(model)
+      } else {
+        expect(icon).toBeNull()
+        expect([...summary.children].find((child) => child.textContent === model)?.outerHTML)
+          .toBe(`<span>${model}</span>`)
+      }
+    })
+    fireEvent.click(summary)
+    expect(await screen.findByRole('dialog', { name: 'Model and context' })).toBeInTheDocument()
+  })
+
   it('supports command abbreviations and configures the web status line', async () => {
       const runtimeSession = {
         ...session,

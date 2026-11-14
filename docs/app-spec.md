@@ -2036,6 +2036,7 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Model IDs, names, and capabilities MUST come from Copilot CLI or Claude
   discovery, not an embedded model list. Documentation examples and test
   fixtures MUST use neutral synthetic models rather than named offerings.
+- The Composer refresh preview MAY show a neutral model-family glyph beside the model in the composer runtime summary. Classification uses model identity, not the owning provider or execution backend; unrecognized models use a generic glyph. These original glyphs are not official brand marks. With the preview off, the existing summary MUST remain visually unchanged.
 - Opening Model and context or App settings MUST request a fresh catalog from
   the owning providers, bypassing browser and SDK lifetime caches without
   restarting sessions. Concurrent discovery requests MAY share one in-flight

@@ -126,6 +126,7 @@ const slowTests = [
   'src/KnowledgeRootSelector.test.tsx',
   'src/ManagerAssistant.test.tsx',
   'src/MarkdownCodeBlock.test.tsx',
+  'src/ModelFamilyIcon.test.tsx',
   'src/MermaidDiagram.real.test.tsx',
   'src/MermaidDiagram.test.tsx',
   'src/OracleSettings.test.tsx',

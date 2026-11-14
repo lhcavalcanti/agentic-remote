@@ -593,6 +593,7 @@ export interface WorkspaceFixtureOptions {
 
 export interface WorkspaceFixtureState {
   hubFlags: HubFeatureFlags
+  models: RuntimeModelOption[]
   roots: KnowledgeRoot[]
   sessions: ManagedSession[]
   /** Closed and still reopenable, newest first. */
@@ -611,6 +612,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
   const sessions = structuredClone(fixtureSessions)
   return {
     hubFlags: { ...defaultHubFeatureFlags },
+    models: structuredClone(fixtureModels),
     roots,
     sessions,
     closedSessions: [],
@@ -1396,7 +1398,7 @@ export async function setupWorkspaceFixture(
           computer.providers?.some((entry) => entry.id === provider[2]),
       )
     ) {
-      await respond({ models: fixtureModels })
+      await respond({ models: state.models })
       return
     }
     const launch = path.match(/^\/api\/computers\/([^/]+)\/launches\/([^/]+)$/)
@@ -1548,8 +1550,9 @@ export async function setupWorkspaceFixture(
         const input = request.postDataJSON() as {
           model: string; reasoningEffort: string; contextTier: string; mode: string
         }
-        if (session.status !== 'idle' || input.model !== fixtureModels[0].id ||
-          !fixtureModels[0].reasoningEfforts.some((effort) => effort === input.reasoningEffort) ||
+        const model = state.models.find((model) => model.id === input.model)
+        if (session.status !== 'idle' || !model ||
+          !model.reasoningEfforts.some((effort) => effort === input.reasoningEffort) ||
           input.contextTier !== 'default' || !['interactive', 'plan', 'autopilot'].includes(input.mode)) {
           await reject(route, 'Unexpected fixture runtime change')
           return
@@ -1641,7 +1644,7 @@ export async function setupWorkspaceFixture(
       if (method === 'GET' && action === '/runtime') {
         await respond({
           current: session.runtime,
-          models: fixtureModels,
+          models: state.models,
           status: session.status,
         })
         return

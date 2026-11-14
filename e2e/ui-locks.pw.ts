@@ -235,6 +235,34 @@ test.describe('browser interaction contracts', () => {
     await expect(page.getByRole('combobox', { name: 'How new sessions start', exact: true })).toHaveValue('sdk')
   })
 
+  test('shows model-family glyphs only after opting in and follows runtime model changes', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'conversation')
+    const summary = page.getByTestId('composer-runtime')
+    await expect(summary.locator('[data-model-family]')).toHaveCount(0)
+    await page.getByRole('button', { name: 'App settings', exact: true }).click()
+    const settings = page.getByRole('dialog', { name: 'App settings', exact: true })
+    await settings.getByRole('checkbox', { name: 'Composer refresh', exact: true }).check()
+    await expect.poll(() => handle.state.settings.values.previewFeatures?.composerRefresh).toBe(true)
+    await settings.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(summary.locator('[data-model-family]')).toHaveAttribute('data-model-family', 'generic')
+
+    for (const [model, family] of [['fixture-claude-99', 'anthropic'], ['fixture-gpt-99', 'openai']]) {
+      const session = handle.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+      session.runtime = { ...session.runtime, model }
+      session.revision = (session.revision ?? 0) + 1
+      handle.emit({ type: 'session.upserted', session })
+      await expect(summary).toContainText(model)
+      await expect(summary.locator('[data-model-family]')).toHaveAttribute('data-model-family', family)
+      await expect(summary.locator('[data-model-family]')).toHaveAttribute('aria-hidden', 'true')
+    }
+
+    await page.getByRole('button', { name: 'App settings', exact: true }).click()
+    await settings.getByRole('checkbox', { name: 'Composer refresh', exact: true }).uncheck()
+    await expect.poll(() => handle.state.settings.values.previewFeatures?.composerRefresh).toBe(false)
+    await settings.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(summary.locator('[data-model-family]')).toHaveCount(0)
+  })
+
   test('persists available previews and respects changed hub availability', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'preview-features')
     const settings = page.getByRole('dialog', { name: 'App settings', exact: true })

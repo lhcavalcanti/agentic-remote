@@ -1,6 +1,7 @@
 import { Pencil, SlidersHorizontal, X } from 'lucide-react'
 import { SIDE_QUESTION_MAX_LENGTH } from '../../shared/side-question'
 import { executionModeName, providerName } from '../session-presentation'
+import { RuntimeModelName } from '../RuntimeModelName'
 import { AttachmentStrip } from './AttachmentStrip'
 import { ComposerActions } from './ComposerActions'
 import { QueuedPromptList } from './QueuedPromptList'
@@ -233,7 +234,7 @@ export function Composer(props: ComposerProps) {
               {executionModeName(selected.executionMode) ? ` · ${executionModeName(selected.executionMode)}` : ''}
             </span>
           ) : null}
-          {statusline.model && selected.runtime?.model ? <span>{selected.runtime.model}</span> : null}
+          {statusline.model && selected.runtime?.model ? <RuntimeModelName modelId={selected.runtime.model} /> : null}
           {statusline.effort && selected.runtime?.reasoningEffort ? (
             <span>effort {selected.runtime.reasoningEffort}</span>
           ) : null}

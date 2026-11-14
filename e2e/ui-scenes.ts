@@ -27,6 +27,8 @@ export const uiContextOptions = {
 export const uiSceneNames = [
   'conversation',
   'composer-busy-queue',
+  'composer-family-claude',
+  'composer-family-openai',
   'session-list',
   'app-settings',
   'preview-features',
@@ -56,6 +58,17 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
     name,
     async setup(page) {
       const state = createWorkspaceFixtureState()
+      if (name === 'composer-family-claude' || name === 'composer-family-openai') {
+        const family = name === 'composer-family-claude' ? 'claude' : 'gpt'
+        const model = { ...state.models[0], id: `fixture-${family}-99`, name: `${family} fictional model` }
+        state.models.push(model)
+        state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.runtime!.model = model.id
+        state.settings = {
+          revision: 1,
+          values: { previewFeatures: { composerRefresh: true } },
+          keyRevisions: { previewFeatures: 1 },
+        }
+      }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
@@ -92,6 +105,10 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
       await expect.poll(() => state.settings.revision).toBeGreaterThan(0)
       if (name === 'composer-busy-queue') {
         await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the release notes next.')
+      } else if (name === 'composer-family-claude' || name === 'composer-family-openai') {
+        const family = name === 'composer-family-claude' ? 'anthropic' : 'openai'
+        await expect(page.getByTestId('composer-runtime').locator('[data-model-family]'))
+          .toHaveAttribute('data-model-family', family)
       } else if (name === 'session-list') {
         await openSessions(page)
       } else if (name === 'app-settings' || name === 'preview-features' || name === 'computers-dialog') {

@@ -338,6 +338,7 @@ export class ClaudeAgentService
         supportsTmuxMigration: false,
         supportsBackgroundTasks: false,
         supportsQueuedPromptDispatch: true,
+        supportsSteering: false,
         supportsLaunchIdentity: true,
         supportsSessionResources: true,
         supportsContextRecovery: false,

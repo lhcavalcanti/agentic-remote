@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyComposerEdit,
+  composerSteeringUnavailableReason,
   expandComposerPastes,
   filterSentMessages,
   hasComposerAcceptanceReceipt,
@@ -14,11 +15,34 @@ import {
   writeComposerEdit,
 } from './composer-state'
 import type { CollapsedPaste, ComposerDraft, ComposerDrafts } from './composer-state'
-import type { ChatMessage } from '../../shared/contracts'
+import type { AgentProviderCapability, ChatMessage } from '../../shared/contracts'
 
 const key = 'computer-1:original'
 const replacementKey = 'computer-1:replacement'
 const label = '[Paste #1 - 21 lines]'
+
+describe('steering capability decisions', () => {
+  const session = { provider: 'copilot' as const, status: 'running' as const }
+  const capability: AgentProviderCapability = {
+    id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSteering: true,
+  }
+  it('allows only the selected provider explicit steering advertisement', () => {
+    expect(composerSteeringUnavailableReason(session, capability, true)).toBeUndefined()
+    expect(composerSteeringUnavailableReason(session, { ...capability, id: 'claude' }, true)).toMatch(/Update this computer/)
+    expect(composerSteeringUnavailableReason(session, undefined, true)).toMatch(/Update this computer/)
+    expect(composerSteeringUnavailableReason(session, { ...capability, supportsSteering: undefined }, true)).toMatch(/Update this computer/)
+  })
+  it.each(['copilot', 'claude'] as const)('does not mistake queued dispatch for steering on %s', (provider) => {
+    const advertised = { ...capability, id: provider, name: provider, supportsQueuedPromptDispatch: true, supportsSteering: false }
+    expect(composerSteeringUnavailableReason({ ...session, provider }, advertised, true)).toMatch(/does not support steering/)
+  })
+  it('explains unavailable, disconnected, idle and pending-request states', () => {
+    expect(composerSteeringUnavailableReason(session, capability, false)).toMatch(/Reconnect/)
+    expect(composerSteeringUnavailableReason({ ...session, status: 'idle' }, capability, true)).toMatch(/no active turn/)
+    expect(composerSteeringUnavailableReason({ ...session, pendingUserInput: {} as never }, capability, true)).toMatch(/pending request/)
+    expect(composerSteeringUnavailableReason(session, { ...capability, available: false, unavailableReason: 'Sign in required' }, true)).toBe('Sign in required')
+  })
+})
 
 describe('sent message filtering', () => {
   const turn = (id: string, content: string, overrides: Partial<ChatMessage> = {}): ChatMessage => ({

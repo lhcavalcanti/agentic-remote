@@ -340,6 +340,58 @@ test.describe('browser interaction contracts', () => {
           fixture.assertHealthy()
         }
       })
+      test('explicit busy send choices reuse immediate and queued delivery', async ({ page, baseURL }) => {
+        const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-delivery-menu')!.setup(page)
+        try {
+          expect(fixture.requests.some((request) => request.path === `${sessionPath}/messages`)).toBe(false)
+          const sent = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/messages`)
+          await page.getByRole('menuitem', { name: 'Steer — guide the active turn', exact: true }).click()
+          expect((await sent).postDataJSON()).toMatchObject({
+            content: 'Focus this review on the recovery checklist.', enqueue: false,
+          })
+          await expect(message(page)).toHaveValue('')
+          await message(page).fill('Run these checks afterward.')
+          const options = page.getByRole('button', { name: 'Send options', exact: true })
+          await options.focus()
+          await page.keyboard.press('Enter')
+          await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
+          await page.keyboard.press('ArrowDown')
+          const queued = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/messages`)
+          await page.keyboard.press('Enter')
+          expect((await queued).postDataJSON()).toMatchObject({ content: 'Run these checks afterward.', enqueue: true })
+          await expect(message(page)).toHaveValue('')
+          await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Run these checks afterward.')
+          await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+          await assertNoHorizontalOverflow(page)
+        } finally {
+          fixture.assertHealthy()
+        }
+      })
+      test('unsupported steering has a reason and context-menu/long-press access does not send', async ({ page, baseURL }) => {
+        const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-delivery-unavailable')!.setup(page)
+        try {
+          const steer = page.getByRole('menuitem', { name: /Steer —/ })
+          await expect(steer).toHaveAttribute('aria-disabled', 'true')
+          await expect(steer).toHaveAccessibleDescription(/does not support steering/)
+          await page.keyboard.press('Escape')
+          const send = page.getByRole('button', { name: 'Send message', exact: true })
+          await send.dispatchEvent('contextmenu')
+          await expect(steer).toBeVisible()
+          await page.keyboard.press('Escape')
+          const bounds = (await send.boundingBox())!
+          await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+          await page.mouse.down()
+          await expect(steer).toBeVisible()
+          await page.mouse.up()
+          expect(fixture.requests.some((request) => request.path === `${sessionPath}/messages`)).toBe(false)
+          const queued = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/messages`)
+          await page.getByRole('menuitem', { name: /Queue —/ }).click()
+          expect((await queued).postDataJSON()).toMatchObject({ enqueue: true })
+          await assertNoHorizontalOverflow(page)
+        } finally {
+          fixture.assertHealthy()
+        }
+      })
     })
   }
 

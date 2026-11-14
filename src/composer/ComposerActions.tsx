@@ -6,6 +6,8 @@ import { usePreviewFeature } from '../preview-features'
 import { SessionActions } from '../SessionActions'
 import { ContextRing } from './ContextRing'
 import { SentMessages } from './SentMessages'
+import { SendControl } from './SendControl'
+import { composerSteeringUnavailableReason } from './composer-state'
 import type { ComposerProps } from './types'
 
 export function ComposerActions({
@@ -38,6 +40,7 @@ export function ComposerActions({
   sessionActions,
   onRecallSentMessage,
   onCancelSentMessage,
+  providerCapability,
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
@@ -45,11 +48,20 @@ export function ComposerActions({
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
   'recordingDuration' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
-  'onRecallSentMessage' | 'onCancelSentMessage'
+  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability'
 >) {
   const refresh = usePreviewFeature('composerRefresh')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyChosen, setHistoryChosen] = useState(false)
+  const busyChoices = refresh && selected.status === 'running' &&
+    !readonlyResourceCommand && !editingQueuedPromptId && !composer.trim().startsWith('/')
+  const sendDisabled = !composer.trim() || sending || transcribing || uploadingFile ||
+    (!readonlyResourceCommand && (
+      Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
+      queuedEditUnconfirmed || selected.suspended === true ||
+      Boolean(selected.interruption || selected.archivedAt) ||
+      Boolean(editingQueuedPromptId && supportsQueuedPromptDispatch &&
+        (selected.status === 'running' || selected.status === 'waiting'))))
   const historyButton = (
     <button
       aria-haspopup="dialog" aria-label="Sent messages" className="composer-tool"
@@ -168,7 +180,12 @@ export function ComposerActions({
           <ListPlus size={17} />
         </button>
       ) : null}
-      <button
+      <SendControl
+        disabled={sendDisabled} enabled={busyChoices} key={`send-${busyChoices}`}
+        onSubmit={onSubmitMessage}
+        steerUnavailableReason={composerSteeringUnavailableReason(selected, providerCapability, selectedComputerOnline)}
+      >
+      {(triggerProps) => <button
         aria-label={
           readonlyResourceCommand
             ? readonlyResourceCommand.tab === 'skills' ? 'Open skills' : 'Open MCP servers'
@@ -177,20 +194,14 @@ export function ComposerActions({
               : 'Send message'
         }
         className="send-button"
-        disabled={!composer.trim() || sending || transcribing || uploadingFile ||
-          (!readonlyResourceCommand && (
-            Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
-            queuedEditUnconfirmed || selected.suspended === true ||
-            Boolean(selected.interruption || selected.archivedAt) ||
-            Boolean(editingQueuedPromptId && supportsQueuedPromptDispatch &&
-              (selected.status === 'running' || selected.status === 'waiting'))))}
-        onClick={() => onSubmitMessage()}
+        disabled={sendDisabled}
+        {...triggerProps}
         title={
           readonlyResourceCommand
             ? 'Open the read-only resource view without sending a prompt'
             : editingQueuedPromptId
               ? supportsQueuedPromptDispatch ? 'Send this queued message now' : 'Put this back in the queue'
-              : selected.status === 'running' ? 'Send into the current response' : 'Send immediately'
+              : busyChoices ? 'Choose Steer or Queue' : selected.status === 'running' ? 'Send into the current response' : 'Send immediately'
         }
         type="button"
       >
@@ -200,7 +211,8 @@ export function ComposerActions({
             ? supportsQueuedPromptDispatch ? 'Send now' : 'Save'
             : 'Send'}
         </span>
-      </button>
+      </button>}
+      </SendControl>
       {selected.status === 'running' ? (
         <button
           aria-label="Stop response"

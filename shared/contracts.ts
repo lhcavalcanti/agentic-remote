@@ -18,6 +18,8 @@ export interface AgentProviderCapability {
   supportsTmuxMigration?: boolean
   supportsBackgroundTasks?: boolean
   supportsQueuedPromptDispatch?: boolean
+  /** Existing immediate follow-up delivery; absence means steering is unknown. */
+  supportsSteering?: boolean
   supportsSessionResources?: boolean
   supportsContextRecovery?: boolean
   supportsSessionRetention?: boolean

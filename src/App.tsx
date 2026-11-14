@@ -13910,6 +13910,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             selectedQueueAvailable={selectedQueueAvailable}
             selectedComputerOnline={selectedComputerOnline}
             supportsQueuedPromptDispatch={selectedProviderCapability?.supportsQueuedPromptDispatch === true}
+            providerCapability={selectedProviderCapability}
             queueActionId={queueActionId}
             sending={sending}
             editingQueuedPromptId={editingQueuedPromptId}

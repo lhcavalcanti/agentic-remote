@@ -334,6 +334,7 @@ const computer: ComputerSummary = {
       available: true,
       terminalBacked: true,
       supportsTmuxMigration: true,
+      supportsSteering: true,
       supportsContextRecovery: true,
       supportsRecoverableClose: true,
     },
@@ -342,6 +343,7 @@ const computer: ComputerSummary = {
       name: 'Claude Agent',
       available: true,
       terminalBacked: false,
+      supportsSteering: false,
     },
   ],
 }
@@ -18899,6 +18901,53 @@ describe('App', () => {
     })
     fireEvent.click(summary)
     expect(await screen.findByRole('dialog', { name: 'Model and context' })).toBeInTheDocument()
+  })
+
+  it.each([
+    { provider: 'copilot' as const, supportsSteering: true, reason: undefined },
+    { provider: 'claude' as const, supportsSteering: false, reason: /does not support steering/ },
+    { provider: 'copilot' as const, supportsSteering: undefined, reason: /Update this computer/ },
+  ])('gates busy preview delivery for $provider steering=$supportsSteering', async ({ provider, supportsSteering, reason }) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...computer,
+      providers: computer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    const busy = { ...session, provider, status: 'running' as const }
+    vi.mocked(listSessions).mockResolvedValue([busy])
+    vi.mocked(getSession).mockResolvedValue(busy)
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Guide or queue this review' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(sendMessage).not.toHaveBeenCalled()
+    const steer = screen.getByRole('menuitem', { name: /Steer —/ })
+    if (reason) {
+      expect(steer).toHaveAttribute('aria-disabled', 'true')
+      expect(steer).toHaveAccessibleDescription(reason)
+      fireEvent.click(steer)
+      expect(sendMessage).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('menuitem', { name: /Queue —/ }))
+    } else {
+      fireEvent.click(steer)
+    }
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1', 'session-1', expect.objectContaining({ content: 'Guide or queue this review', enqueue: Boolean(reason) }),
+    ))
+  })
+
+  it('keeps Enter immediate delivery instead of opening the busy preview menu', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const busy = { ...session, status: 'running' as const }
+    vi.mocked(listSessions).mockResolvedValue([busy])
+    vi.mocked(getSession).mockResolvedValue(busy)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Existing Enter behavior' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1', 'session-1', expect.objectContaining({ content: 'Existing Enter behavior', enqueue: false }),
+    ))
+    expect(screen.queryByRole('menu', { name: 'Message delivery' })).not.toBeInTheDocument()
   })
 
   it('previews searched sent messages without sending and restores the parked collapsed-paste draft on cancel', async () => {

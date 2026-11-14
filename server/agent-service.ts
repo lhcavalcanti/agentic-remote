@@ -2349,6 +2349,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsTmuxMigration: true,
         supportsBackgroundTasks: true,
         supportsQueuedPromptDispatch: true,
+        supportsSteering: true,
         supportsLaunchIdentity: true,
         supportsSessionResources: true,
         supportsContextRecovery: true,

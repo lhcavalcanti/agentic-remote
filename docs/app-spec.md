@@ -16,6 +16,8 @@ The refreshed composer keeps its action row inside the message box: attach, sess
 
 The preview clock opens Sent messages for only the selected session, newest user turns first with timestamps and case-insensitive search across full text. It MUST exclude queued work and pending echoes. Choosing a row previews the full message in the composer without sending; Cancel or Escape MUST restore the parked unsent draft, including collapsed-paste ownership. Use message accepts the selection for editing or sending. The picker is a desktop popover and a phone bottom sheet with keyboard navigation. ArrowUp recall retains its existing behavior and durable history-draft parking.
 
+While a foreground turn is running, preview Send opens Steer — guide the active turn or Queue — run after this turn. The same menu is reachable by its chevron, long press, context menu, or keyboard (Shift+F10 / Alt+Down). Steer MUST require the selected provider's explicit `supportsSteering` advertisement and an available computer/provider without a pending request. Copilot advertises its existing immediate-follow-up path; Claude advertises no steering. Missing metadata on older computers MUST show an update explanation, not infer steering from queued-dispatch support. Queue retains automatic delivery; Enter and command/queued-edit behavior are unchanged. Hold is not implemented.
+
 ## 1. Product goals
 
 Agentic Remote MUST:

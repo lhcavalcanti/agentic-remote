@@ -34,6 +34,8 @@ export const uiSceneNames = [
   'composer-button-row',
   'composer-session-panel',
   'composer-sent-messages',
+  'composer-delivery-menu',
+  'composer-delivery-unavailable',
   'session-list',
   'app-settings',
   'preview-features',
@@ -74,7 +76,7 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
           keyRevisions: { previewFeatures: 1 },
         }
       }
-      if (['composer-status-busy', 'composer-session-setup', 'composer-button-row', 'composer-session-panel', 'composer-sent-messages'].includes(name)) {
+      if (['composer-status-busy', 'composer-session-setup', 'composer-button-row', 'composer-session-panel', 'composer-sent-messages', 'composer-delivery-menu', 'composer-delivery-unavailable'].includes(name)) {
         state.settings = {
           revision: 1, values: { previewFeatures: { composerRefresh: true } },
           keyRevisions: { previewFeatures: 1 },
@@ -84,6 +86,14 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
           session.runtime!.model = 'fictional-model-with-a-long-name-for-small-screens'
         }
         if (name === 'composer-status-busy') session.status = 'running'
+        if (name === 'composer-delivery-menu' || name === 'composer-delivery-unavailable') {
+          session.status = 'running'
+          session.activity = 'Reviewing the recovery checklist'
+          if (name === 'composer-delivery-unavailable') {
+            session.provider = 'claude'
+            session.executionMode = 'sdk'
+          }
+        }
         if (name === 'composer-sent-messages') {
           session.messages.push({
             id: 'fixture-sent-review', role: 'user',
@@ -145,6 +155,10 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
         if (!await history.isVisible()) await page.getByRole('button', { name: 'Session panel', exact: true }).click()
         await history.click()
         await expect(page.getByRole('dialog', { name: 'Sent messages', exact: true })).toBeVisible()
+      } else if (name === 'composer-delivery-menu' || name === 'composer-delivery-unavailable') {
+        await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Focus this review on the recovery checklist.')
+        await page.getByRole('button', { name: 'Send message', exact: true }).click()
+        await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
       } else if (name === 'session-list') {
         await openSessions(page)
       } else if (name === 'app-settings' || name === 'preview-features' || name === 'computers-dialog') {

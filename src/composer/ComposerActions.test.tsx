@@ -19,6 +19,7 @@ const props = (): ComponentProps<typeof ComposerActions> => ({
   onOpenAttachmentInput: vi.fn(), onStartRecording: vi.fn(), onSubmitMessage: vi.fn(),
   onOpenRuntime: vi.fn(), sessionActions: [{ label: 'Skills', onClick: vi.fn() }],
   onRecallSentMessage: vi.fn(), onCancelSentMessage: vi.fn(),
+  providerCapability: { id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSteering: true },
 })
 
 describe('refreshed composer actions', () => {
@@ -36,7 +37,9 @@ describe('refreshed composer actions', () => {
     }
     fireEvent.click(screen.getByRole('button', { name: 'Queue message' }))
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
-    expect(vi.mocked(callbacks.onSubmitMessage).mock.calls).toEqual([[true], []])
+    expect(vi.mocked(callbacks.onSubmitMessage).mock.calls).toEqual([[true]])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Steer — guide the active turn' }))
+    expect(vi.mocked(callbacks.onSubmitMessage).mock.calls).toEqual([[true], [false]])
   })
 
   it('opens the session panel and keeps its existing action callbacks', () => {

@@ -1,4 +1,21 @@
-import type { ChatMessage } from '../../shared/contracts'
+import type { AgentProviderCapability, ChatMessage, ManagedSession } from '../../shared/contracts'
+
+export function composerSteeringUnavailableReason(
+  session: Pick<ManagedSession, 'provider' | 'status' | 'pendingPermission' | 'pendingUserInput'>,
+  capability: AgentProviderCapability | undefined,
+  online: boolean,
+): string | undefined {
+  if (!online) return 'Reconnect this computer before steering.'
+  if (session.status !== 'running') return 'There is no active turn to steer.'
+  if (session.pendingPermission || session.pendingUserInput) return 'Answer the pending request before steering.'
+  if (!capability || capability.id !== (session.provider || 'copilot') ||
+      capability.supportsSteering === undefined) {
+    return 'Update this computer to advertise steering support. Use Queue instead.'
+  }
+  if (!capability.available) return capability.unavailableReason || 'This provider is unavailable.'
+  if (!capability.supportsSteering) return `${capability.name} does not support steering an active turn. Use Queue instead.`
+  return undefined
+}
 
 /** Sent history only: queued items and optimistic echoes are not user turns. */
 export function filterSentMessages(messages: readonly ChatMessage[], query = ''): ChatMessage[] {

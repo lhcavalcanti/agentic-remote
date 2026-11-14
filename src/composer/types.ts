@@ -9,7 +9,7 @@ import type {
   RefObject,
 } from 'react'
 import type { DndContext, DragEndEvent } from '@dnd-kit/core'
-import type { ManagedSession, QueuedPrompt, SlashCommand } from '../../shared/contracts'
+import type { AgentProviderCapability, ManagedSession, QueuedPrompt, SlashCommand } from '../../shared/contracts'
 import type { StatuslineSettings } from '../settings/types'
 import type { SessionResourceTab } from '../session-resource-commands'
 
@@ -35,6 +35,7 @@ export type ComposerProps = {
   selectedQueueAvailable: boolean
   selectedComputerOnline: boolean
   supportsQueuedPromptDispatch: boolean
+  providerCapability?: AgentProviderCapability
   queueActionId?: string
   sending: boolean
   editingQueuedPromptId?: string

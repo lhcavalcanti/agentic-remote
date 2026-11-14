@@ -12,28 +12,31 @@ export function PreviewFeaturesSettings() {
         <span className="settings-scope settings-scope--synced">Synced</span>
       </div>
       <p className="dialog-message">Try upcoming interface changes. All previews start turned off.</p>
-      {previewFeatureNames.map((name) => {
-        const feature = previewFeatureCatalogue[name]
-        const available = isPreviewAvailable(name, hubFlags)
-        return (
-          <div key={name}>
-            <label className="statusline-toggle">
+      <div className="notification-scope-options">
+        {previewFeatureNames.map((name) => {
+          const feature = previewFeatureCatalogue[name]
+          const available = isPreviewAvailable(name, hubFlags)
+          return (
+            <label className="notification-scope-option" key={name}>
               <input
                 type="checkbox"
+                aria-label={feature.label}
                 aria-describedby={`${id}-${name}`}
                 checked={preferences?.[name] === true}
                 disabled={!available}
                 onChange={(event) => set(name, event.target.checked)}
               />
-              <span>{feature.label}</span>
+              <span>
+                <strong>{feature.label}</strong>
+                <small id={`${id}-${name}`}>
+                  {feature.description}
+                  {!available ? <><br />Turned off on this hub</> : null}
+                </small>
+              </span>
             </label>
-            <p className="dialog-message" id={`${id}-${name}`}>
-              {feature.description}
-              {!available ? <><br />Turned off on this hub</> : null}
-            </p>
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
     </section>
   )
 }

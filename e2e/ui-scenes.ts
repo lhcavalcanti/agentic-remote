@@ -1,6 +1,6 @@
 import { expect, type BrowserContextOptions, type Page } from '@playwright/test'
 import { oracleHostStatusFixture } from './oracle-host-status-fixture'
-import { fixtureNotifications } from './shell-fixtures'
+import { fixtureNotifications, fixtureScheduleRuns, fixtureSchedules } from './shell-fixtures'
 import {
   FIXTURE_NOW,
   SELECTED_SESSION_ID,
@@ -50,6 +50,8 @@ export const uiSceneNames = [
   'notification-panel',
   'host-monitor',
   'host-processes',
+  'scheduler',
+  'scheduler-form',
 ] as const
 
 export type UISceneName = typeof uiSceneNames[number]
@@ -136,6 +138,10 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true, hostMonitorView: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
+      if (name === 'scheduler' || name === 'scheduler-form') {
+        state.settings.values = { previewFeatures: { desktopRail: true, schedulerView: true }, displayName: 'Alex Morgan' }
+        state.settings.revision = 1
+      }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
@@ -168,7 +174,7 @@ export function createUIScenes(
               catchUp: 'skip', overlap: 'skip', maxRuntimeMin: 60, notify: 'attention', enabled: true,
             },
           }],
-        } : undefined,
+        } : name === 'scheduler' || name === 'scheduler-form' ? { schedules: fixtureSchedules, runs: fixtureScheduleRuns } : undefined,
         manager: hostStatus?.manager ?? (name === 'oracle-panel' || name === 'oracle-schedule-approval' ? {
           available: true,
           status: 'idle',
@@ -247,6 +253,20 @@ export function createUIScenes(
         if (name === 'host-processes') {
           await monitor.getByRole('tab', { name: 'Processes', exact: true }).click()
           await expect(monitor.getByRole('button', { name: 'Open session', exact: true }).first()).toBeVisible()
+        }
+      } else if (name === 'scheduler' || name === 'scheduler-form') {
+        await openSessions(page)
+        await page.getByRole('button', { name: 'Scheduler', exact: true }).click()
+        const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+        await expect(scheduler).toContainText('Daily workspace review')
+        if (name === 'scheduler-form') {
+          await scheduler.getByRole('button', { name: 'Create schedule', exact: true }).click()
+          await scheduler.getByRole('textbox', { name: 'Name', exact: true }).fill('Morning field guide check')
+          await scheduler.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Review the fictional field guide and list the next three checks. Ask before changing anything.')
+          await expect(scheduler.getByRole('region', { name: 'Next five occurrences' })).toContainText('Sep 5, 2026')
+        } else {
+          await scheduler.getByRole('button', { name: 'History for Daily workspace review', exact: true }).click()
+          await expect(scheduler.getByRole('region', { name: 'Run history for Daily workspace review', exact: true })).toContainText('interrupted')
         }
       } else if (name === 'runtime-dialog' || name === 'composer-session-setup') {
         await page.getByRole('button', { name: 'Configure model, effort, and context', exact: true }).click()

@@ -68,6 +68,7 @@ import { NotificationPanel } from './notifications/NotificationPanel'
 import { useNotifications } from './notifications/use-notifications'
 import { readScheduleLink } from './notifications/schedule-link'
 import { HostMonitorView } from './host-monitor/HostMonitorView'
+import { SchedulerView } from './scheduler/SchedulerView'
 import { usePreviewFeature } from './preview-features'
 import { emptyRuntimeSelection } from './settings/runtime-defaults'
 import { StatuslineControls } from './settings/StatuslineControls'
@@ -3785,6 +3786,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const notificationPanel = usePreviewFeature('notificationPanel')
   const schedulerView = usePreviewFeature('schedulerView')
   const hostMonitorView = usePreviewFeature('hostMonitorView')
+  const schedulerView = usePreviewFeature('schedulerView')
   const notifications = useNotifications(notificationPanel)
   const [scheduleLink, setScheduleLink] = useState(() => readScheduleLink(window.location.href))
   const [shellView, setShellView] = useState<string>()
@@ -14457,10 +14459,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         onClose={() => setShellView(undefined)} onOpenSession={(computerId, sessionId) => {
           if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
         }} />}
-      {shellView === 'scheduler' && <DialogFrame key={scheduleLink?.scheduleId ?? shellView} title="Scheduler"
-        eyebrow="Preview" onClose={() => setShellView(undefined)}>
-        <p className="dialog-message">This view is being prepared for the next preview.</p>
-      </DialogFrame>}
+      {shellView === 'scheduler' && <SchedulerView key={scheduleLink?.scheduleId ?? shellView} enabled={schedulerView} computers={computers}
+        onClose={() => setShellView(undefined)} onOpenSession={(computerId, sessionId) => {
+          if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
+        }} />}
       <RuntimeDialog
         onClose={() => setRuntimeOpen(false)}
         onConfigured={(session) => {

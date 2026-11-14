@@ -495,4 +495,47 @@ test.describe('browser interaction contracts', () => {
     await monitor.getByRole('combobox', { name: 'Computer', exact: true }).selectOption('fixture-travel')
     await expect(monitor).toContainText('This computer is offline')
   })
+
+  test('creates a schedule with explicit permissions and accepts a manual run intent', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'scheduler-form')
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await scheduler.getByRole('button', { name: 'Target', exact: true }).click()
+    await scheduler.getByRole('textbox', { name: 'Folder', exact: true }).fill('/home/demo/field-notes')
+    await scheduler.getByRole('button', { name: 'Policies', exact: true }).click()
+    await expect(scheduler.getByRole('combobox', { name: 'Permission policy', exact: true })).toHaveValue('ask')
+    await scheduler.getByRole('combobox', { name: 'Permission policy', exact: true }).selectOption('allow-all')
+    await expect(scheduler.getByRole('button', { name: 'Save schedule', exact: true })).toBeDisabled()
+    await scheduler.getByRole('checkbox', { name: /I explicitly allow all tool permissions/ }).check()
+    const saved = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === '/api/schedules')
+    await scheduler.getByRole('button', { name: 'Save schedule', exact: true }).click()
+    expect((await saved).postDataJSON()).toMatchObject({
+      target: { permissionPolicy: 'allow-all', folderTrust: 'ask', mode: 'autopilot' }, workspace: 'checkout',
+    })
+    await expect(scheduler.getByRole('heading', { name: 'Morning field guide check', exact: true })).toBeVisible()
+    const run = page.waitForRequest((request) => request.method() === 'POST' &&
+      new URL(request.url()).pathname.startsWith('/api/schedules/') && new URL(request.url()).pathname.endsWith('/run'))
+    await scheduler.getByRole('button', { name: 'Run Morning field guide check now', exact: true }).click()
+    expect((await run).postDataJSON()).toEqual({})
+  })
+
+  test('preserves a schedule draft across another device revision and reloads only on request', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'scheduler')
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await scheduler.getByRole('button', { name: 'Edit Daily workspace review', exact: true }).click()
+    await scheduler.getByRole('textbox', { name: 'Name', exact: true }).fill('Local edited draft')
+    await page.evaluate(async () => {
+      const response = await fetch('/api/schedules/fixture-daily-review', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ revision: 1, name: 'Changed on another device' }),
+      })
+      if (!response.ok) throw new Error('Synthetic concurrent update failed')
+    })
+    await scheduler.getByRole('button', { name: 'Policies', exact: true }).click()
+    await scheduler.getByRole('button', { name: 'Save schedule', exact: true }).click()
+    await expect(scheduler.getByRole('alert').first()).toContainText('Conflict')
+    await scheduler.getByRole('button', { name: 'Details', exact: true }).click()
+    await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Local edited draft')
+    await scheduler.getByRole('button', { name: 'Reload latest (replace draft)', exact: true }).click()
+    await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Changed on another device')
+  })
 })

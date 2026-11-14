@@ -1,6 +1,6 @@
 # Scheduler
 
-Status: shared contracts, pure recurrence, durable storage, hub dispatcher, policy-explicit session runner, HTTP/event contracts, Oracle proposal tools, confirmation cards and canonical notifications. The hub constructs the store, runner and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. The schedule editor remains separate work. Dreamer's existing schedule is unchanged.
+Status: shared contracts, pure recurrence, durable storage, hub dispatcher, policy-explicit session runner, HTTP/event contracts, Oracle proposal tools, confirmation cards and canonical notifications. The hub constructs the store, runner and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. The schedule editor is available through the independent default-off `schedulerView` client preview. Dreamer's existing schedule is unchanged.
 
 ## Schema
 
@@ -135,9 +135,17 @@ After proven terminal outcome/termination, cleanup checks `git status --porcelai
 The current reader accepts legacy runs without full receipts or worktree records. Earlier scheduler readers use a strict schema and cannot read the new optional run metadata: resolve live work, retain a state backup, and disable the scheduler hub flag before downgrading. Keep the flag off on the older runtime so it does not quarantine the newer state. Disabling dispatch does not cancel sessions; identity-aware owning nodes must remain in place while any launch is unresolved. The additive manager-registry `schedule` origin is never converted to `manager`.
 
 
-## UI — planned
+## Client UI preview
 
-List/form, next-five preview, run history, Settings defaults, preview gating, and notifications.
+`schedulerView` requires the authoritative hub `scheduler` flag. The rail or drawer footer opens the list with recurrence summaries, next occurrences in each schedule's IANA timezone, recent-result chips, enable controls, manual Run now, edit, duplicate and archive. Duplicates and restored archives start paused. Archived schedules remain inspectable through the archive filter.
+
+The form separates Details, Target and Policies. All six recurrence presets use `shared/schedule-recurrence.ts` for the next-five preview; once uses an explicit ISO timestamp with offset, avoiding interpretation in the browser's timezone. Target selection includes the existing directory browser and provider model catalog, optional effort/context, and mode. Creation defaults to Autopilot, checkout, Ask permissions, Ask folder trust, skip catch-up/overlap, 60 minutes and attention-only notifications. No new settings default is needed for these existing safe schema defaults.
+
+Allow-all always requires an explicit confirmation, including edits and duplicates of an existing Allow-all schedule. Worktree selection never changes permissions or folder trust. Allowed roots and capability checks stay on the owning computer/runner; the UI cannot broaden them.
+
+Edits submit only changed fields with the original revision, so editing a name does not revalidate an unchanged historical once occurrence as a new launch. A conflict preserves the draft and exposes an explicit “Reload latest (replace draft)” action; socket invalidation never silently replaces edits. Mutations are not automatically retried after uncertain responses. Run history reads up to the per-schedule 200-row retention limit, preserves all dispatcher statuses (including launching, stopping, missed and interrupted), shows durations, and links only runs with bound session IDs. The last-result chip uses the global 200 most recent runs and says “No recent run” when none is in that bounded window.
+
+The client refreshes on typed `schedules.changed` invalidations, hub reconnects and focus. Fictional browser fixtures cover the list, form, policies, revision conflicts and history without launching a provider. Runner installation and live execution/soak are not claimed by the UI.
 
 ## Oracle proposals
 

@@ -263,6 +263,17 @@ test.describe('browser interaction contracts', () => {
     await expect(summary.locator('[data-model-family]')).toHaveCount(0)
   })
 
+  test('preview status is one setup button and explains idle-only changes while busy', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'composer-status-busy')
+    const summary = page.getByTestId('composer-runtime')
+    await expect(summary).toHaveAccessibleDescription(/applies when idle/)
+    await expect(summary).toContainText('plan')
+    await expect(summary.locator('button')).toHaveCount(0)
+    await summary.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('dialog', { name: 'Model and context' })).toBeVisible()
+  })
+
   test('persists available previews and respects changed hub availability', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'preview-features')
     const settings = page.getByRole('dialog', { name: 'App settings', exact: true })

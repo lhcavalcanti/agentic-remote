@@ -3946,6 +3946,42 @@ button {
   gap: 4px;
 }
 
+.composer-runtime--refresh {
+  width: 100%;
+  max-width: 100%;
+  min-height: 40px;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.composer-runtime--refresh .composer-runtime-model {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.composer-runtime__model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-runtime__detail,
+.composer-runtime__mode {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .composer-runtime--refresh .composer-runtime__detail {
+    display: none;
+  }
+}
+
 .dialog-message,
 .runtime-dialog__hint {
   color: var(--muted);

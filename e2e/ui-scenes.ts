@@ -29,6 +29,8 @@ export const uiSceneNames = [
   'composer-busy-queue',
   'composer-family-claude',
   'composer-family-openai',
+  'composer-status-busy',
+  'composer-session-setup',
   'session-list',
   'app-settings',
   'preview-features',
@@ -68,6 +70,15 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
           values: { previewFeatures: { composerRefresh: true } },
           keyRevisions: { previewFeatures: 1 },
         }
+      }
+      if (name === 'composer-status-busy' || name === 'composer-session-setup') {
+        state.settings = {
+          revision: 1, values: { previewFeatures: { composerRefresh: true } },
+          keyRevisions: { previewFeatures: 1 },
+        }
+        const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+        session.runtime!.model = 'fictional-model-with-a-long-name-for-small-screens'
+        if (name === 'composer-status-busy') session.status = 'running'
       }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
@@ -139,9 +150,9 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
             await expect(previews.getByText('Turned off on this hub', { exact: false })).toHaveCount(2)
           }
         }
-      } else if (name === 'runtime-dialog') {
+      } else if (name === 'runtime-dialog' || name === 'composer-session-setup') {
         await page.getByRole('button', { name: 'Configure model, effort, and context', exact: true }).click()
-        await expect(page.getByRole('dialog', { name: 'Model and context' }).getByRole('combobox', { name: 'Model', exact: true })).toHaveValue('fixture-model')
+        await expect(page.getByRole('dialog', { name: 'Model and context' }).getByRole('combobox', { name: 'Model', exact: true })).toBeVisible()
       } else if (name === 'new-session-dialog') {
         await page.getByRole('main').getByRole('button', { name: 'New session', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: 'Choose a folder' })

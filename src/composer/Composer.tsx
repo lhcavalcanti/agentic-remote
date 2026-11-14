@@ -2,13 +2,16 @@ import { Pencil, SlidersHorizontal, X } from 'lucide-react'
 import { SIDE_QUESTION_MAX_LENGTH } from '../../shared/side-question'
 import { executionModeName, providerName } from '../session-presentation'
 import { RuntimeModelName } from '../RuntimeModelName'
+import { usePreviewFeature } from '../preview-features'
 import { AttachmentStrip } from './AttachmentStrip'
 import { ComposerActions } from './ComposerActions'
 import { QueuedPromptList } from './QueuedPromptList'
 import { SlashCommandMenu } from './SlashCommandMenu'
+import { RuntimeStatus } from './RuntimeStatus'
 import type { ComposerProps } from './types'
 
 export function Composer(props: ComposerProps) {
+  const refresh = usePreviewFeature('composerRefresh')
   const {
     selected,
     selectedRetained,
@@ -213,7 +216,9 @@ export function Composer(props: ComposerProps) {
           Recovered saved draft
         </p>
       ) : null}
-      {(statusline.provider ||
+      {refresh ? (
+        <RuntimeStatus session={selected} compactTokens={compactTokens} onOpen={onOpenRuntime} />
+      ) : (statusline.provider ||
         (statusline.model && selected.runtime?.model) ||
         (statusline.effort && selected.runtime?.reasoningEffort) ||
         (statusline.contextTier && selected.runtime?.contextTier) ||

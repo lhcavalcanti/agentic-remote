@@ -247,7 +247,7 @@ export class SchedulerDispatcher {
       const run = this.store.getRun(id)
       if (!isInFlight(run)) return
       if (error instanceof ScheduleLaunchRefusedError) {
-        await this.finish(run, 'failed', error.message)
+        await this.finish(run, run.status === 'stopping' ? 'stopped' : 'failed', error.message)
       } else if (error instanceof ScheduleTargetUnavailableError) {
         if (run.status === 'stopping') await this.finish(run, 'stopped')
         else await this.unavailable(run, error.message)

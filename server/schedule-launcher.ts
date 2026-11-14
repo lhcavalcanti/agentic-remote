@@ -1,6 +1,6 @@
 import type { ManagedSession } from '../shared/contracts.js'
 import { chmod, lstat } from 'node:fs/promises'
-import type { PromptAcceptanceReceipt } from '../shared/launch-identity.js'
+import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
 import type { Schedule, ScheduleRun } from '../shared/schedules.js'
 import type { ComputerManager } from './computer-manager.js'
 import { registryKey, type ManagerStore } from './manager-store.js'
@@ -8,7 +8,7 @@ import {
   ScheduleLaunchRefusedError, ScheduleTargetUnavailableError,
   type ScheduleLauncher, type ScheduleReconciliation, type ScheduleStopAcknowledgement,
 } from './scheduler-dispatcher.js'
-import type { SchedulerStore } from './scheduler-store.js'
+import { isInFlight, type SchedulerStore } from './scheduler-store.js'
 import { SessionLauncher, type SessionLauncherHost } from './session-launcher.js'
 
 export interface ScheduleProvenance {
@@ -109,7 +109,8 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
       title: scheduleSessionTitle(schedule, run.occurrenceAt), provenance: provenance(run, schedule),
     })
     await this.store.changeRun(run.id, { sessionId: launch.session.id })
-    if (this.store.getRun(run.id).status === 'stopping') return
+    const current = this.store.getRun(run.id)
+    if (current.status === 'stopping' || !isInFlight(current)) return
     await this.deliver(run, schedule, launch.session)
   }
 
@@ -127,12 +128,28 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
 
   async reconcile(run: ScheduleRun): Promise<ScheduleReconciliation> {
     const schedule = this.store.scheduleForRun(run.id)
-    const launch = await this.sessions.reconcileLaunch(run.computerId, run.launchId)
+    const computer = this.host.listComputers().find((entry) => entry.id === run.computerId)
+    if (run.status === 'pending' && !run.startedAt && computer?.online &&
+        !computer.providers?.some((provider) => provider.id === schedule.target.provider && provider.supportsLaunchIdentity)) {
+      return { state: 'terminated', outcome: 'failed', error: 'Update this computer to run schedules with launch identity and termination acknowledgement.' }
+    }
+    let launch: LaunchReconciliation | undefined
+    try { launch = await this.sessions.reconcileLaunch(run.computerId, run.launchId) }
+    catch (error) {
+      return { state: 'unknown', error: error instanceof Error && error.message.startsWith('Update this computer')
+        ? error.message : 'Owning computer could not reconcile this launch; its slot remains reserved' }
+    }
     // A negative lookup cannot disprove a creation still in transit. Only a
     // never-launched pending intent is safe to dispatch after restart.
     if (!launch) return { state: run.status === 'pending' ? 'absent' : 'unknown' }
     if (launch.launchId !== run.launchId) return { state: 'unknown', error: 'Mismatched launch evidence' }
     let receipt = launch.receipts.find((entry) => entry.deliveryId === `${run.launchId}:root` && entry.sessionId === launch.sessionId)
+    if (receipt && run.rootPromptReceipt && receipt.promptId !== run.rootPromptReceipt) {
+      return { state: 'unknown', error: 'Mismatched root-prompt evidence' }
+    }
+    if (!receipt && run.rootPromptReceipt && launch.termination?.outcome !== 'stopped') {
+      return { state: 'unknown', sessionId: launch.sessionId, error: 'Owning computer no longer reports the accepted root; its slot remains reserved' }
+    }
     const details: ScheduleReconciliation = {
       state: 'launching', sessionId: launch.sessionId,
       ...(receipt ? { rootPromptReceipt: receipt.promptId, rootPromptAcceptance: receipt } : {}),
@@ -142,6 +159,9 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     }
     if (launch.deleted) return { ...details, state: 'unknown', error: 'Launch session was deleted without termination acknowledgement' }
     const session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
+    if (session.id !== launch.sessionId || session.computerId !== run.computerId) {
+      return { ...details, state: 'unknown', error: 'Mismatched session evidence' }
+    }
     await recordScheduleProvenance(this.registry, session, provenance(run, schedule))
     if (run.status === 'stopping' || launch.stopping) return { ...details, state: 'stopping' }
     if (this.needsInput(session)) return { ...details, state: 'needs-input' }
@@ -176,14 +196,21 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
 
   private async terminal(run: ScheduleRun, result: ScheduleReconciliation): Promise<ScheduleReconciliation> {
     if (this.store.scheduleForRun(run.id).workspace !== 'worktree') return result
+    let owned = this.store.getRun(run.id).worktree
+    if (!owned) {
+      try { owned = await this.host.readScheduleWorktree(run.computerId, run.launchId) }
+      catch { /* Missing owner evidence never authorizes removal. */ }
+    }
+    const deferred = () => ({
+      ...result,
+      ...(owned ? { worktree: {
+        ...owned, state: 'deferred' as const, reason: 'Owning computer did not confirm cleanup; manual review required',
+      } } : { error: 'Worktree cleanup is deferred because ownership or removal could not be verified' }),
+    })
     try {
       const worktree = await this.host.cleanupScheduleWorktree(run.computerId, run.launchId)
-      return { ...result, ...(worktree ? { worktree } : {}) }
-    } catch {
-      return { ...result, worktree: run.worktree ? {
-        ...run.worktree, state: 'deferred', reason: 'Owning computer did not confirm cleanup; manual review required',
-      } : undefined }
-    }
+      return worktree ? { ...result, worktree } : deferred()
+    } catch { return deferred() }
   }
 
   async stop(run: ScheduleRun): Promise<ScheduleStopAcknowledgement> {

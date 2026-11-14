@@ -91,6 +91,15 @@ describe('manager turn context', () => {
       .not.toContain('model')
   })
 
+  it('distinguishes scheduled work from Oracle ownership in its roster', () => {
+    const line = rosterLine(session('scheduled'), {
+      computerId: 'hub', sessionId: 'scheduled', title: 'Scheduled review',
+      origin: 'schedule', firstSeenAt: '2026-10-15T11:00:00.000Z',
+    }, now)
+    expect(line).toContain('started by a schedule (not owned by you)')
+    expect(line).not.toContain('started by you (manager)')
+  })
+
   it('flags sessions waiting for the user and shows the latest reply when idle', () => {
     expect(rosterLine(session('w', { status: 'waiting', pendingUserInput: { requestId: 'r', question: 'Which DB?' } as never }), undefined, now))
       .toContain('· waiting for the user (question)')

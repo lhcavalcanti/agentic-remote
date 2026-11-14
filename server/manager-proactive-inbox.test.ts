@@ -490,12 +490,12 @@ describe('ManagerProactiveInbox', () => {
   it('ignores ineligible origins and stale or duplicate revisions', async () => {
     const inbox = await openInbox()
 
-    await expect(inbox.observe(observation({
-      origin: 'user',
-    }))).resolves.toMatchObject({
-      outcome: 'ignored',
-      reason: 'ineligible-origin',
-    })
+    for (const origin of ['user', 'discovered', 'schedule'] as const) {
+      await expect(inbox.observe(observation({ origin }))).resolves.toMatchObject({
+        outcome: 'ignored',
+        reason: 'ineligible-origin',
+      })
+    }
     await inbox.observe(observation())
     await expect(inbox.observe(observation({
       revision: 1,

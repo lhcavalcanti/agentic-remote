@@ -3,7 +3,10 @@ import { mkdir, readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Schedule, ScheduleRun } from '../shared/schedules.js'
+import type { ManagedSession } from '../shared/contracts.js'
+import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
 import { buildApp } from './app.js'
+import { ManagerStore } from './manager-store.js'
 import { createStartupPhases, type StartupPhaseRecord } from './startup-phases.js'
 import type { ScheduleReconciliation } from './scheduler-dispatcher.js'
 
@@ -39,12 +42,13 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((value) => rm(value, { recursive: true, force: true })))
 })
 
-async function app(role: 'hub' | 'node' = 'hub') {
+async function app(role: 'hub' | 'node' = 'hub', realRunner = false) {
   directory = path.join(process.cwd(), `.scheduler-routes-${randomUUID()}`)
   directories.push(directory)
   await mkdir(directory)
   runtime = await buildApp({
-    dataDirectory: directory, role, logger: false, managerAgent: false, scheduleLauncher: launcher,
+    dataDirectory: directory, role, logger: false, managerAgent: false,
+    ...(!realRunner ? { scheduleLauncher: launcher } : {}),
     startupPhases: createStartupPhases({ write: (line) => records.push(JSON.parse(line)) }),
     transcriptionService: { initialize: async () => {}, stop: async () => {}, transcribe: vi.fn() },
   })
@@ -53,6 +57,60 @@ async function app(role: 'hub' | 'node' = 'hub') {
 }
 
 describe('scheduler hub API', () => {
+  it('installs the real runner with Oracle off and records root receipts and schedule provenance', async () => {
+    const server = await app('hub', true)
+    const computerId = runtime.identity.info.id
+    let launch: LaunchReconciliation | undefined
+    const detail: ManagedSession = {
+      computerId, computerName: 'Fictional studio', id: 'fictional-scheduled-session',
+      cwd: '/fictional/repo', title: 'Untitled', status: 'idle', isOpen: true, messages: [],
+      updatedAt: new Date().toISOString(),
+    }
+    const host = runtime.manager!
+    vi.spyOn(host, 'listComputers').mockReturnValue([{
+      id: computerId, name: detail.computerName, online: true, isLocal: true,
+      providers: [{ id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsLaunchIdentity: true }],
+    }])
+    vi.spyOn(host, 'validateSessionDirectory').mockResolvedValue(detail.cwd)
+    const create = vi.spyOn(host, 'createSession').mockImplementation(async (_id, input) => {
+      detail.launchId = input.launchId
+      launch = { launchId: input.launchId!, sessionId: detail.id, receipts: [] }
+      return detail
+    })
+    vi.spyOn(host, 'renameSession').mockImplementation(async (_computer, _id, input) => {
+      detail.title = input.title
+      return detail
+    })
+    vi.spyOn(host, 'sendMessage').mockImplementation(async (_computer, _session, input) => {
+      const receipt: PromptAcceptanceReceipt = {
+        deliveryId: input.deliveryId!, sessionId: detail.id, promptId: 'fictional-root',
+        acceptedAt: new Date().toISOString(), state: 'delivered',
+      }
+      detail.promptReceipts = [receipt]
+      launch!.receipts = [receipt]
+      return detail
+    })
+    vi.spyOn(host, 'readSession').mockResolvedValue(detail)
+    vi.spyOn(host, 'reconcileLaunch').mockImplementation(async () => launch)
+    vi.spyOn(host, 'listBackgroundTasks').mockResolvedValue({ supported: true, runningCount: 0, tasks: [] })
+    const schedule: Schedule = (await server.inject({ method: 'POST', url: '/api/schedules', headers,
+      payload: { ...input(), enabled: false, target: { ...input().target, computerId } },
+    })).json().schedule
+    const run: ScheduleRun = (await server.inject({ method: 'POST', url: `/api/schedules/${schedule.id}/run`, headers })).json().run
+    await vi.waitFor(() => expect(runtime.scheduler!.store.getRun(run.id).rootPromptReceipt).toBe('fictional-root'))
+    await runtime.scheduler!.tick()
+    expect(create).toHaveBeenCalledWith(computerId, expect.objectContaining({ allowAllPermissions: false, launchId: run.launchId }))
+    const registry = new ManagerStore(path.join(directory, 'manager'))
+    await registry.initialize()
+    expect(registry.registry()[`${computerId}:${detail.id}`]).toMatchObject({ origin: 'schedule', scheduleId: schedule.id })
+    expect(runtime.managerAgent).toBeUndefined()
+    expect(records.filter((record) => record.startupPhase === 'scheduler.provenance').map((record) => record.event)).toEqual(['begin', 'complete'])
+    launch!.receipts[0].outcome = 'succeeded'
+    await runtime.scheduler!.tick()
+    expect(runtime.scheduler!.store.getRun(run.id).status).toBe('succeeded')
+    expect(launcher.launch).not.toHaveBeenCalled()
+  })
+
   it('creates, lists, reads and updates with revision, enable/archive and deletion checks', async () => {
     const server = await app()
     const create = await server.inject({ method: 'POST', url: '/api/schedules', headers, payload: input() })
@@ -162,6 +220,7 @@ describe('scheduler hub API', () => {
       ['GET', '/id/runs'], ['GET', '/runs'], ['GET', '/runs/id'], ['POST', '/runs/id/stop'],
     ] as const) expect((await server.inject({ method, url: `/api/schedules${suffix}`, headers })).statusCode).toBe(404)
     expect((await readdir(directory)).includes('scheduler')).toBe(false)
+    expect((await readdir(directory)).includes('schedule-worktrees')).toBe(false)
     expect(records.some((record) => record.startupPhase === 'scheduler.start')).toBe(false)
     expect(launcher.launch).not.toHaveBeenCalled()
     expect(launcher.reconcile).not.toHaveBeenCalled()

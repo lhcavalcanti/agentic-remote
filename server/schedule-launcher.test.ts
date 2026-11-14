@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedSession, PendingPermission } from '../shared/contracts.js'
@@ -16,6 +16,7 @@ import { SessionScheduleLauncher, scheduleSessionTitle, type ScheduleLauncherHos
 import { ScheduleLaunchRefusedError, SchedulerDispatcher } from './scheduler-dispatcher.js'
 import { holdsSlot, SchedulerStore } from './scheduler-store.js'
 import type { SessionService } from './session-service.js'
+import type { ScheduleWorktreeService } from './schedule-worktrees.js'
 
 const directories: string[] = []
 const dispatchers: SchedulerDispatcher[] = []
@@ -42,7 +43,7 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
-async function fixture(changes: Partial<ScheduleCreate> = {}) {
+async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' | 'oracle' = 'user') {
   const directory = path.join(process.cwd(), `.schedule-launcher-${randomUUID()}`)
   await mkdir(directory)
   directories.push(directory)
@@ -54,7 +55,7 @@ async function fixture(changes: Partial<ScheduleCreate> = {}) {
     name: 'Fictional guide review', prompt: 'Review the fictional guide.',
     target: { computerId: 'hub', folder: '/fictional/repo', provider: 'copilot' },
     recurrence: { type: 'daily', time: '09:00' }, enabled: false, ...changes,
-  })
+  }, createdBy)
   const run = (await store.admit(schedule.id, at, 'manual'))!
   const receipt: PromptAcceptanceReceipt = {
     deliveryId: `${run.launchId}:root`, sessionId: 'session-one', promptId: 'root-one',
@@ -130,9 +131,11 @@ describe('schedule runner', () => {
     })
   })
 
-  it.each(['ask', 'allow-all'] as const)('passes only the schedule permission policy %s to session primitives', async (permissionPolicy) => {
-    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider: 'copilot', permissionPolicy } })
-    const createSession = vi.fn(async () => ({ created: session(), session: session(), folderTrust: 'ask' as const }))
+  it.each([
+    ['ask', 'ask'], ['ask', 'auto-approve'], ['allow-all', 'ask'], ['allow-all', 'auto-approve'],
+  ] as const)('passes only the schedule permission %s and folder trust %s to session primitives', async (permissionPolicy, folderTrust) => {
+    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider: 'copilot', permissionPolicy, folderTrust } })
+    const createSession = vi.fn(async () => ({ created: session(), session: session(), folderTrust }))
     const primitives = {
       createSession,
       deliverPrompt: vi.fn(async () => ({ delivered: session(), receipt: f.receipt, outcome: 'sent' as const })),
@@ -142,9 +145,9 @@ describe('schedule runner', () => {
     }
     await new SessionScheduleLauncher(f.host, f.store, f.registry, primitives).launch(f.run, f.schedule)
     expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
-      permissionPolicy, folderTrust: 'ask', provenance: { origin: 'schedule', scheduleId: f.schedule.id, scheduleRunId: f.run.id, task: f.schedule.prompt },
+      permissionPolicy, folderTrust, provenance: { origin: 'schedule', scheduleId: f.schedule.id, scheduleRunId: f.run.id, task: f.schedule.prompt },
     }))
-    expect(primitives.deliverPrompt).toHaveBeenCalledWith(expect.objectContaining({ folderTrust: 'ask' }),
+    expect(primitives.deliverPrompt).toHaveBeenCalledWith(expect.objectContaining({ folderTrust }),
       f.schedule.prompt, { deliveryId: `${f.run.launchId}:root` })
   })
 
@@ -212,17 +215,68 @@ describe('schedule runner', () => {
     expect(f.host.replyUserInput).not.toHaveBeenCalled()
   })
 
+  it('retains a pre-delivery folder-trust question as needs-input instead of inferring success from idle', async () => {
+    const f = await fixture()
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [], sessionStatus: 'idle' })
+    f.setDetail({ pendingPermission: permission })
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'needs-input' })
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
+    expect(f.host.replyPermission).not.toHaveBeenCalled()
+    f.setDetail({ pendingPermission: undefined })
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'running' })
+    expect(f.host.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('reattaches after restart and resumes only idempotent root acceptance after a creation-only crash', async () => {
     const f = await fixture()
     f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [] })
-    const restarted = new SessionScheduleLauncher(f.host, f.store, f.registry)
-    expect(await restarted.reconcile({ ...f.run, status: 'launching' })).toMatchObject({
+    await f.store.changeRun(f.run.id, { status: 'launching', startedAt: at })
+    const reopened = new SchedulerStore(f.directory)
+    await reopened.initialize()
+    const restarted = new SessionScheduleLauncher(f.host, reopened, f.registry)
+    expect(await restarted.reconcile(reopened.getRun(f.run.id))).toMatchObject({
       state: 'running', sessionId: 'session-one', rootPromptAcceptance: f.receipt,
     })
     await restarted.reconcile({ ...f.run, status: 'running' })
     expect(f.host.createSession).not.toHaveBeenCalled()
     expect(f.host.sendMessage).toHaveBeenCalledTimes(1)
     expect(f.host.reconcileLaunch).toHaveBeenCalledWith('hub', f.run.launchId)
+  })
+
+  it.each(['creation', 'acceptance'])('reconciles a lost %s response without repeating session creation or accepted delivery', async (phase) => {
+    const f = await fixture()
+    if (phase === 'creation') {
+      const create = vi.mocked(f.host.createSession).getMockImplementation()!
+      vi.mocked(f.host.createSession).mockImplementationOnce(async (...args) => {
+        await create(...args)
+        throw new Error('Creation response was lost')
+      })
+    } else {
+      const send = vi.mocked(f.host.sendMessage).getMockImplementation()!
+      vi.mocked(f.host.sendMessage).mockImplementationOnce(async (...args) => {
+        await send(...args)
+        throw new Error('Acceptance response was lost')
+      })
+    }
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).rootPromptReceipt).toBe(f.receipt.promptId))
+    await dispatcher.tick()
+    expect(f.host.createSession).toHaveBeenCalledTimes(1)
+    expect(f.host.sendMessage).toHaveBeenCalledTimes(1)
+    expect(f.store.getRun(f.run.id).status).toBe('running')
+  })
+
+  it('does not reaccept a root the run already remembers when owner receipt evidence disappears', async () => {
+    const f = await fixture()
+    await f.runner.launch(f.run, f.schedule)
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [] })
+    expect(await f.runner.reconcile(f.store.getRun(f.run.id))).toMatchObject({
+      state: 'unknown', error: expect.stringContaining('no longer reports the accepted root'),
+    })
+    expect(f.host.sendMessage).toHaveBeenCalledTimes(1)
+    expect(f.host.createSession).toHaveBeenCalledTimes(1)
   })
 
   it('retains uncertain launches, offline errors and deleted sessions without relaunching', async () => {
@@ -232,7 +286,7 @@ describe('schedule runner', () => {
     f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', deleted: true, receipts: [] })
     expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'unknown' })
     vi.mocked(f.host.reconcileLaunch!).mockRejectedValue(new Error('Offline'))
-    await expect(f.runner.reconcile(f.run)).rejects.toThrow('Offline')
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'unknown', error: expect.stringContaining('slot remains reserved') })
     expect(f.host.createSession).not.toHaveBeenCalled()
   })
 
@@ -246,7 +300,7 @@ describe('schedule runner', () => {
   it.each(['stopped', 'unknown'] as const)('keeps max-runtime slots until termination acknowledgement is %s', async (outcome) => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     vi.setSystemTime(new Date(at))
-    const f = await fixture({ maxRuntimeMin: 5 })
+    const f = await fixture({ maxRuntimeMin: 5, workspace: 'worktree' })
     // The fixture's admitted intent also exercises restart reconciliation.
     const dispatcher = new SchedulerDispatcher(f.store, f.runner)
     dispatchers.push(dispatcher)
@@ -261,17 +315,64 @@ describe('schedule runner', () => {
     expect(holdsSlot(current)).toBe(outcome === 'unknown')
     expect(f.host.cancelWithAck).toHaveBeenCalledWith('hub', 'session-one', undefined)
     expect(f.host.cancel).not.toHaveBeenCalled()
+    if (outcome === 'unknown') expect(f.host.cleanupScheduleWorktree).not.toHaveBeenCalled()
+  })
+
+  it('keeps a replacement pending until the old launch has an acknowledged stop', async () => {
+    const f = await fixture({ overlap: 'replace' })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.host.sendMessage).toHaveBeenCalledTimes(1))
+    await dispatcher.tick()
+    f.setTermination('unknown')
+    const replacement = await dispatcher.runNow(f.schedule.id)
+    await dispatcher.tick()
+    expect(f.store.getRun(f.run.id).status).toBe('stopping')
+    expect(f.store.getRun(replacement.id).status).toBe('pending')
+    expect(f.host.createSession).toHaveBeenCalledTimes(1)
+    expect(f.host.cancelWithAck).toHaveBeenCalled()
+    expect(f.host.cancel).not.toHaveBeenCalled()
   })
 
   it('fails old-node capability and invalid roots explicitly before any session side effects', async () => {
     const f = await fixture()
     f.host.listComputers = () => [{ id: 'hub', name: 'Old computer', online: true, isLocal: false, providers: [{ ...providers[0], supportsLaunchIdentity: false }] }]
     await expect(f.runner.launch(f.run, f.schedule)).rejects.toThrow('Update this computer')
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'terminated', outcome: 'failed', error: expect.stringContaining('Update this computer') })
     expect(f.host.createSession).not.toHaveBeenCalled()
     f.host.listComputers = () => [{ id: 'hub', name: 'Updated', online: true, isLocal: true, providers }]
     vi.mocked(f.host.validateSessionDirectory).mockRejectedValue(new Error('Folder is outside allowed roots'))
     await expect(f.runner.launch(f.run, f.schedule)).rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
     expect(f.host.createSession).not.toHaveBeenCalled()
+  })
+
+  it('fails unsupported worktree computers explicitly rather than launching a checkout fallback', async () => {
+    const f = await fixture({ workspace: 'worktree' })
+    vi.mocked(f.host.allocateScheduleWorktree).mockRejectedValue(new Error('Update this computer to run schedules in worktrees.'))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    expect(f.store.getRun(f.run.id).error).toContain('Update this computer')
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('settles a stop requested during a definitive pre-creation refusal without launching anything', async () => {
+    const f = await fixture()
+    let refuse!: (error: Error) => void
+    const pending = new Promise<string>((_resolve, reject) => { refuse = reject })
+    vi.mocked(f.host.validateSessionDirectory).mockReturnValue(pending)
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.host.validateSessionDirectory).toHaveBeenCalled())
+    expect((await dispatcher.stopRun(f.run.id)).status).toBe('stopping')
+    refuse(new Error('Workspace refused before creation'))
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('stopped'))
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.host.cancelWithAck).not.toHaveBeenCalled()
   })
 
   it('records deferred worktree cleanup instead of removing dirty/unpushed work', async () => {
@@ -286,13 +387,41 @@ describe('schedule runner', () => {
     })
   })
 
-  it('preserves schedule ownership across reload, journal reconciliation and replacement; Oracle cannot adopt it', async () => {
+  it.each(['missing-record', 'offline'])('records cleanup as deferred on %s evidence, including stale callers', async (failure) => {
+    const f = await fixture({ workspace: 'worktree' })
+    await f.runner.launch(f.run, f.schedule)
+    f.receipt.outcome = 'succeeded'
+    if (failure === 'offline') vi.mocked(f.host.cleanupScheduleWorktree).mockRejectedValue(new Error('Offline'))
+    expect(await f.runner.reconcile(f.run)).toMatchObject({
+      state: 'terminated', outcome: 'succeeded', worktree: { state: 'deferred', reason: expect.stringContaining('manual review') },
+    })
+  })
+
+  it('does not trust mismatched root, session or termination evidence', async () => {
     const f = await fixture()
+    await f.runner.launch(f.run, f.schedule)
+    const current = f.store.getRun(f.run.id)
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [{ ...f.receipt, promptId: 'other-prompt', outcome: 'succeeded' }] })
+    expect(await f.runner.reconcile(current)).toMatchObject({ state: 'unknown', error: 'Mismatched root-prompt evidence' })
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [f.receipt] })
+    f.setDetail({ id: 'unrelated-session' })
+    expect(await f.runner.reconcile(current)).toMatchObject({ state: 'unknown', error: 'Mismatched session evidence' })
+    vi.mocked(f.host.cancelWithAck!).mockResolvedValue({
+      sessionId: 'other-session', outcome: 'stopped', checkedAt: at, scope: 'provider-owned',
+    })
+    expect(await f.runner.stop(current)).toMatchObject({ outcome: 'unknown' })
+  })
+
+  it('preserves schedule ownership across reload, journal reconciliation and replacement; Oracle cannot adopt it', async () => {
+    const f = await fixture({}, 'oracle')
+    expect(f.schedule.createdBy).toBe('oracle')
     await f.runner.launch(f.run, f.schedule)
     const recorder = new JournalRecorder(f.registry)
     try {
       await recorder.reconcile([session({ id: 'session-one' })], ['hub'])
       expect(recorder.managedSessions()).toEqual([])
+      expect((await lstat(f.registry.directory)).mode & 0o777).toBe(0o700)
+      expect((await lstat(path.join(f.registry.directory, 'sessions.json'))).mode & 0o777).toBe(0o600)
       await expect(recorder.markManaged(session(), 'Adopt this')).rejects.toThrow('not owned by Oracle')
       recorder.handle({ type: 'session.removed', computerId: 'hub', sessionId: 'session-one', replacedBy: 'replacement' })
       await recorder.flush()
@@ -310,20 +439,29 @@ describe('schedule runner', () => {
 })
 
 describe('schedule owning-computer transport', () => {
-  it.each(['hub', 'worker'])('routes identified sessions and prompt delivery to %s only', async (computerId) => {
-    const f = await fixture({ target: { computerId, folder: '/fictional/repo', provider: 'copilot' } })
+  it.each([
+    ['hub', 'checkout'], ['worker', 'checkout'], ['hub', 'worktree'], ['worker', 'worktree'],
+  ] as const)('routes identified sessions and %s/%s workspace to its owner only', async (computerId, workspace) => {
+    const f = await fixture({ workspace, target: { computerId, folder: '/fictional/repo', provider: 'copilot' } })
     vi.spyOn(RemoteNodeClient.prototype, 'connect').mockImplementation(() => {})
     vi.spyOn(RemoteNodeClient.prototype, 'stop').mockImplementation(() => {})
     vi.spyOn(RemoteNodeClient.prototype, 'online', 'get').mockReturnValue(true)
     vi.spyOn(RemoteNodeClient.prototype, 'providers', 'get').mockReturnValue(providers)
     vi.spyOn(RemoteNodeClient.prototype, 'getInfo').mockRejectedValue(new Error('No background discovery'))
-    const created = session({ computerId })
+    const worktree = {
+      launchId: f.run.launchId, root: '/allowed/worktrees', repository: '/fictional/repo',
+      path: '/allowed/worktrees/run-one', createdAt: at, state: 'ready' as const,
+    }
+    const folder = workspace === 'worktree' ? worktree.path : '/fictional/repo'
+    const created = session({ computerId, cwd: folder })
     const delivered = session({ computerId, promptReceipts: [f.receipt] })
     const remoteCreate = vi.spyOn(RemoteNodeClient.prototype, 'createSession').mockResolvedValue(created)
     vi.spyOn(RemoteNodeClient.prototype, 'renameSession').mockResolvedValue(created)
     vi.spyOn(RemoteNodeClient.prototype, 'getSession').mockResolvedValue(created)
     vi.spyOn(RemoteNodeClient.prototype, 'validateSessionDirectory').mockResolvedValue('/fictional/repo')
     const remoteSend = vi.spyOn(RemoteNodeClient.prototype, 'sendMessage').mockResolvedValue(delivered)
+    const remoteAllocate = vi.spyOn(RemoteNodeClient.prototype, 'allocateScheduleWorktree').mockResolvedValue(worktree)
+    const localAllocate = vi.fn(async () => worktree)
     const localCreate = vi.fn(async () => created)
     const localSend = vi.fn(async () => delivered)
     const manager = new ComputerManager(
@@ -336,6 +474,7 @@ describe('schedule owning-computer transport', () => {
       {
         initialize: async () => {}, list: () => [{ id: 'worker', name: 'Worker', baseUrl: 'http://worker.test', token: 'fictional-token' }],
       } as unknown as ComputerRegistry,
+      { allocate: localAllocate } as unknown as ScheduleWorktreeService,
     )
     await manager.initialize()
     managers.push(manager)
@@ -344,13 +483,22 @@ describe('schedule owning-computer transport', () => {
     expect(computerId === 'hub' ? remoteCreate : localCreate).not.toHaveBeenCalled()
     if (computerId === 'hub') {
       expect(localSend).toHaveBeenCalledWith('session-one', f.schedule.prompt, true, undefined, undefined, `${f.run.launchId}:root`)
-      expect(localCreate).toHaveBeenCalledWith('/fictional/repo', false, false, 'copilot',
+      expect(localCreate).toHaveBeenCalledWith(folder, false, false, 'copilot',
         undefined, undefined, undefined, 'autopilot', f.run.launchId)
     } else {
       expect(remoteSend).toHaveBeenCalledWith('session-one', {
         content: f.schedule.prompt, enqueue: true, deliveryId: `${f.run.launchId}:root`,
       })
       expect(remoteCreate).toHaveBeenCalledWith(expect.objectContaining({ allowAllPermissions: false, launchId: f.run.launchId }))
+    }
+    if (workspace === 'worktree') {
+      expect(computerId === 'hub' ? localAllocate : remoteAllocate).toHaveBeenCalledWith({
+        launchId: f.run.launchId, folder: '/fictional/repo', root: undefined,
+      })
+      expect(computerId === 'hub' ? remoteAllocate : localAllocate).not.toHaveBeenCalled()
+    } else {
+      expect(localAllocate).not.toHaveBeenCalled()
+      expect(remoteAllocate).not.toHaveBeenCalled()
     }
     expect(f.registry.registry()[`${computerId}:session-one`]?.origin).toBe('schedule')
   })

@@ -32,6 +32,8 @@ Commands:
       Restart the service.
   status
       Show service status.
+  doctor [--json] [--tunnel ID]
+      Diagnose the installation without changing it, even with the service down.
   logs
       Follow service logs.
   update
@@ -62,6 +64,379 @@ config_value() {
     return
   fi
   sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1
+}
+
+doctor() {
+  local json="false" tunnel=""
+  while (($# > 0)); do
+    case "$1" in
+      --json)
+        json="true"
+        shift
+        ;;
+      --tunnel)
+        (($# >= 2)) && [[ -n "$2" && "$2" != -* ]] ||
+          die "--tunnel requires an ID"
+        tunnel="$2"
+        shift 2
+        ;;
+      --help | -h)
+        cat <<'EOF'
+Usage: agentic-remote doctor [--json] [--tunnel ID]
+
+Read-only installation, provider, loopback health, and startup diagnostics.
+  --json        Emit an array of {check, status, detail} records.
+  --tunnel ID   Inspect login and tunnel/port ACLs (no ACL changes).
+                Defaults to AGENTIC_REMOTE_DEVTUNNEL_ID in the environment
+                or the installed service environment file.
+  --help, -h    Show this help.
+
+Exit 0 if no check fails; exit 1 if any check fails. Optional checks may skip.
+No installs, restarts, or files are written. Only loopback health probes and
+read-only devtunnel queries use the network. The package manager is not run.
+EOF
+        return
+        ;;
+      *)
+        die "unknown doctor option: $1"
+        ;;
+    esac
+  done
+  if ! command -v node >/dev/null 2>&1; then
+    if [[ "$json" == "true" ]]; then
+      printf '%s\n' '[{"check":"node","status":"fail","detail":"Node.js is not on PATH; remaining checks require Node.js"}]'
+    else
+      printf '%s\n' '✗ node [fail]: Node.js is not on PATH; remaining checks require Node.js'
+    fi
+    return 1
+  fi
+
+  node - "$REPO_ROOT" "$ENV_FILE" "$SERVICE_FILE" "$SERVICE_NAME" "$json" "$tunnel" <<'NODE'
+const fs = require('node:fs')
+const path = require('node:path')
+const http = require('node:http')
+const { isIP } = require('node:net')
+const { spawnSync } = require('node:child_process')
+const [repository, environmentFile, serviceFile, serviceName, json, tunnelOption] = process.argv.slice(2)
+const results = []
+const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+const text = (value) => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim().slice(0, 500)
+const add = (check, status, detail) => results.push({ check, status, detail: text(detail) })
+const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'))
+const metadata = (file) => { try { return fs.statSync(file) } catch { return undefined } }
+const executable = (name) => {
+  for (const candidate of name.includes('/') ? [name] :
+    (process.env.PATH || '').split(path.delimiter).map((directory) => path.join(directory, name))) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK)
+      if (fs.statSync(candidate).isFile()) return candidate
+    } catch {}
+  }
+}
+const run = (binary, args) => spawnSync(binary, args, {
+  encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
+  stdio: ['ignore', 'pipe', 'pipe'],
+})
+const success = (result) => !result.error && result.status === 0
+const configured = new Map()
+let environmentError
+try {
+  // Never source this file: values (including shell substitutions) are data.
+  for (const line of fs.readFileSync(environmentFile, 'utf8').split('\n')) {
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line.trim())
+    if (!match) continue
+    let value = match[2].trim()
+    if ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))) value = value.slice(1, -1)
+    configured.set(match[1], value)
+  }
+} catch { environmentError = true }
+const value = (key, fallback = '') => (process.env[key] || configured.get(key) || fallback).trim()
+const tunnel = tunnelOption || value('AGENTIC_REMOTE_DEVTUNNEL_ID')
+const host = value('HOST', '127.0.0.1')
+const port = value('PORT', '4317')
+const validPort = /^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65535
+const dataDirectory = value('AGENTIC_REMOTE_DATA_DIR', path.join(process.env.HOME, '.agentic-remote'))
+
+function runtimeChecks() {
+  let manifest
+  try { manifest = readJson(path.join(repository, 'package.json')) } catch {
+    add('node', 'fail', 'Cannot read package.json engines')
+    add('pnpm', 'fail', 'Cannot read package.json packageManager')
+    return
+  }
+  // The repository declares a minimum Node version; fail closed if that contract changes.
+  const minimum = /^>=(\d+)\.(\d+)(?:\.(\d+))?$/.exec(manifest.engines?.node || '')
+  const current = process.versions.node.split('.').map(Number)
+  const required = minimum?.slice(1).map((part) => Number(part || 0))
+  const difference = required && current.map((part, index) => part - required[index]).find((part) => part !== 0)
+  const compatible = required && (difference === undefined || difference > 0)
+  add('node', compatible ? 'ok' : 'fail',
+    `Node.js ${process.versions.node}; requires ${manifest.engines?.node || 'an unknown engine range'}`)
+
+  const pin = /^pnpm@(\d+\.\d+\.\d+)(?:\+sha\d+\..+)?$/.exec(manifest.packageManager || '')?.[1]
+  const pnpm = executable('pnpm')
+  let resolved = false
+  if (pin && pnpm) {
+    // Inspect installed metadata, not `pnpm --version`: Corepack and pnpm shims
+    // can otherwise download a missing version or update caches during diagnosis.
+    let directory = path.dirname(fs.realpathSync(pnpm))
+    for (;;) {
+      try {
+        const installed = readJson(path.join(directory, 'package.json'))
+        if (installed.name === 'pnpm' && installed.version === pin) resolved = true
+      } catch {}
+      const parent = path.dirname(directory)
+      if (parent === directory) break
+      directory = parent
+    }
+    const corepackHome = process.env.COREPACK_HOME ||
+      path.join(process.env.XDG_CACHE_HOME || path.join(process.env.HOME, '.cache'), 'node/corepack')
+    try {
+      const installed = readJson(path.join(corepackHome, 'v1/pnpm', pin, 'package.json'))
+      resolved ||= installed.name === 'pnpm' && installed.version === pin &&
+        !!executable(path.join(corepackHome, 'v1/pnpm', pin, 'bin/pnpm.cjs'))
+    } catch {}
+  }
+  add('pnpm', resolved ? 'ok' : 'fail', resolved
+    ? `pnpm ${pin} is available locally (not executed)`
+    : `Pinned ${manifest.packageManager || 'pnpm version'} is not locally resolvable; no install attempted`)
+}
+
+function serviceChecks() {
+  add('service.unit', metadata(serviceFile)?.isFile() ? 'ok' : 'fail',
+    metadata(serviceFile)?.isFile() ? `${serviceName} is installed` : `${serviceName} user unit is missing`)
+  let active = false
+  for (const state of ['enabled', 'active']) {
+    if (!executable('systemctl')) {
+      add(`service.${state}`, 'skip', 'systemctl is not on PATH')
+      continue
+    }
+    const result = run('systemctl', ['--user', `is-${state}`, serviceName])
+    const matches = success(result) && result.stdout.trim() === state
+    if (state === 'active') active = matches
+    add(`service.${state}`, matches ? 'ok' : 'fail',
+      matches ? `User unit is ${state}` : `User unit is not ${state} (or user manager is unavailable)`)
+  }
+  const environment = metadata(environmentFile)
+  const privateFile = environment?.isFile() && environment.uid === process.getuid() &&
+    (environment.mode & 0o077) === 0 && !environmentError
+  add('service.environment', privateFile ? 'ok' : 'fail', privateFile
+    ? 'Service environment is readable, owned by this user, and owner-only'
+    : 'Service environment is missing, unreadable, not owned by this user, or not owner-only')
+  const release = value('AGENTIC_REMOTE_RELEASE_DIR', path.join(path.dirname(environmentFile), 'releases/current'))
+  add('service.release', metadata(release)?.isDirectory() ? 'ok' : 'fail',
+    metadata(release)?.isDirectory() ? 'Current release directory is present' : 'Current release directory is missing')
+  return active
+}
+
+async function healthCheck() {
+  if (!validPort) return add('health', 'fail', 'Configured PORT must be between 1 and 65535')
+  let address = host
+  if (host === '0.0.0.0' || host === 'localhost') address = '127.0.0.1'
+  if (host === '::' || host === '[::]' || host === '[::1]') address = '::1'
+  if (!(address === '::1' || (isIP(address) === 4 && address.startsWith('127.')))) {
+    return add('health', 'skip', 'Configured HOST is not loopback; no non-loopback probe attempted')
+  }
+  await new Promise((resolve) => {
+    let finished = false
+    const finish = (status, detail) => {
+      if (finished) return
+      finished = true
+      clearTimeout(timer)
+      add('health', status, detail)
+      resolve()
+    }
+    const url = `http://${address.includes(':') ? `[${address}]` : address}:${port}/health`
+    const request = http.get(url, (response) => {
+      let body = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk) => {
+        body += chunk
+        if (body.length > 65536) request.destroy()
+      })
+      response.on('error', () => finish('fail', 'Loopback health response was interrupted'))
+      response.on('end', () => {
+        try {
+          const health = JSON.parse(body)
+          if (response.statusCode !== 200 || !record(health) || health.ok !== true) throw new Error()
+          const facts = { role: health.role, name: health.node?.name ?? health.name,
+            version: health.node?.version ?? health.version }
+          const detail = Object.entries(facts).filter(([, item]) => typeof item === 'string')
+            .map(([key, item]) => `${key}=${text(item)}`).join(', ')
+          finish('ok', `${url} ok${detail ? `; ${detail}` : ''}`)
+        } catch { finish('fail', 'Loopback /health did not return HTTP 200 with ok=true') }
+      })
+    })
+    const timer = setTimeout(() => request.destroy(), 3000)
+    request.on('error', () => finish('fail', `Loopback /health is unavailable at ${url} (service may be down)`))
+  })
+}
+
+function providerChecks() {
+  const copilot = executable(value('COPILOT_BIN', 'copilot'))
+  const version = copilot && run(copilot, ['--version'])
+  add('providers.copilot', version && success(version) && version.stdout.trim() ? 'ok' : 'fail',
+    version && success(version) && version.stdout.trim()
+      ? text(version.stdout.split('\n')[0]) : 'Copilot CLI is missing or --version failed')
+  add('providers.tmux', executable('tmux') ? 'ok' : 'fail',
+    executable('tmux') ? 'tmux is on PATH' : 'tmux is not on PATH')
+  const defaultClaude = path.join(process.env.HOME, '.local/bin/claude')
+  const claude = value('CLAUDE_BIN') || (metadata(defaultClaude) ? defaultClaude : '')
+  if (!claude) {
+    add('providers.claude', 'skip', 'Claude support is not configured (no CLAUDE_BIN or default installation)')
+  } else {
+    try {
+      const binary = executable(claude)
+      const result = binary && run(binary, ['auth', 'status'])
+      if (!result || !success(result) || JSON.parse(result.stdout)?.loggedIn !== true) throw new Error()
+      add('providers.claude', 'ok', 'Claude is authenticated')
+    } catch { add('providers.claude', 'fail', 'Configured Claude CLI is missing, not authenticated, or returned unknown auth JSON') }
+  }
+}
+
+function assetChecks() {
+  const whisper = value('AGENTIC_REMOTE_WHISPER_BIN')
+  const model = value('AGENTIC_REMOTE_WHISPER_MODEL')
+  if (!whisper && !model) {
+    add('transcription.whisper', 'skip', 'Local Whisper transcription is not configured')
+    add('transcription.model', 'skip', 'Local Whisper transcription is not configured')
+  } else {
+    const binary = whisper || path.join(process.env.HOME, '.local/bin/whisper-cli')
+    const modelFile = model || path.join(dataDirectory, 'models/ggml-small.bin')
+    add('transcription.whisper', executable(binary) ? 'ok' : 'fail',
+      executable(binary) ? 'Configured whisper-cli is executable' : 'Configured whisper-cli is missing or not executable')
+    add('transcription.model', metadata(modelFile)?.isFile() ? 'ok' : 'fail',
+      metadata(modelFile)?.isFile() ? 'Whisper model is present' : 'Whisper model is missing')
+  }
+  if (value('AGENTIC_REMOTE_ORACLE_VOICE') !== 'on') {
+    return add('voice.assets', 'skip', 'Oracle voice is off')
+  }
+  if (value('AGENTIC_REMOTE_VOICE_COMPUTER')) {
+    return add('voice.assets', 'skip', 'Oracle voice uses a remote computer; local assets are not required')
+  }
+  const assets = [
+    ['AGENTIC_REMOTE_VOICE_STT_MODEL_DIR', 'directory'],
+    ['AGENTIC_REMOTE_VOICE_TTS_MODEL', 'file'],
+    ['AGENTIC_REMOTE_VOICE_TTS_CONFIG', 'file'],
+    ...(value('AGENTIC_REMOTE_VOICE_TTS_ENGINE') === 'sherpa-vits'
+      ? [['AGENTIC_REMOTE_VOICE_TTS_TOKENS', 'file'], ['AGENTIC_REMOTE_VOICE_TTS_DATA_DIR', 'directory']]
+      : [['AGENTIC_REMOTE_VOICE_TTS_BIN', 'executable']]),
+  ]
+  const missing = assets.filter(([key, kind]) => {
+    const configuredPath = value(key)
+    const file = path.resolve(dataDirectory, configuredPath)
+    const stat = metadata(file)
+    return !configuredPath || (kind === 'directory' ? !stat?.isDirectory() :
+      !stat?.isFile() || (kind === 'executable' && !executable(file)))
+  }).map(([key]) => key)
+  add('voice.assets', missing.length ? 'fail' : 'ok',
+    missing.length ? `Missing or unusable voice assets: ${missing.join(', ')}` : 'Configured local STT and TTS assets are present')
+}
+
+function originCheck() {
+  try {
+    const entries = value('AGENTIC_REMOTE_ALLOWED_ORIGINS').split(',').map((item) => item.trim()).filter(Boolean)
+    const origins = entries.map((entry) => {
+      const parsed = new URL(entry)
+      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.host || parsed.origin === 'null') throw new Error()
+      return parsed
+    })
+    const loopback = !entries.length || origins.some((origin) =>
+      ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname))
+    if (!loopback) return add('origins', 'fail', 'Allowed origins do not include loopback')
+    const tunnelOrigin = origins.some((origin) => origin.hostname.endsWith('.devtunnels.ms'))
+    add('origins', tunnel && !tunnelOrigin ? 'warn' : 'ok', tunnel && !tunnelOrigin
+      ? 'Allowed origins include loopback but no devtunnels.ms origin for the configured tunnel'
+      : `Allowed origins parse and include loopback${entries.length ? '' : ' (server defaults)'}`)
+  } catch { add('origins', 'fail', 'Invalid AGENTIC_REMOTE_ALLOWED_ORIGINS entry; expected http(s)://host[:port]') }
+}
+
+function tunnelChecks() {
+  if (!tunnel || !executable('devtunnel')) {
+    for (const check of ['tunnel.auth', 'tunnel.acl', 'tunnel.port-acl']) {
+      add(check, 'skip', !tunnel ? 'No tunnel ID configured (use --tunnel ID)' : 'devtunnel is not on PATH')
+    }
+    return
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(tunnel)) {
+    for (const check of ['tunnel.auth', 'tunnel.acl', 'tunnel.port-acl']) add(check, 'fail', 'Invalid tunnel ID')
+    return
+  }
+  try {
+    const result = run('devtunnel', ['user', 'show', '--json'])
+    if (!success(result)) throw new Error()
+    const user = JSON.parse(result.stdout)
+    if (!record(user) || typeof user.status !== 'string' || user.status.toLowerCase() !== 'logged in' ||
+      typeof user.provider !== 'string' || !/^[A-Za-z][A-Za-z0-9 ._-]{0,63}$/.test(user.provider)) throw new Error()
+    add('tunnel.auth', 'ok', `Logged in; provider=${user.provider}`)
+  } catch { add('tunnel.auth', 'fail', 'Dev Tunnel login is unavailable, logged out, or returned unknown JSON') }
+  for (const [check, portArgs] of [['tunnel.acl', []], ['tunnel.port-acl', ['--port-number', port]]]) {
+    if (portArgs.length && !validPort) {
+      add(check, 'fail', 'Cannot inspect port ACL: invalid PORT')
+      continue
+    }
+    try {
+      const result = run('devtunnel', ['access', 'list', tunnel, ...portArgs, '--json'])
+      if (!success(result)) throw new Error()
+      const acl = JSON.parse(result.stdout)
+      if (!record(acl) || !Array.isArray(acl.accessControlEntries) ||
+        acl.accessControlEntries.some((entry) => !record(entry) || typeof entry.isDeny !== 'boolean')) throw new Error()
+      const allow = acl.accessControlEntries.some((entry) => entry.isDeny !== true)
+      add(check, allow ? 'fail' : 'ok', allow
+        ? 'tunnel is reachable by more than its owner; an allow entry exists (ACLs unchanged)'
+        : `${portArgs.length ? `Port ${port}` : 'Tunnel'} ACL is deny-only (${acl.accessControlEntries.length} entries)`)
+    } catch { add(check, 'fail', 'Cannot verify deny-only ACL: query failed or malformed/unknown JSON (fail closed; ACLs unchanged)') }
+  }
+}
+
+function startupCheck(active) {
+  if (!executable('journalctl')) return add('startup', 'skip', 'journalctl is not on PATH')
+  const journal = run('journalctl', ['--user', '--unit', serviceName, '-o', 'cat', '--since', '-2h', '--no-pager', '-n', '2000'])
+  if (!success(journal)) return add('startup', 'warn', 'Recent user journal could not be read')
+  const pending = new Map()
+  let lastFailure
+  let index = 0
+  for (const line of journal.stdout.split('\n')) {
+    let item
+    try { item = JSON.parse(line) } catch { continue }
+    if (!record(item) || typeof item.startupPhase !== 'string' ||
+      !/^[A-Za-z0-9._-]{1,128}$/.test(item.startupPhase)) continue
+    if (item.startupPhase === 'app.build' && item.event === 'begin') pending.clear()
+    if (item.event === 'begin') pending.set(item.startupPhase, { phase: item.startupPhase, index })
+    if (item.event === 'complete' || item.event === 'fail') pending.delete(item.startupPhase)
+    if (item.event === 'fail') lastFailure = { phase: item.startupPhase, index }
+    index++
+  }
+  const unfinished = !active ? [...pending.values()].at(-1) : undefined
+  if (unfinished && (!lastFailure || unfinished.index > lastFailure.index)) {
+    add('startup', 'fail', `Last unfinished startup phase: ${unfinished.phase} (begin without complete/fail; service not active)`)
+  } else if (lastFailure) {
+    add('startup', active ? 'warn' : 'fail', `Last failed startup phase: ${lastFailure.phase}${active ? ' (service is now active)' : ''}`)
+  } else {
+    add('startup', 'ok', 'No failed or unfinished startup phase in the recent journal (last 2h, up to 2000 lines)')
+  }
+}
+
+async function main() {
+  runtimeChecks()
+  const active = serviceChecks()
+  await healthCheck()
+  providerChecks()
+  assetChecks()
+  originCheck()
+  tunnelChecks()
+  startupCheck(active)
+}
+main().catch(() => add('doctor', 'fail', 'Diagnostics could not complete')).then(() => {
+  if (json === 'true') console.log(JSON.stringify(results))
+  else {
+    const markers = { ok: '✓', warn: '!', fail: '✗', skip: '-' }
+    for (const { check, status, detail } of results) console.log(`${markers[status]} ${check} [${status}]: ${detail}`)
+  }
+  process.exitCode = results.some((result) => result.status === 'fail') ? 1 : 0
+})
+NODE
 }
 
 voice_manifest_query() {
@@ -1211,6 +1586,7 @@ setup_service() {
   local host="" port="" role="" name="" data_directory="" allowed_origins=""
   local allowed_roots=""
   local transcription_computer=""
+  local devtunnel_id=""
   local release_id=""
   while (($# > 0)); do
     case "$1" in
@@ -1259,6 +1635,7 @@ setup_service() {
   data_directory="$(config_value AGENTIC_REMOTE_DATA_DIR)"
   allowed_roots="${AGENTIC_REMOTE_ALLOWED_ROOTS:-$(config_value AGENTIC_REMOTE_ALLOWED_ROOTS)}"
   transcription_computer="${AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER:-$(config_value AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER)}"
+  devtunnel_id="${AGENTIC_REMOTE_DEVTUNNEL_ID:-$(config_value AGENTIC_REMOTE_DEVTUNNEL_ID)}"
   manager_switch="${AGENTIC_REMOTE_MANAGER:-$(config_value AGENTIC_REMOTE_MANAGER)}"
   manager_model="${AGENTIC_REMOTE_MANAGER_MODEL:-$(config_value AGENTIC_REMOTE_MANAGER_MODEL)}"
   manager_effort="${AGENTIC_REMOTE_MANAGER_REASONING_EFFORT:-$(config_value AGENTIC_REMOTE_MANAGER_REASONING_EFFORT)}"
@@ -1316,6 +1693,9 @@ setup_service() {
   if [[ -n "$transcription_computer" ]]; then
     printf 'AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER=%s\n' \
       "$transcription_computer" >>"$environment_tmp"
+  fi
+  if [[ -n "$devtunnel_id" ]]; then
+    printf 'AGENTIC_REMOTE_DEVTUNNEL_ID=%s\n' "$devtunnel_id" >>"$environment_tmp"
   fi
   # The manager agent's settings survive setup the same way.
   if [[ -n "$manager_switch" ]]; then
@@ -1436,6 +1816,9 @@ case "$command" in
   status)
     (($# == 0)) || die "status does not accept options"
     systemctl --user --no-pager --full status "$SERVICE_NAME"
+    ;;
+  doctor)
+    doctor "$@"
     ;;
   logs)
     (($# == 0)) || die "logs does not accept options"

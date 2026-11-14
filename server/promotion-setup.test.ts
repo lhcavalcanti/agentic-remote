@@ -46,6 +46,7 @@ async function setupFixture() {
       'PORT=4317',
       'AGENTIC_REMOTE_ROLE=hub',
       'AGENTIC_REMOTE_NODE_NAME=fixture',
+      'AGENTIC_REMOTE_DEVTUNNEL_ID=fixture.usw2',
       'AGENTIC_REMOTE_ORACLE_VOICE=on',
       'AGENTIC_REMOTE_VOICE_COMPUTER=',
       'AGENTIC_REMOTE_VOICE_STT_PROFILE=nemotron',
@@ -314,6 +315,13 @@ describe('reproducible promotion setup', () => {
     expect((await stat(fixture.environment)).mode & 0o777).toBe(0o600)
     expect(`${result.stdout}${result.stderr}`).not.toContain('private words')
     expect(`${result.stdout}${result.stderr}`).not.toContain('do-not-print')
+  })
+
+  it('preserves the diagnostic tunnel selection across setup without querying it', async () => {
+    const fixture = await setupFixture()
+    const result = await fixture.run()
+    expect(await readFile(fixture.environment, 'utf8')).toContain('AGENTIC_REMOTE_DEVTUNNEL_ID=fixture.usw2\n')
+    expect(result.stdout).not.toContain('fixture.usw2')
   })
 
   it('never downloads voice models during setup', async () => {

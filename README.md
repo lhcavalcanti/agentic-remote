@@ -269,6 +269,8 @@ provider-specific inspection boundaries.
 
 ```bash
 agentic-remote status
+agentic-remote doctor
+agentic-remote doctor --tunnel TUNNEL_ID --json
 agentic-remote logs
 agentic-remote restart
 agentic-remote update
@@ -279,6 +281,8 @@ agentic-remote uninstall
 `setup` and `update` build an immutable release and restart the service.
 `rollback` activates the previous release. Application data is preserved under
 `~/.agentic-remote/`.
+
+`doctor` is read-only and works with the service down. It checks the installed service, local health, provider tools, configured transcription/voice assets, origins, and recent startup phases. `--tunnel ID` (or `AGENTIC_REMOTE_DEVTUNNEL_ID` in the shell or service environment file, preserved by setup/update) also checks Dev Tunnel login and both tunnel and port ACLs: empty or deny-only ACLs pass; any allow entry or unknown JSON fails closed. It reports the login provider without requiring a particular one and never changes ACLs. `--json` emits `{check, status, detail}` records; exit status is 1 if any check fails, otherwise 0. No package manager is executed: the pinned pnpm version must already be locally resolvable through its installation metadata or Corepack cache.
 
 ## Access through Microsoft Dev Tunnels
 
@@ -537,10 +541,13 @@ Agentic Remote is available under the [MIT License](LICENSE).
 ## Troubleshooting
 
 ```bash
+agentic-remote doctor --tunnel TUNNEL_ID
 agentic-remote status
 agentic-remote logs
 curl http://192.168.1.10:4317/api/health
 ```
+
+Start with `doctor` even if startup fails. It shows the last failed startup phase, or an unfinished phase when the service is not active, from the last two hours (up to 2,000 journal lines). Optional Claude auth is checked only when `CLAUDE_BIN` is configured or its default `~/.local/bin/claude` installation exists; Whisper assets are checked when their paths are configured, and local voice assets only with `AGENTIC_REMOTE_ORACLE_VOICE=on`. A recovered startup failure is a warning. Health probes stay on loopback; a non-loopback `HOST` is explicitly skipped. Use `doctor --help` for options.
 
 The service runs provider startup, including session recovery, before it
 listens, so a stalled startup refuses connections; only recovery deferred by

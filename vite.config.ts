@@ -49,6 +49,7 @@ const slowTests = [
   'server/computer-manager-metadata.test.ts',
   'server/conversation-recovery.test.ts',
   'server/delegated-transcription-service.test.ts',
+  'server/doctor-cli.test.ts',
   'server/dreamer-app.test.ts',
   'server/dreamer-planner.test.ts',
   'server/dreamer-routes.test.ts',

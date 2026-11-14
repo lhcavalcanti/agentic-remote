@@ -1,3 +1,4 @@
+import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
 import type {
   AddComputerInput,
   AgentProvider,
@@ -313,6 +314,23 @@ export async function listSessionMcpServers(
       pluginName: server.pluginName,
     })),
   }
+}
+
+export async function fetchHubFeatureFlags(signal?: AbortSignal): Promise<HubFeatureFlags> {
+  const response = await request<{ hubFlags?: unknown }>('/api/features', {
+    cache: 'no-store',
+    signal,
+  })
+  const flags = response.hubFlags
+  if (!flags || typeof flags !== 'object' ||
+    Object.keys(defaultHubFeatureFlags).some(
+      (key) => typeof (flags as Record<string, unknown>)[key] !== 'boolean',
+    )) {
+    throw new Error('The hub returned invalid feature flags')
+  }
+  return Object.fromEntries(Object.keys(defaultHubFeatureFlags).map(
+    (key) => [key, (flags as Record<string, unknown>)[key]],
+  )) as HubFeatureFlags
 }
 
 /** The hub's settings profile, shared by every device that opens this hub. */

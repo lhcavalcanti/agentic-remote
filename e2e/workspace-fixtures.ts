@@ -1,4 +1,5 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
+import { defaultHubFeatureFlags } from '../shared/feature-flags'
 import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
 import {
@@ -457,6 +458,7 @@ export const fixtureKnowledgePositions = Object.fromEntries(
 )
 
 export const fixtureEndpoints = [
+  'GET /api/features',
   'GET /api/computers',
   'GET /api/sessions',
   'GET /api/history',
@@ -772,6 +774,10 @@ export async function setupWorkspaceFixture(
         body: JSON.stringify(body),
       })
 
+    if (method === 'GET' && path === '/api/features') {
+      await respond({ hubFlags: defaultHubFeatureFlags })
+      return
+    }
     if (method === 'GET' && path === '/api/computers') {
       await respond({ computers: fixtureComputers })
       return

@@ -34,7 +34,7 @@ existing Host/Origin policy. **The profile belongs to the hub.**
 
 | Scope | Settings | Why |
 |---|---|---|
-| **Synced** (hub profile) | Appearance, accent, status line, new-session runtimes (model, effort, context, mode), new-session folders, session sort, computer order, Oracle's response style, what notifies you | How you work, not what the device is |
+| **Synced** (hub profile) | Appearance, accent, status line, new-session runtimes (model, effort, context, mode), new-session folders, session sort, computer order, Oracle's response style, what notifies you, preview features | How you work, not what the device is |
 | **This device** | Keyboard shortcuts, sidebar, Knowledge and Oracle panel widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription | Depend on the keyboard, viewport, browser, or local file being read |
 | **Never stored in the profile** | Drafts, queued prompts, transcripts, credentials, push subscriptions, machine capabilities | Content or secrets |
 
@@ -60,6 +60,9 @@ Some related state is already hub-owned and is unchanged:
 | `computerOrder` | Unique computer IDs, at most 200 | pairing order |
 | `oracleResponseStyle` | `concise` \| `balanced` \| `detailed` | `balanced` |
 | `notificationScope` | `all` \| `oracle` \| `off` | `all` |
+| `previewFeatures` | Partial map of known preview feature names to booleans | all off |
+
+Preview preferences sync through the same revision and conflict rules as other settings. They never enable hub behavior. The effective hub flags come from `GET /api/features` (`{hubFlags: {notificationCenter, hostMonitor, scheduler}}`), are read once at hub startup, and are not cached by the browser. Dependent previews are unavailable when their hub flag is off, without discarding the user's preference. These are hub-owned rollout controls, so nodes do not report them; future node-specific services must negotiate their own capabilities.
 
 `newSessionBackend` covers sessions you create. Oracle's sessions follow its
 own hub setting (`/api/manager/settings` `sessionBackend`).

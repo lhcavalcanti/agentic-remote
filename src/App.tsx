@@ -25,6 +25,8 @@ import {
 } from './app-shortcuts'
 import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
 import { useOracleSettings } from './use-oracle-settings'
+import { PreviewFeaturesProvider } from './PreviewFeaturesProvider'
+import { PreviewFeaturesSettings } from './PreviewFeaturesSettings'
 import {
   coordinatedAuthoritativeRefresh,
   dispatchAuthoritativeRefresh,
@@ -697,6 +699,7 @@ const settingNames: Record<SettingsProfileKey, string> = {
   computerOrder: 'Computer order',
   oracleResponseStyle: 'Oracle’s response style',
   notificationScope: 'What notifies you',
+  previewFeatures: 'Preview features',
 }
 
 /** Storage that may be blocked outright, as some private modes do. */
@@ -4707,6 +4710,7 @@ function AppSettingsDialog({
               above.
             </p>
           </section>
+          <PreviewFeaturesSettings />
         </div>
       </section>
       <section
@@ -4721,7 +4725,7 @@ function AppSettingsDialog({
             <p className="dialog-message">
               Appearance, accent, status line, new-session models and folders,
               session sort, computer order, Oracle&apos;s response style, and
-              what notifies you follow you to every device that opens this hub.
+              what notifies you and preview features follow you to every device that opens this hub.
               Keyboard shortcuts, panel placement and widths, and drafts stay
               on this device.
             </p>
@@ -7206,7 +7210,7 @@ function fallbackSessionKey(
   return fallback ? sessionKey(fallback) : undefined
 }
 
-function App() {
+function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClient }) {
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -7761,7 +7765,6 @@ function App() {
   // Preferences that follow you to every device on this hub. This device's
   // copy renders at once; the hub's profile and other devices' changes
   // arrive through the client.
-  const [settingsClient] = useState(createSettingsProfileClient)
   const settingsProfile = useSyncExternalStore(
     settingsClient.subscribe,
     settingsClient.getState,
@@ -18470,4 +18473,11 @@ function App() {
   )
 }
 
-export default App
+export default function App() {
+  const [settingsClient] = useState(createSettingsProfileClient)
+  return (
+    <PreviewFeaturesProvider settingsClient={settingsClient}>
+      <AppWorkspace settingsClient={settingsClient} />
+    </PreviewFeaturesProvider>
+  )
+}

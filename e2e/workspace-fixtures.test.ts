@@ -63,6 +63,15 @@ async function fixtureApi() {
 }
 
 describe('workspace fixture directory routing', () => {
+  it('mocks default-off hub feature flags', async () => {
+    const { fixture, request } = await fixtureApi()
+    expect(await request('/api/features')).toEqual({
+      status: 200,
+      body: { hubFlags: { notificationCenter: false, hostMonitor: false, scheduler: false } },
+    })
+    fixture.assertHealthy()
+  })
+
   it.each([
     ['fixture-studio', '~', '/home/demo'],
     ['fixture-studio', '/home/demo', '/home/demo'],

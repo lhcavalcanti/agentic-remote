@@ -2078,7 +2078,7 @@ clear replacement IDs without losing, duplicating, or reordering content.
   - **Oracle**: Oracle's model and effort, response style, and which activity
     notifies you.
   - **Notifications**: this device's notification permission and subscription.
-  - **Interface**: Appearance, Status line, Keyboard shortcuts.
+  - **Interface**: Appearance, Status line, Keyboard shortcuts, Preview features.
   - **App**: Settings sync, Hub connection (native app only), App updates.
 - Each section whose scope is not obvious MUST say whether it is **Synced** or
   kept on **This device**.
@@ -2095,7 +2095,7 @@ people sharing a hub share its profile. See
 
 | Scope | Settings |
 |---|---|
-| **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you |
+| **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you, preview features |
 | **This device** | Keyboard shortcuts, panel placement and widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
 | **Never in the profile** | Drafts, queues, transcripts, credentials, push subscriptions |
 
@@ -2108,6 +2108,7 @@ people sharing a hub share its profile. See
   reconnect.
 - The hub MUST validate every key and value against an allowlist, bound the
   profile to 32 KB, and guard it with the `/api/` Host and Origin policy.
+- Preview features MUST default off. A preview that depends on a hub feature flag MUST remain unavailable while that flag is off and show **Turned off on this hub**. Stored preferences MUST NOT enable hub behavior. Hub flags come only from the service environment, are read once at startup, and require a restart to change.
 - A device without a copy MUST offer its earlier browser-local settings once;
   the hub MUST keep only settings no device has chosen yet.
 

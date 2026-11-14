@@ -1,5 +1,6 @@
 import type { AgentProvider, RuntimeReasoningEffort } from './contracts.js'
 import { notificationScopes, type NotificationScope } from './notifications.js'
+import { previewFeatureNames, type PreviewFeatures } from './feature-flags.js'
 
 /**
  * The hub-owned settings profile: preferences that follow the user to every
@@ -17,6 +18,7 @@ export const settingsProfileKeys = [
   'computerOrder',
   'oracleResponseStyle',
   'notificationScope',
+  'previewFeatures',
 ] as const
 
 export type SettingsProfileKey = (typeof settingsProfileKeys)[number]
@@ -86,6 +88,7 @@ export interface SettingsProfileValues {
   oracleResponseStyle?: OracleResponseStyle
   /** Unset sends every notification, as before the setting existed. */
   notificationScope?: NotificationScope
+  previewFeatures?: PreviewFeatures
 }
 
 export interface SettingsProfileSnapshot {
@@ -180,6 +183,16 @@ export function parseSettingValue<K extends SettingsProfileKey>(
       return oneOf(oracleResponseStyles, value) ? valid(value) : invalid('is not a known response style')
     case 'notificationScope':
       return oneOf(notificationScopes, value) ? valid(value) : invalid('is not a known notification scope')
+    case 'previewFeatures': {
+      if (!isRecord(value)) return invalid('must be an object')
+      const parsed: PreviewFeatures = {}
+      for (const [feature, enabled] of Object.entries(value)) {
+        if (!oneOf(previewFeatureNames, feature)) return invalid(`has an unknown feature ${feature.slice(0, 40)}`)
+        if (typeof enabled !== 'boolean') return invalid(`feature ${feature} must be true or false`)
+        parsed[feature] = enabled
+      }
+      return valid(parsed)
+    }
     case 'statusline': {
       if (!isRecord(value)) return invalid('must be an object')
       const parsed: StatuslineSetting = {}

@@ -28,6 +28,7 @@ import type {
   WorkspaceListing,
 } from '../shared/contracts'
 import App from './App'
+import { defaultHubFeatureFlags } from '../shared/feature-flags'
 import { SubmissionError } from '../shared/submission-error'
 import {
   applySettingsChanges,
@@ -207,6 +208,7 @@ vi.mock('./dreamer-api', async (importOriginal) => ({
 vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   checkHubSignIn: vi.fn(async () => undefined),
+  fetchHubFeatureFlags: vi.fn(async () => defaultHubFeatureFlags),
   getManager: vi.fn(),
   getOracleVoiceCapabilities: vi.fn(async () => ({
     protocol: 2,
@@ -5122,6 +5124,23 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'App updates' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
+  })
+
+  it('keeps preview feature opt-ins under Interface and syncs them through settings', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const section = within(screen.getByRole('region', { name: 'Interface' }))
+      .getByRole('region', { name: 'Preview features' })
+    const previews = within(section)
+    const composer = previews.getByRole('checkbox', { name: 'Composer refresh' })
+    expect(composer).not.toBeChecked()
+    expect(previews.getByRole('checkbox', { name: 'Notification panel' })).toBeDisabled()
+    fireEvent.click(composer)
+    await waitFor(() => expect(savedSetting('previewFeatures')).toEqual({ composerRefresh: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(screen.getByRole('checkbox', { name: 'Composer refresh' })).toBeChecked()
   })
 
   it('groups app settings by what they are about', async () => {

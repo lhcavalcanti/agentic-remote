@@ -106,6 +106,17 @@ describe('canonical API origin enforcement', () => {
     expect(trustedRead.json().settings).toMatchObject({ revision: 0, values: {} })
   })
 
+  it.each(prefixes)('guards effective feature flags through %s', async (prefix) => {
+    for (const headers of untrusted) {
+      expect((await runtime.app.inject({ url: `${prefix}/features`, headers })).statusCode).toBe(403)
+    }
+    const response = await runtime.app.inject({ url: `${prefix}/features`, headers: trusted })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      hubFlags: { notificationCenter: expect.any(Boolean), hostMonitor: expect.any(Boolean), scheduler: expect.any(Boolean) },
+    })
+  })
+
   it('allows trusted encoded HTTP routes and event upgrades', async () => {
     const response = await runtime.app.inject({
       url: '/%61pi/computers', headers: trusted,

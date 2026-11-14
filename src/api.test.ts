@@ -5,6 +5,7 @@ import {
   createOracleVoiceTicket,
   dispatchQueuedPrompt,
   fetchSettingsProfile,
+  fetchHubFeatureFlags,
   getOracleVoiceCapabilities,
   importSettingsProfile,
   saveSettingsChanges,
@@ -47,6 +48,22 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('reads authoritative hub feature booleans without caching', async () => {
+    const flags = { notificationCenter: true, hostMonitor: false, scheduler: false }
+    const fetchMock = vi.fn(async () => Response.json({ hubFlags: flags }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchHubFeatureFlags()).resolves.toEqual(flags)
+    expect(fetchMock).toHaveBeenCalledWith('/api/features', expect.objectContaining({ cache: 'no-store' }))
+  })
+
+  it.each([undefined, null, {}, { notificationCenter: 'on', hostMonitor: false, scheduler: false }])(
+    'rejects malformed hub feature state %j instead of enabling a preview',
+    async (hubFlags) => {
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json({ hubFlags })))
+      await expect(fetchHubFeatureFlags()).rejects.toThrow('invalid feature flags')
+    },
+  )
+
   it('removes an Oracle upload successfully with an empty 204 response', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)

@@ -46,6 +46,10 @@ async function setupFixture() {
       'PORT=4317',
       'AGENTIC_REMOTE_ROLE=hub',
       'AGENTIC_REMOTE_NODE_NAME=fixture',
+      'AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on',
+      'AGENTIC_REMOTE_FEATURE_HOST_MONITOR=false',
+      'AGENTIC_REMOTE_FEATURE_SCHEDULER=1',
+      'AGENTIC_REMOTE_FEATURE_FUTURE_PREVIEW=off',
       'AGENTIC_REMOTE_ORACLE_VOICE=on',
       'AGENTIC_REMOTE_VOICE_COMPUTER=',
       'AGENTIC_REMOTE_VOICE_STT_PROFILE=nemotron',
@@ -74,8 +78,9 @@ async function setupFixture() {
     'validate_role',
     'validate_name',
     'derived_origins',
-    'append_preserved_voice_configuration',
+    'append_preserved_configuration',
     'setup_service',
+    'update_service',
   ].map((name) => shellFunction(script, name)).filter(Boolean).join('\n')
   const curlMarker = path.join(root, 'curl-called')
   const runner = path.join(root, 'run-setup')
@@ -87,6 +92,7 @@ async function setupFixture() {
       'die() { printf "agentic-remote: %s\\n" "$*" >&2; exit 1; }',
       'require_command() { :; }',
       'pnpm() { :; }',
+      'git() { :; }',
       'publish_release() { :; }',
       'write_service() { :; }',
       'refresh_promotion_lifecycle_if_installed() { :; }',
@@ -95,11 +101,11 @@ async function setupFixture() {
       'systemctl() { :; }',
       'curl() { touch "$CURL_MARKER"; return 99; }',
       functions,
-      'setup_service --name fixture',
+      '"$@"',
     ].join('\n'),
   )
   await chmod(runner, 0o755)
-  const run = () => exec(runner, {
+  const run = (env: NodeJS.ProcessEnv = {}, command = 'setup_service') => exec(runner, [command], {
     env: {
       ...process.env,
       HOME: root,
@@ -110,6 +116,7 @@ async function setupFixture() {
       COMMAND_LINK: path.join(root, 'agentic-remote'),
       SERVICE_NAME: 'fixture.service',
       CURL_MARKER: curlMarker,
+      ...env,
     },
   })
   return { environment, curlMarker, run }
@@ -322,5 +329,30 @@ describe('reproducible promotion setup', () => {
     await fixture.run()
 
     await expect(stat(fixture.curlMarker)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it.each(['setup_service', 'update_service'])('preserves every feature variable across %s and later promotions', async (command) => {
+    const fixture = await setupFixture()
+    await fixture.run({}, command)
+    const values = [
+      'AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on',
+      'AGENTIC_REMOTE_FEATURE_HOST_MONITOR=false',
+      'AGENTIC_REMOTE_FEATURE_SCHEDULER=1',
+      'AGENTIC_REMOTE_FEATURE_FUTURE_PREVIEW=off',
+    ]
+    for (const value of values) expect(await readFile(fixture.environment, 'utf8')).toContain(`${value}\n`)
+    await fixture.run({
+      AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER: 'off',
+      AGENTIC_REMOTE_FEATURE_ADDITIONAL: 'true',
+    }, command)
+    // The next setup has only the saved environment, as on downstream promotion.
+    await fixture.run({}, command)
+    const environment = await readFile(fixture.environment, 'utf8')
+    for (const value of [
+      ...values.slice(1),
+      'AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=off',
+      'AGENTIC_REMOTE_FEATURE_ADDITIONAL=true',
+    ]) expect(environment).toContain(`${value}\n`)
+    expect((await stat(fixture.environment)).mode & 0o777).toBe(0o600)
   })
 })

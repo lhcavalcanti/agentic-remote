@@ -101,6 +101,28 @@ describe('hub settings profile routes', () => {
     await app.close()
   })
 
+  it('persists validated preview preferences without accepting hub flags as preferences', async () => {
+    const store = await profileStore()
+    const app = await hub(store)
+    try {
+      const saved = await app.inject({
+        method: 'PATCH', url: '/api/settings', headers: local,
+        payload: { changes: { previewFeatures: { value: { composerRefresh: true, schedulerView: true }, baseRevision: 0 } } },
+      })
+      expect(saved.statusCode).toBe(200)
+      expect(saved.json().settings.values.previewFeatures).toEqual({ composerRefresh: true, schedulerView: true })
+      for (const value of [{ schedulerView: 'on' }, { scheduler: true }]) {
+        expect((await app.inject({
+          method: 'PATCH', url: '/api/settings', headers: local,
+          payload: { changes: { previewFeatures: { value, baseRevision: 1 } } },
+        })).statusCode).toBe(400)
+      }
+      expect(store.snapshot().revision).toBe(1)
+    } finally {
+      await app.close()
+    }
+  })
+
   it('imports only settings that were never chosen', async () => {
     const store = await profileStore()
     await store.update({ accent: { value: 'teal', baseRevision: 0 } })

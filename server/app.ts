@@ -7,6 +7,7 @@ import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
+import { readHubFeatureFlags } from '../shared/feature-flags.js'
 import type {
   HubEvent,
   VoiceBackendCapability,
@@ -157,6 +158,7 @@ export async function buildApp(
   proactiveCoordinator?: ManagerProactiveCoordinator
 }> {
   const role = options.role ?? 'hub'
+  const hubFlags = role === 'hub' ? readHubFeatureFlags(process.env) : undefined
   let publicDirectory: string | undefined
   let appVersion: AppVersion | undefined
   if (role === 'hub' && options.serveStatic) {
@@ -173,6 +175,7 @@ export async function buildApp(
     }
   }
   const app = Fastify({ logger: options.logger ?? true })
+  if (hubFlags) app.log.info({ hubFlags }, 'Hub feature flags')
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
   const voiceSelection = readOracleVoiceSelection()
   let voiceConfig: OracleVoiceConfig = { enabled: false }
@@ -541,6 +544,10 @@ export async function buildApp(
       },
     )
     if (managerAgent) pushService.attachOracle(managerAgent)
+    app.get('/api/features', async (_request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return { hubFlags }
+    })
     await registerManagerRoutes(
       app,
       managerAgent,

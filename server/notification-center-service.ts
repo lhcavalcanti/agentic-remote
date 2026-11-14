@@ -1,4 +1,5 @@
-import type { HubEvent, ManagedSession } from '../shared/contracts.js'
+import type { ComputerSummary, HubEvent, ManagedSession } from '../shared/contracts.js'
+import type { HostSnapshot } from '../shared/host-telemetry.js'
 import type { ManagerEvent } from '../shared/manager.js'
 import {
   defaultNotificationKindPreference,
@@ -7,6 +8,7 @@ import {
 } from '../shared/notification-center.js'
 import {
   classifyHubNotification,
+  classifyHostNotification,
   classifyOracleNotification,
 } from './notification-classifier.js'
 import { NotificationStore } from './notification-store.js'
@@ -62,6 +64,13 @@ export class NotificationCenterService implements NotificationRecorder {
       .filter((record) => this.inApp(record))))
     this.admissions.set(event, admitted)
     return admitted
+  }
+
+  host(computer: ComputerSummary, snapshot: HostSnapshot | undefined): Promise<void> {
+    const observation = structuredClone({ computer, snapshot })
+    return this.enqueue(() => this.store.ingest((cursors) =>
+      classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now())
+        .filter((record) => this.inApp(record))))
   }
 
   /** The native producer receives the original signal only after admission. */

@@ -1,6 +1,6 @@
 # Host monitor
 
-Status: Linux sampling, on-demand process inventory, and authenticated hub/node transport are implemented behind `AGENTIC_REMOTE_FEATURE_HOST_MONITOR=on` (default off). UI and Oracle integration remain planned.
+Status: Linux sampling, on-demand process inventory, authenticated hub/node transport, and Oracle's read-only status tool are implemented behind `AGENTIC_REMOTE_FEATURE_HOST_MONITOR=on` (default off). Optional resource alert records additionally require `AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on`. The monitor UI remains planned.
 
 ## Lifecycle and transport
 
@@ -23,7 +23,7 @@ Authenticated `/node-api/info` advertises `hostTelemetry: { version: 1, enabled 
 
 ## Process inventory
 
-`scanProcesses(context)` in `server/host-telemetry/processes.ts` returns `{ rows, truncated, othersCount, scannedAt }`. Transport reuses one context per computer for CPU deltas. There is no scanning timer: only a Processes HTTP request can request a scan. Requests are limited to once every five seconds per owning computer, even with live viewers; concurrent or early requests return 429 rather than starting extra work. No provider startup, process control, or persistence is involved.
+`scanProcesses(context)` in `server/host-telemetry/processes.ts` returns `{ rows, truncated, othersCount, scannedAt }`. Transport reuses one context per computer for CPU deltas. There is no scanning timer: only a Processes HTTP request or an explicit Oracle status read can request a scan. Requests are limited to once every five seconds per owning computer, even with live viewers; concurrent or early requests return 429 rather than starting extra work. No provider startup, process control, or persistence is involved.
 
 The scanner inspects at most 4,096 numeric `/proc` entries in PID order, using batches of 32 and yielding to the event loop between batches. Its default reader uses synchronous calls only for tiny per-process kernel metadata, avoiding the measured thread-pool overhead of thousands of asynchronous filesystem operations without holding the event loop for the whole scan. It filters by the process directory's UID against the current user's UID before reading details. `othersCount` counts other-user entries encountered within that bound, not an estimate of all processes on a truncated or permission-restricted host. Processes that vanish, become inaccessible, change UID, or change identity during a read are skipped. A scan is a bounded best-effort snapshot, not an atomic kernel view.
 
@@ -40,8 +40,28 @@ Start time is the kernel's `/proc/<pid>/stat` start tick count, not a wall-clock
 
 Attribution does not initialize providers or call SDK APIs. Terminal observation adds only best-effort stat reads when a newly proven pane/owner binding appears; it does not change tmux commands, launch behavior, readiness, or ownership decisions. Its failure cannot reject a terminal operation. The accessor only lists panes, with a timeout, and rechecks the recorded session process identity; it returns values rather than mutable controller state. Existing sessions not yet observed by this controller remain unattributed until normal terminal interaction proves their binding.
 
+## Oracle status reads
+
+`get_host_status({ computerId? })` uses `ComputerManager.hostTelemetryTarget`, the same path as the hub API; it never reads `/proc` directly. A computer ID or name selects one computer. Without it, the tool reads at most eight computers and reports omissions; the entire result is capped at 16,000 characters, with bounded names and a truncation notice. It reports hostname, hub/node role, the explicit WSL VM label, CPU, used/available memory, free space on the data mount, 1/5/15-minute load, and sample age. Samples older than 30 seconds are marked stale.
+
+The five highest-CPU visible processes include executable basename, PID, CPU, RSS, and conservative ownership. Only proven session-owned rows receive session links; shared runtimes never receive inferred session IDs. Partial inventories are labeled. The first process scan has no CPU baseline and therefore reports zero, as above. The existing five-second scan admission remains in force: a rate-limited or failed inventory is explicitly unavailable without discarding the host summary. Reads neither subscribe viewers nor change sampler cadence.
+
+The tool is read-only in Ask, Delegate, voice, and proactive turns. The production resolver returns a disabled response when the hub flag is off, without constructing a sampler or contacting nodes; Oracle can explain that status is “not available on this computer.” Older/disabled nodes receive the same explicit unavailable state with an update/enable instruction, and offline computers remain unavailable. Runtime errors and pairing details never enter the result. No process control or provider startup is involved.
+
+## Optional resource notifications
+
+Only a hub with both `hostMonitor` and `notificationCenter` enabled constructs `HostAlertMonitor`. It starts under `hostAlerts.start` and stops before notification storage is flushed. It polls snapshots through ComputerManager every 15 seconds after the previous poll settles, with at most four concurrent node reads. It never requests process inventories, opens live viewers, or raises idle sampling to one second. Missing capabilities, disabled nodes, connection failures, and offline computers provide unavailable observations rather than invented resource readings.
+
+Resource observations enter `NotificationCenterService.host` and the canonical notification classifier/store. They create warning-severity `host.alert` records only; they do not add a new push/native delivery path or change existing error-severity health alerts.
+
+- Memory must stay strictly above 90% for at least two minutes of fresh readings. A below-trigger reading resets a pending interval. An active episode recovers at or below 85%.
+- Disk free space on the data mount must be strictly below 5%; an active episode recovers at or above 7%.
+- Repeated samples and out-of-order samples cannot advance an episode. Samples older than 30 seconds or more than five seconds in the future are unusable. Missing readings or a gap over 45 seconds reset pending memory pressure.
+- One record is admitted per computer, condition, and episode. An episode's first qualifying sample anchors its stable identity. Recovery must occur before another episode can begin; a 30-minute per-computer/per-condition cooldown also prevents renewed episodes from alerting immediately. If pressure persists through the cooldown, the new episode may alert on the next fresh breached reading.
+- Episode, recovery, and cooldown cursors persist atomically with notification records. Hub restart, duplicate reads, and node reconnect do not resurrect read or dismissed records. Disabling either flag stops collection for these alerts; existing records remain intact.
+
 ## Planned integration
 
-The planned Processes UI will request inventory at most every five seconds only while that view is open. It will expose All, Agentic Remote, and Agent sessions filters with session links, executable names only, and no stop action. Oracle's read-only host-status tool, host alerting, final overhead gates, and the 48-hour soak remain planned. Isolated scan measurements do not establish the full sampler's overhead budget.
+The planned Processes UI will request inventory at most every five seconds only while that view is open. It will expose All, Agentic Remote, and Agent sessions filters with session links, executable names only, and no stop action. Final overhead gates and the 48-hour soak remain planned. Isolated scan measurements do not establish the full sampler's overhead budget.
 
 Browser fixtures recognize every host endpoint and the live message. `setupWorkspaceFixture(..., { hostMonitor: true })` provides fictional Studio/Build node snapshots, a 60-second ring, 24-hour history, and conservative process attribution; omitted/false keeps all host surfaces unavailable.

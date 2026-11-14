@@ -42,6 +42,13 @@ const cursorSchema = z.object({
   actions: z.array(z.string().max(1_024)).max(2).optional(),
   online: z.boolean().optional(),
   episode: z.number().int().nonnegative().optional(),
+  hostAlert: z.object({
+    sampleAt: timestamp.optional(),
+    since: timestamp.optional(),
+    active: z.boolean(),
+    notified: z.boolean(),
+    lastNotifiedAt: timestamp.optional(),
+  }).strict().optional(),
   touchedAt: timestamp,
 }).strict()
 const stateSchema = z.object({

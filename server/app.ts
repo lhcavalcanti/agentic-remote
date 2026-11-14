@@ -92,6 +92,7 @@ import { registerDreamerRoutes } from './dreamer-routes.js'
 import { DreamerService } from './dreamer-service.js'
 import { HostTelemetrySampler } from './host-telemetry/sampler.js'
 import { HostTelemetryService } from './host-telemetry/service.js'
+import { HostAlertMonitor } from './host-telemetry/alerts.js'
 import type { ProcessScanContext } from './host-telemetry/processes.js'
 import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
 import { SchedulerStore } from './scheduler-store.js'
@@ -172,6 +173,7 @@ export async function buildApp(
   scheduler?: SchedulerDispatcher
   proactiveCoordinator?: ManagerProactiveCoordinator
   hostTelemetry?: HostTelemetryService
+  hostAlerts?: HostAlertMonitor
 }> {
   const role = options.role ?? 'hub'
   const hubFlags = role === 'hub' ? readHubFeatureFlags(process.env) : undefined
@@ -347,6 +349,7 @@ export async function buildApp(
   let manager: ComputerManager | undefined
   let pushService: PushNotificationService | undefined
   let notificationCenter: NotificationCenterService | undefined
+  let hostAlerts: HostAlertMonitor | undefined
   let transcriptionService: TranscriptionService | undefined
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
@@ -403,6 +406,15 @@ export async function buildApp(
       })
       for (const computer of manager.listComputers()) {
         await notificationCenter.hub({ type: 'computer.updated', computer }, true)
+      }
+      if (hostTelemetry) {
+        const localTelemetry = hostTelemetry
+        hostAlerts = new HostAlertMonitor({
+          computers: () => manager!.listComputers(),
+          resolve: (computerId) => manager!.hostTelemetryTarget(computerId, localTelemetry),
+          notifications: notificationCenter,
+          warn: () => app.log.warn('Host resource alert observation failed'),
+        })
       }
     }
     if (notificationCenter) pushService.setRecorder(notificationCenter)
@@ -695,6 +707,7 @@ export async function buildApp(
     if (hostTelemetry) {
       await startupPhases.run('hostTelemetry.start', async () => hostTelemetry.start())
     }
+    if (hostAlerts) await startupPhases.run('hostAlerts.start', async () => hostAlerts.start())
     if (scheduler) await startupPhases.run('scheduler.start', () => scheduler!.start())
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
@@ -712,6 +725,7 @@ export async function buildApp(
   })
 
   app.addHook('onClose', async () => {
+    await hostAlerts?.stop()
     hostTelemetry?.stop()
     await scheduler?.stop()
     await cliCanary?.stop()
@@ -751,5 +765,6 @@ export async function buildApp(
     scheduler,
     proactiveCoordinator,
     hostTelemetry,
+    hostAlerts,
   }
 }

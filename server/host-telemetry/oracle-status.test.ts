@@ -123,7 +123,7 @@ describe('Oracle host status', () => {
       findComputer: (id: string) => computers.find((computer) => computer.id === id || computer.name === id),
       hostTelemetryTarget: resolve,
       messageSource: () => source, answerOnly: () => ask, now: () => new Date(now),
-    } as ManagerToolHost
+    } as unknown as ManagerToolHost
     const tool = createManagerTools(host, () => {}).find(({ name }) => name === 'get_host_status')!
     const result = await tool.handler({ computerId: 'Build node' }, {
       sessionId: 'manager', toolCallId: 'status', toolName: tool.name, arguments: {},
@@ -142,5 +142,21 @@ describe('Oracle host status', () => {
     const tool = createManagerTools(host, () => {}).find(({ name }) => name === 'get_host_status')!
     expect(await tool.handler({}, { sessionId: 'manager', toolCallId: 'status', toolName: tool.name, arguments: {} }))
       .toContain('not available on this computer; host monitoring is turned off.')
+  })
+
+  it('keeps unknown-computer failures bounded without attempting a host read', async () => {
+    const resolve = vi.fn(async () => target())
+    const host = {
+      computers: () => [{ ...computers[0], name: 'long'.repeat(100_000) }],
+      findComputer: () => undefined, hostTelemetryTarget: resolve,
+      messageSource: () => 'typed', now: () => new Date(now),
+    } as unknown as ManagerToolHost
+    const tool = createManagerTools(host, () => {}).find(({ name }) => name === 'get_host_status')!
+    const result = await tool.handler({ computerId: 'missing' }, {
+      sessionId: 'manager', toolCallId: 'status', toolName: tool.name, arguments: {},
+    })
+    expect(result).toMatchObject({ resultType: 'failure', textResultForLlm: expect.stringContaining('not available on this computer') })
+    expect(JSON.stringify(result).length).toBeLessThan(400)
+    expect(resolve).not.toHaveBeenCalled()
   })
 })

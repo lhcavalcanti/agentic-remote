@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import type { HubEvent, ManagedSession, SessionStatus } from '../shared/contracts.js'
+import type { ComputerSummary, HubEvent, ManagedSession, SessionStatus } from '../shared/contracts.js'
+import type { HostSnapshot } from '../shared/host-telemetry.js'
 import type { ManagerEvent } from '../shared/manager.js'
 import type { NotificationKind, NotificationRecord } from '../shared/notification-center.js'
 import { alertNotification, notificationBrief, ORACLE_NOTIFICATION_URL } from '../shared/notifications.js'
@@ -11,10 +12,21 @@ export interface NotificationCursor {
   actions?: string[]
   online?: boolean
   episode?: number
+  hostAlert?: {
+    sampleAt?: string
+    since?: string
+    active: boolean
+    notified: boolean
+    lastNotifiedAt?: string
+  }
   touchedAt: string
 }
 
 export type NotificationCursors = Record<string, NotificationCursor>
+export const HOST_ALERT_COOLDOWN_MS = 30 * 60_000
+export const HOST_ALERT_MEMORY_DURATION_MS = 2 * 60_000
+const HOST_ALERT_MAX_SAMPLE_AGE_MS = 30_000
+const HOST_ALERT_MAX_SAMPLE_GAP_MS = 45_000
 
 /** Length-delimited by JSON, so colons or other delimiters in IDs cannot alias. */
 export function notificationIdentity(kind: NotificationKind, ...parts: (string | undefined)[]): string {
@@ -135,6 +147,79 @@ export function classifyHubNotification(
     })]
   }
   return []
+}
+
+/** Resource episodes share canonical admission/deduplication, not health-error delivery. */
+export function classifyHostNotification(
+  computer: ComputerSummary,
+  snapshot: HostSnapshot | undefined,
+  cursors: NotificationCursors,
+  now: string,
+): NotificationRecord[] {
+  const nowMs = Date.parse(now)
+  const sampleAt = snapshot?.latest?.at
+  const sampleMs = sampleAt ? Date.parse(sampleAt) : NaN
+  const fresh = Number.isFinite(sampleMs) && sampleMs <= nowMs + 5000 && nowMs - sampleMs <= HOST_ALERT_MAX_SAMPLE_AGE_MS
+  const used = snapshot?.latest?.memoryUsedBytes
+  const total = snapshot?.info?.totalMemoryBytes
+  const disk = snapshot?.disk
+  const conditions = [
+    { name: 'memory', value: used != null && total ? used / total * 100 : null,
+      breached: (value: number) => value > 90, recovered: (value: number) => value <= 85,
+      duration: HOST_ALERT_MEMORY_DURATION_MS },
+    { name: 'disk', value: disk?.totalBytes ? disk.freeBytes / disk.totalBytes * 100 : null,
+      breached: (value: number) => value < 5, recovered: (value: number) => value >= 7, duration: 0 },
+  ]
+  const records: NotificationRecord[] = []
+  for (const condition of conditions) {
+    const key = JSON.stringify(['host-condition', computer.id, condition.name])
+    const before = cursors[key]?.hostAlert
+    const state = { active: false, notified: false, ...before }
+    if (!fresh || condition.value === null || !Number.isFinite(condition.value)) {
+      // Missing readings cannot prove two minutes of uninterrupted pressure.
+      if (state.since && !state.active) {
+        delete state.since
+        cursors[key] = { hostAlert: state, touchedAt: now }
+      }
+      continue
+    }
+    if (state.sampleAt && sampleMs <= Date.parse(state.sampleAt)) continue
+    if (!state.active && state.sampleAt && sampleMs - Date.parse(state.sampleAt) > HOST_ALERT_MAX_SAMPLE_GAP_MS) {
+      delete state.since
+    }
+    state.sampleAt = sampleAt
+    if (state.active && condition.recovered(condition.value)) {
+      state.active = false
+      state.notified = false
+      delete state.since
+    } else if (!state.active) {
+      if (condition.breached(condition.value)) {
+        state.since ??= sampleAt
+        state.active = sampleMs - Date.parse(state.since!) >= condition.duration
+      } else {
+        delete state.since
+      }
+    }
+    if (state.active && !state.notified && condition.breached(condition.value) &&
+        (!state.lastNotifiedAt || nowMs - Date.parse(state.lastNotifiedAt) >= HOST_ALERT_COOLDOWN_MS)) {
+      const memory = condition.name === 'memory'
+      records.push(record('host.alert', [computer.id, condition.name, state.since], {
+        computerId: computer.id,
+        severity: 'warning',
+        title: `${notificationBrief(computer.name)} · ${memory ? 'Memory pressure' : 'Low disk space'}`,
+        body: memory
+          ? `Memory usage stayed above 90% for at least 2 minutes (${condition.value.toFixed(1)}% used).`
+          : `The data mount has less than 5% free space (${condition.value.toFixed(1)}% free).`,
+        url: '/',
+        createdAt: now,
+        coalesceKey: JSON.stringify(['host-condition', computer.id, condition.name]),
+      }))
+      state.notified = true
+      state.lastNotifiedAt = now
+    }
+    cursors[key] = { hostAlert: state, touchedAt: now }
+  }
+  return records
 }
 
 /** Oracle's work inbox is not consumed or acknowledged by notification reads. */

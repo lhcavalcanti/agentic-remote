@@ -7,7 +7,7 @@ export const HOST_STATUS_MAX_LENGTH = 16_000
 const FIELD_LIMIT = 100
 
 function text(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f`[\]<>]/g, ' ').slice(0, FIELD_LIMIT)
+  return value.replace(/\p{Cc}|[`[\]<>]/gu, ' ').slice(0, FIELD_LIMIT)
 }
 
 function number(value: number | null | undefined, suffix = ''): string {
@@ -27,7 +27,8 @@ function owner(row: ProcessRow, computer: ComputerSummary): string {
     return `session [${text(row.sessionId)}](/?computer=${encodeURIComponent(computer.id)}&session=${encodeURIComponent(row.sessionId)})`
   }
   if (row.owner === 'shared-runtime') {
-    return row.label === 'Claude runtime' ? 'Claude runtime' : 'shared Copilot runtime'
+    return row.label === 'Claude runtime' ? 'Claude runtime'
+      : row.label === 'Shared Copilot runtime' ? 'shared Copilot runtime' : 'shared runtime (session ownership unproven)'
   }
   return row.owner === 'agentic-remote' ? 'Agentic Remote' : row.owner === 'session' ? 'session (link unavailable)' : 'other'
 }
@@ -48,6 +49,7 @@ function summary(computer: ComputerSummary, snapshot: HostSnapshot, now: number)
 function processes(computer: ComputerSummary, inventory: HostProcesses, now: number): string[] {
   return [
     `Top 5 processes by CPU (one core = 100%; inventory age ${number(Math.max(0, (now - Date.parse(inventory.scannedAt)) / 1000), 's')}):`,
+    'CPU uses scan deltas; the first scan has no baseline and reports 0%.',
     ...inventory.rows.slice().sort((left, right) => right.cpuPercent - left.cpuPercent || left.pid - right.pid)
       .slice(0, 5).map((row) => `- ${text(row.executable)} · PID ${row.pid} · ${number(row.cpuPercent, '%')} CPU · ${bytes(row.rssBytes)} RSS · ${owner(row, computer)}`),
     ...(!inventory.rows.length ? ['No visible processes.'] : []),
@@ -62,12 +64,11 @@ export async function oracleHostStatus(
   resolve: (computerId: string) => Promise<HostTelemetryTarget | undefined>,
   now: () => number,
 ): Promise<string> {
-  const sections: string[] = []
-  for (const computer of computers.slice(0, HOST_STATUS_MAX_COMPUTERS)) {
+  const sections = await Promise.all(computers.slice(0, HOST_STATUS_MAX_COMPUTERS).map(async (computer) => {
     const unavailable = `${text(computer.name)} (${text(computer.id)}): not available on this computer`
     try {
       const target = await resolve(computer.id)
-      if (!target) { sections.push(`${unavailable}; host monitoring is turned off.`); continue }
+      if (!target) return `${unavailable}; host monitoring is turned off.`
       const snapshot = await target.snapshot()
       const lines = summary(computer, snapshot, now())
       try {
@@ -75,18 +76,19 @@ export async function oracleHostStatus(
       } catch {
         lines.push('Processes not available on this computer right now; inventory may be rate limited. Try again after 5 seconds.')
       }
-      sections.push(lines.join('\n'))
+      return lines.join('\n')
     } catch (error) {
       const status = error && typeof error === 'object' && 'statusCode' in error ? error.statusCode : undefined
-      sections.push(`${unavailable}; ${status === 409
+      return `${unavailable}; ${status === 409
         ? 'update this computer or enable its host monitoring.'
-        : 'it may be offline or host monitoring is unavailable.'}`)
+        : 'it may be offline or host monitoring is unavailable.'}`
     }
-  }
+  }))
   if (computers.length > HOST_STATUS_MAX_COMPUTERS) {
     sections.push(`${computers.length - HOST_STATUS_MAX_COMPUTERS} computers omitted; pass computerId for a specific computer.`)
   }
   const result = sections.join('\n\n') || 'Host status: not available on this computer.'
   const notice = '\n[Host status truncated; pass computerId for a specific computer.]'
-  return result.length <= HOST_STATUS_MAX_LENGTH ? result : result.slice(0, HOST_STATUS_MAX_LENGTH - notice.length) + notice
+  const end = result.lastIndexOf('\n', HOST_STATUS_MAX_LENGTH - notice.length)
+  return result.length <= HOST_STATUS_MAX_LENGTH ? result : result.slice(0, Math.max(0, end)) + notice
 }

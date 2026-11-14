@@ -13,6 +13,7 @@ import { HostTelemetrySampler } from './sampler.js'
 import { HostTelemetryService } from './service.js'
 import type { ProcessScanContext } from './processes.js'
 import { HostTelemetrySocket, HOST_TELEMETRY_MAX_QUEUE_BYTES } from './socket.js'
+import { oracleHostStatus } from './oracle-status.js'
 
 const empty: HostSnapshot = { info: null, latest: null, live: [], disk: null }
 const inventory = { rows: [], truncated: false, othersCount: 0, scannedAt: '2026-11-14T06:00:00.000Z' }
@@ -332,6 +333,24 @@ describe('gated hub and authenticated node host transport', () => {
       expect((await node.app.inject({ url: `/node-api${route}` })).statusCode).toBe(401)
     }
     await expect(node.app.injectWS('/node-api/host/live')).rejects.toThrow('401')
+  })
+
+  it('lets Oracle read local and remote hosts through ComputerManager without live subscriptions', async () => {
+    const node = await make('node-fictional', { role: 'node' })
+    const hub = await make('hub-fictional')
+    await pair(hub, node)
+    await hub.app.ready()
+    const result = await oracleHostStatus(
+      hub.manager!.listComputers(),
+      (id) => hub.manager!.hostTelemetryTarget(id, hub.hostTelemetry!),
+      Date.now,
+    )
+    expect(result).toContain('hub-fictional · hub')
+    expect(result).toContain('node-fictional · node')
+    expect(node.scan).toHaveBeenCalledTimes(1)
+    expect(hub.scan).toHaveBeenCalledTimes(1)
+    expect(hub.hostTelemetry!.sampler.status().viewers).toBe(0)
+    expect(node.hostTelemetry!.sampler.status().viewers).toBe(0)
   })
 
   it('returns an actionable 409 for old nodes before HTTP reads or a live upgrade', async () => {

@@ -970,11 +970,17 @@ export function createManagerTools(
       z.object({
         computerId: computerField.optional().describe('Computer id or name; omit for a summary across computers.'),
       }).strict(),
-      async ({ computerId }) => oracleHostStatus(
-        computerId ? [requireComputer(computerId, false)] : host.computers(),
-        (id) => host.hostTelemetryTarget!(id),
-        () => host.now().getTime(),
-      ),
+      async ({ computerId }) => {
+        const computer = computerId ? host.findComputer(computerId) : undefined
+        if (computerId && !computer) {
+          throw new ToolFailure('Host status is not available on this computer; call list_computers for a valid computerId.')
+        }
+        return oracleHostStatus(
+          computer ? [computer] : host.computers(),
+          (id) => host.hostTelemetryTarget!(id),
+          () => host.now().getTime(),
+        )
+      },
     )] : []),
     define(
       'list_computers',

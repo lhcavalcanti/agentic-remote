@@ -543,11 +543,15 @@ Agentic Remote is available under the [MIT License](LICENSE).
 ```bash
 agentic-remote doctor --tunnel TUNNEL_ID
 agentic-remote status
+agentic-remote logs --why
+agentic-remote logs --why --since "1 hour ago" --json
 agentic-remote logs
 curl http://192.168.1.10:4317/api/health
 ```
 
 Start with `doctor` even if startup fails. It shows the last failed startup phase, or an unfinished phase when the service is not active, from the last two hours (up to 2,000 journal lines). Optional Claude auth is checked only when `CLAUDE_BIN` is configured or its default `~/.local/bin/claude` installation exists; Whisper assets are checked when their paths are configured, and local voice assets only with `AGENTIC_REMOTE_ORACLE_VOICE=on`. A recovered startup failure is a warning. Health probes stay on loopback; a non-loopback `HOST` is explicitly skipped. Use `doctor --help` for options.
+
+Use `logs --why` for the latest startup failure, unfinished startup while inactive, structured error, or systemd failure (in that priority order). It reads the last six hours, up to 2,000 journal lines, without needing a running service or reading environment files. It shows local timestamps, correlation keys, up to 20 preceding lines with the same session/request/phase/computer, other lines in the preceding two minutes, and up to five following lines. Obvious credentials are redacted; review output before sharing. `--since TIME` accepts journalctl times; `--json` emits `{failure, correlation, before, after}` with ISO timestamps (`failure: null` when none). Exit status is 0 with or without a failure, 2 for usage errors, and 1 if the journal cannot be read. Plain `logs` still follows the journal.
 
 The service runs provider startup, including session recovery, before it
 listens, so a stalled startup refuses connections; only recovery deferred by

@@ -291,7 +291,7 @@ describe('read-only doctor CLI', () => {
     ].join('\n'))
     const result = await context.run(['--json'], { TEST_ACTIVE: 'failed' })
     expect(result.code).toBe(1)
-    expect(check(result, 'startup')).toMatchObject({ status: 'fail', detail: 'Last failed startup phase: service.start' })
+    expect(check(result, 'startup')).toMatchObject({ status: 'fail', detail: 'Last failed startup phase: service.start; run agentic-remote logs --why' })
     expect(result.stdout).not.toContain('private')
     const recovered = await context.run()
     expect(recovered.code).toBe(0)
@@ -310,6 +310,7 @@ describe('read-only doctor CLI', () => {
     expect(check(await context.run(['--json'], { TEST_ACTIVE: 'inactive' }), 'startup')).toMatchObject({
       status: 'fail', detail: expect.stringContaining('copilot.start (begin without complete/fail'),
     })
+    expect(check(await context.run(['--json'], { TEST_ACTIVE: 'inactive' }), 'startup')?.detail).toContain('agentic-remote logs --why')
     expect(check(await context.run(), 'startup')?.status).toBe('ok')
   })
 

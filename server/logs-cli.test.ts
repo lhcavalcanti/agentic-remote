@@ -1,0 +1,337 @@
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import { promisify } from 'node:util'
+import { afterEach, describe, expect, it } from 'vitest'
+
+const exec = promisify(execFile)
+const CLI = new URL('../bin/agentic-remote', import.meta.url).pathname
+const roots: string[] = []
+const epoch = Date.parse('2026-11-13T21:00:00-08:00')
+type Log = string | Record<string, unknown>
+interface Explanation {
+  failure: { kind: string; time: string | null; message: string; line: string; phase?: string } | null
+  correlation: Record<string, string>
+  before: Array<{ block: string; time: string | null; message: string }>
+  after: Array<{ block: string; time: string | null; message: string }>
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+const journalLine = (message: Log, seconds = 0) => JSON.stringify({
+  __REALTIME_TIMESTAMP: String((epoch + seconds * 1000) * 1000),
+  MESSAGE: typeof message === 'string' ? message : JSON.stringify(message),
+})
+
+async function fixture(lines: string[] = []) {
+  const parent = path.join(process.cwd(), '.agentic-remote')
+  await mkdir(parent, { recursive: true })
+  const root = await mkdtemp(path.join(parent, 'logs-test-'))
+  roots.push(root)
+  const bin = path.join(root, 'bin')
+  const calls = path.join(root, 'calls')
+  const journal = path.join(root, 'journal')
+  const environment = path.join(root, '.config/agentic-remote/environment')
+  await mkdir(bin, { recursive: true })
+  await mkdir(path.dirname(environment), { recursive: true })
+  for (const command of ['bash', 'readlink', 'dirname', 'cat']) {
+    await symlink(`/usr/bin/${command}`, path.join(bin, command))
+  }
+  await symlink(process.execPath, path.join(bin, 'node'))
+  const stub = async (command: string, body: string) => {
+    await writeFile(path.join(bin, command), `#!/usr/bin/env bash\nprintf '%s\\n' '${command}'" $*" >>"$TEST_CALLS"\n${body}\n`, { mode: 0o755 })
+  }
+  await stub('journalctl', [
+    'if [[ "$*" == "--user --unit agentic-remote.service --follow" ]]; then echo "following fixture"; exit 0; fi',
+    '[[ "$*" == "--user --unit agentic-remote.service -o json --since $TEST_SINCE --no-pager -n 2000" ]] || exit 99',
+    'if [[ -n "${TEST_JOURNAL_ERROR:-}" ]]; then printf "%s\\n" "$TEST_JOURNAL_ERROR" >&2; exit "${TEST_JOURNAL_STATUS:-1}"; fi',
+    'while IFS= read -r line; do printf "%s\\n" "$line"; done <"$TEST_JOURNAL"',
+  ].join('\n'))
+  await stub('systemctl', [
+    '[[ "$*" == "--user is-active agentic-remote.service" ]] || exit 99',
+    'echo "${TEST_ACTIVE:-inactive}"',
+    '[[ "${TEST_ACTIVE:-inactive}" == active ]]',
+  ].join('\n'))
+  await writeFile(journal, lines.length ? lines.join('\n') + '\n' : '')
+  await writeFile(calls, '')
+  await writeFile(environment, 'TOKEN=environment-must-not-be-printed\n', { mode: 0o600 })
+  const run = async (args = ['--why', '--json'], overrides: NodeJS.ProcessEnv = {}) => {
+    try {
+      const { stdout, stderr } = await exec(CLI, ['logs', ...args], {
+        env: {
+          HOME: root, PATH: bin, TZ: 'America/Los_Angeles', LANG: 'en_US.UTF-8',
+          TEST_CALLS: calls, TEST_JOURNAL: journal, TEST_SINCE: '-6h', ...overrides,
+        },
+        timeout: 20000,
+      })
+      return { code: 0, stdout, stderr }
+    } catch (error) {
+      const failure = error as { code?: number; stdout?: string; stderr?: string }
+      return { code: failure.code ?? 1, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '' }
+    }
+  }
+  return { root, bin, calls, journal, environment, run }
+}
+
+const explanation = (result: { stdout: string }) => JSON.parse(result.stdout) as Explanation
+
+describe('read-only logs explanation CLI', () => {
+  it('explains the latest startup failure with phase context, a two-minute window, and following lines', async () => {
+    const context = await fixture([
+      journalLine({ startupPhase: 'copilot.sdk', event: 'fail' }, -600),
+      journalLine({ startupPhase: 'copilot.sdk', event: 'begin' }, -180),
+      journalLine('too old for the window', -121),
+      journalLine('inside the window', -120),
+      journalLine({ startupPhase: 'copilot.sdk', event: 'fail', error: 'Error', code: 'ECONNREFUSED' }),
+      journalLine('service stopped', 1),
+    ])
+    const result = await context.run()
+    expect(result.code).toBe(0)
+    expect(result.stderr).toBe('')
+    const output = explanation(result)
+    expect(Object.keys(output)).toEqual(['failure', 'correlation', 'before', 'after'])
+    expect(output.failure).toMatchObject({
+      kind: 'startup', phase: 'copilot.sdk', time: '2026-11-14T05:00:00.000Z',
+      message: 'Failed startup phase: copilot.sdk',
+    })
+    expect(output.correlation).toEqual({ phase: 'copilot.sdk' })
+    expect(output.before.map((line) => [line.block, line.message])).toEqual([
+      ['same phase', '{"startupPhase":"copilot.sdk","event":"fail"}'],
+      ['same phase', '{"startupPhase":"copilot.sdk","event":"begin"}'],
+      ['time window', 'inside the window'],
+    ])
+    expect(output.after).toEqual([{ block: 'after', time: '2026-11-14T05:00:01.000Z', message: 'service stopped' }])
+    const human = await context.run(['--why'])
+    expect(human.stdout).toContain('11/13/2026, 9:00:00 PM PST')
+    expect(human.stdout).toContain('Correlation: phase=copilot.sdk')
+    for (const label of ['[same phase]', '[time window]', '[after]']) expect(human.stdout).toContain(label)
+    expect(human.stdout).not.toContain('too old for the window')
+    expect(await readFile(context.calls, 'utf8')).not.toContain('systemctl')
+  })
+
+  it('finds an error correlated by session with all available identifiers, even outside the time window', async () => {
+    const context = await fixture([
+      journalLine({ level: 30, sessionId: 'session-a', msg: 'queued' }, -300),
+      journalLine({ level: 30, sessionId: 'session-b', msg: 'other session' }, -200),
+      journalLine({ level: 50, sessionId: 'session-a', computerId: 'computer-a', reqId: 'req-a', msg: 'Send failed', err: { message: 'offline' } }),
+      journalLine({ level: 60, sessionId: 'session-b', msg: 'Newer failure' }, 10),
+    ])
+    const output = explanation(await context.run())
+    expect(output.failure).toMatchObject({ kind: 'error', message: 'Newer failure' })
+    expect(output.correlation).toEqual({ sessionId: 'session-b' })
+    expect(output.before[0]).toMatchObject({ block: 'same session', message: expect.stringContaining('other session') })
+    await writeFile(context.journal, [
+      journalLine({ level: 30, sessionId: 'session-a', msg: 'queued' }, -300),
+      journalLine({ level: 50, sessionId: 'session-a', computerId: 'computer-a', reqId: 'req-a', msg: 'Send failed' }),
+    ].join('\n') + '\n')
+    const session = explanation(await context.run())
+    expect(session.correlation).toEqual({ sessionId: 'session-a', computerId: 'computer-a', requestId: 'req-a' })
+    expect(session.before[0]).toMatchObject({ block: 'same session', message: expect.stringContaining('queued') })
+  })
+
+  it.each([
+    { err: { message: 'err-only failure' } },
+    { level: 'error', msg: 'named level failure' },
+    { type: 'error', message: 'event failure' },
+  ])('recognizes structured error shapes: %j', async (item) => {
+    const context = await fixture([journalLine(item)])
+    expect(explanation(await context.run()).failure?.kind).toBe('error')
+  })
+
+  it.each([
+    ['reqId', 'req-1', 'same request', 'requestId'],
+    ['computerId', 'node-1', 'same computer', 'computerId'],
+    ['session_id', 'session-1', 'same session', 'sessionId'],
+  ])('correlates %s records without a phase', async (key, value, block, normalized) => {
+    const context = await fixture([
+      journalLine({ [key]: value, msg: 'before' }, -500),
+      journalLine({ level: 50, [key]: value, msg: 'failure' }),
+    ])
+    const output = explanation(await context.run())
+    expect(output.correlation).toEqual({ [normalized]: value })
+    expect(output.before[0]?.block).toBe(block)
+  })
+
+  it.each([
+    'agentic-remote.service: Main process exited, code=exited, status=1/FAILURE',
+    'agentic-remote.service: Main process exited, code=killed, status=9/KILL',
+    "agentic-remote.service: Failed with result 'exit-code'.",
+    'agentic-remote.service: Start request repeated too quickly.',
+  ])('explains a unit-only failure: %s', async (message) => {
+    const context = await fixture([journalLine('starting', -1), journalLine(message)])
+    const output = explanation(await context.run())
+    expect(output.failure).toMatchObject({ kind: 'unit', message })
+    expect(output.correlation).toEqual({})
+    expect(output.before).toEqual([{ block: 'time window', time: '2026-11-14T04:59:59.000Z', message: 'starting' }])
+  })
+
+  it('uses the last unfinished nested startup only when the unit is not active', async () => {
+    const context = await fixture([
+      journalLine({ startupPhase: 'service.start', event: 'begin' }, -5),
+      journalLine({ startupPhase: 'copilot.start', event: 'begin' }, -4),
+      journalLine({ startupPhase: 'copilot.sdk', event: 'begin' }, -3),
+      journalLine({ startupPhase: 'copilot.sdk', event: 'complete' }, -2),
+    ])
+    expect(explanation(await context.run()).failure).toMatchObject({ kind: 'unfinished-startup', phase: 'copilot.start' })
+    expect(await readFile(context.calls, 'utf8')).toContain('systemctl --user is-active agentic-remote.service')
+    expect(explanation(await context.run(undefined, { TEST_ACTIVE: 'active' })).failure).toBeNull()
+    await rm(path.join(context.bin, 'systemctl'))
+    expect(explanation(await context.run()).failure).toBeNull()
+  })
+
+  it('clears unfinished phases on a new app.build and prioritizes startup failures over later errors', async () => {
+    const context = await fixture([
+      journalLine({ startupPhase: 'copilot.sdk', event: 'begin' }, -600),
+      journalLine({ startupPhase: 'app.build', event: 'begin' }, -5),
+      journalLine({ startupPhase: 'app.build', event: 'complete' }, -4),
+    ])
+    expect(explanation(await context.run()).failure).toBeNull()
+    await writeFile(context.journal, [
+      journalLine({ startupPhase: 'fastify.listen', event: 'fail' }, -2),
+      journalLine({ startupPhase: 'app.build', event: 'begin' }, -1),
+      journalLine({ level: 50, msg: 'later error' }),
+    ].join('\n') + '\n')
+    expect(explanation(await context.run()).failure).toMatchObject({ kind: 'startup', phase: 'fastify.listen' })
+  })
+
+  it('caps same-key context at 20 and following context at 5 without duplicating window lines', async () => {
+    const context = await fixture([
+      ...Array.from({ length: 25 }, (_, index) => journalLine({ sessionId: 'session', msg: `before-${index}` }, index - 500)),
+      journalLine({ level: 50, sessionId: 'session', msg: 'failure' }),
+      ...Array.from({ length: 10 }, (_, index) => journalLine(`after-${index}`, index + 1)),
+    ])
+    const output = explanation(await context.run())
+    expect(output.before).toHaveLength(20)
+    expect(output.before[0].message).toContain('before-5')
+    expect(output.after).toHaveLength(5)
+    expect(output.after.at(-1)?.message).toBe('after-4')
+    await writeFile(context.journal, [
+      journalLine({ sessionId: 'session', msg: 'nearby' }, -1),
+      journalLine({ level: 50, sessionId: 'session', msg: 'failure' }),
+    ].join('\n') + '\n')
+    expect(explanation(await context.run()).before).toHaveLength(1)
+  })
+
+  it('redacts credentials in structured fields, raw messages, correlation, and every output block', async () => {
+    const secrets = ['before-token', 'basic-value', 'pair-secret', 'auth-secret', 'pass-secret', 'header-secret', 'after-token']
+    const context = await fixture([
+      journalLine({ sessionId: 'session', token: secrets[0], msg: `Authorization: Basic ${secrets[1]}` }, -300),
+      journalLine(`pairing token="${secrets[2]}" Authorization: Bearer ${secrets[3]} password=${secrets[4]}`, -1),
+      journalLine({
+        level: 50, sessionId: 'session', msg: 'request failed',
+        err: { headers: { Authorization: secrets[5] }, pairingToken: secrets[2], password: secrets[4] },
+      }),
+      journalLine(`access_token=${secrets[6]}`, 1),
+    ])
+    for (const args of [['--why'], ['--why', '--json']]) {
+      const result = await context.run(args)
+      expect(result.code).toBe(0)
+      expect(result.stdout).toContain('[REDACTED]')
+      for (const secret of secrets) expect(result.stdout).not.toContain(secret)
+      expect(result.stdout).not.toContain('environment-must-not-be-printed')
+    }
+    await writeFile(context.journal, journalLine({ level: 50, sessionId: 'Bearer correlation-secret', msg: 'token="failure-secret"' }) + '\n')
+    const result = await context.run()
+    expect(result.stdout).not.toContain('correlation-secret')
+    expect(result.stdout).not.toContain('failure-secret')
+  })
+
+  it('does not execute log text, read environment contents, or modify fixture inputs', async () => {
+    const context = await fixture()
+    const marker = path.join(context.root, 'must-not-exist')
+    const journal = journalLine({ level: 50, msg: `$(printf unexpected >"${marker}")` }) + '\n'
+    await writeFile(context.journal, journal)
+    const result = await context.run()
+    expect(result.code).toBe(0)
+    expect(await readFile(context.journal, 'utf8')).toBe(journal)
+    expect(await readFile(context.environment, 'utf8')).toBe('TOKEN=environment-must-not-be-printed\n')
+    await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect((await readFile(context.calls, 'utf8')).trim().split('\n')).toEqual([
+      'journalctl --user --unit agentic-remote.service -o json --since -6h --no-pager -n 2000',
+    ])
+  })
+
+  it('reports no failure without an error, including a clean unit exit', async () => {
+    const context = await fixture([
+      journalLine({ level: 30, msg: 'healthy' }),
+      journalLine('agentic-remote.service: Main process exited, code=exited, status=0/SUCCESS'),
+    ])
+    const human = await context.run(['--why'])
+    expect(human).toMatchObject({ code: 0, stdout: 'No failure found in -6h\n', stderr: '' })
+    expect(explanation(await context.run())).toEqual({ failure: null, correlation: {}, before: [], after: [] })
+  })
+
+  it('supports empty journals and timestamp-free structured lines without inventing wall-clock times', async () => {
+    const context = await fixture()
+    expect(explanation(await context.run()).failure).toBeNull()
+    await writeFile(context.journal, '{"startupPhase":"copilot.sdk","event":"fail","elapsedMs":500}\n')
+    expect(explanation(await context.run()).failure?.time).toBeNull()
+    expect((await context.run(['--why'])).stdout).toContain('time unavailable')
+  })
+
+  it('uses a pino timestamp when journal metadata has no timestamp and prefers an error over a unit failure', async () => {
+    const context = await fixture([
+      JSON.stringify({ level: 50, time: epoch, reqId: 'request', msg: 'request failed' }),
+      journalLine("agentic-remote.service: Failed with result 'exit-code'.", 1),
+    ])
+    expect(explanation(await context.run()).failure).toMatchObject({
+      kind: 'error', time: '2026-11-14T05:00:00.000Z', message: 'request failed',
+    })
+  })
+
+  it('passes journal time expressions as a single literal argument', async () => {
+    const context = await fixture()
+    const result = await context.run(['--why', '--since', '1 hour ago'], { TEST_SINCE: '1 hour ago' })
+    expect(result).toMatchObject({ code: 0, stdout: 'No failure found in 1 hour ago\n' })
+  })
+
+  it.each([
+    ['--why', '--unknown'],
+    ['--why', 'extra'],
+    ['--why', '--since'],
+    ['--why', '--since', ''],
+    ['--why', '--since', '-x'],
+    ['--why', '--since', '--json'],
+    ['--json'],
+    ['--since', '-1h'],
+  ])('rejects invalid arguments without reading the journal: %j', async (...args) => {
+    const context = await fixture()
+    expect((await context.run(args)).code).toBe(2)
+    expect(await readFile(context.calls, 'utf8')).toBe('')
+  })
+
+  it('fails with exit 1 if journalctl or Node is missing', async () => {
+    const context = await fixture()
+    await rm(path.join(context.bin, 'journalctl'))
+    const missingJournal = await context.run()
+    expect(missingJournal.code).toBe(1)
+    expect(missingJournal.stdout).toBe('')
+    expect(missingJournal.stderr).toContain('user journal could not be read')
+    await rm(path.join(context.bin, 'node'))
+    expect((await context.run()).code).toBe(1)
+  })
+
+  it.each([1, 0])('fails for an unreadable journal even if journalctl exits %s', async (status) => {
+    const context = await fixture()
+    const result = await context.run(undefined, {
+      TEST_JOURNAL_ERROR: 'No journal files were opened due to insufficient permissions. token=not-for-output',
+      TEST_JOURNAL_STATUS: String(status),
+    })
+    expect(result.code).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.stderr).not.toContain('not-for-output')
+  })
+
+  it('preserves no-option journal following and documents read-only options without querying anything', async () => {
+    const context = await fixture()
+    expect(await context.run([])).toMatchObject({ code: 0, stdout: 'following fixture\n', stderr: '' })
+    const help = await context.run(['--help'])
+    expect(help.code).toBe(0)
+    expect(help.stdout).toContain('--since TIME')
+    expect(help.stdout).toContain('--json')
+    expect(help.stdout).toContain('No environment files are read')
+    expect((await readFile(context.calls, 'utf8')).trim()).toBe('journalctl --user --unit agentic-remote.service --follow')
+  })
+})

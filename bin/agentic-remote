@@ -34,8 +34,8 @@ Commands:
       Show service status.
   doctor [--json] [--tunnel ID]
       Diagnose the installation without changing it, even with the service down.
-  logs
-      Follow service logs.
+  logs [--why [--since TIME] [--json]]
+      Follow service logs, or explain the last failure without changing anything.
   update
       Pull the current branch, install dependencies, build, and restart.
   rollback
@@ -64,6 +64,219 @@ config_value() {
     return
   fi
   sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1
+}
+
+diagnostic_node() {
+  {
+    cat <<'NODE'
+const fs = require('node:fs')
+const path = require('node:path')
+const { spawnSync } = require('node:child_process')
+const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
+const parseRecord = (line) => {
+  try { const value = JSON.parse(line); return record(value) ? value : undefined } catch {}
+}
+const text = (value) => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim().slice(0, 500)
+const executable = (name) => {
+  for (const candidate of name.includes('/') ? [name] :
+    (process.env.PATH || '').split(path.delimiter).map((directory) => path.join(directory, name))) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK)
+      if (fs.statSync(candidate).isFile()) return candidate
+    } catch {}
+  }
+}
+const run = (binary, args) => spawnSync(binary, args, {
+  encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
+  stdio: ['ignore', 'pipe', 'pipe'],
+})
+const success = (result) => !result.error && result.status === 0
+function startupSignals(items) {
+  const pending = new Map()
+  let lastFailure
+  for (const [index, item] of items.entries()) {
+    if (!record(item) || typeof item.startupPhase !== 'string' ||
+      !/^[A-Za-z0-9._-]{1,128}$/.test(item.startupPhase)) continue
+    if (item.startupPhase === 'app.build' && item.event === 'begin') pending.clear()
+    if (item.event === 'begin') pending.set(item.startupPhase, { phase: item.startupPhase, index })
+    if (item.event === 'complete' || item.event === 'fail') pending.delete(item.startupPhase)
+    if (item.event === 'fail') lastFailure = { phase: item.startupPhase, index }
+  }
+  return { lastFailure, unfinished: [...pending.values()].at(-1) }
+}
+NODE
+    cat
+  } | node - "$@"
+}
+
+logs() {
+  if (($# == 0)); then
+    exec journalctl --user --unit "$SERVICE_NAME" --follow
+  fi
+  local why="false" json="false" since="-6h"
+  while (($# > 0)); do
+    case "$1" in
+      --why)
+        why="true"
+        shift
+        ;;
+      --json)
+        json="true"
+        shift
+        ;;
+      --since)
+        if (($# < 2)) || [[ -z "$2" || ( "$2" == -* && ! "$2" =~ ^-[0-9] ) ]]; then
+          printf '%s\n' 'agentic-remote: --since requires a journalctl time' >&2
+          return 2
+        fi
+        since="$2"
+        shift 2
+        ;;
+      --help | -h)
+        cat <<'EOF'
+Usage: agentic-remote logs [--why [--since TIME] [--json]]
+
+No options: follow the service journal, unchanged.
+  --why         Explain the last startup, structured error, or unit failure.
+  --since TIME  Journal time window (default: -6h); requires --why.
+  --json        Emit {failure, correlation, before:[...], after:[...]}; requires --why.
+  --help, -h    Show this help.
+
+Reads up to 2000 journal lines, even with the service down. Shows up to 20
+preceding lines with the same session/request/phase/computer, remaining lines
+in the preceding 2-minute window, and up to 5 following lines. Human times are
+local; JSON times are ISO timestamps. Obvious secrets are redacted.
+No environment files are read, no network probes run, and nothing is changed.
+Exit 0 with or without a failure, 2 for usage errors, 1 if the journal cannot
+be read (or Node.js is unavailable).
+EOF
+        return
+        ;;
+      *)
+        printf '%s\n' 'agentic-remote: unknown logs option; see logs --help' >&2
+        return 2
+        ;;
+    esac
+  done
+  if [[ "$why" != "true" ]]; then
+    printf '%s\n' 'agentic-remote: logs options require --why; see logs --help' >&2
+    return 2
+  fi
+  require_command node
+  diagnostic_node "$SERVICE_NAME" "$since" "$json" <<'NODE'
+const [serviceName, since, json] = process.argv.slice(2)
+function redact(value) {
+  if (Array.isArray(value)) return value.map(redact)
+  if (record(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key, /token|authorization|password|passwd|secret|api[_-]?key|cookie|credential/i.test(key) ? '[REDACTED]' : redact(item),
+  ]))
+  if (typeof value !== 'string') return value
+  return value
+    .replace(/(\b(?:proxy-)?authorization["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+)?[^\s,;"'}]+/gi, '$1[REDACTED]')
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
+    .replace(/(\b[\w.-]*(?:token|password|passwd|secret|api[_-]?key|credential)[\w.-]*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&}]+)/gi, '$1[REDACTED]')
+    .replace(/(--[\w-]*(?:token|password|secret|api-key)[\w-]*\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{12,}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g, '[REDACTED]')
+}
+const clean = (value) => text(redact(value))
+const lineText = (value) => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim().slice(0, 2000)
+function timestamp(journal, item) {
+  const micros = journal?.__REALTIME_TIMESTAMP || journal?._SOURCE_REALTIME_TIMESTAMP
+  const value = micros ? Number(micros) / 1000 : item?.time ?? item?.timestamp
+  if (value === undefined || value === null) return null
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+function correlations(item) {
+  const output = {}
+  for (const [key, aliases] of Object.entries({
+    sessionId: ['sessionId', 'session_id'],
+    computerId: ['computerId', 'computer_id'],
+    requestId: ['requestId', 'reqId', 'request_id'],
+    phase: ['startupPhase', 'phase'],
+  })) {
+    const value = aliases.map((alias) => item?.[alias]).find((value) => typeof value === 'string' && value.trim())
+    if (value) output[key] = value
+  }
+  return output
+}
+function explain() {
+  if (!executable('journalctl')) throw new Error()
+  const journal = run('journalctl', ['--user', '--unit', serviceName, '-o', 'json', '--since', since, '--no-pager', '-n', '2000'])
+  if (!success(journal) || /permission denied|insufficient permissions|not permitted/i.test(journal.stderr)) throw new Error()
+  const entries = journal.stdout.split('\n').filter((line) => line.trim()).slice(-2000).map((line) => {
+    const envelope = parseRecord(line)
+    const message = typeof envelope?.MESSAGE === 'string' ? envelope.MESSAGE : line
+    const item = parseRecord(message)
+    return { item, message, time: timestamp(envelope, item), correlation: correlations(item) }
+  })
+  const { lastFailure, unfinished } = startupSignals(entries.map((entry) => entry.item))
+  let signal = lastFailure && { ...lastFailure, kind: 'startup' }
+  if (!signal && unfinished) {
+    const state = run('systemctl', ['--user', 'is-active', serviceName])
+    // Unknown state is not evidence that a running phase is unfinished.
+    if (!state.error && state.status !== 0 && /^(inactive|failed|deactivating)$/.test(state.stdout.trim())) {
+      signal = { ...unfinished, kind: 'unfinished-startup' }
+    }
+  }
+  if (!signal) {
+    const index = entries.findLastIndex(({ item }) => item && (
+      Number(item.level) >= 50 || /^(error|fatal)$/i.test(item.level) || item.err != null || item.type === 'error'
+    ))
+    if (index >= 0) signal = { index, kind: 'error' }
+  }
+  if (!signal) {
+    const index = entries.findLastIndex(({ item, message }) => !item &&
+      /\bFailed with result\b|\bStart request repeated too quickly\b|\bFailed to start\b|\bcode=(?:killed|dumped)\b|\bstatus=[1-9]\d*(?:\/|\b)/i.test(message))
+    if (index >= 0) signal = { index, kind: 'unit' }
+  }
+  if (!signal) return { failure: null, correlation: {}, before: [], after: [] }
+  const entry = entries[signal.index]
+  const summary = entry.item?.msg ?? entry.item?.message ?? entry.item?.err?.message ?? entry.message
+  const failure = {
+    kind: signal.kind, time: entry.time,
+    message: clean(signal.phase
+      ? `${signal.kind === 'startup' ? 'Failed' : 'Unfinished'} startup phase: ${signal.phase}${signal.kind === 'unfinished-startup' ? ' (begin without complete/fail; service not active)' : ''}`
+      : typeof summary === 'string' ? summary : JSON.stringify(redact(summary))),
+    ...(signal.phase ? { phase: clean(signal.phase) } : {}),
+    line: lineText(entry.item ? JSON.stringify(redact(entry.item)) : redact(entry.message)),
+  }
+  const preceding = entries.slice(0, signal.index)
+  const key = ['sessionId', 'requestId', 'phase', 'computerId'].find((key) => entry.correlation[key])
+  const label = { sessionId: 'same session', requestId: 'same request', phase: 'same phase', computerId: 'same computer' }[key]
+  const same = key ? preceding.filter((item) => item.correlation[key] === entry.correlation[key]).slice(-20) : []
+  const nearby = preceding.filter((item) => !same.includes(item) && entry.time && item.time &&
+    Date.parse(item.time) >= Date.parse(entry.time) - 120000 && Date.parse(item.time) <= Date.parse(entry.time))
+  const output = (item, block) => ({
+    block, time: item.time, message: lineText(item.item ? JSON.stringify(redact(item.item)) : redact(item.message)),
+  })
+  return {
+    failure, correlation: redact(entry.correlation),
+    before: [...same.map((item) => output(item, label)), ...nearby.map((item) => output(item, 'time window'))],
+    after: entries.slice(signal.index + 1, signal.index + 6).map((item) => output(item, 'after')),
+  }
+}
+try {
+  const result = explain()
+  if (json === 'true') console.log(JSON.stringify(result))
+  else if (!result.failure) console.log(`No failure found in ${clean(since)}`)
+  else {
+    const localTime = (time) => time ? new Date(time).toLocaleString(undefined, { timeZoneName: 'short' }) : 'time unavailable'
+    console.log(`Failure · ${localTime(result.failure.time)}\n${result.failure.message}`)
+    console.log(`  ${result.failure.line}`)
+    const keys = Object.entries(result.correlation)
+    if (keys.length) console.log(`Correlation: ${keys.map(([key, value]) => `${key}=${clean(value)}`).join(' · ')}`)
+    let block
+    for (const item of [...result.before, ...result.after]) {
+      if (item.block !== block) { block = item.block; console.log(`\n[${block}]`) }
+      console.log(`  ${localTime(item.time)}  ${item.message}`)
+    }
+  }
+} catch {
+  console.error('agentic-remote: user journal could not be read; check journalctl availability, permissions, and --since')
+  process.exitCode = 1
+}
+NODE
 }
 
 doctor() {
@@ -111,33 +324,14 @@ EOF
     return 1
   fi
 
-  node - "$REPO_ROOT" "$ENV_FILE" "$SERVICE_FILE" "$SERVICE_NAME" "$json" "$tunnel" <<'NODE'
-const fs = require('node:fs')
-const path = require('node:path')
+  diagnostic_node "$REPO_ROOT" "$ENV_FILE" "$SERVICE_FILE" "$SERVICE_NAME" "$json" "$tunnel" <<'NODE'
 const http = require('node:http')
 const { isIP } = require('node:net')
-const { spawnSync } = require('node:child_process')
 const [repository, environmentFile, serviceFile, serviceName, json, tunnelOption] = process.argv.slice(2)
 const results = []
-const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
-const text = (value) => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim().slice(0, 500)
 const add = (check, status, detail) => results.push({ check, status, detail: text(detail) })
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'))
 const metadata = (file) => { try { return fs.statSync(file) } catch { return undefined } }
-const executable = (name) => {
-  for (const candidate of name.includes('/') ? [name] :
-    (process.env.PATH || '').split(path.delimiter).map((directory) => path.join(directory, name))) {
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK)
-      if (fs.statSync(candidate).isFile()) return candidate
-    } catch {}
-  }
-}
-const run = (binary, args) => spawnSync(binary, args, {
-  encoding: 'utf8', timeout: 10000, maxBuffer: 1024 * 1024,
-  stdio: ['ignore', 'pipe', 'pipe'],
-})
-const success = (result) => !result.error && result.status === 0
 const configured = new Map()
 let environmentError
 try {
@@ -407,25 +601,13 @@ function startupCheck(active) {
   if (!executable('journalctl')) return add('startup', 'skip', 'journalctl is not on PATH')
   const journal = run('journalctl', ['--user', '--unit', serviceName, '-o', 'cat', '--since', '-2h', '--no-pager', '-n', '2000'])
   if (!success(journal)) return add('startup', 'warn', 'Recent user journal could not be read')
-  const pending = new Map()
-  let lastFailure
-  let index = 0
-  for (const line of journal.stdout.split('\n')) {
-    let item
-    try { item = JSON.parse(line) } catch { continue }
-    if (!record(item) || typeof item.startupPhase !== 'string' ||
-      !/^[A-Za-z0-9._-]{1,128}$/.test(item.startupPhase)) continue
-    if (item.startupPhase === 'app.build' && item.event === 'begin') pending.clear()
-    if (item.event === 'begin') pending.set(item.startupPhase, { phase: item.startupPhase, index })
-    if (item.event === 'complete' || item.event === 'fail') pending.delete(item.startupPhase)
-    if (item.event === 'fail') lastFailure = { phase: item.startupPhase, index }
-    index++
-  }
-  const unfinished = !active ? [...pending.values()].at(-1) : undefined
+  const signals = startupSignals(journal.stdout.split('\n').map(parseRecord))
+  const lastFailure = signals.lastFailure
+  const unfinished = !active ? signals.unfinished : undefined
   if (unfinished && (!lastFailure || unfinished.index > lastFailure.index)) {
-    add('startup', 'fail', `Last unfinished startup phase: ${unfinished.phase} (begin without complete/fail; service not active)`)
+    add('startup', 'fail', `Last unfinished startup phase: ${unfinished.phase} (begin without complete/fail; service not active); run agentic-remote logs --why`)
   } else if (lastFailure) {
-    add('startup', active ? 'warn' : 'fail', `Last failed startup phase: ${lastFailure.phase}${active ? ' (service is now active)' : ''}`)
+    add('startup', active ? 'warn' : 'fail', `Last failed startup phase: ${lastFailure.phase}${active ? ' (service is now active)' : ''}; run agentic-remote logs --why`)
   } else {
     add('startup', 'ok', 'No failed or unfinished startup phase in the recent journal (last 2h, up to 2000 lines)')
   }
@@ -1834,8 +2016,7 @@ case "$command" in
     doctor "$@"
     ;;
   logs)
-    (($# == 0)) || die "logs does not accept options"
-    exec journalctl --user --unit "$SERVICE_NAME" --follow
+    logs "$@"
     ;;
   pair-info)
     (($# == 0)) || die "pair-info does not accept options"

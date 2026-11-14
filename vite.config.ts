@@ -60,6 +60,7 @@ const slowTests = [
   'server/full-gate.test.ts',
   'server/history-projection.test.ts',
   'server/hub-routes.test.ts',
+  'server/logs-cli.test.ts',
   'server/manager-agent.test.ts',
   'server/manager-routes.test.ts',
   'server/manager-structured-memory-performance.test.ts',

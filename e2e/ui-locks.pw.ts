@@ -542,4 +542,24 @@ test.describe('browser interaction contracts', () => {
     await scheduler.getByRole('button', { name: 'Reload latest (replace draft)', exact: true }).click()
     await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Changed on another device')
   })
+
+  test('includes the preview rail in Oracle docking space without changing the saved preference', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
+    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
+    await page.evaluate(async (revision) => {
+      const response = await fetch('/api/settings', {
+        method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }),
+      })
+      if (!response.ok) throw new Error('Synthetic preview update failed')
+    }, handle.state.settings.revision)
+    await expect(page.locator('.app-shell')).toHaveClass(/app-shell--rail/)
+    await page.setViewportSize({ width: 1024, height: 900 })
+    await expect(page.locator('#oracle-panel')).not.toHaveClass(/manager-panel--docked/)
+    expect(await page.getByRole('main').evaluate((main) => main.getBoundingClientRect().width)).toBeGreaterThanOrEqual(360)
+    expect(await page.evaluate(() => localStorage.getItem('agentic-remote:oracle-placement'))).toBe('docked')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
+  })
 })

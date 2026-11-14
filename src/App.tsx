@@ -4257,8 +4257,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [sessionCreationError, setSessionCreationError] = useState<string>()
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const navigationWidth = sidebarWidth + (desktopRail && viewportWidth >= 1024 ? 64 : 0)
   const oracleDockReservedLeft =
-    sidebarWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
+    navigationWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
   const oracleDockAvailable =
     desktopLayout &&
     viewportWidth - oracleDockReservedLeft >=
@@ -14616,7 +14617,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         reservedLeft={
           effectiveOraclePlacement === 'docked'
             ? oracleDockReservedLeft
-            : sidebarWidth
+            : navigationWidth
         }
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}

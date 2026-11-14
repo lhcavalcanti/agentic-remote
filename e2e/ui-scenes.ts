@@ -33,6 +33,7 @@ export const uiSceneNames = [
   'composer-session-setup',
   'composer-button-row',
   'composer-session-panel',
+  'composer-sent-messages',
   'session-list',
   'app-settings',
   'preview-features',
@@ -73,7 +74,7 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
           keyRevisions: { previewFeatures: 1 },
         }
       }
-      if (['composer-status-busy', 'composer-session-setup', 'composer-button-row', 'composer-session-panel'].includes(name)) {
+      if (['composer-status-busy', 'composer-session-setup', 'composer-button-row', 'composer-session-panel', 'composer-sent-messages'].includes(name)) {
         state.settings = {
           revision: 1, values: { previewFeatures: { composerRefresh: true } },
           keyRevisions: { previewFeatures: 1 },
@@ -83,6 +84,17 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
           session.runtime!.model = 'fictional-model-with-a-long-name-for-small-screens'
         }
         if (name === 'composer-status-busy') session.status = 'running'
+        if (name === 'composer-sent-messages') {
+          session.messages.push({
+            id: 'fixture-sent-review', role: 'user',
+            content: 'Review the recovery checklist and document the remaining checks.',
+            createdAt: FIXTURE_NOW,
+          })
+          session.queuedPrompts = [{
+            id: 'fixture-history-queued', content: 'This queued note is not a sent message.', createdAt: FIXTURE_NOW,
+          }]
+          session.queuedCount = 1
+        }
       }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
@@ -127,6 +139,12 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
       } else if (name === 'composer-session-panel') {
         await page.getByRole('button', { name: 'Session panel', exact: true }).click()
         await expect(page.getByRole('group', { name: 'Session panel' })).toBeVisible()
+      } else if (name === 'composer-sent-messages') {
+        await page.getByRole('textbox', { name: 'Message', exact: true }).fill('My unsent review notes')
+        const history = page.getByRole('button', { name: 'Sent messages', exact: true })
+        if (!await history.isVisible()) await page.getByRole('button', { name: 'Session panel', exact: true }).click()
+        await history.click()
+        await expect(page.getByRole('dialog', { name: 'Sent messages', exact: true })).toBeVisible()
       } else if (name === 'session-list') {
         await openSessions(page)
       } else if (name === 'app-settings' || name === 'preview-features' || name === 'computers-dialog') {

@@ -18901,6 +18901,37 @@ describe('App', () => {
     expect(await screen.findByRole('dialog', { name: 'Model and context' })).toBeInTheDocument()
   })
 
+  it('previews searched sent messages without sending and restores the parked collapsed-paste draft on cancel', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const sentSession = {
+      ...session,
+      messages: [
+        { id: 'sent-message', role: 'user' as const, content: 'Searchable full history text', createdAt: '2026-11-14T12:00:00Z' },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([sentSession])
+    vi.mocked(getSession).mockResolvedValue(sentSession)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const pasted = Array.from({ length: 21 }, (_, index) => `Unsent line ${index}`).join('\n')
+    fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+    expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    const picker = screen.getByRole('dialog', { name: 'Sent messages' })
+    fireEvent.change(within(picker).getByRole('combobox'), { target: { value: 'HISTORY' } })
+    fireEvent.click(within(picker).getByRole('option'))
+    expect(textarea).toHaveValue('Searchable full history text')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')['computer-1:session-1'])
+      .toMatchObject({ text: '[Paste #1 - 21 lines]', pastes: [{ content: pasted }] })
+    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
+    expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+    expect(sendMessage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1', 'session-1', expect.objectContaining({ content: pasted }),
+    ))
+  })
+
   it('supports command abbreviations and configures the web status line', async () => {
       const runtimeSession = {
         ...session,

@@ -8435,13 +8435,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   function navigateMessageHistory(
     direction: -1 | 1,
     force = false,
+    messageId?: string,
   ): boolean {
     if (!selected || !selectedKey) {
       return false
     }
-    const messages = selected.messages
+    const userTurns = selected.messages
       .filter((message) => message.role === 'user' && message.content.trim())
-      .map((message) => message.content)
+    const messages = userTurns.map((message) => message.content)
     if (messages.length === 0) {
       return false
     }
@@ -8460,10 +8461,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             draftPastes:
               existing?.draftPastes ?? composerDrafts[selectedKey]?.pastes ?? [],
           }
-    const nextIndex = Math.min(
+    const nextIndex = messageId ? userTurns.findIndex((message) => message.id === messageId) : Math.min(
       Math.max(history.index + direction, 0),
       messages.length,
     )
+    if (nextIndex < 0) return false
     history.index = nextIndex
     composerHistoryRef.current[selectedKey] = history
     const value =
@@ -8474,6 +8476,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       true,
       nextIndex === messages.length ? history.draftPastes : [],
     )
+    if (messageId) return true
     window.requestAnimationFrame(() => {
       if (
         selectedRef.current &&
@@ -13999,6 +14002,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             onStartRecording={() => void startRecording()}
             onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
             onOpenRuntime={() => setRuntimeOpen(true)}
+            onRecallSentMessage={(id) => { navigateMessageHistory(-1, true, id) }}
+            onCancelSentMessage={() => {
+              if (!selectedKey) return
+              const history = composerHistoryRef.current[selectedKey]
+              if (!history) return
+              setComposerForKey(selectedKey, history.draft, false, history.draftPastes)
+              focusComposer(selectedKey)
+            }}
             sessionActions={[
               { label: 'Background tasks', onClick: openBackgroundTasks, disabled: !selectedSupportsBackgroundTasks },
               { label: 'Skills', onClick: () => openSessionResources('skills') },

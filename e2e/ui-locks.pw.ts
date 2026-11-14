@@ -314,6 +314,32 @@ test.describe('browser interaction contracts', () => {
           fixture.assertHealthy()
         }
       })
+      test('searches and previews sent messages while preserving the unsent draft on cancel', async ({ page, baseURL }) => {
+        const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-sent-messages')!.setup(page)
+        try {
+          const dialog = page.getByRole('dialog', { name: 'Sent messages', exact: true })
+          const bounds = await dialog.boundingBox()
+          expect(bounds!.height).toBeGreaterThan(200)
+          if (viewport.name === 'phone') expect(bounds!.y + bounds!.height).toBeCloseTo(viewport.viewport.height, 0)
+          await expect(dialog.getByRole('option')).toHaveCount(2)
+          await expect(dialog).not.toContainText('This queued note')
+          const search = dialog.getByRole('combobox', { name: 'Search sent messages', exact: true })
+          await search.fill('RECOVERY')
+          await expect(dialog.getByRole('option')).toHaveCount(1)
+          await search.press('ArrowDown')
+          await search.press('Enter')
+          await expect(message(page)).toHaveValue('Review the recovery checklist and document the remaining checks.')
+          expect(await page.evaluate(() => JSON.parse(localStorage.getItem('agentic-remote:composer-drafts')!)))
+            .toMatchObject({ [`fixture-studio:${SELECTED_SESSION_ID}`]: 'My unsent review notes' })
+          await search.press('Escape')
+          await expect(dialog).toBeHidden()
+          await expect(message(page)).toHaveValue('My unsent review notes')
+          expect(fixture.requests.some((request) => request.path === `${sessionPath}/messages`)).toBe(false)
+          await assertNoHorizontalOverflow(page)
+        } finally {
+          fixture.assertHealthy()
+        }
+      })
     })
   }
 

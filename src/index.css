@@ -4049,6 +4049,109 @@ button {
   min-height: 40px;
 }
 
+.dialog-backdrop:has(> .composer-history) {
+  align-items: flex-end;
+}
+
+.composer-history {
+  display: flex;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(620px, 72dvh);
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 110px;
+}
+
+.composer-history__search {
+  width: 100%;
+  min-height: 40px;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  font-size: 16px;
+}
+
+.composer-history__list {
+  min-height: 60px;
+  overflow: auto;
+}
+
+.composer-history__message {
+  display: flex;
+  width: 100%;
+  min-height: 64px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-history__message time,
+.composer-history__hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.composer-history__message > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.composer-history__message--active,
+.composer-history__message[aria-selected="true"] {
+  border-color: var(--accent-focus);
+  background: var(--panel-soft);
+}
+
+.composer-history__hint {
+  margin: 0;
+}
+
+.composer-history__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.composer-history__actions button,
+.composer-history .dialog__header button {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+@media (min-width: 601px) {
+  .dialog-backdrop:has(> .composer-history) {
+    justify-content: flex-end;
+    background: transparent;
+    backdrop-filter: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .dialog-backdrop:has(> .composer-history) {
+    padding: 0;
+  }
+  .composer-history {
+    width: 100%;
+    max-height: 80dvh;
+    margin: 0;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+  }
+}
+
 @container composer (max-width: 480px) {
   .composer-secondary-tools {
     display: none;

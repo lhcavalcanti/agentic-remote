@@ -1,3 +1,17 @@
+import type { ChatMessage } from '../../shared/contracts'
+
+/** Sent history only: queued items and optimistic echoes are not user turns. */
+export function filterSentMessages(messages: readonly ChatMessage[], query = ''): ChatMessage[] {
+  const search = query.trim().toLowerCase()
+  return messages
+    .filter((message) => message.role === 'user' && message.content.trim() &&
+      !message.streaming && message.activityStatus !== 'pending' &&
+      message.content.toLowerCase().includes(search))
+    .map((message, index) => ({ message, index, time: Date.parse(message.createdAt) || 0 }))
+    .sort((left, right) => right.time - left.time || right.index - left.index)
+    .map(({ message }) => message)
+}
+
 export type CollapsedPaste = {
   key: string
   id: number

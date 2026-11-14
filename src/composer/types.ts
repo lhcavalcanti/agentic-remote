@@ -93,4 +93,6 @@ export type ComposerProps = {
   onSubmitMessage: (enqueue?: boolean) => void
   onOpenRuntime: () => void
   sessionActions?: { label: string; onClick: () => void; disabled?: boolean }[]
+  onRecallSentMessage: (id: string) => void
+  onCancelSentMessage: () => void
 }

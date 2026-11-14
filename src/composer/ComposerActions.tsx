@@ -1,9 +1,11 @@
 import {
-  ArrowUp, ListPlus, LoaderCircle, MessageCircleQuestion, Mic, Paperclip, Plus, Search, SlidersHorizontal, Square,
+  ArrowUp, History, ListPlus, LoaderCircle, MessageCircleQuestion, Mic, Paperclip, Plus, Search, SlidersHorizontal, Square,
 } from 'lucide-react'
+import { useState } from 'react'
 import { usePreviewFeature } from '../preview-features'
 import { SessionActions } from '../SessionActions'
 import { ContextRing } from './ContextRing'
+import { SentMessages } from './SentMessages'
 import type { ComposerProps } from './types'
 
 export function ComposerActions({
@@ -34,15 +36,28 @@ export function ComposerActions({
   onSubmitMessage,
   onOpenRuntime,
   sessionActions,
+  onRecallSentMessage,
+  onCancelSentMessage,
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
   'cancelling' | 'transcribing' | 'uploadingFile' | 'composer' | 'sending' | 'queueActionId' |
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
   'recordingDuration' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
-  'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions'
+  'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
+  'onRecallSentMessage' | 'onCancelSentMessage'
 >) {
   const refresh = usePreviewFeature('composerRefresh')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyChosen, setHistoryChosen] = useState(false)
+  const historyButton = (
+    <button
+      aria-haspopup="dialog" aria-label="Sent messages" className="composer-tool"
+      disabled={sending || recording || transcribing || uploadingFile || Boolean(editingQueuedPromptId)}
+      onClick={() => { setHistoryChosen(false); setHistoryOpen(true) }}
+      title="Search sent messages" type="button"
+    ><History aria-hidden="true" size={18} /></button>
+  )
   const setupButton = (
     <button aria-label="Session setup" className="composer-tool" onClick={onOpenRuntime} type="button">
       <SlidersHorizontal aria-hidden="true" size={18} />
@@ -91,6 +106,7 @@ export function ComposerActions({
       ) : null}
     </div>
   ) : (
+    <>
     <div className={`composer-actions${refresh ? ' composer-actions--refresh' : ''}`}>
       <button
         aria-label={transcribing
@@ -108,6 +124,7 @@ export function ComposerActions({
       {refresh ? (
         <div className="composer-secondary-tools">
           {setupButton}
+          {historyButton}
           <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
         </div>
       ) : null}
@@ -125,6 +142,7 @@ export function ComposerActions({
         <SessionActions className="composer-session-panel" label="Session panel" description="This session">
           <div className="composer-secondary-overflow">
             {setupButton}
+            {historyButton}
             <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
           </div>
           {sessionActions?.map((action) => (
@@ -195,5 +213,17 @@ export function ComposerActions({
         </button>
       ) : null}
     </div>
+    {refresh && historyOpen ? (
+      <SentMessages
+        messages={selected.messages}
+        onCancel={() => {
+          if (historyChosen) onCancelSentMessage()
+          setHistoryOpen(false)
+        }}
+        onChoose={(id) => { setHistoryChosen(true); onRecallSentMessage(id) }}
+        onUse={() => setHistoryOpen(false)}
+      />
+    ) : null}
+    </>
   )
 }

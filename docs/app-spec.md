@@ -14,6 +14,8 @@ Interface › Preview features › Composer refresh is off by default. When enab
 
 The refreshed composer keeps its action row inside the message box: attach, session setup, context usage, microphone, session panel, and Send/Stop. Attachment, paste, transcription and delivery pipelines and shortcuts are unchanged. The SVG context ring MUST use measured or estimated context tokens, never subscription/plan usage, and MUST identify unavailable measurements. At narrow widths secondary setup/context controls move into the session panel. Phone controls MUST retain 40×40 px touch targets and keyboard access. The panel links to the existing tasks, skills/MCP resources and session actions.
 
+The preview clock opens Sent messages for only the selected session, newest user turns first with timestamps and case-insensitive search across full text. It MUST exclude queued work and pending echoes. Choosing a row previews the full message in the composer without sending; Cancel or Escape MUST restore the parked unsent draft, including collapsed-paste ownership. Use message accepts the selection for editing or sending. The picker is a desktop popover and a phone bottom sheet with keyboard navigation. ArrowUp recall retains its existing behavior and durable history-draft parking.
+
 ## 1. Product goals
 
 Agentic Remote MUST:

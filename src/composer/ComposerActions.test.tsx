@@ -18,6 +18,7 @@ const props = (): ComponentProps<typeof ComposerActions> => ({
   onStopRecording: vi.fn(), onSubmitSideQuestion: vi.fn(), onStopSession: vi.fn(),
   onOpenAttachmentInput: vi.fn(), onStartRecording: vi.fn(), onSubmitMessage: vi.fn(),
   onOpenRuntime: vi.fn(), sessionActions: [{ label: 'Skills', onClick: vi.fn() }],
+  onRecallSentMessage: vi.fn(), onCancelSentMessage: vi.fn(),
 })
 
 describe('refreshed composer actions', () => {

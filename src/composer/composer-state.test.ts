@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyComposerEdit,
   expandComposerPastes,
+  filterSentMessages,
   hasComposerAcceptanceReceipt,
   prependComposerContent,
   queuedEditOwners,
@@ -13,10 +14,35 @@ import {
   writeComposerEdit,
 } from './composer-state'
 import type { CollapsedPaste, ComposerDraft, ComposerDrafts } from './composer-state'
+import type { ChatMessage } from '../../shared/contracts'
 
 const key = 'computer-1:original'
 const replacementKey = 'computer-1:replacement'
 const label = '[Paste #1 - 21 lines]'
+
+describe('sent message filtering', () => {
+  const turn = (id: string, content: string, overrides: Partial<ChatMessage> = {}): ChatMessage => ({
+    id, content, role: 'user', createdAt: `2026-11-${id.padStart(2, '0')}T12:00:00Z`, ...overrides,
+  })
+  it('searches full text case-insensitively and sorts newest first without mutating input', () => {
+    const messages = [turn('1', 'A long message\nwith hidden TAIL'), turn('3', 'tail again'), turn('2', 'unrelated')]
+    expect(filterSentMessages(messages, ' tAiL ').map((message) => message.id)).toEqual(['3', '1'])
+    expect(messages.map((message) => message.id)).toEqual(['1', '3', '2'])
+  })
+  it('excludes non-user messages, blank text and pending/streaming user echoes', () => {
+    expect(filterSentMessages([
+      turn('1', 'sent'), turn('2', 'assistant', { role: 'assistant' }),
+      turn('3', 'notice', { role: 'notice' }), turn('4', 'activity', { role: 'activity' }),
+      turn('5', ' \n '), turn('6', 'pending', { activityStatus: 'pending' }),
+      turn('7', 'echo', { streaming: true }),
+    ]).map((message) => message.content)).toEqual(['sent'])
+  })
+  it('keeps duplicates as distinct turns and handles empty or unmatched history', () => {
+    expect(filterSentMessages([turn('1', 'same'), turn('2', 'same')])).toHaveLength(2)
+    expect(filterSentMessages([], '')).toEqual([])
+    expect(filterSentMessages([turn('1', 'sent')], 'missing')).toEqual([])
+  })
+})
 
 function paste(overrides: Partial<CollapsedPaste> = {}): CollapsedPaste {
   return {

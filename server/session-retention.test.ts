@@ -311,7 +311,7 @@ describe('session record retention is independent of provider ownership', () => 
   it('keeps a review pin but clears obsolete runtime loss on a conversation replacement', async () => {
     const { store } = await fixture()
     await store.configureRetention('retained', { pinned: true, idleDays: 30 })
-    await store.markInterrupted('retained')
+    await store.markInterrupted('retained', 'terminal-stopped')
     const replaced = await store.replaceWithClearedSession('retained', 'replacement')
     expect(replaced.retention).toEqual({ pinned: true, idleDays: 30 })
     expect(replaced.interruption).toBeUndefined()

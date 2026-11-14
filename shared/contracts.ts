@@ -339,6 +339,32 @@ export interface SessionRetentionPatch {
   idleDays?: number | null
 }
 
+/**
+ * Why a session was interrupted:
+ * - `terminal-stopped`: its terminal was not running when the session was
+ *   viewed or recovered.
+ * - `restart`: the service restarted while the session was working, or while
+ *   an SDK reply was in flight.
+ * - `relaunch-failed`: starting its terminal again failed.
+ * - `queue-held`: queued work waits for an explicit Reopen.
+ * - `recovery-cancelled`: a recovered SDK turn was cancelled.
+ */
+export type SessionInterruptionCause =
+  | 'terminal-stopped'
+  | 'restart'
+  | 'relaunch-failed'
+  | 'queue-held'
+  | 'recovery-cancelled'
+
+export interface SessionInterruption {
+  detectedAt: string
+  previousStatus: SessionStatus
+  /** Absent on interruptions recorded before causes were kept. */
+  cause?: SessionInterruptionCause
+  /** The error behind the cause, bounded; only a failed relaunch has one. */
+  message?: string
+}
+
 export interface SessionSummary {
   id: string
   revision?: number
@@ -351,7 +377,7 @@ export interface SessionSummary {
   isOpen?: boolean
   retention?: SessionRetention
   retentionLastUsedAt?: string
-  interruption?: { detectedAt: string; previousStatus: SessionStatus }
+  interruption?: SessionInterruption
   archivedAt?: string
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]

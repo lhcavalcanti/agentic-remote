@@ -207,6 +207,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Managed session records MUST remain visible by default when their provider
   process disappears, including after overnight inactivity. Process loss MUST
   appear as interrupted/recoverable rather than Working or a silent close.
+- Each interruption MUST record its cause: its terminal had stopped, the
+  service restarted while it was working, its terminal could not be started
+  again (with the error), queued work waits for Reopen, or a recovered turn
+  was cancelled. The first cause stands, except that a failed relaunch
+  replaces it. The banner MUST name the cause beside Reopen; one recorded
+  without a cause keeps the generic notice. The owning computer MUST log one
+  `sessionLifecycle` line for each interruption it records and for each
+  completed suspend and resume.
 - Session retention MUST be persisted on the owning computer and broadcast to
   connected devices. A user MAY pin a session for review or opt into elapsed-age
   archival; default retention MUST be unlimited for records, not live processes.

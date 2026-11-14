@@ -3,6 +3,7 @@ import type {
   BackgroundTaskSnapshot,
   ManagedSession,
   SessionExecutionMode,
+  SessionInterruptionCause,
 } from '../shared/contracts'
 
 export function sessionKey(
@@ -45,6 +46,30 @@ export function taskSnapshot(
   session: Pick<ManagedSession, 'computerId' | 'id'>,
 ): BackgroundTaskSnapshot | undefined {
   return snapshots[sessionKey(session)]
+}
+
+const interruptionReasons: Record<SessionInterruptionCause, string> = {
+  'terminal-stopped': 'its terminal had stopped',
+  restart: 'the service restarted while it was working',
+  'relaunch-failed': 'its terminal could not be started again',
+  'queue-held': 'queued work waits for you to reopen it',
+  'recovery-cancelled': 'the recovered turn was cancelled',
+}
+
+/** What the banner over an interrupted or archived session says. */
+export function retainedSessionNotice(
+  session: Pick<ManagedSession, 'archivedAt' | 'interruption'>,
+): string {
+  const retained = 'History, folder, and queued work are retained.'
+  if (session.archivedAt) return `Session archived. ${retained}`
+  const cause = session.interruption?.cause
+  // A cause this version does not know, or none from before causes were kept.
+  if (!cause || !Object.hasOwn(interruptionReasons, cause)) return `Session interrupted. ${retained}`
+  const message = session.interruption?.message
+  const detail = cause === 'relaunch-failed' && typeof message === 'string'
+    ? message.trim().replace(/\.+$/, '')
+    : ''
+  return `Session interrupted: ${interruptionReasons[cause]}${detail ? ` (${detail})` : ''}. ${retained}`
 }
 
 type SessionState =

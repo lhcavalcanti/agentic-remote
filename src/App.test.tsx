@@ -11953,13 +11953,18 @@ describe('App', () => {
   it('keeps interrupted history readable and requires explicit same-ID reopen before writing', async () => {
     const interrupted = {
       ...session, status: 'error' as const,
-      interruption: { detectedAt: '2026-10-19T06:52:00Z', previousStatus: 'running' as const },
+      interruption: {
+        detectedAt: '2026-10-19T06:52:00Z', previousStatus: 'running' as const, cause: 'terminal-stopped' as const,
+      },
     }
     vi.mocked(listSessions).mockResolvedValue([interrupted])
     vi.mocked(getSession).mockResolvedValue(interrupted)
     vi.mocked(activateSession).mockResolvedValue(session)
     render(<App />)
     expect(await screen.findByText('Hello agent')).toBeInTheDocument()
+    expect(screen.getByText(
+      'Session interrupted: its terminal had stopped. History, folder, and queued work are retained.',
+    )).toBeInTheDocument()
     expect(screen.getByLabelText('Message')).toBeDisabled()
     expect(listCommands).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Reopen session' }))

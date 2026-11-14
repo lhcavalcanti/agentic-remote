@@ -149,6 +149,7 @@ import {
   orderSessionLane,
   pendingSessionPlacements,
   providerName,
+  retainedSessionNotice,
   sessionKey,
   shortPath,
   taskSnapshot,
@@ -17014,10 +17015,7 @@ function App() {
         ) : selected?.restartRecovery?.state === 'waiting-permission' ? null
           : selected?.interruption || selected?.archivedAt ? (
           <div className="error-banner" role="status">
-            <span>
-              {selected.restartRecovery?.message ||
-                `Session ${selected.archivedAt ? 'archived' : 'interrupted'}. History, folder, and queued work are retained.`}
-            </span>
+            <span>{selected.restartRecovery?.message || retainedSessionNotice(selected)}</span>
             <button
               className="error-banner__retry"
               disabled={!selectedComputerOnline || reopening}

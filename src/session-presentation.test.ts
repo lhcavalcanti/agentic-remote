@@ -6,6 +6,7 @@ import {
   orderSessionLane,
   pendingSessionPlacements,
   providerName,
+  retainedSessionNotice,
   sessionKey,
   sessionPresentation,
   sessionSortFrom,
@@ -31,6 +32,38 @@ const tasks: BackgroundTaskSnapshot = {
   runningCount: 2,
   supported: true,
 }
+
+describe('retained session notice', () => {
+  const interrupted = (interruption: NonNullable<ManagedSession['interruption']>) =>
+    retainedSessionNotice({ ...session, interruption })
+  const at = { detectedAt: '2026-11-14T06:00:00Z', previousStatus: 'running' as const }
+
+  it.each([
+    ['terminal-stopped', 'Session interrupted: its terminal had stopped.'],
+    ['restart', 'Session interrupted: the service restarted while it was working.'],
+    ['relaunch-failed', 'Session interrupted: its terminal could not be started again.'],
+    ['queue-held', 'Session interrupted: queued work waits for you to reopen it.'],
+    ['recovery-cancelled', 'Session interrupted: the recovered turn was cancelled.'],
+  ] as const)('names a %s interruption', (cause, reason) => {
+    expect(interrupted({ ...at, cause })).toBe(`${reason} History, folder, and queued work are retained.`)
+  })
+
+  it('includes why a terminal could not be started again', () => {
+    expect(interrupted({ ...at, cause: 'relaunch-failed', message: 'No such directory: /srv/gone.' })).toBe(
+      'Session interrupted: its terminal could not be started again (No such directory: /srv/gone). ' +
+        'History, folder, and queued work are retained.',
+    )
+  })
+
+  it('keeps the plain notice for archives and interruptions without a known cause', () => {
+    const plain = 'Session interrupted. History, folder, and queued work are retained.'
+    expect(interrupted(at)).toBe(plain)
+    expect(interrupted({ ...at, cause: 'from-a-newer-release' as never })).toBe(plain)
+    expect(retainedSessionNotice({
+      ...session, archivedAt: '2026-11-14T06:00:00Z', interruption: { ...at, cause: 'restart' },
+    })).toBe('Session archived. History, folder, and queued work are retained.')
+  })
+})
 
 describe('session presentation', () => {
   it('does not show a missing process as working even with stale running tasks', () => {

@@ -1869,7 +1869,7 @@ describe('App', () => {
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
       const sync = within(dialog).getByRole('heading', { name: 'Settings sync' }).closest('section')!
       expect(sync).toHaveTextContent(
-        'Appearance, accent, status line, new-session models and folders, session sort, computer order, Oracle\'s response style, and what notifies you follow you to every device that opens this hub.',
+        'Appearance, accent, status line, new-session models and folders, session sort, computer order, Oracle\'s response style, and what notifies you and preview features follow you to every device that opens this hub.',
       )
       expect(sync).toHaveTextContent(
         'Keyboard shortcuts, panel placement and widths, and drafts stay on this device.',
@@ -1879,6 +1879,7 @@ describe('App', () => {
           .closest('.app-settings-section__title')?.querySelector('.settings-scope')
       expect(scope('Appearance')).toHaveTextContent('Synced')
       expect(scope('Status line')).toHaveTextContent('Synced')
+      expect(scope('Preview features')).toHaveTextContent('Synced')
       expect(scope('New sessions')).toHaveTextContent('Synced')
       expect(scope('Keyboard shortcuts')).toHaveTextContent('This device')
     })

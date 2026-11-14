@@ -605,8 +605,8 @@
     "server/activity-spacing.test.ts": "100bcae301aba73bb3a74c6f0df8d70939fe3f0dc71dfddb58eb446c9d096062",
     "server/agent-service-recovery.test.ts": "6c3e3eac2e25f1d7c276bf3c78eff185683b4cecc7ba3d1b264634ed2ebc3202",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "6277b65a6e7696baae288d6cba9d7ee03cf4eaa1df79bc2cd7dd527fad7745af",
-    "server/agent-service.ts": "4fd6b71cfc791d2fee307532df1e6eabf36481f813fcb886353210d4a112eff4",
+    "server/agent-service.test.ts": "e78eacda7ffccfc585dbdbd615462c93a9cd25960796db3bc510293547e1e563",
+    "server/agent-service.ts": "e94f746e610ddd2b31ba72654177817539da547c0feb08fee1e30f546d7c7c3f",
     "server/api-origin.test.ts": "6492ceccd88234fca7675b1ed50166f0044f3a52ab8d0df91474baae44b53247",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -1119,13 +1119,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "dae0172166d94f02897fc78e2f9e2e71e89a56ea8720acb4837d35e1be604ece",
+    "GRAPH_REPORT.md": "f1dcf924ca9d4782fe9fc9471be870daf42edb055a90059baa7f5e4620a6ca5d",
     "communities.json": "b6ee5114ebca319820a592da28d271d9df05fe8e5d96f82481a170a322595d52",
-    "graph.html": "50532e05f916c5f711a7d366f0c633ddef3e31f169d4d0daebebe4acb38957af",
-    "graph.json": "faf7ed57cb8720798cb7fbf9a610563c515b763ffe6b604ee6725d36d5727a0d"
+    "graph.html": "dd10d9bbd0521461ac543aae8c44610cd3194bc1c7588c0d0453d88c9f18102e",
+    "graph.json": "dd5b7a72ef6ca4cd94e215f3f7dd73de7be93c51dd9f83f3aac262d12894b5d4"
   },
   "schema_version": 1,
-  "source_commit": "a419366b4f3f41b6bb7f7f7f1ae880e6208f8e26",
-  "source_fingerprint": "e0d01adf3652b8fdcfab8cc2b4dc5f3c88e7b24f7fc2e71fd6a5a967850ccc21",
+  "source_commit": "bbe796f8332743c86dae4faf52df162d638afa2b",
+  "source_fingerprint": "671fdc02ba9eabb9f35370a24d4326c73799665f04f028c60698d2d21e71444b",
   "working_tree_changes": []
 }

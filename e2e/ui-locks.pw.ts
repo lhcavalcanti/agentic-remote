@@ -561,6 +561,8 @@ test.describe('browser interaction contracts', () => {
     expect(await page.evaluate(() => localStorage.getItem('agentic-remote:oracle-placement'))).toBe('docked')
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
+    await expect.poll(() => page.locator('#oracle-panel').evaluate((panel) =>
+      panel.getBoundingClientRect().right - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
   })
 
   test('opens a scheduled notification in its scheduler run history when available', async ({ page, baseURL }) => {

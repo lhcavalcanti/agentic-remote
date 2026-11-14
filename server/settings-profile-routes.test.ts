@@ -134,18 +134,19 @@ describe('hub settings profile routes', () => {
       payload: { values: { accent: 'rose', appearance: 'light' } },
     })
 
-    it('exposes only the hub display-name default on the opt-in settings read', async () => {
-      const app = await hub(await profileStore())
-      const response = await app.inject({ url: '/api/settings?defaults=displayName', headers: local })
-      expect(response.statusCode).toBe(200)
-      expect(Object.keys(response.json()).sort()).toEqual(['defaultDisplayName', 'settings'])
-      expect(response.json().defaultDisplayName).toEqual(expect.any(String))
-      expect((await app.inject({ url: '/api/settings?defaults=displayName',
-        headers: { host: 'localhost', origin: 'https://evil.example' } })).statusCode).toBe(403)
-      await app.close()
-    })
     expect(imported.statusCode).toBe(200)
     expect(imported.json().settings.values).toEqual({ accent: 'teal', appearance: 'light' })
+    await app.close()
+  })
+
+  it('exposes only the hub display-name default on the opt-in settings read', async () => {
+    const app = await hub(await profileStore())
+    const response = await app.inject({ url: '/api/settings?defaults=displayName', headers: local })
+    expect(response.statusCode).toBe(200)
+    expect(Object.keys(response.json()).sort()).toEqual(['defaultDisplayName', 'settings'])
+    expect(response.json().defaultDisplayName).toEqual(expect.any(String))
+    expect((await app.inject({ url: '/api/settings?defaults=displayName',
+      headers: { host: 'localhost', origin: 'https://evil.example' } })).statusCode).toBe(403)
     await app.close()
   })
 

@@ -145,6 +145,7 @@ const slowTests = [
   'src/markdown-navigation.test.ts',
   'src/pwa.test.ts',
   'src/remark-safe-breaks.test.tsx',
+  'src/settings/sections.test.ts',
   'src/settings-profile.test.ts',
   'src/shell.test.ts',
   'src/use-session-knowledge-root.test.tsx',

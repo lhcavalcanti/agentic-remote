@@ -1,0 +1,561 @@
+import type { CSSProperties, ReactNode } from 'react'
+import { Bell, Bot, Folder, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import type { AgentProvider, RuntimeModelOption } from '../../shared/contracts'
+import type { NewSessionBackendSetting, OracleResponseStyle } from '../../shared/settings-profile'
+import type { SettingsProfileState } from '../settings-profile'
+import type { useOracleSettings } from '../use-oracle-settings'
+import { DreamerSettings } from '../OracleDreamer'
+import { OracleModelSettings, OracleSettingsStatus } from '../OracleSettings'
+import { PreviewFeaturesSettings } from '../PreviewFeaturesSettings'
+import { openShellSettings, shellSettingsAvailable } from '../shell'
+import { DefaultRuntimeControls, DefaultSessionFolderControl, SettingScope, ShortcutEditor } from './controls'
+import { accentThemes, appearanceOptions, notificationScopeOptions } from './options'
+import { StatuslineControls } from './StatuslineControls'
+import type { AppSettingsDialogProps } from './types'
+
+export type SettingsSectionProps = AppSettingsDialogProps & {
+  oracle: ReturnType<typeof useOracleSettings>
+  runtimeErrors: Partial<Record<AgentProvider, string>>
+  runtimeLoading: boolean
+  runtimeModels: Partial<Record<AgentProvider, RuntimeModelOption[]>>
+  hubCopilotModels?: RuntimeModelOption[]
+  hubCopilotError?: string
+  retryHubCopilotModels: () => Promise<void>
+  supported: boolean
+  requiresInstall: boolean
+  permissionBlocked: boolean
+  enabled: boolean
+  loading: boolean
+  submitting: boolean
+  toggle: () => Promise<void>
+  testingNotification: boolean
+  testNotification: () => Promise<void>
+  testMessage?: string
+  error?: string
+  checkingUpdate: boolean
+  checkForUpdate: () => Promise<void>
+  updateMessage?: string
+}
+
+export type SettingsSection = {
+  id: string
+  title: string
+  icon: LucideIcon
+  scope: 'hub' | 'device'
+  render: (props: SettingsSectionProps) => ReactNode
+}
+
+function settingsSyncMessage(state: SettingsProfileState): string {
+  switch (state.status) {
+    case 'loading':
+      return 'Loading your settings from the hub…'
+    case 'saving':
+      return 'Saving to the hub…'
+    case 'offline':
+      return state.deviceCopy
+        ? 'The hub can’t be reached. Changes are kept on this device and sync when it’s back.'
+        : 'The hub can’t be reached, and this browser can’t keep a copy. Changes made now last until this page closes.'
+    default:
+      return state.deviceCopy
+        ? 'Saved on this hub.'
+        : 'Saved on this hub. This browser can’t keep a copy, so settings load from the hub each time.'
+  }
+}
+
+export const settingsSections: readonly SettingsSection[] = [
+  {
+    id: 'settings-models',
+    title: 'Models',
+    icon: Bot,
+    scope: 'hub',
+    render: ({
+      runtimeErrors,
+      runtimeLoading,
+      runtimeModels,
+      onDefaultRuntimesChange,
+      defaultRuntimes,
+      onNewSessionBackendChange,
+      newSessionBackend,
+    }) => (
+      <>
+        <div className="app-settings-group__body">
+          <section className="app-settings-section">
+            <div className="app-settings-section__title">
+              <h4>New sessions</h4>
+              <SettingScope synced />
+            </div>
+            <p className="dialog-message">
+              New sessions, including those Oracle starts, use these provider
+              settings. Oracle keeps the context size for a model you name when
+              that model offers it. Existing sessions keep their current model,
+              effort, context, and agent mode.
+            </p>
+            {(['copilot', 'claude'] as const).map((provider) => (
+              <DefaultRuntimeControls
+                error={runtimeErrors[provider]}
+                key={provider}
+                loading={runtimeLoading}
+                models={runtimeModels[provider] || []}
+                onChange={(selection) =>
+                  onDefaultRuntimesChange({
+                    ...defaultRuntimes,
+                    [provider]: selection,
+                  })
+                }
+                provider={provider}
+                selection={defaultRuntimes[provider]}
+              />
+            ))}
+            <label className="field">
+              <span>Start new sessions in</span>
+              <select
+                aria-label="How new sessions start"
+                className="dialog-select"
+                onChange={(event) =>
+                  onNewSessionBackendChange(event.target.value as NewSessionBackendSetting)}
+                value={newSessionBackend}
+              >
+                <option value="terminal">Terminal (tmux)</option>
+                <option value="sdk">Copilot SDK</option>
+              </select>
+            </label>
+            <p className="dialog-message">
+              New Session starts here, and you can still change it for one
+              session. Oracle has its own setting.
+            </p>
+          </section>
+        </div>
+      </>
+    ),
+  },
+  {
+    id: 'settings-folders',
+    title: 'Folders',
+    icon: Folder,
+    scope: 'hub',
+    render: ({ computers, defaultSessionFolders, onDefaultSessionFoldersChange, oracle }) => (
+      <>
+        <p className="dialog-message">
+          Where new sessions start on each computer, and where Oracle starts
+          the sessions it hands work to. Existing sessions keep their folders.
+          A blank folder is the computer&apos;s home directory, and a blank
+          Oracle folder follows yours. Oracle can change its own when you ask.
+        </p>
+        <div className="app-settings-group__body app-settings-group__body--folders">
+          {computers.map((computer) => (
+            <div
+              aria-label={`Session folders on ${computer.name}`}
+              className="settings-computer-folders"
+              key={computer.id}
+              role="group"
+            >
+              <strong className="settings-computer-folders__name">{computer.name}</strong>
+              <DefaultSessionFolderControl
+                computer={computer}
+                offlineNote={false}
+                onChange={(path) => {
+                  const next = { ...defaultSessionFolders }
+                  if (path) {
+                    next[computer.id] = path
+                  } else {
+                    delete next[computer.id]
+                  }
+                  onDefaultSessionFoldersChange(next)
+                }}
+                title="New sessions"
+                value={defaultSessionFolders[computer.id]}
+              />
+              {oracle.settings && !oracle.unavailable ? (
+                <DefaultSessionFolderControl
+                  blankLabel="Same as new sessions"
+                  computer={computer}
+                  label="Oracle's session folder"
+                  offlineNote={false}
+                  onChange={(path) => void oracle.saveFolder(computer.id, path)}
+                  purpose="Oracle"
+                  selectHint="where Oracle starts new sessions"
+                  title="Oracle"
+                  value={oracle.settings.sessionFolders?.[computer.id]}
+                />
+              ) : null}
+              {!computer.online ? (
+                <small className="default-session-folder__offline">
+                  Connect to browse this computer.
+                </small>
+              ) : null}
+            </div>
+          ))}
+        </div>
+        <OracleSettingsStatus oracle={oracle} part="folders" />
+      </>
+    ),
+  },
+  {
+    id: 'settings-oracle',
+    title: 'Oracle',
+    icon: MessageSquare,
+    scope: 'hub',
+    render: ({
+      hubCopilotModels,
+      hubCopilotError,
+      retryHubCopilotModels,
+      oracle,
+      open,
+      onOracleResponseStyleChange,
+      oracleResponseStyle,
+      notificationScope,
+      onNotificationScopeChange,
+    }) => (
+      <>
+        <div className="app-settings-group__body">
+          <OracleModelSettings
+            models={hubCopilotModels}
+            modelsError={hubCopilotError}
+            onRetryModels={retryHubCopilotModels}
+            oracle={oracle}
+          />
+          <DreamerSettings active={open} />
+          {oracle.settings && !oracle.unavailable ? (
+            <section className="app-settings-section" id="settings-oracle-style">
+              <div className="app-settings-section__title">
+                <h4>Response style</h4>
+                <SettingScope synced />
+              </div>
+              <p className="dialog-message">
+                How much Oracle writes. Every style keeps errors, uncertainty,
+                what Oracle did, and anything waiting for you.
+              </p>
+              <label className="field">
+                <span>Response style</span>
+                <select
+                  aria-label="Oracle response style"
+                  className="dialog-select"
+                  onChange={(event) =>
+                    onOracleResponseStyleChange(event.target.value as OracleResponseStyle)}
+                  value={oracleResponseStyle}
+                >
+                  <option value="concise">Concise</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="detailed">Detailed</option>
+                </select>
+              </label>
+            </section>
+          ) : null}
+          <section className="app-settings-section">
+            <div className="app-settings-section__title">
+              <h4>Notify me about</h4>
+              <SettingScope synced />
+            </div>
+            <fieldset className="notification-scope-options">
+              <legend>What notifies you</legend>
+              {notificationScopeOptions.map((option) => (
+                <label className="notification-scope-option" key={option.id}>
+                  <input
+                    aria-describedby={`notification-scope-${option.id}`}
+                    aria-label={option.name}
+                    checked={notificationScope === option.id}
+                    name="notification-scope"
+                    onChange={() => onNotificationScopeChange(option.id)}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>{option.name}</strong>
+                    <small id={`notification-scope-${option.id}`}>{option.description}</small>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+          </section>
+        </div>
+      </>
+    ),
+  },
+  {
+    id: 'settings-notifications',
+    title: 'Notifications',
+    icon: Bell,
+    scope: 'device',
+    render: ({
+      supported,
+      requiresInstall,
+      permissionBlocked,
+      enabled,
+      loading,
+      submitting,
+      toggle,
+      testingNotification,
+      testNotification,
+      testMessage,
+      error,
+    }) => (
+      <>
+        <div className="app-settings-group__body">
+        <section className="app-settings-section">
+          <div className="app-settings-section__title">
+            <h4>This device</h4>
+            <SettingScope synced={false} />
+          </div>
+        {!supported ? (
+          <p className="dialog-message">
+            Push notifications are not supported in this browser.
+          </p>
+        ) : requiresInstall ? (
+          <p className="dialog-message">
+            On iPhone, open this page in Safari, choose Share → Add to Home
+            Screen, then open the installed app to enable notifications.
+          </p>
+        ) : permissionBlocked ? (
+          <p className="dialog-message">
+            Notifications are blocked. On iPhone, open Settings → Notifications
+            → Agentic Remote and allow notifications.
+          </p>
+        ) : (
+          <>
+            <p className="dialog-message">
+              Let this device receive what you chose above. Individual sessions
+              can be muted from their bell icon.
+            </p>
+            <button
+              className={
+                enabled
+                  ? 'secondary-button app-settings-section__action'
+                  : 'primary-button app-settings-section__action'
+              }
+              disabled={loading || submitting}
+              onClick={() => void toggle()}
+              type="button"
+            >
+              {loading
+                ? 'Checking…'
+                : submitting
+                  ? 'Updating…'
+                  : enabled
+                    ? 'Disable notifications'
+                    : 'Enable notifications'}
+            </button>
+            {enabled ? (
+              <button
+                className="secondary-button app-settings-section__action"
+                disabled={testingNotification}
+                onClick={() => void testNotification()}
+                type="button"
+              >
+                {testingNotification ? 'Sending…' : 'Send test notification'}
+              </button>
+            ) : null}
+            {testMessage ? (
+              <p className="app-settings-section__result" role="status">
+                {testMessage}
+              </p>
+            ) : null}
+          </>
+        )}
+        {error ? <p className="form-error">{error}</p> : null}
+        </section>
+        </div>
+      </>
+    ),
+  },
+  {
+    id: 'settings-interface',
+    title: 'Interface',
+    icon: SlidersHorizontal,
+    scope: 'hub',
+    render: ({
+      appearance,
+      onAppearanceChange,
+      accentTheme,
+      onAccentThemeChange,
+      statusline,
+      onStatuslineChange,
+      onShortcutsChange,
+      shortcutOverrides,
+      shortcuts,
+    }) => (
+      <>
+        <div className="app-settings-group__body">
+          <section className="app-settings-section">
+            <div className="app-settings-section__title">
+              <h4>Appearance</h4>
+              <SettingScope synced />
+            </div>
+            <fieldset className="appearance-options">
+              <legend>Reading surfaces</legend>
+              {appearanceOptions.map((option) => (
+                <label className="appearance-option" data-appearance={option.id} key={option.id}>
+                  <input
+                    aria-label={`${option.name} appearance`}
+                    checked={appearance === option.id}
+                    name="appearance"
+                    onChange={() => onAppearanceChange(option.id)}
+                    type="radio"
+                  />
+                  <span aria-hidden="true" className="appearance-option__preview" />
+                  <strong>{option.name}</strong>
+                </label>
+              ))}
+            </fieldset>
+            <p className="dialog-message">
+              System follows each device&apos;s light or dark setting. The accent
+              colors buttons, focus, and activity.
+            </p>
+            <div
+              aria-label="Accent color"
+              className="accent-theme-list"
+              role="radiogroup"
+            >
+              {accentThemes.map((theme) => (
+                <label
+                  className={`accent-theme-option ${
+                    accentTheme === theme.id
+                      ? 'accent-theme-option--selected'
+                      : ''
+                  }`}
+                  key={theme.id}
+                >
+                  <input
+                    aria-label={`${theme.name} accent`}
+                    checked={accentTheme === theme.id}
+                    name="accent-theme"
+                    onChange={() => onAccentThemeChange(theme.id)}
+                    type="radio"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="accent-theme-option__swatch"
+                    style={{ '--accent-choice': theme.color } as CSSProperties}
+                  />
+                  <strong>{theme.name}</strong>
+                </label>
+              ))}
+            </div>
+          </section>
+          <section className="app-settings-section">
+            <div className="app-settings-section__title">
+              <h4>Status line</h4>
+              <SettingScope synced />
+            </div>
+            <p className="dialog-message">
+              Choose the session and runtime details shown above the composer.
+            </p>
+            <StatuslineControls
+              onChange={onStatuslineChange}
+              settings={statusline}
+            />
+          </section>
+          <section className="app-settings-section app-settings-section--wide">
+            <div className="app-settings-section__title">
+              <h4>Keyboard shortcuts</h4>
+              <SettingScope synced={false} />
+            </div>
+            <p className="dialog-message">
+              Available on a keyboard, outside dialogs and the message box. Choose
+              one to give it different keys.
+            </p>
+            <ShortcutEditor
+              onChange={onShortcutsChange}
+              overrides={shortcutOverrides}
+              shortcuts={shortcuts}
+            />
+            <ul className="shortcut-list">
+              <li>
+                <span>Recall previous message</span>
+                <kbd>{'\u2191'}</kbd>
+              </li>
+            </ul>
+            <p className="dialog-message">
+              Recall works in the message box itself, so it is not one of the keys
+              above.
+            </p>
+          </section>
+          <PreviewFeaturesSettings />
+        </div>
+      </>
+    ),
+  },
+  {
+    id: 'settings-app',
+    title: 'App',
+    icon: Settings,
+    scope: 'device',
+    render: ({
+      settingsSync,
+      updateRegistration,
+      onApplyUpdate,
+      checkingUpdate,
+      updatingApp,
+      checkForUpdate,
+      updateMessage,
+    }) => (
+      <>
+        <div className="app-settings-group__body">
+          <section className="app-settings-section" id="settings-sync">
+            <h4>Settings sync</h4>
+            <p className="dialog-message">
+              Appearance, accent, status line, new-session models and folders,
+              session sort, computer order, Oracle&apos;s response style, and
+              what notifies you and preview features follow you to every device that opens this hub.
+              Keyboard shortcuts, panel placement and widths, and drafts stay
+              on this device.
+            </p>
+            <p className="app-settings-section__result" role="status">
+              {settingsSyncMessage(settingsSync)}
+            </p>
+          </section>
+          {shellSettingsAvailable() && (
+            <section className="app-settings-section">
+              <h4>Hub connection</h4>
+              <p className="dialog-message">
+                This app is connected to a hub you chose when you installed it.
+                Change it if the hub moved or you entered the wrong address.
+              </p>
+              <button
+                className="secondary-button"
+                onClick={() => openShellSettings()}
+                type="button"
+              >
+                Change hub…
+              </button>
+            </section>
+          )}
+          <section className="app-settings-section">
+            <h4>App updates</h4>
+            <p className="dialog-message">
+              Version {__APP_VERSION__}. Updates are checked automatically when the
+              app opens and returns to the foreground.
+            </p>
+            {updateRegistration ? (
+              <p className="dialog-message">
+                A new Agentic Remote version is ready.
+              </p>
+            ) : null}
+            <button
+              className="secondary-button app-settings-section__action"
+              disabled={checkingUpdate || updatingApp}
+              onClick={
+                updateRegistration
+                  ? onApplyUpdate
+                  : () => void checkForUpdate()
+              }
+              type="button"
+            >
+              {updatingApp
+                ? 'Updating…'
+                : checkingUpdate
+                  ? 'Checking…'
+                  : updateRegistration
+                    ? 'Update now'
+                    : 'Check for updates'}
+            </button>
+            {updateMessage ? (
+              <p className="app-settings-section__result" role="status">
+                {updateMessage}
+              </p>
+            ) : null}
+          </section>
+        </div>
+      </>
+    ),
+  },
+]

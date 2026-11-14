@@ -251,6 +251,17 @@ describe('read-only doctor CLI', () => {
     expect(check(result, 'tunnel.auth')?.status).toBe('fail')
   })
 
+  it('names a logged-out devtunnel CLI and fails ACL checks closed without querying them', async () => {
+    const context = await fixture()
+    const result = await context.run(['--json'], { TEST_USER: '{"status":"Not logged in"}' })
+    expect(result.code).toBe(1)
+    expect(check(result, 'tunnel.auth')).toMatchObject({ status: 'fail', detail: expect.stringContaining('not logged in') })
+    for (const name of ['tunnel.acl', 'tunnel.port-acl']) {
+      expect(check(result, name)).toMatchObject({ status: 'fail', detail: expect.stringContaining('without a devtunnel login') })
+    }
+    expect(await readFile(context.calls, 'utf8')).not.toContain('devtunnel access list')
+  })
+
   it('skips tunnels when devtunnel is absent from the isolated PATH', async () => {
     const context = await fixture({ devtunnel: false })
     const result = await context.run()

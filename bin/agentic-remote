@@ -363,17 +363,30 @@ function tunnelChecks() {
     for (const check of ['tunnel.auth', 'tunnel.acl', 'tunnel.port-acl']) add(check, 'fail', 'Invalid tunnel ID')
     return
   }
+  let loggedOut = false
   try {
     const result = run('devtunnel', ['user', 'show', '--json'])
     if (!success(result)) throw new Error()
     const user = JSON.parse(result.stdout)
+    if (record(user) && typeof user.status === 'string' && user.status.toLowerCase() === 'not logged in') {
+      loggedOut = true
+      throw new Error()
+    }
     if (!record(user) || typeof user.status !== 'string' || user.status.toLowerCase() !== 'logged in' ||
       typeof user.provider !== 'string' || !/^[A-Za-z][A-Za-z0-9 ._-]{0,63}$/.test(user.provider)) throw new Error()
     add('tunnel.auth', 'ok', `Logged in; provider=${user.provider}`)
-  } catch { add('tunnel.auth', 'fail', 'Dev Tunnel login is unavailable, logged out, or returned unknown JSON') }
+  } catch {
+    add('tunnel.auth', 'fail', loggedOut
+      ? 'devtunnel on this computer is not logged in; run devtunnel user login on the computer that owns the tunnel'
+      : 'Dev Tunnel login is unavailable or returned unknown JSON')
+  }
   for (const [check, portArgs] of [['tunnel.acl', []], ['tunnel.port-acl', ['--port-number', port]]]) {
     if (portArgs.length && !validPort) {
       add(check, 'fail', 'Cannot inspect port ACL: invalid PORT')
+      continue
+    }
+    if (loggedOut) {
+      add(check, 'fail', 'Cannot verify deny-only ACL without a devtunnel login (fail closed; ACLs unchanged)')
       continue
     }
     try {

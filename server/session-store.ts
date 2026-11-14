@@ -19,6 +19,7 @@ import type {
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
 import { canArchiveSession, mergeSessionRetention, sessionRetentionSchema } from './session-retention.js'
+import { closedSessionContext, isClosedSessionContext } from '../shared/closed-sessions.js'
 
 export interface DiscoveredSession {
   id: string
@@ -106,20 +107,23 @@ export type TerminalQueueOutcome =
 export class RetainedSessionError extends Error {
   readonly statusCode = 409
   readonly uncertainDelivery = false
-  readonly reasonCode: `retained-session.${'archived' | 'interrupted'}`
+  readonly reasonCode: `retained-session.${RetainedState}`
 
-  constructor(state: 'archived' | 'interrupted', action: string) {
+  constructor(state: RetainedState, action: string) {
     super(`Reopen the ${state} session before ${action}. Nothing was changed.`)
     this.name = 'RetainedSessionError'
     this.reasonCode = `retained-session.${state}`
   }
 }
 
+type RetainedState = 'archived' | 'interrupted' | 'closed'
+
 export function assertSessionNotRetained(
-  session: Pick<SessionDetail, 'archivedAt' | 'interruption'> | undefined,
+  session: Pick<SessionDetail, 'archivedAt' | 'interruption' | 'closedAt'> | undefined,
   action: string,
   archivedOnly = false,
 ): void {
+  if (session?.closedAt) throw new RetainedSessionError('closed', action)
   if (session?.archivedAt) throw new RetainedSessionError('archived', action)
   if (!archivedOnly && session?.interruption) throw new RetainedSessionError('interrupted', action)
 }
@@ -576,6 +580,26 @@ export class SessionStore {
       if (session.retentionLastUsedAt !== undefined && !Number.isFinite(Date.parse(session.retentionLastUsedAt))) {
         throw new Error('Invalid session retention activity timestamp')
       }
+      if (session.closedAt !== undefined || session.closedContext !== undefined) {
+        // An older release that reopened a closed record keeps fields it does
+        // not know; its reopen is what stands.
+        if (session.managedOpen === true || session.closedAt === undefined) {
+          session.closedAt = undefined
+          session.closedContext = undefined
+          staleSdkInteractionMarked = true
+        } else {
+          // Unreadable closure metadata is replaced rather than refused, so
+          // the record stays closed and still expires.
+          if (typeof session.closedAt !== 'string' || !Number.isFinite(Date.parse(session.closedAt))) {
+            session.closedAt = new Date(this.now()).toISOString()
+            staleSdkInteractionMarked = true
+          }
+          if (session.closedContext !== undefined && !isClosedSessionContext(session.closedContext)) {
+            session.closedContext = undefined
+            staleSdkInteractionMarked = true
+          }
+        }
+      }
       if (session.interruption !== undefined && (
         !session.interruption || typeof session.interruption !== 'object' ||
         !Number.isFinite(Date.parse(session.interruption.detectedAt)) ||
@@ -803,6 +827,11 @@ export class SessionStore {
     return this.retiredIds(this.state).has(id)
   }
 
+  /** Closed through the app: kept to reopen, with nothing running for it. */
+  isClosed(id: string): boolean {
+    return Boolean(this.state.sessions[id]?.closedAt) && !this.isRetiredSession(id)
+  }
+
   private retiredIds(state: StoredState): ReadonlySet<string> {
     if (!state.retiredSessionIds) return emptyRetirements
     let retired = this.retirementCache.get(state.retiredSessionIds)
@@ -893,6 +922,8 @@ export class SessionStore {
       for (const discovered of sessions) {
         if (this.retiredIds(state).has(discovered.id)) continue
         const previous = state.sessions[discovered.id]
+        // A closed record keeps what it was when it closed.
+        if (previous?.closedAt) continue
         if (previous) {
           const cwd = previous.contextCwd ? previous.cwd : discovered.cwd
           const title =
@@ -1046,7 +1077,7 @@ export class SessionStore {
   }
 
   private isArchivable(session: StoredSession): boolean {
-    return !this.isProtectedRecord(session) && canArchiveSession(session, this.now())
+    return !session.closedAt && !this.isProtectedRecord(session) && canArchiveSession(session, this.now())
   }
 
   /**
@@ -1095,6 +1126,8 @@ export class SessionStore {
       if (isCurrent && !isCurrent()) return () => undefined
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
+        // Closed on purpose: neither a live owner nor its age changes that.
+        if (session.closedAt) continue
         const present = active.has(session.id)
         const protectedRecord = this.isProtectedRecord(session)
         const archive = !present && !protectedRecord && canArchiveSession(session, this.now()) &&
@@ -1154,6 +1187,7 @@ export class SessionStore {
       if (isCurrent && !isCurrent()) return () => released
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
+        if (session.closedAt) continue
         if (activeTerminal.has(session.id)) {
           const admitted = session.managedOpen !== true &&
             (liveAdmission?.(session.id) ?? false)
@@ -1244,6 +1278,8 @@ export class SessionStore {
       session.isOpen = isOpen
       if (isOpen) {
         session.retentionLastUsedAt = new Date(this.now()).toISOString()
+        session.closedAt = undefined
+        session.closedContext = undefined
         if (session.interruption && (session.backend === 'sdk' ||
             session.pendingPermission?.stale || session.pendingUserInput?.stale)) {
           session.status = 'error'
@@ -1561,6 +1597,55 @@ export class SessionStore {
       state.sessions[sessionId] = session
       return () => this.requireSession(sessionId)
     })
+  }
+
+  /**
+   * Closes a session without deleting it. It leaves the open list and the
+   * recovery set, keeps its identity, transcript, and provider data, and
+   * records what it was about. Anything waiting to be sent goes with the
+   * runtime, so reopening never sends anything by itself. Closing a closed
+   * session changes nothing, so its retention keeps counting from the first.
+   */
+  async closeSession(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.closedContext = closedSessionContext({
+        title: session.title,
+        cwd: session.cwd,
+        messages: [...(session.archivedMessages || []), ...session.messages],
+      })
+      session.closedAt = new Date(this.now()).toISOString()
+      session.isOpen = false
+      session.managedOpen = false
+      session.suspended = undefined
+      session.archivedAt = undefined
+      session.interruption = undefined
+      session.sdkRestartRecovery = undefined
+      session.sdkAcceptedReply = undefined
+      session.status = 'idle'
+      session.activity = undefined
+      session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      session.queuedPrompts = []
+      session.queuedCount = 0
+      session.queueState = undefined
+      session.queuedDispatch = undefined
+      session.queueDispatchAt = undefined
+      session.terminalQueueDispatch = undefined
+      session.queuedPromptReservation = undefined
+      session.sdkQueueAdmission = undefined
+      session.recoverySeed = undefined
+      session.recoveryResend = undefined
+      session.failedPrompt = undefined
+      // Whatever was reading the transcript when it closed must not land
+      // afterwards.
+      session.transcriptEpoch = randomUUID()
+      for (const message of session.messages) {
+        message.streaming = false
+        if (message.role === 'activity' && message.activityStatus === 'running') {
+          message.activityStatus = 'failed'
+        }
+      }
+    }, (session) => !session.closedAt, true)
   }
 
   async setSuspended(
@@ -1910,6 +1995,7 @@ export class SessionStore {
     prepend = false,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
+      if (session.closedAt) throw new RetainedSessionError('closed', 'queueing work')
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length

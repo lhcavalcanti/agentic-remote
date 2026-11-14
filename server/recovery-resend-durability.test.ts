@@ -1678,6 +1678,14 @@ describe('Review 5125727881 runtime boundaries', () => {
   ) => Promise<PublicSessionValue>> = {
     listSessions: async ({ service }) => service.listSessions(),
     listHistory: async ({ service }) => service.listHistory(),
+    listClosedSessions: async ({ service }, snapshot) => {
+      vi.spyOn(service.store, 'list').mockReturnValue([{ ...snapshot, closedAt: originalToken }])
+      return service.listClosedSessions()
+    },
+    closeSession: async ({ service }, snapshot) => {
+      service['closeSerialized'] = async () => snapshot
+      return service.closeSession(sessionId)
+    },
     getSession: async ({ service }) => service.getSession(sessionId),
     openSession: async ({ service }) => service.openSession(sessionId),
     activateSession: async ({ service }) => service.activateSession(sessionId),

@@ -339,6 +339,7 @@ export class ClaudeAgentService
         supportsSessionResources: true,
         supportsContextRecovery: false,
         supportsSessionRetention: true,
+        supportsRecoverableClose: true,
         unavailableReason: this.available ? undefined : this.unavailableReason,
       },
     ]
@@ -478,6 +479,13 @@ export class ClaudeAgentService
 
   listHistory(): SessionDetail[] {
     return this.store.list().map((session) => ({ ...this.queuedDispatches.view(session), messages: [] }))
+  }
+
+  /** Sessions closed through the app that can still be reopened, newest closure first. */
+  listClosedSessions(): SessionDetail[] {
+    return this.listHistory()
+      .filter((session) => session.closedAt)
+      .sort((left, right) => right.closedAt!.localeCompare(left.closedAt!))
   }
 
   getSession(id: string): SessionDetail | undefined {
@@ -1071,6 +1079,12 @@ export class ClaudeAgentService
   ): Promise<SessionDetail> {
     if (!content.trim()) throw queueConflict('Message cannot be empty')
     // Queued or not, and before any recovery token is claimed.
+    if (this.store.get(sessionId)?.closedAt) {
+      throw Object.assign(
+        queueConflict('Reopen the closed session before sending. Nothing was sent.'),
+        { uncertainDelivery: false },
+      )
+    }
     if (this.store.get(sessionId)?.interruption || this.store.get(sessionId)?.archivedAt) {
       throw Object.assign(
         queueConflict('Reopen the interrupted session before sending. Nothing was sent.'),
@@ -1545,10 +1559,47 @@ export class ClaudeAgentService
     }
   }
 
-  private async deleteClaimed(
-    sessionId: string,
-    session: SessionDetail,
-  ): Promise<void> {
+  /**
+   * Deletes a closed session for good once its retention has ended. Decided
+   * in the lifecycle queue, so a reopen that got there first keeps it.
+   */
+  async deleteExpiredClosedSession(sessionId: string, closedBefore: number): Promise<boolean> {
+    return this.serializeLifecycle(sessionId, async () => {
+      const closedAt = this.store.get(sessionId)?.closedAt
+      if (!closedAt || !(Date.parse(closedAt) <= closedBefore)) return false
+      this.resourceObservations.delete(sessionId)
+      await this.deleteSerialized(sessionId)
+      return true
+    })
+  }
+
+  /**
+   * Closes a session so it can be reopened: its turn and requests stop as a
+   * delete would stop them, but the record and Claude's transcript stay.
+   */
+  async closeSession(sessionId: string): Promise<SessionDetail> {
+    return this.serializeLifecycle(sessionId, async () => {
+      const session = this.requireSession(sessionId)
+      if (session.closedAt) return this.queuedDispatches.view(session)
+      this.deletingSessions.add(sessionId)
+      this.queueReceiptStops.get(sessionId)?.()
+      try {
+        await Promise.allSettled(this.claudeReplyWrites(sessionId))
+        await this.stopForRemoval(sessionId, 'Session was closed')
+        const closed = await this.store.closeSession(sessionId)
+        this.resourceObservations.delete(sessionId)
+        this.pendingQueueAdmissions.delete(sessionId)
+        this.forgetClaudeReplies(sessionId)
+        this.emit('event', { type: 'session.removed', sessionId, closed: true })
+        return this.queuedDispatches.view(closed)
+      } finally {
+        this.deletingSessions.delete(sessionId)
+      }
+    })
+  }
+
+  /** Stops the turn and requests of a session leaving the open list. */
+  private async stopForRemoval(sessionId: string, reason: string): Promise<void> {
     // A turn started a moment ago may not have registered its query yet. It is
     // waited for rather than polled for a while: a provider that is slow to
     // answer outlasted the polling and the turn then started against a
@@ -1563,12 +1614,19 @@ export class ClaudeAgentService
     }
     this.active.get(sessionId)?.abortController.abort()
     const settling = this.active.get(sessionId)?.done
-    this.resolvePending(sessionId, 'Session was deleted')
+    this.resolvePending(sessionId, reason)
     if (settling) {
       // Waited for, so the turn is finished with the conversation before it is
       // removed rather than writing into it afterwards.
       await settling
     }
+  }
+
+  private async deleteClaimed(
+    sessionId: string,
+    session: SessionDetail,
+  ): Promise<void> {
+    await this.stopForRemoval(sessionId, 'Session was deleted')
     let cleanupError: unknown
     try {
       await this.sdk.deleteSession(sessionId, { dir: session.cwd })
@@ -2534,7 +2592,7 @@ export class ClaudeAgentService
       return undefined
     }
     // A retained queue waits, untouched, for Reopen.
-    if (session.interruption || session.archivedAt) return undefined
+    if (session.interruption || session.archivedAt || session.closedAt) return undefined
     if (session.suspended || this.suspendingSessions.has(sessionId)) {
       // Suspending leaves a session idle, so the queue would take a prompt off
       // and then be refused for being suspended, losing it for good.
@@ -2649,6 +2707,8 @@ export class ClaudeAgentService
 
   private publish(session: SessionDetail): void {
     if (this.stopped) return
+    // A closed session left the list with its removal.
+    if (this.store.isClosed(session.id)) return
     this.emit('event', { type: 'session.upserted', session: this.queuedDispatches.view(session) })
   }
 

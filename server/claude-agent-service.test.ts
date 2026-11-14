@@ -1248,3 +1248,62 @@ describe('ClaudeAgentService', () => {
 
 
 })
+
+describe('ClaudeAgentService recoverable close', () => {
+  it('stops a running turn but keeps the session and its Claude transcript to reopen', async () => {
+    let sessionId = ''
+    let aborted = false
+    const f = await fixture(async function* (options) {
+      yield textResult(sessionId)[0]
+      await new Promise<void>((resolve) => {
+        const signal = options.abortController!.signal
+        if (signal.aborted) resolve()
+        else signal.addEventListener('abort', () => resolve(), { once: true })
+      })
+      aborted = true
+    })
+    const created = await f.service.createSession(f.directory, false, true, 'claude')
+    sessionId = created.id
+    const events: unknown[] = []
+    f.service.on('event', (event) => events.push(event))
+    await f.service.sendMessage(sessionId, 'Summarize the open issues')
+    await vi.waitFor(() =>
+      expect(f.service.getSession(sessionId)?.messages.at(-1)?.content).toBe('Hello from Claude'))
+
+    const closed = await f.service.closeSession(sessionId)
+
+    expect(aborted).toBe(true)
+    expect(f.deleteSession).not.toHaveBeenCalled()
+    expect(closed).toMatchObject({
+      isOpen: false,
+      status: 'idle',
+      closedAt: expect.any(String),
+      closedContext: { prompts: ['Summarize the open issues'], reply: 'Hello from Claude' },
+    })
+    expect(f.service.listSessions()).toEqual([])
+    expect(f.service.listClosedSessions()).toEqual([expect.objectContaining({ id: sessionId })])
+    expect(events).toContainEqual({ type: 'session.removed', sessionId, closed: true })
+    await expect(f.service.sendMessage(sessionId, 'Late follow-up'))
+      .rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/Reopen the closed session/) })
+
+    const queries = f.queryCalls.length
+    const reopened = await f.service.activateSession(sessionId)
+
+    expect(reopened).toMatchObject({ isOpen: true })
+    expect(reopened.closedAt).toBeUndefined()
+    expect(f.queryCalls).toHaveLength(queries)
+  })
+
+  it('deletes a closed session for good only after its retention ends', async () => {
+    const f = await fixture(async function* () {})
+    const created = await f.service.createSession(f.directory, false, true, 'claude')
+    const closed = await f.service.closeSession(created.id)
+    const closedAt = Date.parse(closed.closedAt!)
+
+    await expect(f.service.deleteExpiredClosedSession(created.id, closedAt - 1)).resolves.toBe(false)
+    await expect(f.service.deleteExpiredClosedSession(created.id, closedAt)).resolves.toBe(true)
+
+    expect(f.deleteSession).toHaveBeenCalledWith(created.id, { dir: f.directory })
+    expect(f.service.getSession(created.id)).toBeUndefined()
+  })
+})

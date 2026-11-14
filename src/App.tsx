@@ -62,6 +62,8 @@ import {
 } from './app-shortcuts'
 import type { ShortcutBinding, ShortcutId } from './app-shortcuts'
 import { AppSettingsDialog } from './settings/AppSettingsDialog'
+import { ShellNavigation } from './rail/ShellNavigation'
+import { usePreviewFeature } from './preview-features'
 import { emptyRuntimeSelection } from './settings/runtime-defaults'
 import { StatuslineControls } from './settings/StatuslineControls'
 import type {
@@ -620,6 +622,7 @@ const settingNames: Record<SettingsProfileKey, string> = {
   notificationScope: 'What notifies you',
   previewFeatures: 'Preview features',
   schedulerAllowAllForOracle: 'Oracle schedule permissions',
+  displayName: 'Display name',
 }
 
 /** Storage that may be blocked outright, as some private modes do. */
@@ -3773,6 +3776,8 @@ function fallbackSessionKey(
 }
 
 function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClient }) {
+  const desktopRail = usePreviewFeature('desktopRail')
+  const [shellView, setShellView] = useState<string>()
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -5408,6 +5413,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setCloseRequest(undefined)
   }
   const hasBlockingUi =
+    Boolean(shellView) ||
     newSessionOpen ||
     Boolean(closeRequestSession) ||
     recentlyClosedOpen ||
@@ -9390,6 +9396,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return true
     }
     const dialogs: [boolean, () => void][] = [
+      [Boolean(shellView), () => setShellView(undefined)],
       [Boolean(closeRequestSession), () => setCloseRequest(undefined)],
       [recentlyClosedOpen, () => setRecentlyClosedOpen(false)],
       [newSessionOpen, closeNewSession],
@@ -13000,7 +13007,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
 
   return (
     <div
-      className={`app-shell ${
+      className={`app-shell ${desktopRail ? 'app-shell--rail' : ''} ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
       } ${signInExpired ? 'app-shell--signed-out' : ''} ${
         oracleOpen &&
@@ -13045,6 +13052,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         tabIndex={0}
       />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
+        <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession}
+          onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
+          onOpen={(id) => { setSidebarOpen(false); setShellView(id) }} />
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>
           <button
             aria-label="Back to sessions"
@@ -13378,7 +13388,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           </button>
         ) : null}
         <div className="sidebar-settings">
-          <button
+          {!desktopRail && <button
             aria-label="App settings"
             className="sidebar-settings__button"
             onClick={() => {
@@ -13393,7 +13403,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               <strong>App settings</strong>
               <small>Notifications, updates, and display</small>
             </span>
-          </button>
+          </button>}
           {/* On a phone the session list covers the conversation and its
               Oracle bubble, so Oracle is offered here too; CSS shows this
               copy only there. */}
@@ -14392,6 +14402,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         />
       ) : null}
       <AppSettingsDialog
+        onDisplayNameChange={(name) => saveSetting('displayName', name)}
         accentTheme={accentTheme}
         initialSection={settingsSection}
         onApplyUpdate={() => void applyPwaUpdate()}
@@ -14423,6 +14434,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         updateRegistration={updateRegistration}
         updatingApp={updatingApp}
       />
+      {shellView && <DialogFrame title={shellView === 'host' ? 'Host monitor' : shellView === 'scheduler' ? 'Scheduler' : 'Notifications'}
+        eyebrow="Preview" onClose={() => setShellView(undefined)}>
+        <p className="dialog-message">This view is being prepared for the next preview.</p>
+      </DialogFrame>}
       <RuntimeDialog
         onClose={() => setRuntimeOpen(false)}
         onConfigured={(session) => {

@@ -14,6 +14,7 @@ import { DefaultRuntimeControls, DefaultSessionFolderControl, SettingScope, Shor
 import { accentThemes, appearanceOptions, notificationScopeOptions } from './options'
 import { StatuslineControls } from './StatuslineControls'
 import type { AppSettingsDialogProps } from './types'
+import { DisplayNameSetting } from '../rail/DisplayNameSetting'
 
 export type SettingsSectionProps = AppSettingsDialogProps & {
   oracle: ReturnType<typeof useOracleSettings>
@@ -485,6 +486,7 @@ export const settingsSections: readonly SettingsSection[] = [
     scope: 'device',
     render: ({
       settingsSync,
+      onDisplayNameChange,
       updateRegistration,
       onApplyUpdate,
       checkingUpdate,
@@ -494,6 +496,7 @@ export const settingsSections: readonly SettingsSection[] = [
     }) => (
       <>
         <div className="app-settings-group__body">
+          <DisplayNameSetting value={settingsSync.values.displayName} onChange={onDisplayNameChange} />
           <section className="app-settings-section" id="settings-sync">
             <h4>Settings sync</h4>
             <p className="dialog-message">

@@ -45,6 +45,7 @@ export const uiSceneNames = [
   'computers-dialog',
   'oracle-panel',
   'oracle-schedule-approval',
+  'desktop-rail',
 ] as const
 
 export type UISceneName = typeof uiSceneNames[number]
@@ -119,6 +120,10 @@ export function createUIScenes(
           revision: 1, values: { previewFeatures: { schedulerView: true } }, keyRevisions: { previewFeatures: 1 },
         }
       }
+      if (name === 'desktop-rail') {
+        state.settings.values = { previewFeatures: { desktopRail: true }, displayName: 'Alex Morgan' }
+        state.settings.revision = 1
+      }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
@@ -185,7 +190,7 @@ export function createUIScenes(
         await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Focus this review on the recovery checklist.')
         await page.getByRole('button', { name: 'Send message', exact: true }).click()
         await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
-      } else if (name === 'session-list') {
+      } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
       } else if (name === 'app-settings' || name === 'preview-features' || name === 'computers-dialog') {
         const appSettings = name !== 'computers-dialog'

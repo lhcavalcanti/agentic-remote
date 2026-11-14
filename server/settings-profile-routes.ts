@@ -5,6 +5,7 @@ import {
   type SettingsProfileSnapshot,
 } from '../shared/settings-profile.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
+import { resolveHubDisplayName } from './display-name.js'
 
 /** Generous for 32 KB of settings; anything larger is refused before parsing. */
 const SETTINGS_BODY_LIMIT = 64 * 1024
@@ -63,8 +64,13 @@ export function registerSettingsProfileRoutes(
     return settings
   }
 
-  app.get('/api/settings', async (_request, reply) => {
+  let defaultDisplayName: Promise<string> | undefined
+  app.get('/api/settings', async (request, reply) => {
     reply.header('cache-control', 'no-store')
+    if ((request.query as { defaults?: string }).defaults === 'displayName') {
+      defaultDisplayName ??= resolveHubDisplayName()
+      return { settings: requireStore().snapshot(), defaultDisplayName: await defaultDisplayName }
+    }
     return { settings: requireStore().snapshot() }
   })
 

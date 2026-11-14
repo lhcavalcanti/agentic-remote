@@ -1117,7 +1117,7 @@ export async function setupWorkspaceFixture(
       }
       try {
         if (method === 'GET' && path === '/api/settings') {
-          await respond({ settings: snapshot() })
+          await respond({ settings: snapshot(), ...(url.searchParams.get('defaults') === 'displayName' ? { defaultDisplayName: 'Alex Morgan' } : {}) })
           return
         }
         if (method === 'POST' && path === '/api/settings/import') {

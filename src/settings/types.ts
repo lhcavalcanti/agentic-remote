@@ -27,6 +27,7 @@ export type StatuslineSettings = {
 export type AccentTheme = (typeof accentThemes)[number]['id']
 
 export type AppSettingsDialogProps = {
+  onDisplayNameChange?: (name: string) => void
   open: boolean
   computers: ComputerSummary[]
   onClose: () => void

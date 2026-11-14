@@ -1,0 +1,18 @@
+.shell-rail { order: 99; padding: 12px; border-top: 1px solid var(--border); }
+.shell-rail__top { display: none; }
+.shell-rail__footer { display: flex; flex-direction: column; gap: 6px; }
+.shell-rail__identity { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px; font-size: 13px; }
+.shell-avatar { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--accent-tint-strong); color: var(--accent-foreground); font-size: 12px; font-weight: 700; }
+.shell-rail__entry { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; }
+.shell-rail__entry:hover { background: var(--accent-tint); }
+.shell-badge { border-radius: 12px; background: var(--accent-foreground); color: var(--bg); font-size: 10px; font-weight: 700; padding: 2px 5px; }
+@media (min-width: 1024px) {
+  .app-shell--rail > .sidebar { position: relative; padding-left: 64px; }
+  .shell-rail { position: absolute; inset: 0 auto 0 0; width: 64px; display: flex; flex-direction: column; justify-content: space-between; padding: 12px 6px; border-top: 0; border-right: 1px solid var(--border); }
+  .shell-rail__top { display: flex; align-items: center; flex-direction: column; gap: 20px; }
+  .shell-rail__entry { justify-content: center; }
+  .shell-rail__label { display: none; }
+  .shell-rail__identity { flex-direction: column; gap: 4px; text-align: center; }
+  .shell-rail__identity > span:last-child { width: 48px; overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
+  .shell-badge { position: absolute; right: 0; top: 0; }
+}

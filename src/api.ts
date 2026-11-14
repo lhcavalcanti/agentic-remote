@@ -124,7 +124,7 @@ async function responseError(
   )
 }
 
-async function request<TResult>(
+export async function request<TResult>(
   path: string,
   init?: RequestInit,
 ): Promise<TResult> {

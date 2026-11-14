@@ -20,6 +20,7 @@ export const settingsProfileKeys = [
   'notificationScope',
   'previewFeatures',
   'schedulerAllowAllForOracle',
+  'displayName',
 ] as const
 
 export type SettingsProfileKey = (typeof settingsProfileKeys)[number]
@@ -78,6 +79,7 @@ export const oracleResponseStyles = ['concise', 'balanced', 'detailed'] as const
 export type OracleResponseStyle = (typeof oracleResponseStyles)[number]
 
 export interface SettingsProfileValues {
+  displayName?: string
   appearance?: AppearanceSetting
   accent?: AccentSetting
   statusline?: StatuslineSetting
@@ -176,6 +178,14 @@ export function parseSettingValue<K extends SettingsProfileKey>(
   switch (key) {
     case 'schedulerAllowAllForOracle':
       return typeof value === 'boolean' ? valid(value) : invalid('must be true or false')
+    case 'displayName': {
+      if (typeof value !== 'string' || [...value].some((character) => {
+        const code = character.codePointAt(0)!
+        return code < 32 || (code >= 127 && code <= 159)
+      })) return invalid('must not contain control characters')
+      const name = value.trim()
+      return name.length >= 1 && name.length <= 60 ? valid(name) : invalid('must be 1–60 characters')
+    }
     case 'appearance':
       return oneOf(appearanceSettings, value) ? valid(value) : invalid('is not a known appearance')
     case 'accent':

@@ -17,13 +17,24 @@ export interface SessionNavigationView {
     computer: ComputerSummary
     sessions: ManagedSession[]
     total: number
+    /** Sessions left out of the list because they are hidden. */
+    hidden: number
   }[]
-  counts: Record<SessionFilter, number> & { suspended: number }
+  counts: Record<SessionFilter, number> & { suspended: number; hidden: number }
   visible: ManagedSession[]
   shown: number
   filtering: boolean
   reorderDisabled: boolean
 }
+
+export interface HiddenSessions {
+  /** `computerId:sessionId` of the sessions left out of the list. */
+  keys: ReadonlySet<string>
+  /** Whether the list shows them anyway. */
+  shown: boolean
+}
+
+const noHiddenSessions: HiddenSessions = { keys: new Set(), shown: false }
 
 export function sessionNavigationView(
   computers: readonly ComputerSummary[],
@@ -32,25 +43,34 @@ export function sessionNavigationView(
   query: string,
   filter: SessionFilter,
   showSuspended = true,
+  hiddenSessions: HiddenSessions = noHiddenSessions,
 ): SessionNavigationView {
-  const counts = { all: 0, attention: 0, working: 0, suspended: 0 }
+  const counts = { all: 0, attention: 0, working: 0, suspended: 0, hidden: 0 }
   const groups = computers.map((computer) => {
-    const sessions = (sessionsByComputer.get(computer.id) || []).filter((session) => session.isOpen !== false)
-    const classified = sessions.map((session) => ({
+    const open = (sessionsByComputer.get(computer.id) || []).filter((session) => session.isOpen !== false)
+    const states = open.map((session) => ({
       session,
+      hidden: hiddenSessions.keys.has(sessionKey(session)),
       state: sessionPresentation(
         session,
         taskSnapshot(backgroundTasks, session),
         computer.online,
       ),
     }))
-    counts.all += sessions.length
+    // Hiding is curation rather than a filter: a hidden session leaves the
+    // list, and its counts, unless shown -- or while it needs you, so a
+    // question or permission is never out of sight.
+    const classified = states.filter((entry) =>
+      !entry.hidden || hiddenSessions.shown || entry.state.needsAttention)
+    counts.hidden += states.filter((entry) => entry.hidden).length
+    counts.all += classified.length
     counts.attention += classified.filter(({ state }) => state.needsAttention).length
     counts.working += classified.filter(({ state }) => state.working).length
     counts.suspended += classified.filter(({ session }) => session.suspended === true).length
     return {
       computer,
-      total: sessions.length,
+      total: classified.length,
+      hidden: states.length - classified.length,
       sessions: classified.filter(({ session, state }) =>
         (showSuspended || session.suspended !== true) &&
           matchesSessionSearch(session, query, computer.name) &&

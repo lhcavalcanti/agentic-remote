@@ -72,7 +72,12 @@ describe('hub session order routes', () => {
     expect(empty.statusCode).toBe(200)
     expect(empty.json()).toEqual({
       sessionOrder: {
-        revision: 0, bootstrapped: false, showSuspended: true, order: {},
+        revision: 0,
+        bootstrapped: false,
+        showSuspended: true,
+        showHidden: false,
+        hidden: [],
+        order: {},
       },
     })
 
@@ -89,6 +94,8 @@ describe('hub session order routes', () => {
         revision: 2,
         bootstrapped: true,
         showSuspended: true,
+        showHidden: false,
+        hidden: [],
         order: { 'computer-1': ['computer-1:b', 'computer-1:a'] },
       },
     })
@@ -167,6 +174,8 @@ describe('hub session order routes', () => {
       revision: 1,
       bootstrapped: false,
       showSuspended: false,
+      showHidden: false,
+      hidden: [],
       order: {},
     })
 
@@ -178,6 +187,94 @@ describe('hub session order routes', () => {
     })
     expect(malformed.statusCode).toBeGreaterThanOrEqual(400)
     expect(store.snapshot().revision).toBe(1)
+    await app.close()
+  })
+
+  it('persists hidden-session visibility through the shared snapshot', async () => {
+    const store = await orderStore()
+    const { app } = await hub(store)
+
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/api/session-order',
+      headers: { host: 'localhost' },
+      payload: { showHidden: true },
+    })
+    expect(saved.statusCode).toBe(200)
+    expect(saved.json().sessionOrder).toMatchObject({
+      revision: 1,
+      showSuspended: true,
+      showHidden: true,
+    })
+
+    for (const payload of [{}, { showHidden: 'yes' }]) {
+      const refused = await app.inject({
+        method: 'PUT',
+        url: '/api/session-order',
+        headers: { host: 'localhost' },
+        payload,
+      })
+      expect(refused.statusCode).toBeGreaterThanOrEqual(400)
+    }
+    expect(store.snapshot().revision).toBe(1)
+    await app.close()
+  })
+
+  it('hides and shows one session without reordering it', async () => {
+    const store = await orderStore()
+    await store.bootstrap({ 'computer-1': ['computer-1:a', 'computer-1:b'] })
+    const { app } = await hub(store)
+
+    const hidden = await app.inject({
+      method: 'PUT',
+      url: '/api/session-order/computer-1/b',
+      headers: { host: 'localhost' },
+      payload: { hidden: true },
+    })
+    expect(hidden.statusCode).toBe(200)
+    expect(hidden.json().sessionOrder).toMatchObject({
+      revision: 2,
+      hidden: ['computer-1:b'],
+      order: { 'computer-1': ['computer-1:a', 'computer-1:b'] },
+    })
+
+    const shown = await app.inject({
+      method: 'PUT',
+      url: '/api/session-order/computer-1/b',
+      headers: { host: 'localhost' },
+      payload: { hidden: false },
+    })
+    expect(shown.statusCode).toBe(200)
+    expect(shown.json().sessionOrder).toMatchObject({ revision: 3, hidden: [] })
+    await app.close()
+  })
+
+  it('refuses to hide a session the hub does not list, or a malformed request', async () => {
+    const store = await orderStore()
+    await store.bootstrap({ 'computer-1': ['computer-1:a'] })
+    const { app } = await hub(store)
+
+    const unknown = await app.inject({
+      method: 'PUT',
+      url: '/api/session-order/computer-1/retired',
+      headers: { host: 'localhost' },
+      payload: { hidden: true },
+    })
+    expect(unknown.statusCode).toBe(409)
+
+    for (const request of [
+      { url: '/api/session-order/computer-1/a', payload: { hidden: 'yes' } },
+      { url: '/api/session-order/computer-1/a', payload: {} },
+      { url: `/api/session-order/computer-1/${'a'.repeat(400)}`, payload: { hidden: true } },
+    ]) {
+      const refused = await app.inject({
+        method: 'PUT',
+        headers: { host: 'localhost' },
+        ...request,
+      })
+      expect(refused.statusCode).toBeGreaterThanOrEqual(400)
+    }
+    expect(store.snapshot()).toMatchObject({ revision: 1, hidden: [] })
     await app.close()
   })
 
@@ -246,6 +343,41 @@ describe('hub session order routes', () => {
     await app.close()
   })
 
+  it('keeps a cleared session hidden when its node reports a plain removal first', async () => {
+    const store = await orderStore()
+    await store.bootstrap({
+      'computer-1': ['computer-1:other', 'computer-1:session-1', 'computer-1:last'],
+    })
+    await store.setSessionHidden('computer-1', 'session-1', true)
+    const { app, manager } = await hub(store, {
+      clearConversation: async () => {
+        // A legacy node's own removal event is applied before its response.
+        manager.emit('event', {
+          type: 'session.removed',
+          computerId: 'computer-1',
+          sessionId: 'session-1',
+        })
+        await until(() => !store.isHidden('computer-1', 'session-1'))
+        return { id: 'session-1-cleared', computerId: 'computer-1' }
+      },
+    })
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/computers/computer-1/sessions/session-1/clear',
+      headers: { host: 'localhost' },
+    })
+
+    expect(response.statusCode).toBe(200)
+    expect(store.snapshot()).toMatchObject({
+      hidden: ['computer-1:session-1-cleared'],
+      order: {
+        'computer-1': ['computer-1:other', 'computer-1:session-1-cleared', 'computer-1:last'],
+      },
+    })
+    await app.close()
+  })
+
   it('commits a lifecycle change even with no browser connected', async () => {
     const store = await orderStore()
     const { app, manager } = await hub(store)
@@ -289,6 +421,8 @@ describe('hub session order routes', () => {
         revision: 2,
         bootstrapped: true,
         showSuspended: true,
+        showHidden: false,
+        hidden: [],
         order: { 'computer-1': ['computer-1:b', 'computer-1:a'] },
       },
     })

@@ -774,6 +774,14 @@ export interface SessionOrderSnapshot {
   bootstrapped: boolean
   /** Shared visibility for sessions paused through Agentic Remote. */
   showSuspended: boolean
+  /** Shared visibility for hidden sessions. A hub that predates it sends none: false. */
+  showHidden?: boolean
+  /**
+   * Keys of the sessions left out of the Sessions list, in the same canonical
+   * form as `order`. Hiding changes nothing about a session's runtime. A hub
+   * that predates it sends none: nothing is hidden.
+   */
+  hidden?: string[]
   order: Record<string, string[]>
 }
 

@@ -272,6 +272,8 @@ import {
   restartSession,
   resumeSession,
   saveSessionVisibility,
+  saveHiddenSessionVisibility,
+  saveSessionHidden,
   suspendSession,
   fetchSessionOrder,
   fetchSettingsProfile,
@@ -7883,6 +7885,17 @@ function App() {
   const [showSuspendedSessions, setShowSuspendedSessions] = useState(true)
   const [savingSuspendedVisibility, setSavingSuspendedVisibility] = useState(false)
   const savingSuspendedVisibilityRef = useRef(false)
+  // Hidden sessions keep running; only the list leaves them out.
+  const [hiddenSessionKeys, setHiddenSessionKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+  const [showHiddenSessions, setShowHiddenSessions] = useState(false)
+  const [savingHiddenVisibility, setSavingHiddenVisibility] = useState(false)
+  const savingHiddenVisibilityRef = useRef(false)
+  const [hidingSessions, setHidingSessions] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+  const hidingSessionsRef = useRef(new Set<string>())
   const sessionOrderRef = useRef(sessionOrder)
   sessionOrderRef.current = sessionOrder
   const sessionOrderRevisionRef = useRef(sessionOrderRevision)
@@ -7898,6 +7911,9 @@ function App() {
       setSessionOrderRevision(snapshot.revision)
       setSessionOrder(snapshot.order)
       setShowSuspendedSessions(snapshot.showSuspended !== false)
+      // A hub that predates hiding sends neither field.
+      setHiddenSessionKeys(new Set(Array.isArray(snapshot.hidden) ? snapshot.hidden : []))
+      setShowHiddenSessions(snapshot.showHidden === true)
     },
     [],
   )
@@ -8326,6 +8342,7 @@ function App() {
       sessionQuery,
       sessionFilter,
       showSuspendedSessions,
+      { keys: hiddenSessionKeys, shown: showHiddenSessions },
     ),
     [
       orderedComputers,
@@ -8334,6 +8351,8 @@ function App() {
       sessionQuery,
       sessionFilter,
       showSuspendedSessions,
+      hiddenSessionKeys,
+      showHiddenSessions,
     ],
   )
   // A pending row stands where its session will appear, so finishing the
@@ -12421,6 +12440,15 @@ function App() {
         ? [...current.filter((key) => key !== fromKey), toKey]
         : current,
     )
+    // The hub carries this too; moving it here keeps the replacement out of
+    // the list until that snapshot arrives.
+    setHiddenSessionKeys((current) => {
+      if (!current.has(fromKey)) return current
+      const next = new Set(current)
+      next.delete(fromKey)
+      next.add(toKey)
+      return next
+    })
   }
 
   function focusComposer(targetKey: string | undefined, cursor?: number): boolean {
@@ -16139,22 +16167,18 @@ function App() {
     const to = order.indexOf(overKey)
     if (from < 0 || to < 0) return
     const computerId = activeSession.computerId
-    const lane = showSuspendedSessions
-      ? arrayMove(order, from, to)
-      : reorderSessionLaneWithHiddenFollowers(
-          order,
-          activeKey,
-          overKey,
-          new Set(
-            sessions
-              .filter(
-                (session) =>
-                  session.computerId === computerId &&
-                  session.suspended !== true,
-              )
-              .map(sessionKey),
-          ),
-        )
+    // Each listed session carries the hidden or suspended sessions after it
+    // that the list leaves out, so they stay where they were relative to it.
+    const lane = reorderSessionLaneWithHiddenFollowers(
+      order,
+      activeKey,
+      overKey,
+      new Set(
+        navigationView.groups
+          .find((group) => group.computer.id === computerId)
+          ?.sessions.map(sessionKey),
+      ),
+    )
     // Move it now so the drag lands where it was dropped, but keep what the
     // hub last acknowledged: if the write fails the list has to go back, not
     // sit in a position no other device will ever agree with.
@@ -16185,6 +16209,54 @@ function App() {
 
   function changeSessionSort(sort: SessionSort) {
     saveSetting('sessionSort', sort)
+  }
+
+  function changeShowHiddenSessions(showHidden: boolean) {
+    if (savingHiddenVisibilityRef.current || showHidden === showHiddenSessions) return
+    savingHiddenVisibilityRef.current = true
+    setSavingHiddenVisibility(true)
+    void (async () => {
+      try {
+        applySessionOrderSnapshot(await saveHiddenSessionVisibility(showHidden))
+      } catch (caught) {
+        void syncSessionOrderRef.current()
+        setError(
+          `Could not save hidden-session visibility: ${
+            caught instanceof Error ? caught.message : String(caught)
+          }`,
+        )
+      } finally {
+        savingHiddenVisibilityRef.current = false
+        setSavingHiddenVisibility(false)
+      }
+    })()
+  }
+
+  // Selection, draft, and reading position stay put: a hidden session is
+  // still open and still reachable by address or from Oracle.
+  function toggleSessionHidden(session: ManagedSession) {
+    const key = sessionKey(session)
+    if (hidingSessionsRef.current.has(key)) return
+    const hide = !hiddenSessionKeys.has(key)
+    hidingSessionsRef.current.add(key)
+    setHidingSessions(new Set(hidingSessionsRef.current))
+    void (async () => {
+      try {
+        applySessionOrderSnapshot(await saveSessionHidden(session.computerId, session.id, hide))
+      } catch (caught) {
+        void syncSessionOrderRef.current()
+        // The report is in the conversation, which a phone's drawer covers.
+        setSidebarOpen(false)
+        setError(
+          `Could not ${hide ? 'hide' : 'show'} ${session.title} ${
+            hide ? 'from' : 'in'
+          } the list: ${caught instanceof Error ? caught.message : String(caught)}`,
+        )
+      } finally {
+        hidingSessionsRef.current.delete(key)
+        setHidingSessions(new Set(hidingSessionsRef.current))
+      }
+    })()
   }
 
   function changeShowSuspendedSessions(showSuspended: boolean) {
@@ -16333,9 +16405,12 @@ function App() {
                 filter={sessionFilter}
                 showSuspended={showSuspendedSessions}
                 showSuspendedSaving={savingSuspendedVisibility}
+                showHidden={showHiddenSessions}
+                showHiddenSaving={savingHiddenVisibility}
                 onQueryChange={setSessionQuery}
                 onFilterChange={setSessionFilter}
                 onShowSuspendedChange={changeShowSuspendedSessions}
+                onShowHiddenChange={changeShowHiddenSessions}
                 onRefresh={refreshAuthoritative}
                 refreshMessage={refreshMessage}
                 refreshState={refreshState}
@@ -16363,6 +16438,9 @@ function App() {
                 onSortChange={changeSessionSort}
                 closingSessions={closingSessions}
                 suspendingSessions={suspendingSessions}
+                hiddenSessions={hiddenSessionKeys}
+                hidingSessions={hidingSessions}
+                onToggleSessionHidden={toggleSessionHidden}
               />
             </DndContext>
         </div>

@@ -1450,6 +1450,12 @@ button {
   border-bottom: 0;
 }
 
+.session-filters__visibility {
+  display: flex;
+  flex: 1 0 auto;
+  gap: 4px;
+}
+
 .session-filter {
   display: flex;
   flex: 1 0 auto;
@@ -2057,7 +2063,8 @@ button {
   gap: 5px;
 }
 
-.session-mode-badge {
+.session-mode-badge,
+.session-hidden-badge {
   padding-left: 5px;
   color: var(--muted);
   border-left: 1px solid var(--border-strong);
@@ -7598,18 +7605,26 @@ button {
 
 /* Sits at the end of the row, out of the way of the title but reachable
    without opening the conversation. Close stays above Pause so the destructive
-   and reversible lifecycle actions keep a stable order. */
+   and reversible lifecycle actions keep a stable order. Hide follows them in a
+   column of its own: a third control under them would make every row taller. */
 .session-item__controls {
   grid-column: 3;
   grid-row: 1;
   align-self: center;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: auto auto;
   gap: 2px;
 }
 
+.session-item__hide {
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
 .session-item__close,
-.session-item__suspend {
+.session-item__suspend,
+.session-item__hide {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -7632,10 +7647,13 @@ button {
 
 .session-item:hover .session-item__close,
 .session-item:hover .session-item__suspend,
+.session-item:hover .session-item__hide,
 .session-item:focus-within .session-item__close,
 .session-item:focus-within .session-item__suspend,
+.session-item:focus-within .session-item__hide,
 .session-item__close:focus-visible,
 .session-item__suspend:focus-visible,
+.session-item__hide:focus-visible,
 .session-item__suspend--active {
   opacity: 1;
 }
@@ -7645,7 +7663,8 @@ button {
   color: var(--danger);
 }
 
-.session-item__suspend:hover {
+.session-item__suspend:hover,
+.session-item__hide:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text);
 }
@@ -7655,7 +7674,8 @@ button {
 }
 
 .session-item__close:focus-visible,
-.session-item__suspend:focus-visible {
+.session-item__suspend:focus-visible,
+.session-item__hide:focus-visible {
   outline: 2px solid var(--accent-foreground);
   outline-offset: 2px;
 }
@@ -7663,16 +7683,20 @@ button {
 /* Still hidden until the pointer is near. Fading a disabled control in on its
    own left every busy session showing a faint pause button at all times. */
 .session-item__close:disabled,
-.session-item__suspend:disabled {
+.session-item__suspend:disabled,
+.session-item__hide:disabled {
   cursor: not-allowed;
 }
 
 .session-item:hover .session-item__close:disabled,
 .session-item:hover .session-item__suspend:disabled,
+.session-item:hover .session-item__hide:disabled,
 .session-item:focus-within .session-item__close:disabled,
 .session-item:focus-within .session-item__suspend:disabled,
+.session-item:focus-within .session-item__hide:disabled,
 .session-item__close:disabled:focus-visible,
-.session-item__suspend:disabled:focus-visible {
+.session-item__suspend:disabled:focus-visible,
+.session-item__hide:disabled:focus-visible {
   opacity: 0.35;
 }
 
@@ -7681,14 +7705,16 @@ button {
    finding an invisible target. It stays visible, and large enough to hit. */
 @media (hover: none) {
   .session-item__close,
-  .session-item__suspend {
+  .session-item__suspend,
+  .session-item__hide {
     opacity: 1;
     width: 40px;
     height: 40px;
   }
 
   .session-item__close:disabled,
-  .session-item__suspend:disabled {
+  .session-item__suspend:disabled,
+  .session-item__hide:disabled {
     opacity: 0.3;
   }
 }

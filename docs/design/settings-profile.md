@@ -40,8 +40,8 @@ existing Host/Origin policy. **The profile belongs to the hub.**
 
 Some related state is already hub-owned and is unchanged:
 
-- the custom session order and suspended-session visibility
-  (`/api/session-order`);
+- the custom session order, suspended-session visibility, and hidden
+  sessions (`/api/session-order`);
 - Oracle's model and folder (`/api/manager/settings`).
 
 "Follow latest" is per-view state, not a setting.

@@ -5,7 +5,19 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { ChevronDown, GripVertical, Monitor, Pause, Play, Plus, RefreshCw, Search, X } from 'lucide-react'
+import {
+  ChevronDown,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Monitor,
+  Pause,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  X,
+} from 'lucide-react'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
@@ -48,6 +60,11 @@ type SessionActions = {
   closingSessions: ReadonlySet<string>
   /** `computerId:sessionId` of the sessions whose suspend or resume is in flight. */
   suspendingSessions: ReadonlySet<string>
+  /** `computerId:sessionId` of the sessions left out of the list. */
+  hiddenSessions: ReadonlySet<string>
+  /** `computerId:sessionId` of the sessions whose hide or show is being saved. */
+  hidingSessions: ReadonlySet<string>
+  onToggleSessionHidden: (session: ManagedSession) => void
 }
 
 export function SessionState({ presentation }: {
@@ -133,6 +150,9 @@ function SortableSessionItem({
   onToggleSessionSuspended,
   closingSessions,
   suspendingSessions,
+  hiddenSessions,
+  hidingSessions,
+  onToggleSessionHidden,
   managedSessions,
 }: SessionActions & {
   session: ManagedSession
@@ -170,6 +190,9 @@ function SortableSessionItem({
   const ownsTasks = runningBackgroundTasks > 0 || hasActiveBackgroundTasks(backgroundTasks)
   const suspendUnavailable =
     !online || suspending || (!session.suspended && (retained || busy || ownsTasks))
+  // The hub keeps this, not the owning computer, so it works offline too.
+  const hidden = hiddenSessions.has(sessionKey(session))
+  const hiding = hidingSessions.has(sessionKey(session))
   return (
     <div
       className={`session-item session-item--tone-${computerTone(
@@ -201,6 +224,7 @@ function SortableSessionItem({
             session.title,
             managedSessions?.has(sessionKey(session)) ? 'started by Oracle' : undefined,
             session.retention?.pinned ? 'kept for review' : undefined,
+            hidden ? 'hidden from the list' : undefined,
             providerName(session.provider),
             executionModeName(session.executionMode),
             presentation.description,
@@ -229,6 +253,14 @@ function SortableSessionItem({
               ) : null}
               {session.retention?.pinned ? (
                 <em className="provider-badge" title="Protected from automatic archival">For review</em>
+              ) : null}
+              {hidden ? (
+                <em
+                  className="provider-badge session-hidden-badge"
+                  title="Hidden from the list; the session keeps running"
+                >
+                  Hidden
+                </em>
               ) : null}
               {presentation.state === 'tasks' && runningBackgroundTasks > 0
                 ? null
@@ -306,6 +338,27 @@ function SortableSessionItem({
         >
           {session.suspended ? <Play aria-hidden="true" size={13} /> : <Pause aria-hidden="true" size={13} />}
         </button>
+        <button
+          aria-busy={hiding || undefined}
+          aria-label={
+            hidden ? `Show ${session.title} in the list` : `Hide ${session.title} from the list`
+          }
+          className="session-item__hide"
+          disabled={hiding}
+          onClick={() => onToggleSessionHidden(session)}
+          title={
+            hiding
+              ? hidden
+                ? 'Showing this session in the list'
+                : 'Hiding this session from the list'
+              : hidden
+                ? 'Show in the list again'
+                : 'Hide from the list; the session keeps running'
+          }
+          type="button"
+        >
+          {hidden ? <Eye aria-hidden="true" size={13} /> : <EyeOff aria-hidden="true" size={13} />}
+        </button>
       </div>
     </div>
   )
@@ -316,6 +369,7 @@ function SortableComputerGroup({
   sessions,
   pendingCreations = [],
   total,
+  hidden,
   filtering,
   reorderDisabled,
   sorting,
@@ -327,6 +381,8 @@ function SortableComputerGroup({
   sessions: ManagedSession[]
   pendingCreations?: PendingSessionCreation[]
   total: number
+  /** Sessions left out of the list because they are hidden. */
+  hidden: number
   filtering: boolean
   reorderDisabled: boolean
   sorting: boolean
@@ -414,7 +470,11 @@ function SortableComputerGroup({
           )}
           {sessions.length === 0 && pendingCreations.length === 0 ? (
             <p className="computer-session-group__empty">
-              {filtering ? 'No matching sessions' : 'No open sessions'}
+              {filtering
+                ? 'No matching sessions'
+                : hidden > 0
+                  ? `${hidden} hidden session${hidden === 1 ? '' : 's'}`
+                  : 'No open sessions'}
             </p>
           ) : null}
         </div>
@@ -435,12 +495,15 @@ export function SessionNavigation({
   filter,
   showSuspended,
   showSuspendedSaving,
+  showHidden,
+  showHiddenSaving,
   creationError,
   loadingError,
   onDismissCreationError,
   onQueryChange: setQuery,
   onFilterChange: setFilter,
   onShowSuspendedChange: setShowSuspended,
+  onShowHiddenChange: setShowHidden,
   pendingCreations = [],
   onRefresh,
   refreshState = 'fresh',
@@ -459,6 +522,8 @@ export function SessionNavigation({
   filter: SessionFilter
   showSuspended: boolean
   showSuspendedSaving: boolean
+  showHidden: boolean
+  showHiddenSaving: boolean
   creationError?: string
   loadingError?: string
   onDismissCreationError?: () => void
@@ -474,6 +539,7 @@ export function SessionNavigation({
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
   onShowSuspendedChange: (show: boolean) => void
+  onShowHiddenChange: (show: boolean) => void
 }) {
   const searchRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -594,22 +660,48 @@ export function SessionNavigation({
               <span aria-hidden="true">{entry.count}</span>
             </button>
           ))}
-          <button
-            aria-label="Include suspended sessions"
-            aria-busy={showSuspendedSaving}
-            aria-pressed={showSuspended}
-            className="session-filter session-filter--suspended"
-            disabled={showSuspendedSaving}
-            onClick={() => setShowSuspended(!showSuspended)}
-            title={showSuspendedSaving
-              ? 'Saving suspended-session visibility'
-              : showSuspended ? 'Hide suspended sessions' : 'Show suspended sessions'}
-            type="button"
-          >
-            <Pause aria-hidden="true" size={11} />
-            Suspended
-            <span aria-hidden="true">{counts.suspended}</span>
-          </button>
+          {/* These decide what the list includes rather than narrowing it,
+              so on a narrow list they wrap onto their own line together. */}
+          <div className="session-filters__visibility">
+            <button
+              aria-label="Include suspended sessions"
+              aria-busy={showSuspendedSaving}
+              aria-pressed={showSuspended}
+              className="session-filter session-filter--suspended"
+              disabled={showSuspendedSaving}
+              onClick={() => setShowSuspended(!showSuspended)}
+              title={showSuspendedSaving
+                ? 'Saving suspended-session visibility'
+                : showSuspended ? 'Hide suspended sessions' : 'Show suspended sessions'}
+              type="button"
+            >
+              <Pause aria-hidden="true" size={11} />
+              Suspended
+              <span aria-hidden="true">{counts.suspended}</span>
+            </button>
+            {/* Offered once something is hidden, and while hidden sessions
+                are shown so that can be undone. */}
+            {counts.hidden > 0 || showHidden ? (
+              <button
+                aria-label="Include hidden sessions"
+                aria-busy={showHiddenSaving}
+                aria-pressed={showHidden}
+                className="session-filter session-filter--hidden"
+                disabled={showHiddenSaving}
+                onClick={() => setShowHidden(!showHidden)}
+                title={showHiddenSaving
+                  ? 'Saving hidden-session visibility'
+                  : showHidden
+                    ? 'Leave hidden sessions out of the list'
+                    : 'Show hidden sessions in the list'}
+                type="button"
+              >
+                <EyeOff aria-hidden="true" size={11} />
+                Hidden
+                {counts.hidden > 0 ? <span aria-hidden="true">{counts.hidden}</span> : null}
+              </button>
+            ) : null}
+          </div>
         </div>
         {filtering ? (
           <div className="session-list__results">
@@ -672,7 +764,8 @@ export function SessionNavigation({
         ref={scrollRef}
       >
         {loading ? <p className="sidebar-message">Loading sessions...</p> : null}
-        {!loading && !loadingError && counts.all === 0 && pendingCreations.length === 0 ? (
+        {!loading && !loadingError && counts.all === 0 && counts.hidden === 0 &&
+          pendingCreations.length === 0 ? (
           <p className="sidebar-message">No sessions here.</p>
         ) : null}
         <SortableContext
@@ -695,6 +788,7 @@ export function SessionNavigation({
                 selectedKey={selectedKey}
                 sessions={group.sessions}
                 total={group.total}
+                hidden={group.hidden}
               />
             ))}
           </div>

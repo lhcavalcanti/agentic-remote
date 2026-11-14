@@ -370,6 +370,30 @@ export async function saveSessionVisibility(
   return response.sessionOrder
 }
 
+/** Saves whether every browser on this hub lists hidden sessions. */
+export async function saveHiddenSessionVisibility(
+  showHidden: boolean,
+): Promise<SessionOrderSnapshot> {
+  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
+    '/api/session-order',
+    { method: 'PUT', body: JSON.stringify({ showHidden }) },
+  )
+  return response.sessionOrder
+}
+
+/** Leaves a session out of the Sessions list, or puts it back. It keeps running either way. */
+export async function saveSessionHidden(
+  computerId: string,
+  sessionId: string,
+  hidden: boolean,
+): Promise<SessionOrderSnapshot> {
+  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
+    `/api/session-order/${encodeURIComponent(computerId)}/${encodeURIComponent(sessionId)}`,
+    { method: 'PUT', body: JSON.stringify({ hidden }) },
+  )
+  return response.sessionOrder
+}
+
 /** Submits one computer's lane, so a stale view cannot rewrite the others. */
 export async function saveSessionOrderLane(
   computerId: string,

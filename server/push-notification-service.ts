@@ -10,6 +10,7 @@ import {
   notificationAllowed,
   notificationBrief,
   OracleNotifier,
+  scheduleNotificationPayload,
   type NotificationCategory,
   type NotificationPayload,
   type NotificationScope,
@@ -32,6 +33,7 @@ export interface PushPolicy {
   scope?: () => NotificationScope | undefined
   /** Whether an open app is showing Oracle, which then needs no push. */
   oracleWatched?: () => boolean
+  isScheduledSession?: (session: ManagedSession) => boolean
 }
 
 interface PushState {
@@ -54,6 +56,7 @@ export class PushNotificationService {
   private writeQueue: Promise<void> = Promise.resolve()
   private manager?: HubEventSource
   private oracleSource?: OracleEventSource
+  private scheduleSource?: HubEventSource
   private readonly oracle = new OracleNotifier()
   private policy: PushPolicy = {}
   private recorder?: NotificationRecorder
@@ -144,6 +147,12 @@ export class PushNotificationService {
     this.recorder = recorder
   }
 
+  attachScheduleNotifications(source: HubEventSource): void {
+    this.scheduleSource?.off('event', this.handleEvent)
+    this.scheduleSource = source
+    source.on('event', this.handleEvent)
+  }
+
   /** Notifies Oracle's replies, failures, and requests for your OK. */
   attachOracle(source: OracleEventSource): void {
     this.oracleSource = source
@@ -155,6 +164,8 @@ export class PushNotificationService {
     this.manager = undefined
     this.oracleSource?.off('event', this.handleOracleEvent)
     this.oracleSource = undefined
+    this.scheduleSource?.off('event', this.handleEvent)
+    this.scheduleSource = undefined
   }
 
   publicKey(): string {
@@ -249,6 +260,14 @@ export class PushNotificationService {
   }
 
   private readonly deliverEvent = (event: HubEvent, persisted?: Promise<void>) => {
+    if (event.type === 'schedule.run.notification') {
+      const record = event.notification
+      if (record.muted || (record.sessionId && this.requireState().mutedSessions.includes(`${record.computerId}:${record.sessionId}`))) return
+      void this.sendPayload(scheduleNotificationPayload(record), 'session', persisted).catch((error: unknown) => {
+        console.warn('Unable to send schedule outcome notification:', error)
+      })
+      return
+    }
     if (event.type === 'computer.removed') {
       const prefix = `${event.computerId}:`
       for (const key of this.notifiedActions) {
@@ -292,6 +311,7 @@ export class PushNotificationService {
       return
     }
     const session = event.session
+    if (this.policy.isScheduledSession?.(session)) return
     const sessionKey = this.sessionKey(session.computerId, session.id)
     const previousStatus = this.sessionStatuses.get(sessionKey)
     this.sessionStatuses.set(sessionKey, session.status)

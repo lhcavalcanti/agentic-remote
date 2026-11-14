@@ -8,9 +8,38 @@ import {
   type UISceneHandle,
   type UISceneName,
 } from './ui-scenes'
-import { SELECTED_SESSION_ID } from './workspace-fixtures'
+import { FIXTURE_NOW, SELECTED_SESSION_ID, createWorkspaceFixtureState, setupWorkspaceFixture } from './workspace-fixtures'
 
 test.use(uiContextOptions)
+
+test('native shell receives one canonical scheduled outcome without enabling scheduler preview', async ({ page, baseURL }) => {
+  await page.addInitScript(() => {
+    const notifications: unknown[] = []
+    Object.assign(window, {
+      fixtureScheduleNotifications: notifications,
+      __AGENTIC_SHELL__: { version: 1, notify: (notification: unknown) => notifications.push(notification) },
+    })
+  })
+  const state = createWorkspaceFixtureState()
+  const fixture = await setupWorkspaceFixture(page, {
+    baseUrl: baseURL!, state, knowledgeMode: 'hidden', scheduler: { schedules: [], runs: [] }, notifications: [],
+  })
+  try {
+    await page.goto(fixture.url)
+    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible()
+    await expect.poll(() => state.eventSockets.size).toBeGreaterThan(0)
+    const event = {
+      type: 'schedule.run.notification' as const,
+      notification: { id: 'a'.repeat(64), kind: 'schedule.run.failed' as const, severity: 'error' as const,
+        computerId: 'fixture-studio', title: 'Morning review · failed', body: 'Open the scheduled run for details.',
+        url: '/?schedule=fictional-review&run=fictional-run', createdAt: FIXTURE_NOW, coalesceKey: 'fictional-review', muted: false },
+    }
+    fixture.emit(event)
+    fixture.emit(event)
+    await expect.poll(() => page.evaluate(() =>
+      (window as unknown as { fixtureScheduleNotifications: unknown[] }).fixtureScheduleNotifications.length)).toBe(1)
+  } finally { fixture.assertHealthy() }
+})
 
 for (const action of ['Approve', 'Reject'] as const) {
   test(`schedule proposal ${action.toLowerCase()} sends the exact id`, async ({ page, baseURL }) => {

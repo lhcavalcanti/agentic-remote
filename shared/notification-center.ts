@@ -5,6 +5,11 @@ export const notificationKinds = [
   'oracle.message',
   'host.alert',
   'computer.offline',
+  'schedule.run.succeeded',
+  'schedule.run.failed',
+  'schedule.run.needs-input',
+  'schedule.run.missed',
+  'schedule.run.interrupted',
 ] as const
 
 export type NotificationKind = (typeof notificationKinds)[number] | `schedule.run.${string}`
@@ -56,3 +61,8 @@ export const defaultNotificationKindPreference: Readonly<NotificationKindPrefere
   Object.freeze({ push: true, inApp: true, native: true })
 
 export type NotificationKindPreferences = Partial<Record<NotificationKind, NotificationKindPreference>>
+
+export interface ScheduleRunNotification {
+  type: 'schedule.run.notification'
+  notification: NotificationRecord
+}

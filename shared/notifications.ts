@@ -1,4 +1,5 @@
 import type { ManagerEvent, ManagerMessage } from './manager.js'
+import type { NotificationRecord } from './notification-center.js'
 
 /**
  * Which notifications reach your devices. A synced setting: the hub applies
@@ -37,6 +38,33 @@ export interface NotificationPayload {
   tag: string
   priority: 'high' | 'normal' | 'low'
   data: { url: string }
+}
+
+export function scheduleNotificationPayload(record: NotificationRecord): NotificationPayload {
+  return {
+    title: record.title, body: record.body, tag: `agentic-schedule-${record.id}`,
+    priority: record.severity === 'info' ? 'low' : 'high', data: { url: record.url },
+  }
+}
+
+/** Native shells consume the same canonical outcome as Web Push, never session idleness. */
+export class ScheduleShellNotifier {
+  private readonly seen = new Set<string>()
+  next(record: NotificationRecord, context: {
+    scope?: NotificationScope
+    mutedKeys?: readonly string[]
+    activeKey?: string
+    documentVisible?: boolean
+  } = {}): { tag: string; title: string; body: string; urgent: boolean } | undefined {
+    if (this.seen.has(record.id)) return
+    this.seen.add(record.id)
+    if (this.seen.size > 1000) this.seen.delete(this.seen.values().next().value!)
+    const key = record.sessionId ? `${record.computerId}:${record.sessionId}` : undefined
+    if (!notificationAllowed(context.scope, 'session') || record.muted ||
+        (key && (context.mutedKeys?.includes(key) || (key === context.activeKey && context.documentVisible)))) return
+    const payload = scheduleNotificationPayload(record)
+    return { tag: payload.tag, title: payload.title, body: payload.body, urgent: payload.priority === 'high' }
+  }
 }
 
 /** Opens the app with Oracle's panel open. */

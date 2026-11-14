@@ -1,6 +1,6 @@
 # Scheduler
 
-Status: shared contracts, pure recurrence, durable storage, hub dispatcher, policy-explicit session runner, HTTP/event contracts, Oracle proposal tools and confirmation cards. The hub constructs the store, runner and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. The schedule editor and notification integration remain separate work. Dreamer's existing schedule is unchanged.
+Status: shared contracts, pure recurrence, durable storage, hub dispatcher, policy-explicit session runner, HTTP/event contracts, Oracle proposal tools, confirmation cards and canonical notifications. The hub constructs the store, runner and dispatcher only with `AGENTIC_REMOTE_FEATURE_SCHEDULER=on` (default off). Nodes never construct or dispatch schedules. The schedule editor remains separate work. Dreamer's existing schedule is unchanged.
 
 ## Schema
 
@@ -154,3 +154,19 @@ Scheduler-enabled hubs register `list_schedules`, `get_schedule`, and bounded `l
 Each proposal and observed outcome is recorded in the manager journal, including confirmation, rejection, expiry and failure, with startup replay for interrupted journal delivery. Proposal IDs are not session ownership. Schedule-started sessions retain the registry's `schedule` origin and cannot be promoted to Oracle ownership; Oracle-created schedules are not Oracle-owned sessions.
 
 With Interface › Preview features › Scheduler enabled and the authoritative hub flag on, the Oracle panel renders pending confirmation cards. Before expanding anything, each card shows the operation, human recurrence and timezone, the next run from the shared recurrence engine, and labeled computer, folder, permissions, folder trust and workspace facts. Creates include a prompt preview; updates show changed fields as before → after, while enable/disable/Run now/archive explain their consequences. Allow-all displays the explicit warning “Runs tools without asking”. Before-state is read only at the proposal's exact base revision; a missing or stale revision disables approval rather than displaying a misleading diff. The immutable JSON stays under “Exact payload to approve”, with expiry and Approve/Reject actions bound only to the proposal ID. Socket changes and reconnects refresh the pending list. The Interface › Scheduler setting permits allow-all proposals, defaults off, and never approves a proposal itself.
+
+## Canonical run notifications
+
+The canonical classifier resolves `notify` from the immutable definition accepted for the run, not today's edited schedule. A run outcome produces one stable identity from schedule ID, run ID and outcome. Needs-input is an attention outcome; a stopped run uses the interrupted kind. Pending, launching, running and stopping are not outcomes.
+
+| Accepted policy | Succeeded | Failed | Needs input | Missed | Interrupted |
+| --- | --- | --- | --- | --- | --- |
+| `always` | Notify | Notify | Notify | Notify | Notify |
+| `attention` | Suppress | Notify | Notify | Notify | Notify |
+| `never` | Suppress | Suppress | Suppress | Suppress | Suppress |
+
+`ScheduleNotificationService` admits the canonical record before external delivery and broadcasts `schedule.run.notification` with the resolved notification. The notification-center flag controls in-app storage, not scheduler push/native behavior. Both channels consume the same canonical outcome and stable tag. Scheduler state retains up to 100,000 durable identity fences (inside its existing 64 MiB ceiling); reaching that bound fails closed rather than reopening an old outcome. Restart, repeated status updates and node resync cannot announce an outcome again, and notification-store tombstones preserve read/dismissed state. Delivery is at most once: a crash after the external-delivery fence or a push transport failure is not automatically retried.
+
+Ordinary session action/completion paths are suppressed for every schedule policy, including `never`. Before session binding, the resolver matches the owner-persisted launch ID plus computer against admitted runs; after binding it also uses session ID and the registry's schedule provenance (including replacements). It never treats a generic automation launch ID as Oracle ownership. Scheduler storage initializes before push snapshot seeding to close the restart/pending-permission gap.
+
+The hub annotates HTTP and socket session projections with `suppressOrdinaryNotifications` for native clients; this is hub-derived delivery metadata, not owner-side provenance. Session state and transcript events still flow unchanged otherwise, including patch/resync metadata. Push retains notification scope and session mute; native additionally suppresses the active visible session and duplicate identities. In-app records survive mute/scope suppression. No notification service exists without the scheduler hub flag.

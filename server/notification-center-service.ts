@@ -29,16 +29,20 @@ export class NotificationCenterService implements NotificationRecorder {
     private readonly options: {
       mutedSessions: () => readonly string[]
       readSession: (computerId: string, sessionId: string) => Promise<ManagedSession>
+      isScheduledSession?: (session: ManagedSession) => boolean
       now?: () => number
     },
   ) {}
 
   hub(event: HubEvent, baseline = false): Promise<void> {
+    const existing = this.admissions.get(event)
+    if (existing) return existing
     const snapshot = structuredClone(event)
+    const scheduled = snapshot.type === 'session.upserted' && this.options.isScheduledSession?.(snapshot.session) === true
     const muted = event.type === 'session.upserted' &&
       this.options.mutedSessions().includes(`${event.session.computerId}:${event.session.id}`)
     const admitted = this.enqueue(async () => {
-      if (snapshot.type === 'session.upserted' && !snapshot.session.messages.some((message) => message.role === 'user') &&
+      if (!scheduled && snapshot.type === 'session.upserted' && !snapshot.session.messages.some((message) => message.role === 'user') &&
           !snapshot.session.pendingPermission && !snapshot.session.pendingUserInput &&
           (!baseline || snapshot.session.status === 'running')) {
         // Roster snapshots contain no transcript. Read passively; never open,
@@ -50,9 +54,9 @@ export class NotificationCenterService implements NotificationRecorder {
               : detail.updatedAt === snapshot.session.updatedAt)) snapshot.session.messages = detail.messages
       }
       const now = this.now()
-      await this.store.ingest((cursors) => classifyHubNotification(snapshot, cursors, now, baseline)
+      await this.store.ingest((cursors) => classifyHubNotification(snapshot, cursors, now, baseline, scheduled)
         .filter((record) => this.inApp(record))
-        .map((record) => ({ ...record, muted })))
+        .map((record) => ({ ...record, muted: record.muted || muted })))
     })
     this.admissions.set(event, admitted)
     return admitted

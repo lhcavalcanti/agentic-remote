@@ -27,9 +27,10 @@ const stateSchema = z.object({
   cursors: z.record(z.string(), timestamp),
   occurrences: z.record(z.string(), z.string()),
   proposals: z.array(scheduleProposalSchema).max(1000).default([]),
+  notificationFences: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(100_000).default([]),
 }).strict()
 type State = z.infer<typeof stateSchema>
-const empty = (): State => ({ version: 1, revision: 0, schedules: [], runs: [], runSchedules: {}, cursors: {}, occurrences: {}, proposals: [] })
+const empty = (): State => ({ version: 1, revision: 0, schedules: [], runs: [], runSchedules: {}, cursors: {}, occurrences: {}, proposals: [], notificationFences: [] })
 const failure = (message: string, statusCode: number) => Object.assign(new Error(message), { statusCode })
 export const occurrenceKey = (scheduleId: string, occurrenceAt: string) => JSON.stringify([scheduleId, occurrenceAt])
 export const isInFlight = (run: ScheduleRun) =>
@@ -112,6 +113,8 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     const counts = new Map<string, number>()
     for (const run of next.runs) counts.set(run.scheduleId, (counts.get(run.scheduleId) ?? 0) + 1)
     if (ids.size !== next.schedules.length || new Set(names).size !== names.length ||
+        new Set(next.proposals.map((proposal) => proposal.id)).size !== next.proposals.length ||
+        new Set(next.notificationFences).size !== next.notificationFences.length ||
         new Set(next.runs.map((run) => run.id)).size !== next.runs.length || launches.size !== next.runs.length ||
         Object.keys(next.runSchedules).length !== next.runs.length ||
         new Set(Object.values(next.occurrences)).size !== Object.keys(next.occurrences).length ||
@@ -143,6 +146,21 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   }
 
   proposals(): ScheduleProposal[] { return structuredClone(this.state.proposals) }
+  ownsSession(computerId: string, sessionId: string, launchId?: string): boolean {
+    return this.state.runs.some((run) => run.computerId === computerId &&
+      ((launchId !== undefined && run.launchId === launchId) || run.sessionId === sessionId))
+  }
+
+  claimNotification(id: string): Promise<boolean> {
+    return this.commit((next) => {
+      if (next.notificationFences.includes(id)) return { result: false }
+      if (!/^[a-f0-9]{64}$/.test(id) || next.notificationFences.length >= 100_000) {
+        throw new Error('Scheduler notification deduplication capacity reached')
+      }
+      next.notificationFences.push(id)
+      return { result: true }
+    })
+  }
   proposal(id: string): ScheduleProposal {
     const proposal = this.state.proposals.find((entry) => entry.id === id)
     if (!proposal) throw failure('Schedule proposal not found', 404)

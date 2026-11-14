@@ -8,6 +8,7 @@ import {
 } from './side-question.js'
 import type {
   HubEvent,
+  ManagedSession,
   HubResyncRequest,
   SessionOrderSnapshot,
   WorkspaceFile,
@@ -31,6 +32,7 @@ import type { SettingsProfileStore } from './settings-profile-store.js'
 import type { ClientPresence } from './client-presence.js'
 import type { NotificationCenterService } from './notification-center-service.js'
 import type { SchedulerStore } from './scheduler-store.js'
+import type { ScheduleNotificationService } from './schedule-notification-service.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
@@ -410,7 +412,27 @@ export async function registerHubRoutes(
   oracleVoice?: OracleVoiceRouteOptions,
   notifications?: NotificationCenterService,
   scheduler?: SchedulerStore,
+  scheduleNotifications?: ScheduleNotificationService,
+  isScheduledSession?: (session: ManagedSession) => boolean,
 ): Promise<void> {
+  const sessionForClient = (session: ManagedSession): ManagedSession => {
+    const result = { ...session }
+    delete result.suppressOrdinaryNotifications
+    if (isScheduledSession?.(session)) result.suppressOrdinaryNotifications = true
+    return result
+  }
+  if (scheduler) {
+    app.addHook('preSerialization', async (_request, _reply, payload) => {
+      if (!payload || typeof payload !== 'object') return payload
+      const response = payload as { session?: ManagedSession; sessions?: ManagedSession[] }
+      if (response.session?.computerId) response.session = sessionForClient(response.session)
+      if (Array.isArray(response.sessions) && response.sessions.every((session) =>
+        session && typeof session === 'object' && typeof session.id === 'string' && typeof session.computerId === 'string')) {
+        response.sessions = response.sessions.map(sessionForClient)
+      }
+      return payload
+    })
+  }
   const policy = originPolicy()
   // Assigned once the socket set exists further down. Until then a committed
   // order is still persisted and returned; only the push to other clients is
@@ -1274,8 +1296,10 @@ export async function registerHubRoutes(
   })
   let broadcasts: Promise<unknown> = Promise.resolve()
   const broadcast = (event: HubEvent) => {
+    const outgoing = scheduler && event.type === 'session.upserted'
+      ? { ...event, session: sessionForClient(event.session) } : event
     if (!notifications) {
-      publications.broadcast(event)
+      publications.broadcast(outgoing)
       return
     }
     const admitted = notifications.admission(event)
@@ -1283,7 +1307,7 @@ export async function registerHubRoutes(
     // admission delays a signal the native producer may announce.
     broadcasts = broadcasts.then(async () => {
       await admitted
-      publications.broadcast(event)
+      publications.broadcast(outgoing)
     }).catch((error: unknown) => {
       app.log.error({ err: error }, 'Could not persist the notification for a hub event')
     })
@@ -1293,6 +1317,7 @@ export async function registerHubRoutes(
   notifications?.store.on('changed', broadcast)
   scheduler?.on('changed', broadcast)
   scheduler?.on('proposal', broadcast)
+  scheduleNotifications?.on('event', broadcast)
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
   publishSettings = (settings) => broadcast({ type: 'settings.updated', settings })
@@ -1404,6 +1429,7 @@ export async function registerHubRoutes(
     notifications?.store.off('changed', broadcast)
     scheduler?.off('changed', broadcast)
     scheduler?.off('proposal', broadcast)
+    scheduleNotifications?.off('event', broadcast)
     manager.off('event', trackOrder)
     // Drain in-flight order work so a closing app leaves no write behind it.
     await seeding

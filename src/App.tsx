@@ -375,6 +375,7 @@ import {
 } from './shell'
 import {
   notificationState,
+  ScheduleShellNotifier,
   shellNotifications,
   type SessionNotificationState,
 } from './shell-notifications'
@@ -5288,6 +5289,16 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const notificationStateRef = useRef<Map<string, SessionNotificationState>>(
     new Map(),
   )
+  const scheduleShellNotifierRef = useRef(new ScheduleShellNotifier())
+  const raiseScheduleShellNotificationRef = useRef((_record: import('../shared/notification-center').NotificationRecord) => {})
+  raiseScheduleShellNotificationRef.current = (record) => {
+    if (!nativeShell()) return
+    const notification = scheduleShellNotifierRef.current.next(record, {
+      scope: notificationScopeRef.current, mutedKeys: mutedSessions, activeKey: selectedKey,
+      documentVisible: document.visibilityState === 'visible',
+    })
+    if (notification) sendShellNotification(notification)
+  }
   useEffect(() => {
     if (!nativeShell()) {
       return
@@ -7520,6 +7531,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           raiseOracleShellNotificationRef.current(event)
         } else if (event.type === 'schedule-proposals.changed') {
           setScheduleProposalEpoch((current) => current + 1)
+        } else if (event.type === 'schedule.run.notification') {
+          raiseScheduleShellNotificationRef.current(event.notification)
         } else if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)
         } else if (event.type === 'session.order.updated') {

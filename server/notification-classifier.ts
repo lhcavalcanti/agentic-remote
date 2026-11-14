@@ -4,6 +4,7 @@ import type { HostSnapshot } from '../shared/host-telemetry.js'
 import type { ManagerEvent } from '../shared/manager.js'
 import type { NotificationKind, NotificationRecord } from '../shared/notification-center.js'
 import { alertNotification, notificationBrief, ORACLE_NOTIFICATION_URL } from '../shared/notifications.js'
+import type { Schedule, ScheduleRun } from '../shared/schedules.js'
 
 export interface NotificationCursor {
   status?: SessionStatus
@@ -72,8 +73,11 @@ export function classifyHubNotification(
   cursors: NotificationCursors,
   now: string,
   baseline = false,
+  scheduledSession = false,
 ): NotificationRecord[] {
+  if (event.type === 'schedule.run.notification') return [event.notification]
   if (event.type === 'session.upserted') {
+    if (scheduledSession) return []
     const session = event.session
     const key = JSON.stringify(['session', session.computerId, session.id])
     const before = cursors[key]
@@ -94,6 +98,7 @@ export function classifyHubNotification(
       actions,
       touchedAt: now,
     }
+
     const results: NotificationRecord[] = []
     for (const action of actions) {
       if (before?.actions?.includes(action)) continue
@@ -220,6 +225,25 @@ export function classifyHostNotification(
     cursors[key] = { hostAlert: state, touchedAt: now }
   }
   return records
+}
+
+/** The accepted run definition, never today's edited schedule, owns policy. */
+export function classifyScheduleNotification(schedule: Schedule, run: ScheduleRun, now: string): NotificationRecord[] {
+  const outcome = run.status === 'stopped' ? 'interrupted' : run.status
+  if (!['succeeded', 'failed', 'needs-input', 'missed', 'interrupted'].includes(outcome) ||
+      schedule.notify === 'never' || (schedule.notify === 'attention' && outcome === 'succeeded')) return []
+  const kind = `schedule.run.${outcome}` as NotificationKind
+  const severity = outcome === 'succeeded' ? 'info' : outcome === 'failed' ? 'error' : 'warning'
+  const label = outcome === 'needs-input' ? 'needs input' : outcome
+  const params = new URLSearchParams({ schedule: schedule.id, run: run.id, computer: run.computerId })
+  if (run.sessionId) params.set('session', run.sessionId)
+  return [record(kind, [schedule.id, run.id, outcome], {
+    computerId: run.computerId, ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+    title: `${notificationBrief(schedule.name)} · ${label}`,
+    body: notificationBrief(run.error || run.summary || (outcome === 'needs-input' ? 'Open the scheduled session to continue.' : `Scheduled run ${label}.`)),
+    severity, createdAt: run.endedAt ?? run.startedAt ?? run.createdAt ?? now,
+    url: `/?${params}`, coalesceKey: JSON.stringify(['schedule', schedule.id]),
+  })]
 }
 
 /** Oracle's work inbox is not consumed or acknowledged by notification reads. */

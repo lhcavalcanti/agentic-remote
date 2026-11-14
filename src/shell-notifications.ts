@@ -11,6 +11,7 @@
  */
 
 import type { ShellNotification } from './shell'
+export { ScheduleShellNotifier } from '../shared/notifications'
 
 export interface NotifiableSession {
   computerId: string
@@ -20,6 +21,7 @@ export interface NotifiableSession {
   queuedCount?: number
   pendingPermission?: { requestId?: string } | undefined
   pendingUserInput?: { requestId?: string } | undefined
+  suppressOrdinaryNotifications?: true
 }
 
 export interface SessionNotificationState {
@@ -94,6 +96,7 @@ export function shellNotifications(
   const notifications: ShellNotification[] = []
 
   for (const session of sessions) {
+    if (session.suppressOrdinaryNotifications) continue
     const sessionKey = key(session)
     const before = context.previous.get(sessionKey)
     // A session seen for the first time is history, not news. This also stops

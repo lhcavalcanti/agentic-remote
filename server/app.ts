@@ -10,6 +10,7 @@ import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
 import { parseFeatureFlag, readHubFeatureFlags } from '../shared/feature-flags.js'
 import type {
   HubEvent,
+  ManagedSession,
   VoiceBackendCapability,
 } from '../shared/contracts.js'
 import {
@@ -100,6 +101,7 @@ import { SchedulerDispatcher, type ScheduleLauncher } from './scheduler-dispatch
 import { registerSchedulerRoutes } from './scheduler-routes.js'
 import { SessionScheduleLauncher } from './schedule-launcher.js'
 import { configuredScheduleWorktreeRoots, ScheduleWorktreeService } from './schedule-worktrees.js'
+import { ScheduleNotificationService } from './schedule-notification-service.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -173,6 +175,7 @@ export async function buildApp(
   voiceCapability: VoiceBackendCapability
   dreamerService?: DreamerService
   scheduler?: SchedulerDispatcher
+  scheduleNotifications?: ScheduleNotificationService
   proactiveCoordinator?: ManagerProactiveCoordinator
   hostTelemetry?: HostTelemetryService
   hostAlerts?: HostAlertMonitor
@@ -364,6 +367,11 @@ export async function buildApp(
   let managerStoreReady = false
   let dreamerService: DreamerService | undefined
   let scheduler: SchedulerDispatcher | undefined
+  let scheduleNotifications: ScheduleNotificationService | undefined
+  const isScheduledSession = (session: ManagedSession): boolean => Boolean(scheduler && (
+    scheduler.store.ownsSession(session.computerId, session.id, session.launchId) ||
+    managerStore?.sessionOrigin(session.computerId, session.id) === 'schedule'
+  ))
   let scheduleJournal: Promise<unknown> = Promise.resolve()
   let proactiveCoordinator: ManagerProactiveCoordinator | undefined
   let proactiveInbox: ManagerProactiveInbox | undefined
@@ -409,6 +417,7 @@ export async function buildApp(
       notificationCenter = new NotificationCenterService(store, {
         mutedSessions: () => pushService!.settings().mutedSessions,
         readSession: (computerId, sessionId) => manager!.readSession(computerId, sessionId),
+        isScheduledSession,
       })
       for (const computer of manager.listComputers()) {
         await notificationCenter.hub({ type: 'computer.updated', computer }, true)
@@ -425,12 +434,13 @@ export async function buildApp(
     }
     if (notificationCenter) pushService.setRecorder(notificationCenter)
     else pushService.setRecorder?.(undefined)
-    pushService.attach(manager)
+    if (!hubFlags?.scheduler) pushService.attach(manager)
     const presence = new ClientPresence()
     const profile = settingsProfileStore
     pushService.setPolicy({
       scope: () => profile.snapshot().values.notificationScope,
       oracleWatched: () => presence.oracleWatched(),
+      isScheduledSession,
     })
     const managerSettings = managerRuntimeSettings()
     managerStructuredMemory = await initializeManagerStructuredMemory(
@@ -609,6 +619,14 @@ export async function buildApp(
         warn: (message) => app.log.warn(message),
       })
       const store = scheduler.store
+      await startupPhases.run('scheduler.initialize', () => store.initialize())
+      scheduleNotifications = new ScheduleNotificationService(store, {
+        admit: notificationCenter ? (event) => notificationCenter!.hub(event) : undefined,
+        mutedSessions: () => pushService!.settings().mutedSessions,
+        warn: (error) => app.log.error({ err: error }, 'Could not deliver a schedule outcome'),
+      })
+      pushService.attachScheduleNotifications(scheduleNotifications)
+      pushService.attach(manager)
       store.on('proposal', () => {
         const proposals = store.proposals()
         scheduleJournal = scheduleJournal.then(async () => {
@@ -642,6 +660,8 @@ export async function buildApp(
       },
       notificationCenter,
       scheduler?.store,
+      scheduleNotifications,
+      isScheduledSession,
     )
     if (!notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     app.get('/api/features', async (_request, reply) => {
@@ -738,6 +758,7 @@ export async function buildApp(
       for (const proposal of scheduler!.store.proposals()) await recordScheduleProposal(managerStore!, proposal)
       await scheduleJournal
     })
+    if (scheduleNotifications) await startupPhases.run('scheduler.notifications.start', () => scheduleNotifications!.start())
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
     const starting = managerAgent
@@ -757,6 +778,7 @@ export async function buildApp(
     await hostAlerts?.stop()
     hostTelemetry?.stop()
     await scheduler?.stop()
+    await scheduleNotifications?.stop()
     await scheduleJournal
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
@@ -793,6 +815,7 @@ export async function buildApp(
     voiceCapability,
     dreamerService,
     scheduler,
+    scheduleNotifications,
     proactiveCoordinator,
     hostTelemetry,
     hostAlerts,

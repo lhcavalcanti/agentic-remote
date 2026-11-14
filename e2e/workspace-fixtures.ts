@@ -1713,6 +1713,14 @@ export async function setupWorkspaceFixture(
   }
 
   function emit(event: HubEvent) {
+    if (event.type === 'schedule.run.notification') {
+      if (!options.scheduler) throw new Error('A disabled scheduler cannot publish an outcome')
+      if (options.notifications !== undefined && !notifications.some((record) => record.id === event.notification.id)) {
+        notifications.push(structuredClone(event.notification))
+        emit({ type: 'notifications.changed', revision: ++notificationRevision,
+          unreadCount: notifications.filter((record) => !record.readAt && !record.dismissedAt).length })
+      }
+    }
     if (event.type === 'session.knowledge.updated') {
       state.bindings.set(`${event.computerId}:${event.sessionId}`, event.binding)
     }

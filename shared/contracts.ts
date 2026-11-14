@@ -1,6 +1,6 @@
 import type { ManagerEvent } from './manager.js'
 import type { SettingsProfileSnapshot } from './settings-profile.js'
-import type { NotificationsChanged } from './notification-center.js'
+import type { NotificationsChanged, ScheduleRunNotification } from './notification-center.js'
 import type { SchedulerChanged } from './schedules.js'
 import type { ScheduleProposalsChanged } from './schedule-proposals.js'
 import type { PromptAcceptanceReceipt, TerminationAcknowledgement } from './launch-identity.js'
@@ -498,6 +498,8 @@ export interface ComputerSummary {
 export interface ManagedSession extends SessionDetail {
   computerId: string
   computerName: string
+  /** Hub-derived delivery metadata, not owner-side session provenance. */
+  suppressOrdinaryNotifications?: true
 }
 
 export interface ManagedRemovedQueuedPrompt {
@@ -582,6 +584,7 @@ export type HubEvent =
   | NotificationsChanged
   | SchedulerChanged
   | ScheduleProposalsChanged
+  | ScheduleRunNotification
   | {
       type: 'session.upserted'
       session: ManagedSession

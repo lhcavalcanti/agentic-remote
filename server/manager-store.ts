@@ -356,6 +356,10 @@ export class ManagerStore {
     return structuredClone(this.sessions)
   }
 
+  sessionOrigin(computerId: string, sessionId: string): SessionOrigin | undefined {
+    return this.sessions[registryKey(computerId, sessionId)]?.origin
+  }
+
   updateRegistry(change: (registry: ManagerRegistry) => void): Promise<void> {
     const next = structuredClone(this.sessions)
     change(next)

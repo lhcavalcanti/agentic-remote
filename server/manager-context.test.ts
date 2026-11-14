@@ -184,6 +184,15 @@ describe('manager turn context', () => {
     expect(MANAGER_SYSTEM_PROMPT).not.toContain('Ask only')
   })
 
+  it('suspends sessions only at the user\'s request, and says what can be suspended and how one comes back', () => {
+    const rule = MANAGER_SYSTEM_PROMPT.split('\n').find((line) => line.includes('suspend_session'))
+    expect(rule).toBeDefined()
+    expect(rule).toMatch(/only when the user asks/)
+    expect(rule).toMatch(/never on your own initiative/)
+    expect(rule).toMatch(/only an idle session with no running background tasks/i)
+    expect(rule).toMatch(/resume_session, or send_to_session/)
+  })
+
   it('collapses status churn and asks for memory upkeep after removals', () => {
     const registry: ManagerRegistry = {
       'hub:a': { computerId: 'hub', sessionId: 'a', title: 'Alpha', origin: 'manager', firstSeenAt: 't' },
@@ -426,7 +435,7 @@ describe('manager turn context', () => {
       /the actual answer/,
       /uncertainty/,
       /errors and failures[^.;]*with their message/,
-      /every action you took[^.;]*started, messaged, answered, closed, or asked to close/,
+      /every action you took[^.;]*started, messaged, answered, suspended, resumed, closed, or asked to close/,
       /declined or refused, and why/,
       /waiting for the user/,
       /exact commands, code, paths, IDs, or log lines/,

@@ -48,6 +48,8 @@ export const uiSceneNames = [
   'oracle-schedule-approval',
   'desktop-rail',
   'notification-panel',
+  'host-monitor',
+  'host-processes',
 ] as const
 
 export type UISceneName = typeof uiSceneNames[number]
@@ -130,6 +132,10 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true, notificationPanel: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
+      if (name === 'host-monitor' || name === 'host-processes') {
+        state.settings.values = { previewFeatures: { desktopRail: true, hostMonitorView: true }, displayName: 'Alex Morgan' }
+        state.settings.revision = 1
+      }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
@@ -149,7 +155,8 @@ export function createUIScenes(
         appearance: 'graphite',
         state,
         notifications: name === 'notification-panel' ? fixtureNotifications : undefined,
-        hostMonitor: Boolean(hostStatus),
+        hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes',
+        hostMonitorWsl: name === 'host-monitor' || name === 'host-processes',
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: [{
             id: 'fictional-morning-review', operation: 'create', createdBy: 'oracle', status: 'pending',
@@ -231,6 +238,16 @@ export function createUIScenes(
         await openSessions(page)
         await page.getByRole('button', { name: 'Notifications', exact: true }).click()
         await expect(page.getByRole('dialog', { name: 'Notifications', exact: true })).toContainText('Workspace review complete')
+      } else if (name === 'host-monitor' || name === 'host-processes') {
+        await openSessions(page)
+        await page.getByRole('button', { name: 'Host monitor', exact: true }).click()
+        const monitor = page.getByRole('dialog', { name: 'Host monitor', exact: true })
+        await expect(monitor).toContainText('fixture-studio-fictional')
+        await expect(monitor).toContainText('WSL VM, not the Windows host')
+        if (name === 'host-processes') {
+          await monitor.getByRole('tab', { name: 'Processes', exact: true }).click()
+          await expect(monitor.getByRole('button', { name: 'Open session', exact: true }).first()).toBeVisible()
+        }
       } else if (name === 'runtime-dialog' || name === 'composer-session-setup') {
         await page.getByRole('button', { name: 'Configure model, effort, and context', exact: true }).click()
         await expect(page.getByRole('dialog', { name: 'Model and context' }).getByRole('combobox', { name: 'Model', exact: true })).toBeVisible()

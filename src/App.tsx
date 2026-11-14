@@ -67,6 +67,7 @@ import { publishFeatureEvent } from './features/events'
 import { NotificationPanel } from './notifications/NotificationPanel'
 import { useNotifications } from './notifications/use-notifications'
 import { readScheduleLink } from './notifications/schedule-link'
+import { HostMonitorView } from './host-monitor/HostMonitorView'
 import { usePreviewFeature } from './preview-features'
 import { emptyRuntimeSelection } from './settings/runtime-defaults'
 import { StatuslineControls } from './settings/StatuslineControls'
@@ -3783,6 +3784,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const desktopRail = usePreviewFeature('desktopRail')
   const notificationPanel = usePreviewFeature('notificationPanel')
   const schedulerView = usePreviewFeature('schedulerView')
+  const hostMonitorView = usePreviewFeature('hostMonitorView')
   const notifications = useNotifications(notificationPanel)
   const [scheduleLink, setScheduleLink] = useState(() => readScheduleLink(window.location.href))
   const [shellView, setShellView] = useState<string>()
@@ -14451,7 +14453,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           else if (record.kind === 'oracle.message') { setOracleOpen(true); setShellView(undefined) }
           else if (record.sessionId && record.computerId && openManagedSession({ computerId: record.computerId, sessionId: record.sessionId })) setShellView(undefined)
         }} />}
-      {shellView && shellView !== 'notifications' && <DialogFrame key={scheduleLink?.scheduleId ?? shellView} title={shellView === 'host' ? 'Host monitor' : 'Scheduler'}
+      {shellView === 'host' && <HostMonitorView computers={computers} enabled={hostMonitorView}
+        onClose={() => setShellView(undefined)} onOpenSession={(computerId, sessionId) => {
+          if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
+        }} />}
+      {shellView === 'scheduler' && <DialogFrame key={scheduleLink?.scheduleId ?? shellView} title="Scheduler"
         eyebrow="Preview" onClose={() => setShellView(undefined)}>
         <p className="dialog-message">This view is being prepared for the next preview.</p>
       </DialogFrame>}

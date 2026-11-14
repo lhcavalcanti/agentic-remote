@@ -591,6 +591,7 @@ export interface WorkspaceFixtureOptions {
   notifications?: NotificationRecord[]
   /** Omitted keeps host monitoring off; all data is fictional. */
   hostMonitor?: boolean
+  hostMonitorWsl?: boolean
   /** Omitted keeps the hub scheduler disabled. All data remains fictional. */
   scheduler?: { schedules: Schedule[]; runs: ScheduleRun[]; proposals?: import('../shared/schedule-proposals').ScheduleProposal[] }
   /** Use a native event socket only on the already-validated local fixture origin. */
@@ -838,7 +839,7 @@ export async function setupWorkspaceFixture(
         }
         socket.send(JSON.stringify({
           type: 'host.snapshot',
-          snapshot: { ...fixtureHostSnapshot, info: { ...fixtureHostSnapshot.info!, hostname: `${computer.id}-fictional` } },
+          snapshot: { ...fixtureHostSnapshot, info: { ...fixtureHostSnapshot.info!, hostname: `${computer.id}-fictional`, isWsl: options.hostMonitorWsl ?? fixtureHostSnapshot.info!.isWsl } },
         }))
         socket.onMessage(() => {
           failures.push('Unexpected client message on fixture host stream')
@@ -1079,7 +1080,7 @@ export async function setupWorkspaceFixture(
       } else if (hostRoute[2] === 'live') {
         await respond({ error: 'WebSocket upgrade required' }, 404)
       } else {
-        await respond({ ...fixtureHostSnapshot, info: { ...fixtureHostSnapshot.info!, hostname: `${computer.id}-fictional` } })
+        await respond({ ...fixtureHostSnapshot, info: { ...fixtureHostSnapshot.info!, hostname: `${computer.id}-fictional`, isWsl: options.hostMonitorWsl ?? fixtureHostSnapshot.info!.isWsl } })
       }
       return
     }

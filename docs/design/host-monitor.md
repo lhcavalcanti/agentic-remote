@@ -1,6 +1,6 @@
 # Host monitor
 
-Status: Linux sampling, on-demand process inventory, authenticated hub/node transport, and Oracle's read-only status tool are implemented behind `AGENTIC_REMOTE_FEATURE_HOST_MONITOR=on` (default off). Optional resource alert records additionally require `AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on`. The monitor UI remains planned.
+Status: Linux sampling, on-demand process inventory, authenticated hub/node transport, and Oracle's read-only status tool are implemented behind `AGENTIC_REMOTE_FEATURE_HOST_MONITOR=on` (default off). Optional resource alert records additionally require `AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on`. The client is available through the independent default-off `hostMonitorView` preview.
 
 ## Lifecycle and transport
 
@@ -60,9 +60,17 @@ Resource observations enter `NotificationCenterService.host` and the canonical n
 - One record is admitted per computer, condition, and episode. An episode's first qualifying sample anchors its stable identity. Recovery must occur before another episode can begin; a 30-minute per-computer/per-condition cooldown also prevents renewed episodes from alerting immediately. If pressure persists through the cooldown, the new episode may alert on the next fresh breached reading.
 - Episode, recovery, and cooldown cursors persist atomically with notification records. Hub restart, duplicate reads, and node reconnect do not resurrect read or dismissed records. Disabling either flag stops collection for these alerts; existing records remain intact.
 
-## Planned integration
+## Client preview
 
-The planned Processes UI will request inventory at most every five seconds only while that view is open. It will expose All, Agentic Remote, and Agent sessions filters with session links, executable names only, and no stop action. Final overhead gates and the 48-hour soak remain planned. Isolated scan measurements do not establish the full sampler's overhead budget.
+The rail (or existing drawer footer with the rail preview off) opens a computer picker with hostname and hub/node role. WSL is explicitly “WSL VM, not the Windows host”. CPU, memory, network, disk I/O and disk capacity use current values and small SVG trends, with missing readings left as gaps. The live window is 60 seconds; the 24-hour toggle reads the existing minute aggregates and refreshes once per minute.
+
+The telemetry contract does not retain historical disk capacity. The client therefore collects a 60-second disk-capacity trend only while open, and explicitly labels the missing 24-hour capacity history rather than inventing values. Retained CPU/memory/network/I/O history is unchanged.
+
+Processes requests run sequentially at most every five seconds only while that tab and document are visible. All, Agentic Remote, and Agent sessions filters retain shared-runtime labels; only proven session ownership enables an Open session link. No arguments or process-control actions are shown. Pause freezes presentation, not collection or subscription. Closing the view, switching computers, going offline, or hiding the document releases the stream and timers; reopening refetches authoritative data. Compatibility, disabled-computer and offline failures retain their actionable messages.
+
+## Remaining integration
+
+Final overhead gates and the 48-hour soak remain planned. Isolated scan measurements do not establish the full sampler's overhead budget.
 
 Browser fixtures recognize every host endpoint and the live message. `setupWorkspaceFixture(..., { hostMonitor: true })` provides fictional Studio/Build node snapshots, a 60-second ring, 24-hour history, and conservative process attribution; omitted/false keeps all host surfaces unavailable.
 

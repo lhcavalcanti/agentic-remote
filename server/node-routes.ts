@@ -3,6 +3,8 @@ import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import type WebSocket from 'ws'
 import { z } from 'zod'
+import { launchIdentitySchema, cancellationAckSchema } from '../shared/launch-identity.js'
+import { updateComputerForLaunchIdentity } from './launch-identity.js'
 import {
   ORACLE_VOICE_PROTOCOL,
   decodeVoiceAudioFrame,
@@ -56,6 +58,7 @@ const sideQuestionSchema = z.object({
 
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
+  launchId: launchIdentitySchema.optional(),
   provider: z.enum(['copilot', 'claude']).default('copilot'),
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
@@ -98,6 +101,7 @@ const reorderQueueSchema = z.object({
 })
 
 const sendMessageSchema = z.object({
+  deliveryId: launchIdentitySchema.optional(),
   acknowledgesFailure: z.string().max(64).optional(),
   content: z
     .string()
@@ -662,6 +666,8 @@ export async function registerNodeRoutes(
 
       node.post('/sessions', async (request, reply) => {
         const input = createSessionSchema.parse(request.body)
+        if (input.launchId !== undefined && !service.providers().some((provider) =>
+          provider.id === input.provider && provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
         return reply
           .code(201)
           .send({
@@ -674,8 +680,26 @@ export async function registerNodeRoutes(
               input.reasoningEffort,
               input.contextTier,
               input.mode,
+              ...(input.launchId !== undefined ? [input.launchId] : []),
             ),
           })
+      })
+
+      node.get<{ Params: { launchId: string } }>('/launches/:launchId', async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        if (!service.reconcileLaunch || !service.providers().some((provider) => provider.supportsLaunchIdentity)) {
+          throw updateComputerForLaunchIdentity()
+        }
+        return { launch: await service.reconcileLaunch(launchIdentitySchema.parse(request.params.launchId)) ?? null }
+      })
+
+      node.post<{ Params: { sessionId: string } }>('/sessions/:sessionId/cancel-with-ack', async (request) => {
+        const { timeoutMs } = cancellationAckSchema.parse(request.body ?? {})
+        const owner = service.getSession(request.params.sessionId)
+        if (!owner) throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+        if (!service.cancelWithAck || !service.providers().some((provider) =>
+          provider.id === (owner.provider || 'copilot') && provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+        return service.cancelWithAck(request.params.sessionId, timeoutMs)
       })
 
       node.get<{ Params: { provider: 'copilot' | 'claude' } }>(
@@ -869,14 +893,24 @@ export async function registerNodeRoutes(
         '/sessions/:sessionId/messages',
         async (request, reply) => {
           const input = sendMessageSchema.parse(request.body)
+          if (input.deliveryId !== undefined) {
+            const providerId = service.getSession(request.params.sessionId)?.provider || 'copilot'
+            if (!service.providers().some((provider) => provider.id === providerId &&
+                provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+          }
+          const session = await service.sendMessage(
+            request.params.sessionId,
+            input.content,
+            input.enqueue,
+            input.acknowledgesFailure,
+            input.replaceTerminalDraft,
+            ...(input.deliveryId !== undefined ? [input.deliveryId] : []),
+          )
           return reply.code(202).send({
-            session: await service.sendMessage(
-              request.params.sessionId,
-              input.content,
-              input.enqueue,
-              input.acknowledgesFailure,
-              input.replaceTerminalDraft,
-            ),
+            session,
+            ...(input.deliveryId !== undefined ? {
+              receipt: session.promptReceipts?.find((receipt) => receipt.deliveryId === input.deliveryId),
+            } : {}),
           })
         },
       )

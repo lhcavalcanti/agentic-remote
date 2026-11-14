@@ -1,4 +1,8 @@
 import type { DirectoryScope } from './directory-browser.js'
+import {
+  cancellationAckSchema, launchReconciliationSchema, promptAcceptanceReceiptSchema, terminationAcknowledgementSchema,
+  type LaunchReconciliation, type TerminationAcknowledgement,
+} from '../shared/launch-identity.js'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
@@ -385,6 +389,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         body: JSON.stringify(input),
       },
     )
+    if (input.launchId !== undefined && response?.session?.launchId !== input.launchId) {
+      throw new RemoteNodeRequestError('The owning computer did not confirm launch identity. Reconcile before retrying.', 502, undefined, true)
+    }
     return response.session
   }
 
@@ -642,6 +649,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         body: JSON.stringify(input),
       },
     )
+    if (input.deliveryId !== undefined) {
+      const receipt = response?.session?.promptReceipts?.find((entry) => entry.deliveryId === input.deliveryId)
+      if (!promptAcceptanceReceiptSchema.safeParse(receipt).success || receipt?.sessionId !== sessionId) {
+        throw new RemoteNodeRequestError('The owning computer did not confirm prompt acceptance. Reconcile before retrying.', 502, undefined, true)
+      }
+    }
     return response.session
   }
 
@@ -667,6 +680,40 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         body: '{}',
       },
     )
+  }
+
+  async reconcileLaunch(launchId: string): Promise<LaunchReconciliation | undefined> {
+    const response = await this.request<{ launch: LaunchReconciliation | null }>(
+      `/node-api/launches/${encodeURIComponent(launchId)}`,
+    )
+    if (response?.launch === null) return undefined
+    const parsed = launchReconciliationSchema.safeParse(response?.launch)
+    if (!parsed.success) throw new RemoteNodeRequestError('The owning computer returned invalid launch evidence.', 502)
+    const launch = parsed.data
+    if (launch.launchId !== launchId || launch.receipts.some((receipt) => receipt.sessionId !== launch.sessionId) ||
+        (launch.termination && launch.termination.sessionId !== launch.sessionId)) {
+      throw new RemoteNodeRequestError('The owning computer returned a mismatched launch identity.', 502)
+    }
+    return launch
+  }
+
+  async cancelWithAck(sessionId: string, timeoutMs: number): Promise<TerminationAcknowledgement> {
+    cancellationAckSchema.parse({ timeoutMs })
+    try {
+      const acknowledgement = terminationAcknowledgementSchema.parse(await this.request<TerminationAcknowledgement>(
+        `/node-api/sessions/${encodeURIComponent(sessionId)}/cancel-with-ack`,
+        { method: 'POST', body: JSON.stringify({ timeoutMs }) },
+        timeoutMs + 5_000,
+      ))
+      if (acknowledgement.sessionId !== sessionId) throw new Error('Mismatched termination acknowledgement')
+      return acknowledgement
+    } catch (error) {
+      if (error instanceof RemoteNodeRequestError && error.statusCode === 409) throw error
+      return {
+        sessionId, outcome: 'unknown', checkedAt: new Date().toISOString(), scope: 'provider-owned',
+        reason: 'The owning computer did not confirm termination.',
+      }
+    }
   }
 
   async askSession(

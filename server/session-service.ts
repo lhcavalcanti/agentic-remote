@@ -27,6 +27,7 @@ import type {
 } from '../shared/contracts.js'
 import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 import type { StartupPhases } from './startup-phases.js'
+import type { LaunchReconciliation, TerminationAcknowledgement } from '../shared/launch-identity.js'
 
 export interface SessionService {
   providers(): AgentProviderCapability[]
@@ -50,6 +51,7 @@ export interface SessionService {
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
     mode?: AgentMode,
+    launchId?: string,
   ): Promise<SessionDetail>
   uploadFile(
     sessionId: string,
@@ -99,6 +101,7 @@ export interface SessionService {
     enqueue?: boolean,
     acknowledgesFailure?: string,
     replaceTerminalDraft?: boolean,
+    deliveryId?: string,
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
   /** Resource readers must settle and release their own work on cancellation. */
@@ -112,6 +115,8 @@ export interface SessionService {
     replaceTerminalDraft?: boolean,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
+  reconcileLaunch?(launchId: string): Promise<LaunchReconciliation | undefined>
+  cancelWithAck?(sessionId: string, timeoutMs?: number): Promise<TerminationAcknowledgement>
   /** Answers a side question from the conversation without prompting it. */
   askSession?(
     sessionId: string,

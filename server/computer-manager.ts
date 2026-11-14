@@ -41,6 +41,8 @@ import {
 import { NodeIdentityStore } from './node-identity.js'
 import { normalizeNodeUrl, RemoteNodeClient } from './remote-node-client.js'
 import { RemoteNodeRequestError } from './remote-node-errors.js'
+import { launchIdentitySchema, cancellationAckSchema, type TerminationAcknowledgement } from '../shared/launch-identity.js'
+import { updateComputerForLaunchIdentity } from './launch-identity.js'
 import type { SessionService } from './session-service.js'
 import {
   readSessionSkills,
@@ -626,6 +628,10 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     const capability = computer.providers?.find(
       (candidate) => candidate.id === provider,
     )
+    if (input.launchId !== undefined) {
+      launchIdentitySchema.parse(input.launchId)
+      if (!capability?.supportsLaunchIdentity) throw updateComputerForLaunchIdentity()
+    }
     if (!capability?.available) {
       throw new Error(
         capability?.unavailableReason ||
@@ -643,6 +649,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.reasoningEffort,
             input.contextTier,
             input.mode,
+            ...(input.launchId !== undefined ? [input.launchId] : []),
           )
         : await this.requireClient(computerId).createSession(input)
     return managedSession(session, computer)
@@ -963,6 +970,13 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     input: SendMessageInput,
   ): Promise<ManagedSession> {
     const computer = this.requireComputer(computerId)
+    if (input.deliveryId !== undefined) {
+      launchIdentitySchema.parse(input.deliveryId)
+      if (!computer.providers?.some((provider) => provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+      const owner = await this.readSession(computerId, sessionId)
+      if (!computer.providers?.some((provider) => provider.id === (owner.provider || 'copilot') &&
+          provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+    }
     const session =
       computerId === this.identity.info.id
         ? await this.localService.sendMessage(
@@ -971,6 +985,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.enqueue,
             input.acknowledgesFailure,
             input.replaceTerminalDraft,
+            ...(input.deliveryId !== undefined ? [input.deliveryId] : []),
           )
         : await this.requireClient(computerId).sendMessage(sessionId, input)
     return managedSession(session, computer)
@@ -1000,7 +1015,30 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       await this.localService.cancel(sessionId)
       return
     }
+
     await this.requireClient(computerId).cancel(sessionId)
+  }
+
+  async reconcileLaunch(computerId: string, launchId: string) {
+    launchIdentitySchema.parse(launchId)
+    const computer = this.requireComputer(computerId)
+    if (!computer.providers?.some((provider) => provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).reconcileLaunch(launchId)
+    if (!this.localService.reconcileLaunch) throw updateComputerForLaunchIdentity()
+    return this.localService.reconcileLaunch(launchId)
+  }
+
+  async cancelWithAck(computerId: string, sessionId: string, timeoutMs = 10_000): Promise<TerminationAcknowledgement> {
+    cancellationAckSchema.parse({ timeoutMs })
+    const computer = this.requireComputer(computerId)
+    if (!computer.providers?.some((provider) => provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).cancelWithAck(sessionId, timeoutMs)
+    const owner = this.localService.getSession(sessionId)
+    if (!owner) throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+    if (!computer.providers?.some((provider) => provider.id === (owner.provider || 'copilot') &&
+        provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+    if (!this.localService.cancelWithAck) throw updateComputerForLaunchIdentity()
+    return this.localService.cancelWithAck(sessionId, timeoutMs)
   }
 
   async askSession(

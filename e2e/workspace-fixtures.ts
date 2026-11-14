@@ -1,5 +1,6 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
 import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
+import { launchIdentitySchema } from '../shared/launch-identity'
 import type { NotificationRecord } from '../shared/notification-center'
 import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
@@ -1172,6 +1173,14 @@ export async function setupWorkspaceFixture(
       await respond({ models: fixtureModels })
       return
     }
+    const launch = path.match(/^\/api\/computers\/([^/]+)\/launches\/([^/]+)$/)
+    if (method === 'GET' && launch && fixtureComputers.some((computer) => computer.id === launch[1])) {
+      const owned = sessions.find((entry) => entry.computerId === launch[1] && entry.launchId === decodeURIComponent(launch[2]))
+      await respond({ launch: owned ? {
+        launchId: owned.launchId, sessionId: owned.id, sessionStatus: owned.status, receipts: owned.promptReceipts || [],
+      } : null })
+      return
+    }
     const match = path.match(
       /^\/api\/computers\/([^/]+)\/sessions\/([^/]+)(\/.*)?$/,
     )
@@ -1229,14 +1238,33 @@ export async function setupWorkspaceFixture(
         emit({ type: 'session.upserted', session })
       }
       if (method === 'POST' && action === '/messages') {
-        const input = request.postDataJSON() as { content?: unknown; enqueue?: unknown }
+        const input = request.postDataJSON() as { content?: unknown; enqueue?: unknown; deliveryId?: unknown }
         if (typeof input.content !== 'string' || !input.content.trim() ||
-          (input.enqueue !== undefined && typeof input.enqueue !== 'boolean')) {
+          (input.enqueue !== undefined && typeof input.enqueue !== 'boolean') ||
+          (input.deliveryId !== undefined && !launchIdentitySchema.safeParse(input.deliveryId).success)) {
           await reject(route, 'Unexpected fixture message')
           return
         }
+        const deliveryId = typeof input.deliveryId === 'string' ? input.deliveryId : undefined
+        if (deliveryId !== undefined) {
+          const owner = sessions.find((entry) => entry.computerId === session.computerId &&
+            entry.promptReceipts?.some((receipt) => receipt.deliveryId === deliveryId))
+          if (owner && owner.id !== session.id) {
+            await respond({ error: 'Delivery identity belongs to another session.' }, 409)
+            return
+          }
+          const receipt = session.promptReceipts?.find((entry) => entry.deliveryId === deliveryId)
+          if (receipt) {
+            await respond({ session, receipt })
+            return
+          }
+          if (session.launchStopping || (!input.enqueue && (session.status === 'running' || session.status === 'waiting'))) {
+            await respond({ error: 'This session cannot accept a new prompt now.' }, 409)
+            return
+          }
+        }
         const id = `fixture-submission-${session.revision}`
-        if (input.enqueue) {
+        if (input.enqueue || deliveryId !== undefined) {
           session.queuedPrompts = [...(session.queuedPrompts ?? []), { id, content: input.content, createdAt: FIXTURE_NOW }]
           session.queuedCount = session.queuedPrompts.length
         } else {
@@ -1244,8 +1272,16 @@ export async function setupWorkspaceFixture(
           session.status = 'running'
           session.activity = 'Working on the follow-up'
         }
+        if (deliveryId !== undefined) {
+          session.promptReceipts = [...(session.promptReceipts ?? []), {
+            deliveryId, sessionId: session.id, promptId: id, acceptedAt: FIXTURE_NOW, state: 'queued',
+          }]
+        }
         commitSession()
-        await respond({ session })
+        await respond({
+          session,
+          ...(deliveryId !== undefined ? { receipt: session.promptReceipts!.find((receipt) => receipt.deliveryId === deliveryId) } : {}),
+        })
         return
       }
       if (method === 'PUT' && action === '/queue') {
@@ -1306,6 +1342,13 @@ export async function setupWorkspaceFixture(
         await respond({
           file: { name: file.name, size: file.size, path: `${session.cwd}/.agentic-remote/uploads/${file.name}` },
         }, 201)
+        return
+      }
+      if (method === 'POST' && action === '/cancel-with-ack') {
+        await respond({
+          sessionId: session.id, outcome: 'unknown', checkedAt: session.updatedAt, scope: 'provider-owned',
+          reason: 'Synthetic fixture has no provider termination signal.',
+        })
         return
       }
       if (action === '/knowledge-root' && (method === 'GET' || method === 'PUT')) {

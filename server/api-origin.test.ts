@@ -88,6 +88,18 @@ describe('canonical API origin enforcement', () => {
     }
   })
 
+  it.each(prefixes)('guards launch reconciliation and acknowledged cancellation through %s', async (prefix) => {
+    for (const headers of untrusted) {
+      expect((await runtime.app.inject({
+        url: `${prefix}/computers/${runtime.identity.info.id}/launches/launch-identity`, headers,
+      })).statusCode).toBe(403)
+      expect((await runtime.app.inject({
+        method: 'POST', url: `${prefix}/computers/${runtime.identity.info.id}/sessions/${session.id}/cancel-with-ack`,
+        headers, payload: {},
+      })).statusCode).toBe(403)
+    }
+  })
+
   it('guards separately registered APIs before parsing their payloads', async () => {
     for (const [method, route] of [
       ['GET', '/version'],
@@ -95,6 +107,8 @@ describe('canonical API origin enforcement', () => {
       ['POST', '/push/subscriptions'],
       ['POST', '/transcriptions'],
       ['POST', `/computers/${runtime.identity.info.id}/sessions/${session.id}/files`],
+      ['GET', `/computers/${runtime.identity.info.id}/launches/launch-identity`],
+      ['POST', `/computers/${runtime.identity.info.id}/sessions/${session.id}/cancel-with-ack`],
     ] as const) {
       const response = await runtime.app.inject({
         method, url: `/%61pi${route}`, headers: untrusted[0],

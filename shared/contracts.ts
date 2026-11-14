@@ -1,6 +1,7 @@
 import type { ManagerEvent } from './manager.js'
 import type { SettingsProfileSnapshot } from './settings-profile.js'
 import type { NotificationsChanged } from './notification-center.js'
+import type { PromptAcceptanceReceipt, TerminationAcknowledgement } from './launch-identity.js'
 
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
@@ -23,6 +24,7 @@ export interface AgentProviderCapability {
   supportsRecoverableClose?: boolean
   /** Answers side questions about a session without prompting it. */
   supportsSideQuestions?: boolean
+  supportsLaunchIdentity?: boolean
   unavailableReason?: string
 }
 
@@ -383,6 +385,11 @@ export interface SessionInterruption {
 
 export interface SessionSummary {
   id: string
+  launchId?: string
+  promptReceipts?: PromptAcceptanceReceipt[]
+  /** Durable admission fence for acknowledged cancellation. */
+  launchStopping?: boolean
+  launchTermination?: TerminationAcknowledgement
   revision?: number
   provider?: AgentProvider
   executionMode?: SessionExecutionMode
@@ -657,6 +664,7 @@ export interface HubResyncRequest {
 
 export interface CreateSessionInput {
   cwd: string
+  launchId?: string
   provider?: AgentProvider
   terminalBacked?: boolean
   allowAllPermissions?: boolean
@@ -685,6 +693,7 @@ export interface SideQuestionAnswer {
 
 export interface SendMessageInput {
   content: string
+  deliveryId?: string
   enqueue?: boolean
   /** Explicitly replace verified unsent text in a tmux composer before sending. */
   replaceTerminalDraft?: boolean

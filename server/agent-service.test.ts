@@ -404,6 +404,82 @@ beforeEach(() => {
   vi.spyOn(TmuxTerminalSessionController.prototype, 'ownerStopped').mockResolvedValue(false)
 })
 
+describe('AgentService launch identity', () => {
+  it.each([false, true])('coalesces owning session creation, including terminal sessions (%s)', async (terminalBacked) => {
+    const directory = path.resolve(`.launch-sdk-test-${randomUUID()}`)
+    await mkdir(directory, { mode: 0o700 })
+    directories.push(directory)
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+    const client = new FakeCopilotClient()
+    const createTerminal = vi.fn(async () => ({ sessionName: 'synthetic', windowId: '1' }))
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client, async () => [], async () => undefined,
+      async () => [], undefined,
+      { create: createTerminal, has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    await service.start()
+    const create = () => service.createSession(
+      directory, terminalBacked, false, 'copilot', undefined, undefined, undefined, undefined, 'run:one',
+    )
+    const created = await Promise.all([create(), create(), create()])
+    expect(created[1].id).toBe(created[0].id)
+    expect(created[2].id).toBe(created[0].id)
+    expect(client.createdConfigs).toHaveLength(terminalBacked ? 0 : 1)
+    expect(createTerminal).toHaveBeenCalledTimes(terminalBacked ? 1 : 0)
+    expect(await service.reconcileLaunch('run:one')).toMatchObject({ sessionId: created[0].id, receipts: [] })
+  })
+
+  it('accepts one identified SDK prompt and binds its terminal outcome to its root turn', async () => {
+    const directory = path.resolve(`.launch-sdk-test-${randomUUID()}`)
+    await mkdir(directory, { mode: 0o700 })
+    directories.push(directory)
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client, async () => [], async () => undefined, async () => [],
+    )
+    await service.start()
+    const created = await service.createSession(
+      directory, false, false, 'copilot', undefined, undefined, undefined, undefined, 'root-run',
+    )
+    await service.sendMessage(created.id, 'Exactly once', true, undefined, false, 'root-delivery')
+    await service.sendMessage(created.id, 'Exactly once', true, undefined, false, 'root-delivery')
+    await vi.waitFor(() => expect(client.session.sentPrompts).toEqual(['Exactly once']))
+    expect((await service.reconcileLaunch('root-run'))?.receipts[0]).toMatchObject({
+      deliveryId: 'root-delivery', rootTurnId: expect.any(String),
+    })
+    client.session.resolveSessionIdle()
+    await vi.waitFor(async () => expect((await service.reconcileLaunch('root-run'))?.receipts[0])
+      .toMatchObject({ state: 'delivered', outcome: 'succeeded' }))
+  })
+})
+
+describe('AgentService unknown termination', () => {
+  it('does not turn a cancellation request and SDK transport failure into a stopped root outcome', async () => {
+    const directory = path.resolve(`.launch-sdk-test-${randomUUID()}`)
+    await mkdir(directory, { mode: 0o700 })
+    directories.push(directory)
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client, async () => [], async () => undefined, async () => [],
+    )
+    await service.start()
+    const created = await service.createSession(
+      directory, false, false, 'copilot', undefined, undefined, undefined, undefined, 'uncertain-run',
+    )
+    await service.sendMessage(created.id, 'Root', true, undefined, false, 'uncertain-root')
+    await vi.waitFor(() => expect(client.session.sentPrompts).toEqual(['Root']))
+    const cancellation = service.cancelWithAck(created.id, 100)
+    await vi.waitFor(() => expect(service.store.get(created.id)?.launchStopping).toBe(true))
+    client.session.disconnectPendingWaits(new Error('Synthetic transport failure without a terminal provider event'))
+    expect(await cancellation).toMatchObject({ outcome: 'unknown' })
+    await vi.waitFor(async () => expect((await service.reconcileLaunch('uncertain-run'))?.receipts[0])
+      .toMatchObject({ outcome: 'unknown' }))
+    expect((await service.reconcileLaunch('uncertain-run'))?.termination).toBeUndefined()
+  })
+})
+
 describe('AgentService startup diagnostics', () => {
   it('logs only sanitized SDK runtime diagnostic fields after startup', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))

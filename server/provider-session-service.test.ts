@@ -33,6 +33,58 @@ function provider(id: AgentProvider, supported = true) {
 }
 
 describe('provider queued dispatch aggregation', () => {
+  it('refuses a delivery token concurrently reused by a different provider session', async () => {
+    const copilot = provider('copilot')
+    const claude = provider('claude')
+    const copilotSession = copilot.getSession('copilot-session')!
+    const claudeSession = claude.getSession('claude-session')!
+    const owner = Object.assign(copilot, {
+      listHistory: () => [copilotSession],
+      sendMessage: vi.fn(async () => {
+        await Promise.resolve()
+        copilotSession.promptReceipts = [{
+          deliveryId: 'shared-delivery', sessionId: copilotSession.id, promptId: 'root',
+          acceptedAt: '2026-11-14T06:00:00Z', state: 'queued',
+        }]
+        return copilotSession
+      }),
+    })
+    const other = Object.assign(claude, {
+      listHistory: () => [claudeSession],
+      sendMessage: vi.fn(async () => claudeSession),
+    })
+    const aggregate = new ProviderSessionService(owner as unknown as SessionService, other as unknown as SessionService)
+    const first = aggregate.sendMessage(copilotSession.id, 'Root', true, undefined, false, 'shared-delivery')
+    const retry = aggregate.sendMessage(copilotSession.id, 'Root', true, undefined, false, 'shared-delivery')
+    await expect(aggregate.sendMessage(claudeSession.id, 'Other', true, undefined, false, 'shared-delivery'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await Promise.all([first, retry])
+    await expect(aggregate.sendMessage(claudeSession.id, 'Other', true, undefined, false, 'shared-delivery'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(owner.sendMessage).toHaveBeenCalledOnce()
+    expect(other.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('arbitrates one launch token across providers instead of creating a session on each', async () => {
+    const copilot = Object.assign(provider('copilot'), {
+      reconcileLaunch: vi.fn(async () => undefined),
+      createSession: vi.fn(async () => provider('copilot').getSession('copilot-session')!),
+    })
+    const claude = Object.assign(provider('claude'), {
+      reconcileLaunch: vi.fn(async () => undefined),
+      createSession: vi.fn(async () => provider('claude').getSession('claude-session')!),
+    })
+    const aggregate = new ProviderSessionService(copilot as unknown as SessionService, claude as unknown as SessionService)
+    const [first, retry] = await Promise.all([
+      aggregate.createSession('/fake-provider', false, false, 'copilot', undefined, undefined, undefined, undefined, 'shared-launch'),
+      aggregate.createSession('/fake-provider', false, false, 'claude', undefined, undefined, undefined, undefined, 'shared-launch'),
+    ])
+    expect(first.id).toBe('copilot-session')
+    expect(retry.id).toBe(first.id)
+    expect(copilot.createSession).toHaveBeenCalledOnce()
+    expect(claude.createSession).not.toHaveBeenCalled()
+  })
+
   it.each(['copilot', 'claude'] as const)('keeps %s delivery and discard acknowledgement on the owning provider', async (id) => {
     const copilot = provider('copilot')
     const claude = provider('claude')

@@ -102,6 +102,7 @@ describe('SessionLauncher', () => {
       session: { title: 'Review app' },
       folderTrust: 'auto-approve',
     })
+
     expect(recordProvenance).toHaveBeenCalledWith(launch.session, { source: 'another-owner' })
     expect(vi.mocked(host.renameSession).mock.invocationCallOrder[0])
       .toBeLessThan(recordProvenance.mock.invocationCallOrder[0])
@@ -111,6 +112,27 @@ describe('SessionLauncher', () => {
     await launcher.deliverPrompt(launch, 'Review it.')
     expect(recordProvenance.mock.invocationCallOrder[0])
       .toBeLessThan(vi.mocked(host.sendMessage).mock.invocationCallOrder[0])
+  })
+
+  it('carries optional launch and root-delivery identity and exposes reconciliation and acknowledged cancellation', async () => {
+    const receipt = {
+      deliveryId: 'root-delivery', sessionId: 'session-1', promptId: 'queued-root',
+      acceptedAt: '2026-11-14T06:00:00.000Z', state: 'queued' as const,
+    }
+    vi.mocked(host.sendMessage).mockResolvedValue(session({ promptReceipts: [receipt] }))
+    host.reconcileLaunch = vi.fn(async () => ({
+      launchId: 'run', sessionId: 'session-1', sessionStatus: 'idle' as const, receipts: [receipt],
+    }))
+    host.cancelWithAck = vi.fn(async () => ({
+      sessionId: 'session-1', outcome: 'unknown' as const, checkedAt: receipt.acceptedAt, scope: 'provider-owned' as const,
+    }))
+    const launch = await launcher.createSession(launchInput({ launchId: 'run' }))
+    expect(host.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({ launchId: 'run' }))
+    expect((await launcher.deliverPrompt(launch, 'Root', { deliveryId: 'root-delivery' })).receipt).toEqual(receipt)
+    expect(host.sendMessage).toHaveBeenCalledWith('hub', 'session-1', { content: 'Root', enqueue: true, deliveryId: 'root-delivery' })
+    expect(await launcher.reconcileLaunch('hub', 'run')).toMatchObject({ receipts: [receipt] })
+    expect(await launcher.cancelWithAck(launch.session, 123)).toMatchObject({ outcome: 'unknown' })
+    expect(host.cancelWithAck).toHaveBeenCalledWith('hub', 'session-1', 123)
   })
 
   it('keeps the creation response and records its original title when naming fails', async () => {

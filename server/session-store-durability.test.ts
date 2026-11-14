@@ -98,6 +98,32 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
+describe('Durable launch identity transactions', () => {
+  it('never exposes a queue acceptance receipt unless its prompt was committed with it', async () => {
+    const { store, contents } = await fixture()
+    const before = store.get('session')
+    vi.mocked(rename).mockRejectedValueOnce(new Error('Receipt transaction refused'))
+    await expect(store.acceptIdentifiedPrompt('session', 'delivery', 'Exactly once', true)).rejects.toThrow('Receipt transaction refused')
+    expect(store.get('session')).toEqual(before)
+    expect(JSON.parse(await contents()).sessions.session.promptReceipts).toBeUndefined()
+    const accepted = await store.acceptIdentifiedPrompt('session', 'delivery', 'Exactly once', true)
+    expect(accepted.promptReceipts).toEqual([expect.objectContaining({ deliveryId: 'delivery', state: 'queued' })])
+    expect(accepted.queuedPrompts?.filter((prompt) => prompt.content === 'Exactly once')).toHaveLength(1)
+  })
+
+  it('never publishes a launch mapping separately from its created session', async () => {
+    const { store, contents } = await fixture()
+    const launched = { ...session('launch-session'), launchId: 'run' }
+    vi.mocked(rename).mockRejectedValueOnce(new Error('Creation transaction refused'))
+    await expect(store.create(launched)).rejects.toThrow('Creation transaction refused')
+    expect(store.reconcileLaunch('run')).toBeUndefined()
+    expect(store.get(launched.id)).toBeUndefined()
+    expect(JSON.parse(await contents()).launches).toBeUndefined()
+    await store.create(launched)
+    expect(store.reconcileLaunch('run')).toMatchObject({ sessionId: launched.id })
+  })
+})
+
 describe('Durable queue claims', () => {
   async function ready() {
     const setup = await fixture()

@@ -37,6 +37,53 @@ afterEach(async () => {
   }))
 })
 
+describe('launch identity response safety', () => {
+  it('does not silently accept creation or delivery responses that omitted required identity evidence', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ session }))
+    const owner = client('http://fixture.invalid')
+    await expect(owner.createSession({ cwd: '/fixture', launchId: 'run' })).rejects.toMatchObject({
+      statusCode: 502, uncertainDelivery: true,
+    })
+    fetch.mockResolvedValueOnce(Response.json({ session }))
+    await expect(owner.sendMessage(session.id, { content: 'Root', deliveryId: 'root' })).rejects.toMatchObject({
+      statusCode: 502, uncertainDelivery: true,
+    })
+    fetch.mockResolvedValueOnce(Response.json({ session }))
+    await expect(owner.sendMessage(session.id, { content: 'Legacy message' })).resolves.toEqual(session)
+  })
+
+  it.each([
+    {},
+    { launch: { launchId: 'other', sessionId: 'session', receipts: [] } },
+    { launch: { launchId: 'run', sessionId: 'session', receipts: [{ deliveryId: 'root', sessionId: 'other' }] } },
+  ])('does not turn a malformed or mismatched reconciliation into absence (%j)', async (payload) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(payload))
+    await expect(client('http://fixture.invalid').reconcileLaunch('run')).rejects.toThrow()
+  })
+
+  it('only treats an explicit null reconciliation as an unknown token', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ launch: null }))
+    await expect(client('http://fixture.invalid').reconcileLaunch('run')).resolves.toBeUndefined()
+  })
+
+  it.each([
+    {},
+    { sessionId: 'other', outcome: 'stopped', checkedAt: '2026-11-14T06:00:00Z', scope: 'provider-owned' },
+  ])('does not acknowledge termination on malformed or mismatched evidence (%j)', async (payload) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(payload))
+    await expect(client('http://fixture.invalid').cancelWithAck('session', 100)).resolves.toMatchObject({
+      sessionId: 'session', outcome: 'unknown',
+    })
+  })
+
+  it('keeps transport failure unknown instead of reporting the work stopped', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Synthetic disconnect'))
+    await expect(client('http://fixture.invalid').cancelWithAck('session', 100)).resolves.toMatchObject({
+      sessionId: 'session', outcome: 'unknown',
+    })
+  })
+})
+
 describe('session Knowledge base requests', () => {
   it('encodes the session, authenticates the PUT, and returns the canonical path', async () => {
     const requests: Array<{

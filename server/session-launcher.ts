@@ -8,12 +8,14 @@ import type {
 } from '../shared/contracts.js'
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import type { ComputerManager } from './computer-manager.js'
+import type { PromptAcceptanceReceipt } from '../shared/launch-identity.js'
+import { updateComputerForLaunchIdentity } from './launch-identity.js'
 
 export type SessionLauncherHost = Pick<
   ComputerManager,
   'createSession' | 'renameSession' | 'readSession' | 'sendMessage'
   | 'replyPermission' | 'replyUserInput' | 'cancel'
->
+> & Partial<Pick<ComputerManager, 'reconcileLaunch' | 'cancelWithAck'>>
 
 export type SessionPermissionPolicy = 'ask' | 'allow-all'
 export type SessionFolderTrustPolicy = 'ask' | 'auto-approve'
@@ -21,6 +23,7 @@ type SessionReference = Pick<ManagedSession, 'computerId' | 'id'>
 
 export interface SessionLaunchInput<Provenance extends object> {
   computerId: string
+  launchId?: string
   provider: AgentProvider
   backend: 'sdk' | 'terminal'
   folder: string
@@ -47,6 +50,7 @@ export interface SessionLaunch extends SessionPromptTarget {
 export interface SessionPromptDelivery {
   outcome: 'sent' | 'steered' | 'queued'
   delivered: ManagedSession
+  receipt?: PromptAcceptanceReceipt
 }
 
 interface SessionLauncherOptions<Provenance extends object> {
@@ -112,6 +116,7 @@ export class SessionLauncher<Provenance extends object> {
     if (!input.provenance) throw new Error('provenance is required')
     const created = await this.host.createSession(input.computerId, {
       cwd: input.folder,
+      ...(input.launchId !== undefined ? { launchId: input.launchId } : {}),
       provider: input.provider,
       terminalBacked: input.backend === 'terminal',
       allowAllPermissions: input.permissionPolicy === 'allow-all',
@@ -144,10 +149,20 @@ export class SessionLauncher<Provenance extends object> {
   async deliverPrompt(
     target: SessionPromptTarget,
     content: string,
-    options: { steer?: boolean } = {},
+    options: { steer?: boolean; deliveryId?: string } = {},
   ): Promise<SessionPromptDelivery> {
     requireFolderTrust(target.folderTrust)
     const { session } = target
+    if (options.deliveryId !== undefined) {
+      if (options.steer) throw new Error('Identified root prompts use durable queue acceptance, not steering.')
+      await this.trustFolder(target)
+      const delivered = await this.host.sendMessage(session.computerId, session.id, {
+        content, enqueue: true, deliveryId: options.deliveryId,
+      })
+      const receipt = delivered.promptReceipts?.find((entry) => entry.deliveryId === options.deliveryId)
+      if (!receipt) throw new Error('The owning computer did not return a prompt acceptance receipt. Reconcile before retrying.')
+      return { outcome: receipt.state === 'queued' ? 'queued' : 'sent', delivered, receipt }
+    }
     if (options.steer) {
       try {
         const delivered = await this.host.sendMessage(session.computerId, session.id, { content, enqueue: false })
@@ -181,6 +196,16 @@ export class SessionLauncher<Provenance extends object> {
   /** Signals cancellation; it does not acknowledge termination of queued or background work. */
   cancel(session: SessionReference): Promise<void> {
     return this.host.cancel(session.computerId, session.id)
+  }
+
+  reconcileLaunch(computerId: string, launchId: string) {
+    if (!this.host.reconcileLaunch) throw updateComputerForLaunchIdentity()
+    return this.host.reconcileLaunch(computerId, launchId)
+  }
+
+  cancelWithAck(session: SessionReference, timeoutMs?: number) {
+    if (!this.host.cancelWithAck) throw updateComputerForLaunchIdentity()
+    return this.host.cancelWithAck(session.computerId, session.id, timeoutMs)
   }
 
   /**

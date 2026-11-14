@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { launchIdentitySchema, cancellationAckSchema } from '../shared/launch-identity.js'
 import {
   SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
   SIDE_QUESTION_EARLIER_LIMIT,
@@ -84,6 +85,7 @@ const sideQuestionSchema = z.object({
 
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
+  launchId: launchIdentitySchema.optional(),
   provider: z.enum(['copilot', 'claude']).default('copilot'),
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
@@ -110,6 +112,7 @@ const renameSessionSchema = z.object({
 })
 
 const sendMessageSchema = z.object({
+  deliveryId: launchIdentitySchema.optional(),
   acknowledgesFailure: z.string().max(64).optional(),
   content: z
     .string()
@@ -1097,13 +1100,35 @@ export async function registerHubRoutes(
     '/api/computers/:computerId/sessions/:sessionId/messages',
     async (request, reply) => {
       const input = sendMessageSchema.parse(request.body)
+      const session = await manager.sendMessage(
+        request.params.computerId,
+        request.params.sessionId,
+        input,
+      )
       return reply.code(202).send({
-        session: await manager.sendMessage(
-          request.params.computerId,
-          request.params.sessionId,
-          input,
-        ),
+        session,
+        ...(input.deliveryId !== undefined ? {
+          receipt: session.promptReceipts?.find((receipt) => receipt.deliveryId === input.deliveryId),
+        } : {}),
       })
+    },
+  )
+
+  app.get<{ Params: { computerId: string; launchId: string } }>(
+    '/api/computers/:computerId/launches/:launchId',
+    async (request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return { launch: await manager.reconcileLaunch(
+        request.params.computerId, launchIdentitySchema.parse(request.params.launchId),
+      ) ?? null }
+    },
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/cancel-with-ack',
+    async (request) => {
+      const { timeoutMs } = cancellationAckSchema.parse(request.body ?? {})
+      return manager.cancelWithAck(request.params.computerId, request.params.sessionId, timeoutMs)
     },
   )
 

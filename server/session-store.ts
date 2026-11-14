@@ -632,11 +632,11 @@ export class SessionStore {
       }
       if (session.queueState !== undefined) validateQueueState(session.queueState)
       session.provider ??= 'copilot'
-      session.isOpen = session.managedOpen === true || (session.isOpen === true && Boolean(
+      session.isOpen = !session.closedAt && (session.managedOpen === true || (session.isOpen === true && Boolean(
         session.retention?.pinned || session.queuedPrompts?.length || session.pendingPermission ||
         session.pendingUserInput || session.failedPrompt || session.recoverySeed ||
         session.queuedDispatch || session.terminalQueueDispatch || session.sdkQueueAdmission,
-      ))
+      )))
       if (!session.interruption && (
         (session.managedOpen &&
           (session.status === 'running' || session.status === 'waiting' || session.status === 'error')) ||

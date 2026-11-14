@@ -535,4 +535,23 @@ describe('closed sessions stay reopenable without running', () => {
     expect(restored.get('retained')?.closedContext).toBeUndefined()
     await restored.close()
   })
+
+  it('keeps a record closed when an older release only saw its process', async () => {
+    const { store, directory } = await fixture()
+    await store.configureRetention('retained', { pinned: true })
+    const closed = await store.closeSession('retained')
+    await store.close()
+    const file = path.join(directory, 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    // An older release lists a live process as open without managing it, and
+    // a pinned record that it lists stays open across a restart.
+    state.sessions.retained.isOpen = true
+    await writeFile(file, JSON.stringify(state))
+
+    const restored = new SessionStore(directory, () => now)
+    await restored.initialize()
+
+    expect(restored.get('retained')).toMatchObject({ isOpen: false, closedAt: closed.closedAt })
+    await restored.close()
+  })
 })

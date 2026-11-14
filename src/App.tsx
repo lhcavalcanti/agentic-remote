@@ -8822,15 +8822,14 @@ function App() {
   )
   const sideQuestionDraft = askingAside ? selectedSideThread?.draft || '' : undefined
   // The confirmation lasts only while its session is still listed, so a session
-  // closed elsewhere does not bring it back when it is reopened.
+  // closed elsewhere does not bring it back when it is reopened. Settled while
+  // rendering, before anything can show the stale question.
   const closeRequestSession = closeRequest
     ? sessions.find((session) => sessionKey(session) === sessionKey(closeRequest))
     : undefined
-  useEffect(() => {
-    if (closeRequest && !closeRequestSession) {
-      setCloseRequest(undefined)
-    }
-  }, [closeRequest, closeRequestSession])
+  if (closeRequest && !closeRequestSession) {
+    setCloseRequest(undefined)
+  }
   const hasBlockingUi =
     newSessionOpen ||
     Boolean(closeRequestSession) ||

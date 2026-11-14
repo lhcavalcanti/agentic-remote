@@ -17,7 +17,9 @@ import {
   mergeRuntimeModelOptions,
   sameRuntimeSelection,
 } from './runtime-defaults'
-import { settingsSections } from './sections'
+import { navigableSettingsSections, schedulerSettingsSection, settingsSections } from './sections'
+import { SettingsNavigation } from './SettingsNavigation'
+import { usePreviewFeature } from '../preview-features'
 import type { SettingsSectionProps } from './sections'
 import type { AppSettingsDialogProps } from './types'
 
@@ -52,6 +54,11 @@ function scrollSettingsTo(id: string, { focus = false } = {}) {
 const settingsTakeoverEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const
 
 export function AppSettingsDialog(props: AppSettingsDialogProps) {
+  const navigation = usePreviewFeature('settingsNavigation')
+  const scheduler = usePreviewFeature('schedulerView')
+  const navigationSections = scheduler
+    ? [...navigableSettingsSections.slice(0, 5), schedulerSettingsSection, ...navigableSettingsSections.slice(5)]
+    : navigableSettingsSections
   const {
     open,
     computers,
@@ -272,7 +279,7 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
   // stacked on a phone, would push it away, so it stays with that part as
   // the settings grow until you scroll, tap or type yourself.
   useEffect(() => {
-    if (!open || !initialSection) return
+    if (!open || !initialSection || navigation) return
     const section = initialSection
     let observer: ResizeObserver | undefined
     let dialog: HTMLElement | null | undefined
@@ -296,7 +303,7 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
       stopFollowing()
       for (const type of settingsTakeoverEvents) dialog?.removeEventListener(type, stopFollowing)
     }
-  }, [initialSection, open])
+  }, [initialSection, open, navigation])
 
   if (!open) {
     return null
@@ -374,6 +381,7 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
 
   const sectionProps: SettingsSectionProps = {
     ...props,
+    categoryNavigation: navigation,
     oracle,
     runtimeErrors,
     runtimeLoading,
@@ -399,11 +407,13 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
 
   return (
     <DialogFrame
-      className="app-settings-dialog"
+      className={`app-settings-dialog${navigation ? ' app-settings-dialog--navigation' : ''}`}
       eyebrow="Application"
       onClose={onClose}
       title="App settings"
     >
+      {navigation ? <SettingsNavigation key={initialSection ?? 'default'} initialSection={initialSection}
+        sectionProps={sectionProps} sections={navigationSections} /> : <>
       <nav aria-label="Settings sections" className="app-settings-nav">
         {settingsSections.map((group) => (
           <button
@@ -428,6 +438,7 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
           </section>
         ))}
       </div>
+      </>}
     </DialogFrame>
   )
 }

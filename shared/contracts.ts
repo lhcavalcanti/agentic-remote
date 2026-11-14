@@ -486,6 +486,7 @@ export interface ComputerSummary {
   name: string
   isLocal: boolean
   online: boolean
+  version?: string
   baseUrl?: string
   /** Durable pairing lifetime; stable across reconnects and process restarts. */
   lifecycleGeneration?: string

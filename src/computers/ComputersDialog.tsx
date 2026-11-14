@@ -2,30 +2,54 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Trash2, Wifi, WifiOff } from 'lucide-react'
 import type { ComputerSummary } from '../../shared/contracts'
-import { addComputer, removeComputer } from '../api'
+import { addComputer, listComputers, removeComputer } from '../api'
 import { DialogFrame } from '../components/DialogFrame'
 
-export function ComputersDialog({
-  open,
-  computers,
-  onClose,
-  onAdded,
-  onRemoved,
-}: {
-  open: boolean
+export type ComputersBodyProps = {
   computers: ComputerSummary[]
-  onClose: () => void
   onAdded: (computer: ComputerSummary) => void
   onRemoved: (computerId: string) => void
+  enhanced?: boolean
+  open?: boolean
+  onClose?: () => void
+}
+
+export function ComputersDialog({ open, onClose, ...props }: ComputersBodyProps & {
+  open: boolean
+  onClose: () => void
 }) {
+  return <ComputersBody {...props} open={open} onClose={onClose} />
+}
+
+export function ComputersBody({
+  computers,
+  onAdded,
+  onRemoved,
+  enhanced = false,
+  open = true,
+  onClose,
+}: ComputersBodyProps) {
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [token, setToken] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string>()
+  const [checking, setChecking] = useState(false)
+  const [connection, setConnection] = useState<string>()
+  if (!open) return null
 
-  if (!open) {
-    return null
+  async function check() {
+    setChecking(true)
+    setError(undefined)
+    try {
+      const latest = await listComputers()
+      for (const computer of latest) onAdded(computer)
+      setConnection(latest.map((computer) => `${computer.name}: ${computer.online ? 'Online' : 'Offline'}`).join(' · '))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setChecking(false)
+    }
   }
 
   async function submit(event: FormEvent) {
@@ -62,8 +86,8 @@ export function ComputersDialog({
     }
   }
 
-  return (
-    <DialogFrame eyebrow="Hub settings" onClose={onClose} title="Computers">
+  const body = (
+    <>
       <div className="computer-list">
         {computers.map((computer) => (
           <div className="computer-row" key={computer.id}>
@@ -71,6 +95,7 @@ export function ComputersDialog({
             <span>
               <strong>{computer.name}</strong>
               <small>{computer.isLocal ? 'This computer' : computer.baseUrl}</small>
+              {enhanced ? <small>{computer.online ? 'Online' : 'Offline'} · {computer.isLocal ? 'Hub' : 'Node'} · Version {computer.version ?? 'not reported'}</small> : null}
             </span>
             {!computer.isLocal ? (
               <button
@@ -85,6 +110,11 @@ export function ComputersDialog({
           </div>
         ))}
       </div>
+      {enhanced ? <>
+        <button className="secondary-button" disabled={checking} onClick={() => void check()} type="button">{checking ? 'Checking…' : 'Check connection'}</button>
+        {connection ? <p role="status">{connection}</p> : null}
+        <p className="dialog-message">Pair a computer below. Its name can be set when pairing.</p>
+      </> : null}
       <form className="computer-form" onSubmit={submit}>
         <label className="field">
           <span>Name (optional)</span>
@@ -125,6 +155,7 @@ export function ComputersDialog({
           {submitting ? 'Connecting…' : 'Add computer'}
         </button>
       </form>
-    </DialogFrame>
+    </>
   )
+  return onClose ? <DialogFrame eyebrow="Hub settings" onClose={onClose} title="Computers">{body}</DialogFrame> : body
 }

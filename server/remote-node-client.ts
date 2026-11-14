@@ -114,6 +114,7 @@ export function normalizeNodeUrl(value: string): string {
 }
 
 export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
+  version?: string
   readonly registrationId = randomUUID()
   private readonly resourceReads = new ResourceReads()
   private readonly resourceLifetime = new AbortController()
@@ -159,6 +160,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       signal ? 0 : 15_000,
       false,
     )
+    this.version = info.version
     this._providers = info.providers
     this._voice = info.voice
     this.setOnline(true)

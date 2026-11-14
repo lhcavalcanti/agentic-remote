@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
-import { Bell, Bot, Folder, MessageSquare, Settings, SlidersHorizontal } from 'lucide-react'
+import { Bell, Bot, Clock, Folder, MessageSquare, MonitorCog, Settings, SlidersHorizontal } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AgentProvider, RuntimeModelOption } from '../../shared/contracts'
 import type { NewSessionBackendSetting, OracleResponseStyle } from '../../shared/settings-profile'
@@ -15,8 +15,10 @@ import { accentThemes, appearanceOptions, notificationScopeOptions } from './opt
 import { StatuslineControls } from './StatuslineControls'
 import type { AppSettingsDialogProps } from './types'
 import { DisplayNameSetting } from '../rail/DisplayNameSetting'
+import { ComputersBody } from '../computers/ComputersDialog'
 
 export type SettingsSectionProps = AppSettingsDialogProps & {
+  categoryNavigation?: boolean
   oracle: ReturnType<typeof useOracleSettings>
   runtimeErrors: Partial<Record<AgentProvider, string>>
   runtimeLoading: boolean
@@ -45,6 +47,7 @@ export type SettingsSection = {
   title: string
   icon: LucideIcon
   scope: 'hub' | 'device'
+  searchLabels?: readonly string[]
   render: (props: SettingsSectionProps) => ReactNode
 }
 
@@ -71,6 +74,7 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Models',
     icon: Bot,
     scope: 'hub',
+    searchLabels: ['New sessions', 'GitHub Copilot default model', 'Claude Agent default model', 'effort', 'context', 'Start new sessions in'],
     render: ({
       runtimeErrors,
       runtimeLoading,
@@ -136,6 +140,7 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Folders',
     icon: Folder,
     scope: 'hub',
+    searchLabels: ['New sessions', "Oracle's session folder"],
     render: ({ computers, defaultSessionFolders, onDefaultSessionFoldersChange, oracle }) => (
       <>
         <p className="dialog-message">
@@ -198,6 +203,7 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Oracle',
     icon: MessageSquare,
     scope: 'hub',
+    searchLabels: ['Model', 'Reasoning effort', 'Response style', 'Notify me about', 'What notifies you', 'Memory', 'Voice', 'Dreamer', 'Opens new sessions with'],
     render: ({
       hubCopilotModels,
       hubCopilotError,
@@ -278,6 +284,7 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Notifications',
     icon: Bell,
     scope: 'device',
+    searchLabels: ['Enable notifications', 'Disable notifications', 'Send test notification', 'This device'],
     render: ({
       supported,
       requiresInstall,
@@ -364,6 +371,7 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Interface',
     icon: SlidersHorizontal,
     scope: 'hub',
+    searchLabels: ['Appearance', 'Reading surfaces', 'Accent color', 'Status line', 'Keyboard shortcuts', 'Preview features'],
     render: ({
       appearance,
       onAppearanceChange,
@@ -376,6 +384,7 @@ export const settingsSections: readonly SettingsSection[] = [
       shortcuts,
       schedulerAllowAllForOracle,
       onSchedulerAllowAllForOracleChange,
+      categoryNavigation,
     }) => (
       <>
         <div className="app-settings-group__body">
@@ -474,7 +483,7 @@ export const settingsSections: readonly SettingsSection[] = [
             </p>
           </section>
           <PreviewFeaturesSettings />
-          <SchedulerPermissionSettings allowed={schedulerAllowAllForOracle} onChange={onSchedulerAllowAllForOracleChange} />
+          {!categoryNavigation ? <SchedulerPermissionSettings allowed={schedulerAllowAllForOracle} onChange={onSchedulerAllowAllForOracleChange} /> : null}
         </div>
       </>
     ),
@@ -484,6 +493,7 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'App',
     icon: Settings,
     scope: 'device',
+    searchLabels: ['Display name', 'Settings sync', 'Hub connection', 'App updates', 'Version', 'Check for updates'],
     render: ({
       settingsSync,
       onDisplayNameChange,
@@ -566,3 +576,37 @@ export const settingsSections: readonly SettingsSection[] = [
     ),
   },
 ]
+
+export const navigableSettingsSections: readonly SettingsSection[] = [
+  settingsSections[0],
+  settingsSections[1],
+  {
+    id: 'settings-computers',
+    title: 'Remote machines',
+    icon: MonitorCog,
+    scope: 'hub',
+    searchLabels: ['Name', 'Node URL', 'Pairing token', 'Add computer', 'Remove', 'Check connection', 'Version', 'Status', 'Role', 'Host monitor'],
+    render: ({ computers, onComputerAdded, onComputerRemoved, onOpenHostMonitor }) => (
+      <>
+        {onOpenHostMonitor ? <button className="secondary-button" onClick={onOpenHostMonitor} type="button">Open Host monitor</button> : null}
+        <ComputersBody computers={computers} enhanced onAdded={onComputerAdded ?? (() => undefined)}
+          onRemoved={onComputerRemoved ?? (() => undefined)} />
+      </>
+    ),
+  },
+  settingsSections[3],
+  settingsSections[2],
+  settingsSections[4],
+  settingsSections[5],
+]
+
+export const schedulerSettingsSection: SettingsSection = {
+  id: 'settings-scheduler',
+  title: 'Scheduler',
+  icon: Clock,
+  scope: 'hub',
+  searchLabels: ['Allow Oracle to propose allow-all schedules'],
+  render: ({ schedulerAllowAllForOracle, onSchedulerAllowAllForOracleChange }) => (
+    <SchedulerPermissionSettings allowed={schedulerAllowAllForOracle} onChange={onSchedulerAllowAllForOracleChange} />
+  ),
+}

@@ -30,6 +30,9 @@ export type AppSettingsDialogProps = {
   onDisplayNameChange?: (name: string) => void
   open: boolean
   computers: ComputerSummary[]
+  onComputerAdded?: (computer: ComputerSummary) => void
+  onComputerRemoved?: (computerId: string) => void
+  onOpenHostMonitor?: () => void
   onClose: () => void
   onApplyUpdate: () => void
   onUpdateReady: (registration: ServiceWorkerRegistration) => void

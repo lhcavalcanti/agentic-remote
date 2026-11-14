@@ -41,6 +41,8 @@ export const uiSceneNames = [
   'session-list',
   'app-settings',
   'preview-features',
+  'settings-navigation',
+  'settings-remote-machines',
   'runtime-dialog',
   'new-session-dialog',
   'computers-dialog',
@@ -142,6 +144,13 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true, schedulerView: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
+      if (name === 'settings-navigation' || name === 'settings-remote-machines') {
+        state.settings.values = {
+          previewFeatures: { settingsNavigation: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
+          displayName: 'Alex Morgan',
+        }
+        state.hubFlags = { ...state.hubFlags, hostMonitor: true, scheduler: true }
+      }
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
@@ -161,7 +170,7 @@ export function createUIScenes(
         appearance: 'graphite',
         state,
         notifications: name === 'notification-panel' ? fixtureNotifications : undefined,
-        hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes',
+        hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes' || name === 'settings-navigation' || name === 'settings-remote-machines',
         hostMonitorWsl: name === 'host-monitor' || name === 'host-processes',
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: fixtureScheduleProposals,
@@ -204,6 +213,18 @@ export function createUIScenes(
         await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
+      } else if (name === 'settings-navigation' || name === 'settings-remote-machines') {
+        await openSessions(page)
+        await page.getByRole('button', { name: name === 'settings-navigation' ? 'App settings' : 'Manage computers', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+        await expect(dialog.getByRole('textbox', { name: 'Search settings' }).or(dialog.getByRole('searchbox', { name: 'Search settings' }))).toBeVisible()
+        if (name === 'settings-remote-machines') {
+          await expect(dialog.getByRole('button', { name: 'Check connection', exact: true })).toBeVisible()
+        } else {
+          const models = dialog.getByRole('combobox', { name: 'GitHub Copilot default model', exact: true })
+          if (page.viewportSize()!.width < 600) await dialog.getByRole('button', { name: /^Models/ }).click()
+          await expect(models).toBeEnabled()
+        }
       } else if (name === 'app-settings' || name === 'preview-features' || name === 'computers-dialog') {
         const appSettings = name !== 'computers-dialog'
         await openSessions(page)

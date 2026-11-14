@@ -82,6 +82,43 @@ for (const viewport of uiViewports) {
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
 
+test('settings categories preserve display name, scheduler defaults and the Host monitor destination', async ({ page, baseURL }) => {
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-navigation')!.setup(page)
+  try {
+    const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+    await dialog.getByRole('button', { name: /^Scheduler Hub/ }).click()
+    await dialog.getByRole('checkbox', { name: 'Allow Oracle to propose allow-all schedules' }).check()
+    await expect.poll(() => fixture.state.settings.values.schedulerAllowAllForOracle).toBe(true)
+    await dialog.getByRole('button', { name: /^App This device/ }).click()
+    await dialog.getByRole('textbox', { name: 'Display name', exact: true }).fill('Jamie Rivera')
+    await dialog.getByRole('button', { name: 'Save display name', exact: true }).click()
+    await expect.poll(() => fixture.state.settings.values.displayName).toBe('Jamie Rivera')
+    await dialog.getByRole('button', { name: /^Remote machines/ }).click()
+    await dialog.getByRole('button', { name: 'Open Host monitor', exact: true }).click()
+    await expect(dialog).toBeHidden()
+    await expect(page.getByRole('dialog', { name: 'Host monitor', exact: true })).toBeVisible()
+  } finally { fixture.assertHealthy() }
+})
+
+test('settings preview searches fields, navigates by keyboard, deep-links computers and closes with Escape', async ({ page, baseURL }) => {
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-navigation')!.setup(page)
+  try {
+    const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+    await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Accent')
+    await dialog.getByRole('button', { name: /^Interface/ }).click()
+    await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeVisible()
+    await expect(dialog.getByRole('heading', { name: 'Keyboard shortcuts', exact: true })).toBeHidden()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await page.getByRole('button', { name: 'Manage computers', exact: true }).click()
+    await expect(dialog.getByRole('button', { name: 'Check connection', exact: true })).toBeVisible()
+    const remote = dialog.getByRole('button', { name: /^Remote machines/ })
+    await remote.focus()
+    await remote.press('ArrowDown')
+    await expect(dialog.getByRole('button', { name: /^Notifications/ })).toBeFocused()
+  } finally { fixture.assertHealthy() }
+})
+
 // App.test.tsx covers reconciliation, receipt failures, serialized queue races,
 // clipboard variants and history ownership. These locks add real-browser event
 // and HTTP wiring rather than duplicating that component-level matrix.

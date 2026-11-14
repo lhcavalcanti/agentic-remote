@@ -4263,6 +4263,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   >([])
   const [sessionCreationError, setSessionCreationError] = useState<string>()
   const [computersOpen, setComputersOpen] = useState(false)
+  const settingsNavigation = usePreviewFeature('settingsNavigation')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const navigationWidth = sidebarWidth + (desktopRail && viewportWidth >= 1024 ? 64 : 0)
   const oracleDockReservedLeft =
@@ -13034,6 +13035,25 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     unreadCount={notifications.unreadCount} offscreen={!desktopLayout && !sidebarOpen}
     onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
     onOpen={(id) => { if (id === 'scheduler') setScheduleLink(undefined); setSidebarOpen(false); setShellView(id) }} />
+  function computerAdded(computer: ComputerSummary) {
+    forgottenComputers.current.delete(computer.id)
+    eventSequenceRef.current = nextSessionEventSequence()
+    computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
+    computersRef.current = upsertComputer(computersRef.current, computer)
+    setComputers(computersRef.current)
+  }
+
+  function computerRemoved(computerId: string) {
+    eventSequenceRef.current = nextSessionEventSequence()
+    computerEventSequenceRef.current.set(computerId, eventSequenceRef.current)
+    computersRef.current = computersRef.current.filter((computer) => computer.id !== computerId)
+    setComputers(computersRef.current)
+    forgetComputerKnowledge(computerId)
+    setSessions((current) => current.filter((session) => session.computerId !== computerId))
+    setBackgroundTaskSnapshots((current) => Object.fromEntries(
+      Object.entries(current).filter(([key]) => !key.startsWith(`${computerId}:`))))
+  }
+
   return (
     <div
       className={`app-shell ${desktopRail ? 'app-shell--rail' : ''} ${
@@ -13446,7 +13466,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           <button
             aria-label="Manage computers"
             className="icon-button manage-computers-button"
-            onClick={() => setComputersOpen(true)}
+            onClick={() => {
+              if (settingsNavigation) {
+                setSettingsSection('settings-computers')
+                setSettingsOpen(true)
+              } else setComputersOpen(true)
+            }}
             type="button"
           >
             <MonitorCog aria-hidden="true" size={18} />
@@ -14368,36 +14393,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       />
       <ComputersDialog
         computers={computers}
-        onAdded={(computer) => {
-          // Pairing it again is authoritative, and the socket may not be the
-          // one that says so. Without this the mark set when it was removed
-          // would outlive it and go on discarding its answers.
-          forgottenComputers.current.delete(computer.id)
-          eventSequenceRef.current = nextSessionEventSequence()
-          computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
-          computersRef.current = upsertComputer(computersRef.current, computer)
-          setComputers(computersRef.current)
-        }}
+        onAdded={computerAdded}
         onClose={() => setComputersOpen(false)}
-        onRemoved={(computerId) => {
-          eventSequenceRef.current = nextSessionEventSequence()
-          computerEventSequenceRef.current.set(computerId, eventSequenceRef.current)
-          computersRef.current = computersRef.current.filter(
-            (computer) => computer.id !== computerId,
-          )
-          setComputers(computersRef.current)
-          forgetComputerKnowledge(computerId)
-          setSessions((current) =>
-            current.filter((session) => session.computerId !== computerId),
-          )
-          setBackgroundTaskSnapshots((current) =>
-            Object.fromEntries(
-              Object.entries(current).filter(
-                ([key]) => !key.startsWith(`${computerId}:`),
-              ),
-            ),
-          )
-        }}
+        onRemoved={computerRemoved}
         open={computersOpen}
       />
       <StatuslineDialog
@@ -14431,6 +14429,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       ) : null}
       <AppSettingsDialog
         onDisplayNameChange={(name) => saveSetting('displayName', name)}
+        onComputerAdded={computerAdded}
+        onComputerRemoved={computerRemoved}
+        onOpenHostMonitor={hostMonitorView ? () => {
+          setSettingsOpen(false)
+          setSidebarOpen(false)
+          setShellView('host')
+        } : undefined}
         accentTheme={accentTheme}
         initialSection={settingsSection}
         onApplyUpdate={() => void applyPwaUpdate()}

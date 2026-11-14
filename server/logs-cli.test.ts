@@ -45,7 +45,7 @@ async function fixture(lines: string[] = []) {
   }
   await stub('journalctl', [
     'if [[ "$*" == "--user --unit agentic-remote.service --follow" ]]; then echo "following fixture"; exit 0; fi',
-    '[[ "$*" == "--user --unit agentic-remote.service -o json --since $TEST_SINCE --no-pager -n 2000" ]] || exit 99',
+    '[[ "$*" == "--user --unit agentic-remote.service -o json --output-fields=MESSAGE --since $TEST_SINCE --no-pager" ]] || exit 99',
     'if [[ -n "${TEST_JOURNAL_ERROR:-}" ]]; then printf "%s\\n" "$TEST_JOURNAL_ERROR" >&2; exit "${TEST_JOURNAL_STATUS:-1}"; fi',
     'while IFS= read -r line; do printf "%s\\n" "$line"; done <"$TEST_JOURNAL"',
   ].join('\n'))
@@ -91,7 +91,7 @@ describe('read-only logs explanation CLI', () => {
     expect(result.code).toBe(0)
     expect(result.stderr).toBe('')
     const output = explanation(result)
-    expect(Object.keys(output)).toEqual(['failure', 'correlation', 'before', 'after'])
+    expect(Object.keys(output)).toEqual(['failure', 'correlation', 'omittedWindowLines', 'before', 'after'])
     expect(output.failure).toMatchObject({
       kind: 'startup', phase: 'copilot.sdk', time: '2026-11-14T05:00:00.000Z',
       message: 'Failed startup phase: copilot.sdk',
@@ -249,8 +249,27 @@ describe('read-only logs explanation CLI', () => {
     expect(await readFile(context.environment, 'utf8')).toBe('TOKEN=environment-must-not-be-printed\n')
     await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await readFile(context.calls, 'utf8')).trim().split('\n')).toEqual([
-      'journalctl --user --unit agentic-remote.service -o json --since -6h --no-pager -n 2000',
+      'journalctl --user --unit agentic-remote.service -o json --output-fields=MESSAGE --since -6h --no-pager',
     ])
+  })
+
+  it('finds a failure older than the last 2,000 lines in more than 1 MB of journal output', async () => {
+    const filler = Array.from({ length: 3000 }, (_, index) =>
+      journalLine({ level: 30, msg: `request ${index} ${'x'.repeat(400)}` }))
+    const context = await fixture([journalLine({ level: 50, msg: 'early failure' }), ...filler])
+    const result = await context.run()
+    expect(result.code).toBe(0)
+    expect(JSON.parse(result.stdout).failure).toMatchObject({ kind: 'error', message: 'early failure' })
+  })
+
+  it('keeps only the 20 time-window lines closest to the failure and counts the rest', async () => {
+    const busy = Array.from({ length: 60 }, (_, index) => journalLine({ level: 30, msg: `request ${index}` }, index))
+    const context = await fixture([...busy, journalLine({ level: 50, msg: 'busy failure' }, 61)])
+    const json = JSON.parse((await context.run()).stdout)
+    expect(json.before.filter((line: { block: string }) => line.block === 'time window')).toHaveLength(20)
+    expect(json.before.at(-1).message).toContain('request 59')
+    expect(json.omittedWindowLines).toBe(40)
+    expect((await context.run(['--why'])).stdout).toContain('40 earlier lines in the 2-minute window omitted')
   })
 
   it('reports no failure without an error, including a clean unit exit', async () => {
@@ -260,7 +279,7 @@ describe('read-only logs explanation CLI', () => {
     ])
     const human = await context.run(['--why'])
     expect(human).toMatchObject({ code: 0, stdout: 'No failure found in -6h\n', stderr: '' })
-    expect(explanation(await context.run())).toEqual({ failure: null, correlation: {}, before: [], after: [] })
+    expect(explanation(await context.run())).toEqual({ failure: null, correlation: {}, omittedWindowLines: 0, before: [], after: [] })
   })
 
   it('supports empty journals and timestamp-free structured lines without inventing wall-clock times', async () => {

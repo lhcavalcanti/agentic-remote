@@ -142,9 +142,10 @@ No options: follow the service journal, unchanged.
   --json        Emit {failure, correlation, before:[...], after:[...]}; requires --why.
   --help, -h    Show this help.
 
-Reads up to 2000 journal lines, even with the service down. Shows up to 20
-preceding lines with the same session/request/phase/computer, remaining lines
-in the preceding 2-minute window, and up to 5 following lines. Human times are
+Reads the whole window (up to 64 MB of journal output; narrow --since if it
+is larger), even with the service down. Shows up to 20
+preceding lines with the same session/request/phase/computer, the last 20
+remaining lines in the preceding 2-minute window, and up to 5 following lines. Human times are
 local; JSON times are ISO timestamps. Obvious secrets are redacted.
 No environment files are read, no network probes run, and nothing is changed.
 Exit 0 with or without a failure, 2 for usage errors, 1 if the journal cannot
@@ -200,11 +201,19 @@ function correlations(item) {
   }
   return output
 }
+const JOURNAL_MAX_BYTES = 64 * 1024 * 1024
+class JournalTooLarge extends Error {}
 function explain() {
   if (!executable('journalctl')) throw new Error()
-  const journal = run('journalctl', ['--user', '--unit', serviceName, '-o', 'json', '--since', since, '--no-pager', '-n', '2000'])
+  // Structured service lines are large; request only MESSAGE (address fields such as
+  // __REALTIME_TIMESTAMP are always included) and allow a bounded larger buffer.
+  const journal = spawnSync('journalctl', ['--user', '--unit', serviceName, '-o', 'json', '--output-fields=MESSAGE',
+    '--since', since, '--no-pager'], {
+    encoding: 'utf8', timeout: 20000, maxBuffer: JOURNAL_MAX_BYTES, stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  if (journal.error?.code === 'ENOBUFS') throw new JournalTooLarge()
   if (!success(journal) || /permission denied|insufficient permissions|not permitted/i.test(journal.stderr)) throw new Error()
-  const entries = journal.stdout.split('\n').filter((line) => line.trim()).slice(-2000).map((line) => {
+  const entries = journal.stdout.split('\n').filter((line) => line.trim()).map((line) => {
     const envelope = parseRecord(line)
     const message = typeof envelope?.MESSAGE === 'string' ? envelope.MESSAGE : line
     const item = parseRecord(message)
@@ -230,7 +239,7 @@ function explain() {
       /\bFailed with result\b|\bStart request repeated too quickly\b|\bFailed to start\b|\bcode=(?:killed|dumped)\b|\bstatus=[1-9]\d*(?:\/|\b)/i.test(message))
     if (index >= 0) signal = { index, kind: 'unit' }
   }
-  if (!signal) return { failure: null, correlation: {}, before: [], after: [] }
+  if (!signal) return { failure: null, correlation: {}, omittedWindowLines: 0, before: [], after: [] }
   const entry = entries[signal.index]
   const summary = entry.item?.msg ?? entry.item?.message ?? entry.item?.err?.message ?? entry.message
   const failure = {
@@ -245,13 +254,15 @@ function explain() {
   const key = ['sessionId', 'requestId', 'phase', 'computerId'].find((key) => entry.correlation[key])
   const label = { sessionId: 'same session', requestId: 'same request', phase: 'same phase', computerId: 'same computer' }[key]
   const same = key ? preceding.filter((item) => item.correlation[key] === entry.correlation[key]).slice(-20) : []
-  const nearby = preceding.filter((item) => !same.includes(item) && entry.time && item.time &&
+  const window = preceding.filter((item) => !same.includes(item) && entry.time && item.time &&
     Date.parse(item.time) >= Date.parse(entry.time) - 120000 && Date.parse(item.time) <= Date.parse(entry.time))
+  // A busy hub logs hundreds of requests per minute; keep the lines closest to the failure.
+  const nearby = window.slice(-20)
   const output = (item, block) => ({
     block, time: item.time, message: lineText(item.item ? JSON.stringify(redact(item.item)) : redact(item.message)),
   })
   return {
-    failure, correlation: redact(entry.correlation),
+    failure, correlation: redact(entry.correlation), omittedWindowLines: window.length - nearby.length,
     before: [...same.map((item) => output(item, label)), ...nearby.map((item) => output(item, 'time window'))],
     after: entries.slice(signal.index + 1, signal.index + 6).map((item) => output(item, 'after')),
   }
@@ -268,12 +279,20 @@ try {
     if (keys.length) console.log(`Correlation: ${keys.map(([key, value]) => `${key}=${clean(value)}`).join(' · ')}`)
     let block
     for (const item of [...result.before, ...result.after]) {
-      if (item.block !== block) { block = item.block; console.log(`\n[${block}]`) }
+      if (item.block !== block) {
+        block = item.block
+        console.log(`\n[${block}]`)
+        if (block === 'time window' && result.omittedWindowLines > 0) {
+          console.log(`  … ${result.omittedWindowLines} earlier lines in the 2-minute window omitted`)
+        }
+      }
       console.log(`  ${localTime(item.time)}  ${item.message}`)
     }
   }
-} catch {
-  console.error('agentic-remote: user journal could not be read; check journalctl availability, permissions, and --since')
+} catch (error) {
+  console.error(error instanceof JournalTooLarge
+    ? `agentic-remote: journal output exceeded ${JOURNAL_MAX_BYTES / 1024 / 1024} MB; narrow it with --since`
+    : 'agentic-remote: user journal could not be read; check journalctl availability, permissions, and --since')
   process.exitCode = 1
 }
 NODE

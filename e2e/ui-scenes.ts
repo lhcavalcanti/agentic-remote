@@ -6,8 +6,8 @@ import {
   SELECTED_SESSION_ID,
   createWorkspaceFixtureState,
   fixtureBaseUrl,
-  fixtureSchedules,
-  fixtureScheduleRuns,
+  fixtureSchedules as provenanceSchedules,
+  fixtureScheduleRuns as provenanceRuns,
   setupWorkspaceFixture,
   type WorkspaceFixture,
   type WorkspaceFixtureState,
@@ -92,12 +92,12 @@ export function createUIScenes(
       const origins = name === 'session-origins' || name === 'session-origin-run' || name === 'session-subagents'
       if (origins) {
         state.settings = {
-          revision: 1, values: { previewFeatures: { composerRefresh: true, schedulerView: true } },
+          revision: 1, values: { previewFeatures: { composerRefresh: true, schedulerView: true, desktopRail: true } },
           keyRevisions: { previewFeatures: 1 },
         }
         state.sessions[0].provenance = {
-          origin: 'schedule', scheduleId: fixtureSchedules[0].id,
-          scheduleName: fixtureSchedules[0].name, scheduleRunId: fixtureScheduleRuns[0].id,
+          origin: 'schedule', scheduleId: provenanceSchedules[0].id,
+          scheduleName: provenanceSchedules[0].name, scheduleRunId: provenanceRuns[0].id,
         }
         state.sessions[1].provenance = { origin: 'user' }
         state.sessions[2].provenance = { origin: 'manager' }
@@ -212,7 +212,7 @@ export function createUIScenes(
           schedules: [], runs: [], proposals: fixtureScheduleProposals,
         } : name === 'scheduler' || name === 'scheduler-form' || name === 'notification-panel'
           ? { schedules: fixtureSchedules, runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals }
-          : origins ? { schedules: structuredClone(fixtureSchedules), runs: structuredClone(fixtureScheduleRuns) } : undefined,
+          : origins ? { schedules: structuredClone(provenanceSchedules), runs: structuredClone(provenanceRuns) } : undefined,
         taskSnapshots: name === 'session-subagents' ? {
           [`fixture-studio:${SELECTED_SESSION_ID}`]: {
             supported: true, runningCount: 1, tasks: [
@@ -264,7 +264,8 @@ export function createUIScenes(
         await expect(nav.getByRole('img', { name: 'Found on this computer' })).toBeVisible()
       } else if (name === 'session-origin-run') {
         await page.locator('.conversation-header').getByRole('link', { name: 'View run from schedule Morning field guide review' }).click()
-        await expect(page.getByRole('dialog', { name: 'Schedule run' })).toContainText('Reviewed the field guide links.')
+        await expect(page.getByRole('dialog', { name: 'Scheduler', exact: true })
+          .getByRole('region', { name: 'Run history for Morning field guide review' })).toContainText('Reviewed the field guide links.')
       } else if (name === 'session-subagents') {
         await expect(page.getByRole('button', { name: '2 subagents running', exact: true })).toBeVisible()
       } else if (name === 'session-list' || name === 'desktop-rail') {

@@ -13174,6 +13174,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             >
               <SessionNavigation
                 managedSessions={managedSessionKeys}
+                onOpenScheduleRun={(target) => {
+                  setScheduleLink(target); setSidebarOpen(false); setShellView('scheduler')
+                }}
                 backgroundTasks={backgroundTaskSnapshots}
                 view={navigationView}
                 query={sessionQuery}
@@ -13509,7 +13512,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               {selected ? (
                 <span className="conversation-header__origin">
                   <SessionOriginBadge compact provenance={selected.provenance} />
-                  <SessionOriginRunLink provenance={selected.provenance} />
+                  <SessionOriginRunLink provenance={selected.provenance} onOpenRun={(target) => {
+                    setScheduleLink(target); setShellView('scheduler')
+                  }} />
                 </span>
               ) : null}
               {selected?.title || 'Agentic Remote'}

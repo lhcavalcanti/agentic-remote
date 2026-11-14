@@ -2355,22 +2355,6 @@ button {
   padding-right: 40px;
 }
 
-.session-origin-run {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 10px 16px;
-}
-
-.session-origin-run dt {
-  color: var(--muted);
-}
-
-.session-origin-run dd {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
 .subagent-count {
   display: inline-flex;
   align-items: center;

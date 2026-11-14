@@ -10,11 +10,13 @@ The user, Oracle, schedule, and discovered/external origins have separate icons 
 
 For schedules, recorded schedule/run IDs come from the registry; the current name comes from the scheduler store. A session may outlive a deleted schedule, in which case its run identity remains but no name is invented. Provenance is display-only and does not change policy, ownership, queue behavior, or registry records.
 
+Notification delivery metadata remains separate. A scheduled admission may already suppress ordinary notifications before a registry origin exists; `suppressOrdinaryNotifications` is never treated as proof of provenance. Both fields survive HTTP and socket projection without changing notification admission order or policy.
+
 ## Run access
 
-A run link requires both Composer refresh and the effective Scheduler view preview, including its hub flag. It reads the existing `GET /api/schedules/runs/:id` route and opens read-only details. Opening it never starts, retries, stops, or modifies a schedule or session. Missing runs show the existing API error with a retry action. The link's unmodified target is the same read-only run resource.
+A run link requires both Composer refresh and the effective Scheduler view preview, including its hub flag. It uses the scheduler's canonical root-page `schedule`/`run` link, opens the existing Scheduler view, and selects the recorded run history. The same URL works in another tab or as a bookmark. Opening it never starts, retries, stops, or modifies a schedule or session; missing or expired history uses the Scheduler view's existing unavailable states.
 
-The isolated detail surface provides an actual run destination before the broader scheduler view exists. It uses existing dialog focus management and closes on Escape. Preview/session/run changes unmount its state and abort pending reads.
+Session rows and the conversation header share that navigation. The desktop rail reuses the same session row component. Notification rows, run-history entries, and host-process links use their own purpose-specific components; their existing session navigation reaches the same provenance-aware header without adding new badge surfaces.
 
 ## Runtime subagents
 

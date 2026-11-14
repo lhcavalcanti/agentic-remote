@@ -42,6 +42,7 @@ import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
 import { sessionOriginDescription } from './session-origin'
 import { usePreviewFeature } from './preview-features'
+import type { ScheduleLink } from './notifications/schedule-link'
 
 export type PendingSessionCreation = Pick<
   ManagedSession,
@@ -57,6 +58,7 @@ const sessionListScrollStorageKey = 'agentic-remote:session-list-scroll-v1'
 type SessionActions = {
   /** `computerId:sessionId` of the sessions Oracle started. */
   managedSessions?: ReadonlySet<string>
+  onOpenScheduleRun?: (target: ScheduleLink) => void
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
   onCloseSession: (session: ManagedSession) => void
@@ -151,6 +153,7 @@ function SortableSessionItem({
   sorting,
   onSelectSession,
   onOpenSessionTasks,
+  onOpenScheduleRun,
   onCloseSession,
   onToggleSessionSuspended,
   closingSessions,
@@ -285,7 +288,7 @@ function SortableSessionItem({
             </small>
           </span>
         </button>
-        <SessionOriginRunLink provenance={session.provenance} />
+        <SessionOriginRunLink provenance={session.provenance} onOpenRun={onOpenScheduleRun} />
         {runningBackgroundTasks > 0 ? (
           <button
             aria-label={`View background tasks for ${session.title}`}

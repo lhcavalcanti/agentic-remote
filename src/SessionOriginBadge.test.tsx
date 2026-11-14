@@ -1,17 +1,16 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultHubFeatureFlags, effectivePreviewFeatures } from '../shared/feature-flags'
 import type { BackgroundTask, BackgroundTaskSnapshot, SessionProvenance } from '../shared/contracts'
 import { PreviewFeaturesContext } from './preview-features'
-import { getScheduleRun } from './api'
+import { readScheduleLink } from './notifications/schedule-link'
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
 import { SubagentCount } from './SubagentCount'
 
-vi.mock('./api', () => ({ getScheduleRun: vi.fn() }))
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 function preview(children: ReactNode, composerRefresh = true, schedulerView = false, scheduler = false) {
   const hubFlags = { ...defaultHubFeatureFlags, scheduler }
@@ -40,43 +39,28 @@ describe('session origin badges', () => {
 })
 
 describe('schedule run provenance links', () => {
-  const provenance: SessionProvenance = { origin: 'schedule', scheduleName: 'Morning review', scheduleRunId: 'run' }
+  const provenance: SessionProvenance = { origin: 'schedule', scheduleName: 'Morning review', scheduleId: 'morning', scheduleRunId: 'run' }
   it.each([[false, true, true], [true, false, true], [true, true, false]])(
     'does not expose run access unless both previews and the hub are enabled (%s, %s, %s)',
     (composer, schedulerView, hub) => {
       render(preview(<SessionOriginRunLink provenance={provenance} />, composer, schedulerView, hub))
       expect(screen.queryByRole('link')).not.toBeInTheDocument()
-      expect(getScheduleRun).not.toHaveBeenCalled()
     },
   )
-  it('reads the recorded run without launching anything and restores focus on Escape', async () => {
-    vi.mocked(getScheduleRun).mockResolvedValue({
-      id: 'run', scheduleId: 'morning', computerId: 'studio', status: 'succeeded', trigger: 'schedule',
-      launchId: 'launch', occurrenceAt: '2026-11-14T20:00:00Z', summary: 'Reviewed the notes.',
-    })
-    render(preview(<SessionOriginRunLink provenance={provenance} />, true, true, true))
+  it('opens the existing scheduler using the recorded identities and a bookmarkable URL', () => {
+    const onOpenRun = vi.fn()
+    render(preview(<SessionOriginRunLink provenance={provenance} onOpenRun={onOpenRun} />, true, true, true))
     const link = screen.getByRole('link', { name: 'View run from schedule Morning review' })
-    link.focus()
+    expect(readScheduleLink(link.getAttribute('href')!)).toEqual({ scheduleId: 'morning', runId: 'run' })
     fireEvent.click(link)
-    expect(await screen.findByText('succeeded')).toBeInTheDocument()
-    expect(getScheduleRun).toHaveBeenCalledExactlyOnceWith('run', expect.any(AbortSignal))
-    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
-    expect(link).toHaveFocus()
+    expect(onOpenRun).toHaveBeenCalledExactlyOnceWith({ scheduleId: 'morning', runId: 'run' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
-  it('discards an open run when the preview is disabled instead of reopening it on opt-in', async () => {
-    vi.mocked(getScheduleRun).mockResolvedValue({
-      id: 'run', scheduleId: 'morning', computerId: 'studio', status: 'succeeded', trigger: 'schedule',
-      launchId: 'launch', occurrenceAt: '2026-11-14T20:00:00Z',
-    })
-    const result = render(preview(<SessionOriginRunLink provenance={provenance} />, true, true, true))
-    fireEvent.click(screen.getByRole('link'))
-    await screen.findByText('succeeded')
-    result.rerender(preview(<SessionOriginRunLink provenance={provenance} />, false, true, true))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    result.rerender(preview(<SessionOriginRunLink provenance={provenance} />, true, true, true))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(getScheduleRun).toHaveBeenCalledOnce()
+  it('does not invent a run destination when only a schedule or run identity is known', () => {
+    const result = render(preview(<SessionOriginRunLink provenance={{ ...provenance, scheduleId: undefined }} />, true, true, true))
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
+    result.rerender(preview(<SessionOriginRunLink provenance={{ ...provenance, scheduleRunId: undefined }} />, true, true, true))
+    expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 })
 

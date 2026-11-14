@@ -117,6 +117,18 @@ describe('hub schedule notification integration', () => {
     expect(earlyUnbound).toBe(true)
     const registry = JSON.parse(await readFile(path.join(directory, 'manager', 'sessions.json'), 'utf8'))
     expect(registry[`${computerId}:${session.id}`]).toMatchObject({ origin: 'schedule', scheduleId: schedule.id, scheduleRunId: runId })
+    const provenance = { origin: 'schedule', scheduleId: schedule.id, scheduleRunId: runId, scheduleName: schedule.name }
+    const detail = await runtime.app.inject({ url: `/api/computers/${computerId}/sessions/${session.id}?passive=1`, headers })
+    expect(detail.json().session).toMatchObject({ suppressOrdinaryNotifications: true, provenance })
+    const socket = await runtime.app.injectWS('/api/events', { headers })
+    const observed: HubEvent[] = []
+    socket.on('message', (raw) => observed.push(JSON.parse(String(raw))))
+    try {
+      host.emit('event', { type: 'session.upserted', session: { ...session } })
+      await vi.waitFor(() => expect(observed).toContainEqual(expect.objectContaining({
+        type: 'session.upserted', session: expect.objectContaining({ suppressOrdinaryNotifications: true, provenance }),
+      })))
+    } finally { socket.terminate() }
     expect(runtime.managerAgent).toBeUndefined()
     launch!.receipts[0].outcome = 'succeeded'
     session.status = 'idle'
@@ -144,8 +156,11 @@ describe('hub schedule notification integration', () => {
     vi.spyOn(runtime.manager!, 'readSession').mockResolvedValue(session)
     const list = await runtime.app.inject({ url: '/api/sessions', headers })
     expect(list.json().sessions[0]).toMatchObject({ id: session.id, suppressOrdinaryNotifications: true, status: 'running' })
+    // Admission alone has no registry origin; notification policy must not invent one.
+    expect(list.json().sessions[0].provenance).toBeUndefined()
     const detail = await runtime.app.inject({ url: `/api/computers/${session.computerId}/sessions/${session.id}?passive=1`, headers })
     expect(detail.json().session.suppressOrdinaryNotifications).toBe(true)
+    expect(detail.json().session.provenance).toBeUndefined()
     const socket = await runtime.app.injectWS('/api/events', { headers })
     const observed: HubEvent[] = []
     socket.on('message', (raw) => observed.push(JSON.parse(String(raw))))
@@ -159,6 +174,9 @@ describe('hub schedule notification integration', () => {
       await runtime.notificationCenter?.flush()
       await vi.waitFor(() => expect(observed.filter((event) => event.type === 'session.upserted')).toHaveLength(3))
       expect(observed.filter((event) => event.type === 'session.upserted').every((event) => event.session.suppressOrdinaryNotifications)).toBe(true)
+      for (const event of observed.filter((event) => event.type === 'session.upserted')) {
+        expect(event.session.provenance).toBeUndefined()
+      }
       expect(observed.filter((event) => event.type === 'schedule.run.notification')).toEqual([])
       expect(sender).not.toHaveBeenCalled()
       if (runtime.notificationCenter) expect(await runtime.notificationCenter.store.list()).toEqual([])

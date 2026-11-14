@@ -13999,6 +13999,22 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             onStartRecording={() => void startRecording()}
             onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
             onOpenRuntime={() => setRuntimeOpen(true)}
+            sessionActions={[
+              { label: 'Background tasks', onClick: openBackgroundTasks, disabled: !selectedSupportsBackgroundTasks },
+              { label: 'Skills', onClick: () => openSessionResources('skills') },
+              { label: 'MCP servers', onClick: () => openSessionResources('mcp') },
+              ...(selectedProviderCapability?.supportsSessionRetention
+                ? [{ label: 'Session retention', onClick: () => setRetentionOpen(true), disabled: !selectedComputerOnline }] : []),
+              { label: 'Rename', onClick: () => setRenameOpen(true), disabled: !selectedComputerOnline },
+              { label: selectedNotificationsMuted ? 'Unmute notifications' : 'Mute notifications', onClick: () => void toggleSelectedSessionMute(), disabled: mutingSession },
+              ...(selected.provider !== 'claude' && selected.executionMode === 'sdk' && selectedProviderCapability?.supportsTmuxMigration
+                ? [{ label: 'Move session to tmux', onClick: () => void moveSelectedSessionToTmux(), disabled: movingToTmux || selectedLifecycleBlocked || selectedSuspending }] : []),
+              { label: 'Restart', onClick: () => void restartSelectedSession(), disabled: restarting || selectedRestartBlocked },
+              ...(selectedShowsRecovery
+                ? [{ label: 'Recover conversation', onClick: () => void recoverSelectedConversation(), disabled: !selectedCanRecover || recovering }] : []),
+              { label: 'Clear conversation', onClick: () => void clearSelectedConversation(), disabled: clearing || selectedLifecycleBlocked },
+              { label: 'Close session', onClick: () => requestSessionClose(), disabled: selectedClosing || !selectedComputerOnline },
+            ]}
           />
         ) : null}
       </main>

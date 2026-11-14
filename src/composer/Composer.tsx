@@ -148,7 +148,7 @@ export function Composer(props: ComposerProps) {
       <div
         className={`composer ${
           selectedQueueAvailable && !askingAside ? 'composer--running' : ''
-        } ${askingAside ? 'composer--aside' : ''}`}
+        } ${askingAside ? 'composer--aside' : ''} ${refresh ? 'composer--refresh' : ''}`}
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
@@ -209,7 +209,7 @@ export function Composer(props: ComposerProps) {
           multiple
           type="file"
         />
-        <ComposerActions {...props} />
+        <ComposerActions key={`${selected.computerId}:${selected.id}`} {...props} />
       </div>
       {!askingAside && composer && composerDraftRecovered && !composerStorageError ? (
         <p aria-label="Session draft status" className="composer-draft-status" role="status">

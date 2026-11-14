@@ -1,6 +1,9 @@
 import {
-  ArrowUp, ListPlus, LoaderCircle, MessageCircleQuestion, Mic, Paperclip, Search, Square,
+  ArrowUp, ListPlus, LoaderCircle, MessageCircleQuestion, Mic, Paperclip, Plus, Search, SlidersHorizontal, Square,
 } from 'lucide-react'
+import { usePreviewFeature } from '../preview-features'
+import { SessionActions } from '../SessionActions'
+import { ContextRing } from './ContextRing'
 import type { ComposerProps } from './types'
 
 export function ComposerActions({
@@ -29,14 +32,22 @@ export function ComposerActions({
   onOpenAttachmentInput,
   onStartRecording,
   onSubmitMessage,
+  onOpenRuntime,
+  sessionActions,
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
   'cancelling' | 'transcribing' | 'uploadingFile' | 'composer' | 'sending' | 'queueActionId' |
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
   'recordingDuration' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
-  'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage'
+  'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions'
 >) {
+  const refresh = usePreviewFeature('composerRefresh')
+  const setupButton = (
+    <button aria-label="Session setup" className="composer-tool" onClick={onOpenRuntime} type="button">
+      <SlidersHorizontal aria-hidden="true" size={18} />
+    </button>
+  )
   return recording ? (
     <div className="recording-panel" role="status">
       <button className="recording-panel__cancel" onClick={() => onStopRecording(true)} type="button">
@@ -52,7 +63,7 @@ export function ComposerActions({
       </button>
     </div>
   ) : askingAside ? (
-    <div className="composer-actions">
+    <div className={`composer-actions${refresh ? ' composer-actions--refresh' : ''}`}>
       <span className="composer-actions__spacer" />
       <button
         aria-label="Ask side question"
@@ -80,7 +91,7 @@ export function ComposerActions({
       ) : null}
     </div>
   ) : (
-    <div className="composer-actions">
+    <div className={`composer-actions${refresh ? ' composer-actions--refresh' : ''}`}>
       <button
         aria-label={transcribing
           ? 'Transcribing audio'
@@ -92,8 +103,14 @@ export function ComposerActions({
       >
         {transcribing || uploadingFile ? (
           <LoaderCircle className="activity-message__spinner" size={17} />
-        ) : <Paperclip size={17} />}
+        ) : refresh ? <Plus size={19} /> : <Paperclip size={17} />}
       </button>
+      {refresh ? (
+        <div className="composer-secondary-tools">
+          {setupButton}
+          <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
+        </div>
+      ) : null}
       <button
         aria-label="Start microphone recording"
         className="send-button composer-record-button"
@@ -104,6 +121,20 @@ export function ComposerActions({
       >
         <Mic size={17} />
       </button>
+      {refresh ? (
+        <SessionActions className="composer-session-panel" label="Session panel" description="This session">
+          <div className="composer-secondary-overflow">
+            {setupButton}
+            <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
+          </div>
+          {sessionActions?.map((action) => (
+            <button
+              className="session-action" disabled={action.disabled}
+              key={action.label} onClick={action.onClick} type="button"
+            >{action.label}</button>
+          ))}
+        </SessionActions>
+      ) : null}
       <span className="composer-actions__spacer" />
       {selectedQueueAvailable ? (
         <button

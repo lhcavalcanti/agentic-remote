@@ -92,4 +92,5 @@ export type ComposerProps = {
   onStartRecording: () => void
   onSubmitMessage: (enqueue?: boolean) => void
   onOpenRuntime: () => void
+  sessionActions?: { label: string; onClick: () => void; disabled?: boolean }[]
 }

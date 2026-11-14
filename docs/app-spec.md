@@ -12,6 +12,8 @@ recommended, and optional behavior.
 
 Interface › Preview features › Composer refresh is off by default. When enabled, the composer MUST show one session-setup button below the message box with the model-family glyph, model, effort, context window, and mode. While busy it MUST describe changes as “applies when idle”; it MUST NOT apply runtime changes mid-turn. On phones the glyph and mode stay visible while the model truncates. The existing computer/provider/path/status/queue status line is unchanged.
 
+The refreshed composer keeps its action row inside the message box: attach, session setup, context usage, microphone, session panel, and Send/Stop. Attachment, paste, transcription and delivery pipelines and shortcuts are unchanged. The SVG context ring MUST use measured or estimated context tokens, never subscription/plan usage, and MUST identify unavailable measurements. At narrow widths secondary setup/context controls move into the session panel. Phone controls MUST retain 40×40 px touch targets and keyboard access. The panel links to the existing tasks, skills/MCP resources and session actions.
+
 ## 1. Product goals
 
 Agentic Remote MUST:

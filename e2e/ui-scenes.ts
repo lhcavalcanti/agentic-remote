@@ -31,6 +31,8 @@ export const uiSceneNames = [
   'composer-family-openai',
   'composer-status-busy',
   'composer-session-setup',
+  'composer-button-row',
+  'composer-session-panel',
   'session-list',
   'app-settings',
   'preview-features',
@@ -71,13 +73,15 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
           keyRevisions: { previewFeatures: 1 },
         }
       }
-      if (name === 'composer-status-busy' || name === 'composer-session-setup') {
+      if (['composer-status-busy', 'composer-session-setup', 'composer-button-row', 'composer-session-panel'].includes(name)) {
         state.settings = {
           revision: 1, values: { previewFeatures: { composerRefresh: true } },
           keyRevisions: { previewFeatures: 1 },
         }
         const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
-        session.runtime!.model = 'fictional-model-with-a-long-name-for-small-screens'
+        if (name === 'composer-status-busy' || name === 'composer-session-setup') {
+          session.runtime!.model = 'fictional-model-with-a-long-name-for-small-screens'
+        }
         if (name === 'composer-status-busy') session.status = 'running'
       }
       if (name === 'preview-features') {
@@ -120,6 +124,9 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
         const family = name === 'composer-family-claude' ? 'anthropic' : 'openai'
         await expect(page.getByTestId('composer-runtime').locator('[data-model-family]'))
           .toHaveAttribute('data-model-family', family)
+      } else if (name === 'composer-session-panel') {
+        await page.getByRole('button', { name: 'Session panel', exact: true }).click()
+        await expect(page.getByRole('group', { name: 'Session panel' })).toBeVisible()
       } else if (name === 'session-list') {
         await openSessions(page)
       } else if (name === 'app-settings' || name === 'preview-features' || name === 'computers-dialog') {

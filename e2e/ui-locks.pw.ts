@@ -274,6 +274,49 @@ test.describe('browser interaction contracts', () => {
     await expect(page.getByRole('dialog', { name: 'Model and context' })).toBeVisible()
   })
 
+  test('preview row attaches using the existing pipeline and opens read-only session resources', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'composer-button-row')
+    const chooser = page.waitForEvent('filechooser')
+    await page.getByRole('button', { name: 'Attach file or audio recording', exact: true }).click()
+    await (await chooser).setFiles({
+      name: 'fixture-notes.md', mimeType: 'text/markdown', buffer: Buffer.from('Fictional notes'),
+    })
+    await expect(page.getByRole('listitem', { name: 'fixture-notes.md attachment' })).toContainText('Attached')
+    await page.getByRole('button', { name: 'Session panel', exact: true }).click()
+    await page.getByRole('group', { name: 'Session panel' }).getByRole('button', { name: 'Skills', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Skills and MCP servers', exact: true })).toBeVisible()
+    expect(handle.requests.some((request) => request.path === `${sessionPath}/messages`)).toBe(false)
+  })
+
+  for (const viewport of uiViewports) {
+    test.describe(`preview row access ${viewport.name}`, () => {
+      test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+      test('keeps touch targets and exposes secondary controls through the session panel', async ({ page, baseURL }) => {
+        const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-button-row')!.setup(page)
+        try {
+          const sizes = await page.locator('.composer-actions button:visible').evaluateAll((buttons) =>
+            buttons.map((button) => ({ label: button.getAttribute('aria-label'), width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height })))
+          for (const size of sizes) {
+            expect(size.width, size.label ?? '').toBeGreaterThanOrEqual(40)
+            expect(size.height, size.label ?? '').toBeGreaterThanOrEqual(40)
+          }
+          const setup = page.getByRole('button', { name: 'Session setup', exact: true })
+          if (viewport.name === 'phone') {
+            await expect(setup).toBeHidden()
+            await page.getByRole('button', { name: 'Session panel', exact: true }).click()
+          }
+          await expect(setup).toBeVisible()
+          await setup.focus()
+          await page.keyboard.press('Enter')
+          await expect(page.getByRole('dialog', { name: 'Model and context' })).toBeVisible()
+          await assertNoHorizontalOverflow(page)
+        } finally {
+          fixture.assertHealthy()
+        }
+      })
+    })
+  }
+
   test('persists available previews and respects changed hub availability', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'preview-features')
     const settings = page.getByRole('dialog', { name: 'App settings', exact: true })

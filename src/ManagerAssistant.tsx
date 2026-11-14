@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, MouseEvent, MutableRefObject, PointerEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
@@ -44,6 +44,7 @@ import {
 import { phoneEnterCreatesNewline } from './enter-behavior'
 import { sessionLinkTarget } from './manager-links'
 import { MessageTime } from './MessageTime'
+import { automaticTurnSummary, automaticTurnText, isAutomaticTurn } from './oracle-automatic'
 import { sentMessageLength } from './sent-message'
 import { OracleAttachmentChips, OracleMessageAttachments } from './OracleAttachments'
 import { useOracleAttachments } from './use-oracle-attachments'
@@ -306,6 +307,86 @@ const ActivityRow = memo(function ActivityRow({
           <ExternalLink aria-hidden="true" size={12} />
         </button>
       ))}
+    </li>
+  )
+})
+
+/**
+ * A turn the hub started for Oracle, such as a session update or a task
+ * follow-up: shown by what prompted it, in the activity rhythm, rather than
+ * as a message from you. The prompt itself stays one tap away.
+ */
+const AutomaticTurn = memo(function AutomaticTurn({
+  message,
+  onOpenSession,
+  onRetry,
+  retrying,
+}: {
+  message: ManagerMessage
+  onOpenSession: (ref: ManagerSessionRef) => void
+  onRetry: (message: ManagerMessage) => void
+  retrying: boolean
+}) {
+  const summary = automaticTurnSummary(message)!
+  const [showPrompt, setShowPrompt] = useState(false)
+  const promptId = useId()
+  const refs = message.automatic?.sessionRefs ?? []
+  const task = message.source === 'task'
+  // A task's turn is retried from its task card, which owns its identity.
+  const retryable = !task
+    && (message.state === 'failed' || message.state === 'interrupted' || message.state === 'cancelled')
+  return (
+    <li className={`manager-activity manager-activity--automatic manager-activity--${message.state ?? 'done'}`}>
+      <div className="manager-activity__line">
+        <span className="manager-activity__summary">
+          <span aria-hidden="true" className="manager-activity__mark" />
+          <span className="manager-activity__text">
+            <span className="manager-activity__label">{summary.label}</span>
+            {summary.detail ? <> · {summary.detail}</> : null}
+          </span>
+        </span>
+        {/* Wraps as one group, so the summary keeps its line on a narrow panel. */}
+        <span className="manager-activity__controls">
+          {message.state === 'cancelled' ? <span className="manager-message__state">Stopped</span> : null}
+          <MessageTime value={message.createdAt} />
+          {refs.map((ref, index) => (
+            <button
+              aria-label={refs.length > 1 ? `Open session ${index + 1} of ${refs.length}` : 'Open session'}
+              className="manager-activity__open"
+              key={`${ref.computerId}:${ref.sessionId}`}
+              onClick={() => onOpenSession(ref)}
+              type="button"
+            >
+              Open
+              <ExternalLink aria-hidden="true" size={12} />
+            </button>
+          ))}
+          <button
+            aria-controls={showPrompt ? promptId : undefined}
+            aria-expanded={showPrompt}
+            aria-label="Prompt Oracle received"
+            className="icon-button manager-activity__toggle"
+            onClick={() => setShowPrompt((value) => !value)}
+            title={showPrompt ? 'Hide the prompt Oracle received' : 'Show the prompt Oracle received'}
+            type="button"
+          >
+            <ChevronDown aria-hidden="true" size={14} />
+          </button>
+        </span>
+      </div>
+      {showPrompt ? <p className="manager-activity__prompt" id={promptId}>{message.content}</p> : null}
+      {message.state === 'failed' && message.error ? (
+        <p className="manager-message__error" role="alert">
+          {message.error}
+          {task ? ' Retry it from its task card.' : null}
+        </p>
+      ) : null}
+      {retryable ? (
+        <button className="secondary-button manager-message__retry" disabled={retrying} onClick={() => onRetry(message)} type="button">
+          <RotateCcw aria-hidden="true" size={14} />
+          Retry
+        </button>
+      ) : null}
     </li>
   )
 })
@@ -1369,6 +1450,17 @@ export function ManagerAssistant({
             ref={transcriptRef}
           >
             {transcript.map((message) => {
+              if (isAutomaticTurn(message)) {
+                return (
+                  <AutomaticTurn
+                    key={message.id}
+                    message={message}
+                    onOpenSession={openSession}
+                    onRetry={retryMessage}
+                    retrying={busyMessage === message.id}
+                  />
+                )
+              }
               if (message.role === 'user') {
                 return (
                   <UserMessage
@@ -1442,6 +1534,10 @@ export function ManagerAssistant({
               const rewriting = editing?.id === message.id ? editing : undefined
               const editTooLong = (rewriting?.text.length ?? 0) > MANAGER_MESSAGE_MAX_LENGTH
               const editUnchanged = rewriting?.text.trim() === message.content.trim()
+              // Oracle's own turns are shown by what prompted them; the hub
+              // refuses to edit them, and a task's turn belongs to its task.
+              const automatic = automaticTurnSummary(message)
+              const shown = automatic ? automaticTurnText(automatic) : message.content
               return (
                 <li className={`oracle-queue__item${rewriting ? ' oracle-queue__item--editing' : ''}`} key={message.id}>
                   <span aria-hidden="true" className="oracle-queue__position">{index + 1}</span>
@@ -1495,35 +1591,39 @@ export function ManagerAssistant({
                     <>
                       <div className="oracle-queue__text">
                         <span className="visually-hidden">{`Number ${index + 1}: `}</span>
-                        {message.content}
+                        {shown}
                         <OracleMessageAttachments files={message.attachments} />
                       </div>
                       <MessageTime value={message.createdAt} />
-                      {message.answerOnly ? <span className="oracle-queue__tag">Ask</span> : null}
-                      <button
-                        aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
-                        className="icon-button oracle-queue__edit"
-                        disabled={Boolean(editing) || busyMessage === message.id}
-                        onClick={() => startEdit(message)}
-                        ref={(element) => {
-                          if (element) editButtons.current.set(message.id, element)
-                          else editButtons.current.delete(message.id)
-                        }}
-                        title="Edit; it keeps its place in the queue"
-                        type="button"
-                      >
-                        <Pencil aria-hidden="true" size={14} />
-                      </button>
-                      <button
-                        aria-label={`Remove from the queue: ${message.content.slice(0, 60)}`}
-                        className="icon-button oracle-queue__remove"
-                        disabled={busyMessage === message.id}
-                        onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
-                        title="Remove from the queue"
-                        type="button"
-                      >
-                        <X aria-hidden="true" size={15} />
-                      </button>
+                      {message.answerOnly && !automatic ? <span className="oracle-queue__tag">Ask</span> : null}
+                      {automatic ? null : (
+                        <button
+                          aria-label={`Edit queued message: ${message.content.slice(0, 60)}`}
+                          className="icon-button oracle-queue__edit"
+                          disabled={Boolean(editing) || busyMessage === message.id}
+                          onClick={() => startEdit(message)}
+                          ref={(element) => {
+                            if (element) editButtons.current.set(message.id, element)
+                            else editButtons.current.delete(message.id)
+                          }}
+                          title="Edit; it keeps its place in the queue"
+                          type="button"
+                        >
+                          <Pencil aria-hidden="true" size={14} />
+                        </button>
+                      )}
+                      {message.source === 'task' ? null : (
+                        <button
+                          aria-label={`Remove from the queue: ${shown.slice(0, 60)}`}
+                          className="icon-button oracle-queue__remove"
+                          disabled={busyMessage === message.id}
+                          onClick={() => void act(message, () => removeQueuedManagerMessage(message.id))}
+                          title="Remove from the queue"
+                          type="button"
+                        >
+                          <X aria-hidden="true" size={15} />
+                        </button>
+                      )}
                     </>
                   )}
                 </li>

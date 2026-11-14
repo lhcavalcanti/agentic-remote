@@ -11,6 +11,7 @@ import type {
   ManagerProactiveOutcome,
   ManagerSnapshot,
 } from '../shared/manager.js'
+import { formatProactivePrompt } from '../shared/manager-automatic.js'
 import type { ManagerAgent } from './manager-agent.js'
 import {
   ManagerProactiveInbox,
@@ -478,7 +479,7 @@ export class ManagerProactiveCoordinator {
     if (events.length === 0) return
     const message = await this.agent.enqueueInternal({
       id: batchMessageId(events),
-      content: this.prompt(events),
+      content: formatProactivePrompt(events),
       source: 'proactive',
       answerOnly: true,
       automatic: {
@@ -499,20 +500,6 @@ export class ManagerProactiveCoordinator {
     ) {
       await this.agent.retry(message.id)
     }
-  }
-
-  private prompt(
-    events: readonly ManagerProactiveInboxEvent[],
-  ): string {
-    const lines = [
-      'Review these durable manager-owned lifecycle events. Read state only, then record exactly one outcome for every event.',
-    ]
-    for (const event of events) {
-      lines.push(
-        `Event ${event.id}: kind=${event.kind}; computer=${event.computerId}; session=${event.sessionId}; taskGeneration=${event.taskGeneration}; revision=${event.revision}.`,
-      )
-    }
-    return lines.join('\n')
   }
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {

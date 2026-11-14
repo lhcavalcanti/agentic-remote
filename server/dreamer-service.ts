@@ -15,6 +15,7 @@ import type {
   ManagerInternalSubmission,
   ManagerMessage,
 } from '../shared/manager.js'
+import { DURABLE_TASK_LINE_PREFIX } from '../shared/manager-automatic.js'
 import type {
   OracleTask,
   OracleTaskAttempt,
@@ -1303,7 +1304,7 @@ export class DreamerService {
       content: [
         task.executionPrompt!,
         '',
-        `Durable task: ${task.title}`,
+        `${DURABLE_TASK_LINE_PREFIX}${task.title}`,
         `Next action: ${task.nextAction}`,
         ...(priorSessionRefs.length
           ? [

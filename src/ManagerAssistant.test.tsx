@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagerAttachment, ManagerEvent, ManagerMessage, ManagerSnapshot } from '../shared/manager'
+import { formatProactivePrompt } from '../shared/manager-automatic'
 import type { VoiceCapabilities } from '../shared/oracle-voice'
 import {
   cancelManager,
@@ -2039,6 +2040,146 @@ describe('ManagerAssistant', () => {
     expect(times()).toEqual(queued.map((message) => message.createdAt))
     // The time stays out of the editor's description.
     expect(editor).toHaveAccessibleDescription(/^Keeps its place/)
+  })
+
+  describe("Oracle's automatic turns", () => {
+    const docs = { computerId: 'hub', sessionId: 's1' }
+    const tests = { computerId: 'hub', sessionId: 's2' }
+    const finished = { id: 'a'.repeat(64), kind: 'finished', ...docs, taskGeneration: 2, revision: 7 } as const
+    const failed = { id: 'b'.repeat(64), kind: 'failed', ...tests, taskGeneration: 1, revision: 3 } as const
+    const sessionUpdate = (id: string, overrides: Partial<ManagerMessage> = {}): ManagerMessage => ({
+      id,
+      role: 'user',
+      content: formatProactivePrompt([finished]),
+      createdAt: '2026-11-07T09:01:00.000Z',
+      state: 'done',
+      source: 'proactive',
+      answerOnly: true,
+      automatic: { kind: 'proactive', eventIds: [finished.id], sessionRefs: [docs] },
+      ...overrides,
+    })
+    const taskFollowUp = (id: string, overrides: Partial<ManagerMessage> = {}): ManagerMessage => ({
+      id,
+      role: 'user',
+      content: ['Investigate the gate', '', 'Durable task: Ship docs', 'Next action: Review the draft'].join('\n'),
+      createdAt: '2026-11-07T09:02:00.000Z',
+      state: 'done',
+      source: 'task',
+      automatic: { kind: 'task', taskId: 't1', sessionRefs: [] },
+      ...overrides,
+    })
+    const rowWith = (scope: HTMLElement, label: string) => within(scope).getByText(label).closest('li')!
+
+    it('shows them as thin rows, not as messages from you', async () => {
+      const { onOpenSession } = setup({
+        ...empty,
+        messages: [
+          { id: 'u1', role: 'user', content: 'start docs', createdAt: '2026-11-07T09:00:00.000Z', state: 'done' },
+          sessionUpdate('p1'),
+          sessionUpdate('p2', {
+            content: formatProactivePrompt([{ ...finished, id: 'c'.repeat(64) }, failed]),
+            automatic: { kind: 'proactive', eventIds: ['c'.repeat(64), failed.id], sessionRefs: [docs, tests] },
+          }),
+          taskFollowUp('k1'),
+        ],
+      })
+      const panel = await openPanel()
+      const conversation = within(panel).getByRole('list', { name: 'Oracle conversation' })
+
+      expect(within(conversation).getByText('start docs').closest('li')).toHaveClass('manager-message--user')
+      const update = rowWith(conversation, 'Session update')
+      expect(update).toHaveClass('manager-activity')
+      expect(update).not.toHaveClass('manager-message--user')
+      expect(update).toHaveTextContent('Session update · finished')
+      expect(update.querySelector('time')).toHaveAttribute('datetime', '2026-11-07T09:01:00.000Z')
+      expect(within(update).queryByText('Ask')).not.toBeInTheDocument()
+      expect(within(conversation).queryByText(/Review these durable/)).not.toBeInTheDocument()
+
+      fireEvent.click(within(update).getByRole('button', { name: 'Open session' }))
+      expect(onOpenSession).toHaveBeenLastCalledWith(docs)
+
+      const details = within(update).getByRole('button', { name: 'Prompt Oracle received', expanded: false })
+      fireEvent.click(details)
+      expect(details).toHaveAttribute('aria-expanded', 'true')
+      expect(within(update).getByText(/Review these durable manager-owned lifecycle events/)).toBeInTheDocument()
+
+      const updates = rowWith(conversation, 'Session updates')
+      expect(updates).toHaveTextContent('Session updates · 1 failed, 1 finished')
+      expect(within(updates).getAllByRole('button', { name: /^Open session \d of 2$/ })).toHaveLength(2)
+
+      const task = rowWith(conversation, 'Task follow-up')
+      expect(task).toHaveTextContent('Task follow-up · Ship docs')
+      expect(within(task).queryByRole('button', { name: /^Open/ })).not.toBeInTheDocument()
+    })
+
+    it('names an update it cannot read by its event count', async () => {
+      setup({
+        ...empty,
+        messages: [
+          sessionUpdate('p1', {
+            content: 'Docs finished',
+            automatic: { kind: 'proactive', eventIds: [finished.id, failed.id], sessionRefs: [] },
+          }),
+          { id: 'p2', role: 'user', content: 'from an older hub', createdAt: 't', state: 'done', source: 'proactive' },
+          taskFollowUp('k1', { content: 'Investigate the gate' }),
+        ],
+      })
+      const panel = await openPanel()
+      const rows = within(within(panel).getByRole('list', { name: 'Oracle conversation' })).getAllByRole('listitem')
+      expect(rows.map((row) => row.querySelector('.manager-activity__summary')?.textContent)).toEqual([
+        'Session updates · 2 events',
+        'Session update',
+        'Task follow-up',
+      ])
+    })
+
+    it('keeps a failed session update retryable but leaves a failed task to its card', async () => {
+      vi.mocked(retryManagerMessage).mockResolvedValue(sessionUpdate('p1', { state: 'queued', updatedAt: '2026-11-07T09:05:00.000Z' }))
+      setup({
+        ...empty,
+        messages: [
+          sessionUpdate('p1', { state: 'failed', error: 'Oracle could not answer: timeout.', updatedAt: '2026-11-07T09:04:00.000Z' }),
+          taskFollowUp('k1', { state: 'failed', error: 'Oracle could not answer: down.' }),
+        ],
+      })
+      const panel = await openPanel()
+      const conversation = within(panel).getByRole('list', { name: 'Oracle conversation' })
+      const task = rowWith(conversation, 'Task follow-up')
+      expect(within(task).getByRole('alert')).toHaveTextContent('could not answer: down')
+      expect(task).toHaveTextContent('Retry it from its task card.')
+      expect(within(task).queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+
+      const update = rowWith(conversation, 'Session update')
+      expect(within(update).getByRole('alert')).toHaveTextContent('could not answer: timeout')
+      fireEvent.click(within(update).getByRole('button', { name: 'Retry' }))
+      await waitFor(() => expect(retryManagerMessage).toHaveBeenCalledWith('p1'))
+    })
+
+    it('lists a waiting one by its summary, without the controls the hub refuses', async () => {
+      setup({
+        ...empty,
+        status: 'working',
+        queued: 3,
+        messages: [
+          { id: 'r0', role: 'user', content: 'being answered', createdAt: 't', state: 'running' },
+          { id: 'q1', role: 'user', content: 'typed while busy', createdAt: 't', state: 'queued' },
+          sessionUpdate('q2', { state: 'queued' }),
+          taskFollowUp('q3', { state: 'queued' }),
+        ],
+      })
+      await openPanel()
+      const queue = screen.getByRole('region', { name: 'Queued for Oracle' })
+      const [typed, update, task] = within(queue).getAllByRole('listitem')
+      expect(within(typed).getByRole('button', { name: 'Edit queued message: typed while busy' })).toBeInTheDocument()
+
+      expect(update).toHaveTextContent('Session update · finished')
+      expect(update).not.toHaveTextContent('Review these durable')
+      expect(within(update).queryByRole('button', { name: /^Edit queued message/ })).not.toBeInTheDocument()
+      expect(within(update).getByRole('button', { name: 'Remove from the queue: Session update · finished' })).toBeInTheDocument()
+
+      expect(task).toHaveTextContent('Task follow-up · Ship docs')
+      expect(within(task).queryByRole('button')).not.toBeInTheDocument()
+    })
   })
 
   it('closes a session only when you confirm the request', async () => {

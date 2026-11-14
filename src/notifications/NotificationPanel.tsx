@@ -1,14 +1,18 @@
 import { useState } from 'react'
-import { Bell, Bot, CheckCheck, CircleCheck, CircleHelp, CircleX, Clock, Monitor, Trash2 } from 'lucide-react'
+import { Bell, Bot, CalendarClock, CheckCheck, CircleCheck, CircleHelp, CircleX, Monitor, Trash2 } from 'lucide-react'
 import type { NotificationRecord } from '../../shared/notification-center'
 import { DialogFrame } from '../components/DialogFrame'
 import { notificationGroups, type NotificationTab } from './grouping'
 import type { useNotifications } from './use-notifications'
+import { scheduleNotificationLabel } from './schedule-link'
 import './notifications.css'
 
 function kindIcon(record: NotificationRecord) {
   if (record.kind === 'oracle.message') return Bot
-  if (record.kind.startsWith('schedule.')) return Clock
+  if (record.kind === 'schedule.run.succeeded') return CircleCheck
+  if (record.kind === 'schedule.run.failed' || record.kind === 'schedule.run.interrupted') return CircleX
+  if (record.kind === 'schedule.run.needs-input') return CircleHelp
+  if (record.kind.startsWith('schedule.run.')) return CalendarClock
   if (record.kind === 'session.failed') return CircleX
   if (record.kind === 'session.completed') return CircleCheck
   if (record.kind === 'session.needs-input') return CircleHelp
@@ -51,6 +55,7 @@ export function NotificationPanel({ notifications, enabled, onClose, onOpen }: {
           return <li key={key} className="notification-row" data-unread={unread} data-severity={latest.severity}>
             <Icon size={20} aria-hidden="true" />
             <div className="notification-row__body">
+              {scheduleNotificationLabel(latest.kind) && <small className="notification-kind">{scheduleNotificationLabel(latest.kind)}</small>}
               <button type="button" className="notification-link" onClick={() => {
                 void mutate(records.map((record) => record.id), 'read')
                 onOpen(latest)

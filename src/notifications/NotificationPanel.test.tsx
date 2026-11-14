@@ -71,3 +71,12 @@ it('presents disabled and empty states without inventing records', () => {
   rerender(<NotificationPanel {...props} enabled />)
   expect(screen.getByText(/You’re all caught up/)).toBeTruthy()
 })
+
+it('shows scheduled attention records with a human-readable outcome label', () => {
+  render(<NotificationPanel enabled onClose={vi.fn()} onOpen={vi.fn()} notifications={{
+    records: [record('scheduled', { kind: 'schedule.run.needs-input', title: 'Daily review', sessionId: undefined, url: '/?schedule=review&run=one' })],
+    mutate: vi.fn(), mutating: false, loading: false, error: undefined, unreadCount: 1,
+  }} />)
+  expect(screen.getByText('Scheduled · Needs input')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Daily review' })).toBeTruthy()
+})

@@ -66,6 +66,7 @@ import { ShellNavigation } from './rail/ShellNavigation'
 import { publishFeatureEvent } from './features/events'
 import { NotificationPanel } from './notifications/NotificationPanel'
 import { useNotifications } from './notifications/use-notifications'
+import { readScheduleLink } from './notifications/schedule-link'
 import { usePreviewFeature } from './preview-features'
 import { emptyRuntimeSelection } from './settings/runtime-defaults'
 import { StatuslineControls } from './settings/StatuslineControls'
@@ -3781,7 +3782,9 @@ function fallbackSessionKey(
 function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClient }) {
   const desktopRail = usePreviewFeature('desktopRail')
   const notificationPanel = usePreviewFeature('notificationPanel')
+  const schedulerView = usePreviewFeature('schedulerView')
   const notifications = useNotifications(notificationPanel)
+  const [scheduleLink, setScheduleLink] = useState(() => readScheduleLink(window.location.href))
   const [shellView, setShellView] = useState<string>()
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
@@ -13061,7 +13064,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
         <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession} unreadCount={notifications.unreadCount}
           onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
-          onOpen={(id) => { setSidebarOpen(false); setShellView(id) }} />
+          onOpen={(id) => { if (id === 'scheduler') setScheduleLink(undefined); setSidebarOpen(false); setShellView(id) }} />
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>
           <button
             aria-label="Back to sessions"
@@ -14443,10 +14446,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       />
       {shellView === 'notifications' && <NotificationPanel enabled={notificationPanel} notifications={notifications}
         onClose={() => setShellView(undefined)} onOpen={(record) => {
-          if (record.kind === 'oracle.message') { setOracleOpen(true); setShellView(undefined) }
+          const target = record.kind.startsWith('schedule.run.') ? readScheduleLink(record.url) : undefined
+          if (target && schedulerView) { setScheduleLink(target); setShellView('scheduler') }
+          else if (record.kind === 'oracle.message') { setOracleOpen(true); setShellView(undefined) }
           else if (record.sessionId && record.computerId && openManagedSession({ computerId: record.computerId, sessionId: record.sessionId })) setShellView(undefined)
         }} />}
-      {shellView && shellView !== 'notifications' && <DialogFrame title={shellView === 'host' ? 'Host monitor' : 'Scheduler'}
+      {shellView && shellView !== 'notifications' && <DialogFrame key={scheduleLink?.scheduleId ?? shellView} title={shellView === 'host' ? 'Host monitor' : 'Scheduler'}
         eyebrow="Preview" onClose={() => setShellView(undefined)}>
         <p className="dialog-message">This view is being prepared for the next preview.</p>
       </DialogFrame>}

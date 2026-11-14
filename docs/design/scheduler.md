@@ -147,6 +147,8 @@ Edits submit only changed fields with the original revision, so editing a name d
 
 The client refreshes on typed `schedules.changed` invalidations, hub reconnects and focus. Fictional browser fixtures cover the list, form, policies, revision conflicts and history without launching a provider. Runner installation and live execution/soak are not claimed by the UI.
 
+History reads are fenced to the selected schedule, including refresh callbacks retained by an in-flight mutation. Closing the view aborts reads and prevents late callbacks from starting new ones. Model effort/context settings absent from a refreshed catalog remain explicitly labeled rather than appearing as a different selected value.
+
 ## Oracle proposals
 
 The scheduler transaction also retains at most 1,000 typed proposals (24-hour pending lifetime). Each binds an immutable operation, normalized payload, and existing schedule revision, with Oracle attribution and a pending/approved/rejected/expired/applied/failed lifecycle. Terminal proposals are evicted oldest-first; unresolved approvals are never evicted. Storing proposals with scheduler state makes schedule application and proposal settlement atomic, including the Run now admission fence. Repeated approvals, concurrent clicks, and restarts cannot apply a proposal twice.

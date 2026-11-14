@@ -5,12 +5,15 @@ import { subscribeFeatureEvents } from '../features/events'
 import { scheduleError } from './format'
 
 export function useScheduler(enabled: boolean, historyId?: string) {
-  const [data, setData] = useState<{ schedules: Schedule[]; recent: ScheduleRun[]; history: ScheduleRun[] }>({ schedules: [], recent: [], history: [] })
+  const [data, setData] = useState<{ schedules: Schedule[]; recent: ScheduleRun[]; history: ScheduleRun[]; historyId?: string }>({ schedules: [], recent: [], history: [] })
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(true)
   const controller = useRef<AbortController | undefined>(undefined)
+  const active = useRef(false)
+  const selectedHistory = useRef<string | undefined>(undefined)
   const refresh = useCallback(async () => {
-    if (!enabled) return
+    if (!enabled || !active.current) return
+    const requestedHistory = selectedHistory.current
     controller.current?.abort()
     const pending = new AbortController()
     controller.current = pending
@@ -19,23 +22,25 @@ export function useScheduler(enabled: boolean, historyId?: string) {
       const [list, recent, history] = await Promise.all([
         request<{ schedules: Schedule[] }>('/api/schedules', init),
         request<{ runs: ScheduleRun[] }>('/api/schedules/runs?limit=200', init),
-        historyId ? request<{ runs: ScheduleRun[] }>(`/api/schedules/${encodeURIComponent(historyId)}/runs?limit=200`, init) : Promise.resolve({ runs: [] }),
+        requestedHistory ? request<{ runs: ScheduleRun[] }>(`/api/schedules/${encodeURIComponent(requestedHistory)}/runs?limit=200`, init) : Promise.resolve({ runs: [] }),
       ])
       if (!pending.signal.aborted) {
-        setData({ schedules: list.schedules, recent: recent.runs, history: history.runs })
+        setData({ schedules: list.schedules, recent: recent.runs, history: history.runs, historyId: requestedHistory })
         setError(undefined)
       }
     } catch (caught) { if (!pending.signal.aborted) setError(scheduleError(caught)) }
     finally { if (!pending.signal.aborted) setLoading(false) }
-  }, [enabled, historyId])
+  }, [enabled])
   useEffect(() => {
+    active.current = enabled
+    selectedHistory.current = historyId
     if (!enabled) return
     void refresh()
     const unsubscribe = subscribeFeatureEvents((event) => {
       if (event.type === 'schedules.changed' || event.type === 'hub.connected') void refresh()
     })
     window.addEventListener('focus', refresh)
-    return () => { controller.current?.abort(); unsubscribe(); window.removeEventListener('focus', refresh) }
-  }, [enabled, refresh])
-  return { ...data, error, loading, refresh }
+    return () => { active.current = false; controller.current?.abort(); unsubscribe(); window.removeEventListener('focus', refresh) }
+  }, [enabled, historyId, refresh])
+  return { ...data, history: data.historyId === historyId ? data.history : [], error, loading, refresh }
 }

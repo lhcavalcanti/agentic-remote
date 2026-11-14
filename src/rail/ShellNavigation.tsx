@@ -4,12 +4,13 @@ import { usePreviewFeatures } from '../preview-features'
 import { initials, useDisplayName } from './display-name'
 import './rail.css'
 
-export function ShellNavigation({ displayName, onNewSession, onSettings, onOpen, unreadCount = 0 }: {
+export function ShellNavigation({ displayName, onNewSession, onSettings, onOpen, unreadCount = 0, offscreen = false }: {
   displayName?: string
   onNewSession(): void
   onSettings(): void
   onOpen(id: string): void
   unreadCount?: number
+  offscreen?: boolean
 }) {
   const { effective } = usePreviewFeatures()
   const name = useDisplayName(displayName, effective.desktopRail)
@@ -20,7 +21,7 @@ export function ShellNavigation({ displayName, onNewSession, onSettings, onOpen,
     ...(effective.schedulerView ? [{ id: 'scheduler', label: 'Scheduler', icon: CalendarClock, railEntry: { order: 30 }, open: () => onOpen('scheduler') }] : []),
     ...(effective.desktopRail ? [{ id: 'settings', label: 'App settings', icon: Settings, railEntry: { order: 100 }, open: onSettings }] : []),
   ]
-  return <nav className="shell-rail" aria-label="App navigation">
+  return <nav className="shell-rail" aria-label="App navigation" inert={offscreen} aria-hidden={offscreen || undefined}>
     {effective.desktopRail && <div className="shell-rail__top">
       <Sparkles aria-label="Agentic Remote" size={24} />
       <button aria-label="New session" title="New session" onClick={onNewSession} className="icon-button"><Plus size={22} /></button>

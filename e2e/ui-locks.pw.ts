@@ -63,6 +63,10 @@ for (const viewport of uiViewports) {
         const fixture = await scene.setup(page)
         try {
           await assertNoHorizontalOverflow(page)
+          if (name === 'desktop-rail') {
+            expect(await page.locator('.sidebar').evaluate((sidebar) =>
+              (window.innerWidth >= 1024 ? sidebar.firstElementChild : sidebar.lastElementChild)?.matches('.shell-rail'))).toBe(true)
+          }
           await expect(page).toHaveScreenshot(`${viewport.name}-${name}.png`, {
             // Rounded-corner compositing can vary by one RGB level in Chromium.
             animations: 'disabled', caret: 'hide', maxDiffPixels: 0, threshold: 0.01,

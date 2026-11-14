@@ -73,15 +73,35 @@ it('refreshes live schedule invalidations only when enabled', async () => {
   await waitFor(() => expect(request).toHaveBeenCalledTimes(calls + 2))
   unmount()
   act(() => publishFeatureEvent({ type: 'schedules.changed', scheduleId: 'review', revision: 3 }))
+  await result.current.refresh()
   expect(request).toHaveBeenCalledTimes(calls + 2)
 })
 
+it('refreshes the current history after a mutation callback outlives a selection change', async () => {
+  vi.mocked(request).mockImplementation(async (path) => path === '/api/schedules' ? { schedules: [schedule] } : {
+    runs: [{ id: 'one', scheduleId: path.includes('/first/') ? 'first' : 'second', computerId: 'studio',
+      occurrenceAt: '2026-11-14T18:00:00Z', trigger: 'manual', status: 'running', launchId: 'launch-one' }],
+  })
+  const { result, rerender } = renderHook(({ historyId }) => useScheduler(true, historyId), { initialProps: { historyId: 'first' } })
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  expect(result.current.history[0]?.scheduleId).toBe('first')
+  const capturedRefresh = result.current.refresh
+  rerender({ historyId: 'second' })
+  expect(result.current.history).toEqual([])
+  await waitFor(() => expect(request).toHaveBeenCalledWith('/api/schedules/second/runs?limit=200', expect.anything()))
+  vi.mocked(request).mockClear()
+  await act(() => capturedRefresh())
+  expect(request).toHaveBeenCalledWith('/api/schedules/second/runs?limit=200', expect.anything())
+  expect(vi.mocked(request).mock.calls.some(([path]) => path.includes('/first/runs'))).toBe(false)
+})
+
 it('sends only changed fields with the original revision, preserves conflicts and reloads explicitly', async () => {
-  const latest = { ...schedule, name: 'Changed remotely', revision: 2 }
+  const historical = { ...schedule, recurrence: { type: 'once' as const, at: '2020-01-01T00:00:00Z' } }
+  const latest = { ...historical, name: 'Changed remotely', revision: 2 }
   vi.mocked(request).mockImplementation(async (path, init) => {
     if (init?.method === 'PATCH') throw new SubmissionError('Revision conflict', 409)
     if (path === '/api/schedules/review') return { schedule: latest }
-    return path === '/api/schedules' ? { schedules: [schedule] } : { runs: [] }
+    return path === '/api/schedules' ? { schedules: [historical] } : { runs: [] }
   })
   render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Morning review' }))
@@ -96,6 +116,32 @@ it('sends only changed fields with the original revision, preserves conflicts an
   fireEvent.click(screen.getByRole('button', { name: 'Reload latest (replace draft)' }))
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Changed remotely'))
   expect(scheduleError(new SubmissionError('Revision conflict', 409))).toContain('Your draft is preserved')
+})
+
+it('keeps unavailable model settings visible rather than silently displaying another value', async () => {
+  const initial = { ...definition, target: { ...definition.target, model: 'fictional-model', effort: 'max' as const, context: 'long_context' as const } }
+  render(<ScheduleForm initial={initial} computers={[computer]} pending={false} onSave={vi.fn()} onCancel={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Target' }))
+  await screen.findByRole('option', { name: 'max (not in current catalog)' })
+  expect(screen.getByRole('combobox', { name: 'Effort' })).toHaveProperty('value', 'max')
+  expect(screen.getByRole('combobox', { name: 'Context' })).toHaveProperty('value', 'long_context')
+})
+
+it('revision-checks toggles and archive actions and starts duplicate definitions paused', async () => {
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Enable Morning review' }))
+  await waitFor(() => expect(request).toHaveBeenCalledWith('/api/schedules/review/enabled', expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ revision: 1, enabled: false }),
+  })))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Duplicate Morning review' })).toHaveProperty('disabled', false))
+  fireEvent.click(screen.getByRole('button', { name: 'Duplicate Morning review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  expect(screen.getByRole('checkbox', { name: 'Enabled after save' })).toHaveProperty('checked', false)
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Archive Morning review' }))
+  await waitFor(() => expect(request).toHaveBeenCalledWith('/api/schedules/review/archived', expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ revision: 1, archived: true }),
+  })))
 })
 
 it('shows nonterminal and interrupted history without inventing success and opens bound sessions', async () => {

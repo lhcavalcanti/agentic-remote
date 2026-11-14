@@ -26,11 +26,12 @@ function recurrencePreset(type: ScheduleRecurrence['type']): ScheduleRecurrence 
   }
 }
 
-export function ScheduleForm({ initial, computers, editing, pending, onSave, onCancel }: {
+export function ScheduleForm({ initial, computers, editing, pending, saveError, onSave, onCancel }: {
   initial?: ScheduleDefinition
   computers: ComputerSummary[]
   editing?: Schedule
   pending: boolean
+  saveError?: string
   onSave(definition: ScheduleDefinition): Promise<void>
   onCancel(): void
 }) {
@@ -126,8 +127,11 @@ export function ScheduleForm({ initial, computers, editing, pending, onSave, onC
           {models.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}
         </select></label>
         <label className="field">Effort<select className="dialog-select" value={target.effort ?? ''} onChange={(event) => updateTarget('effort', event.target.value as ScheduleTarget['effort'] || undefined)}>
-          <option value="">Default</option>{(selectedModel?.reasoningEfforts ?? ['low', 'medium', 'high', 'xhigh', 'max']).map((effort) => <option key={effort} value={effort}>{effort}</option>)}</select></label>
+          <option value="">Default</option>
+          {target.effort && selectedModel && !selectedModel.reasoningEfforts.includes(target.effort) && <option value={target.effort}>{target.effort} (not in current catalog)</option>}
+          {(selectedModel?.reasoningEfforts ?? ['low', 'medium', 'high', 'xhigh', 'max']).map((effort) => <option key={effort} value={effort}>{effort}</option>)}</select></label>
         <label className="field">Context<select className="dialog-select" value={target.context ?? 'default'} onChange={(event) => updateTarget('context', event.target.value as ScheduleTarget['context'])}>
+          {target.context && selectedModel && !selectedModel.contextTiers.includes(target.context) && <option value={target.context}>{target.context} (not in current catalog)</option>}
           {(selectedModel?.contextTiers ?? ['default', 'long_context']).map((context) => <option key={context} value={context}>{context === 'default' ? 'Default' : 'Long context'}</option>)}</select></label>
         <label className="field">Mode<select className="dialog-select" value={target.mode} onChange={(event) => updateTarget('mode', event.target.value as ScheduleTarget['mode'])}>
           <option value="autopilot">Autopilot</option><option value="interactive">Interactive</option><option value="plan">Plan</option></select></label>
@@ -152,7 +156,7 @@ export function ScheduleForm({ initial, computers, editing, pending, onSave, onC
       {target.permissionPolicy === 'allow-all' && <label className="schedule-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I explicitly allow all tool permissions for this schedule. This can change files and run commands unattended.</label>}
       <p className="schedule-caption">Ask and folder trust are independent. Worktree isolation does not grant permissions or broaden allowed roots.</p>
     </fieldset>
-    {error && <p role="alert" className="error-banner">{error}</p>}
+    {error && !saveError && <p role="alert" className="error-banner">{error}</p>}
     <div className="schedule-form__actions">
       <button type="button" className="secondary-button" disabled={pending} onClick={onCancel}>Cancel edit</button>
       {step !== 'Policies' ? <button type="button" className="primary-button" onClick={() => setStep(step === 'Details' ? 'Target' : 'Policies')}>Next: {step === 'Details' ? 'Target' : 'Policies'}</button> :

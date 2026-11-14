@@ -44,3 +44,13 @@ it('saves a trimmed display-name edit and refuses invalid names', () => {
   expect(screen.getByRole('alert').textContent).toContain('1–60')
   expect(onChange).toHaveBeenCalledOnce()
 })
+
+it('removes a closed drawer navigation from keyboard and accessibility reach', () => {
+  const preferences = { desktopRail: true }
+  const { container } = render(<PreviewFeaturesContext value={{
+    preferences, hubFlags: defaultHubFeatureFlags,
+    effective: effectivePreviewFeatures(preferences, defaultHubFeatureFlags), set: vi.fn(),
+  }}><ShellNavigation displayName="Alex Morgan" offscreen onNewSession={vi.fn()} onSettings={vi.fn()} onOpen={vi.fn()} /></PreviewFeaturesContext>)
+  expect(container.querySelector('nav')?.hasAttribute('inert')).toBe(true)
+  expect(screen.queryByRole('navigation')).toBeNull()
+})

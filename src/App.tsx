@@ -3786,7 +3786,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const notificationPanel = usePreviewFeature('notificationPanel')
   const schedulerView = usePreviewFeature('schedulerView')
   const hostMonitorView = usePreviewFeature('hostMonitorView')
-  const schedulerView = usePreviewFeature('schedulerView')
   const notifications = useNotifications(notificationPanel)
   const [scheduleLink, setScheduleLink] = useState(() => readScheduleLink(window.location.href))
   const [shellView, setShellView] = useState<string>()
@@ -9410,7 +9409,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return true
     }
     const dialogs: [boolean, () => void][] = [
-      [Boolean(shellView), () => setShellView(undefined)],
+      [Boolean(shellView), closeShellView],
       [Boolean(closeRequestSession), () => setCloseRequest(undefined)],
       [recentlyClosedOpen, () => setRecentlyClosedOpen(false)],
       [newSessionOpen, closeNewSession],
@@ -13019,6 +13018,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     })()
   }
 
+  function closeShellView() {
+    setShellView(undefined)
+    if (!desktopLayout) setSidebarOpen(true)
+  }
+  const shellNavigation = <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession}
+    unreadCount={notifications.unreadCount} offscreen={!desktopLayout && !sidebarOpen}
+    onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
+    onOpen={(id) => { if (id === 'scheduler') setScheduleLink(undefined); setSidebarOpen(false); setShellView(id) }} />
   return (
     <div
       className={`app-shell ${desktopRail ? 'app-shell--rail' : ''} ${
@@ -13066,9 +13073,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         tabIndex={0}
       />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
-        <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession} unreadCount={notifications.unreadCount}
-          onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
-          onOpen={(id) => { if (id === 'scheduler') setScheduleLink(undefined); setSidebarOpen(false); setShellView(id) }} />
+        {viewportWidth >= 1024 ? shellNavigation : null}
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>
           <button
             aria-label="Back to sessions"
@@ -13439,6 +13444,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             <MonitorCog aria-hidden="true" size={18} />
           </button>
         </div>
+        {viewportWidth < 1024 ? shellNavigation : null}
       </aside>
 
       {sidebarOpen ? (
@@ -14449,18 +14455,18 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         updatingApp={updatingApp}
       />
       {shellView === 'notifications' && <NotificationPanel enabled={notificationPanel} notifications={notifications}
-        onClose={() => setShellView(undefined)} onOpen={(record) => {
+        onClose={closeShellView} onOpen={(record) => {
           const target = record.kind.startsWith('schedule.run.') ? readScheduleLink(record.url) : undefined
           if (target && schedulerView) { setScheduleLink(target); setShellView('scheduler') }
           else if (record.kind === 'oracle.message') { setOracleOpen(true); setShellView(undefined) }
           else if (record.sessionId && record.computerId && openManagedSession({ computerId: record.computerId, sessionId: record.sessionId })) setShellView(undefined)
         }} />}
       {shellView === 'host' && <HostMonitorView computers={computers} enabled={hostMonitorView}
-        onClose={() => setShellView(undefined)} onOpenSession={(computerId, sessionId) => {
+        onClose={closeShellView} onOpenSession={(computerId, sessionId) => {
           if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
         }} />}
       {shellView === 'scheduler' && <SchedulerView key={scheduleLink?.scheduleId ?? shellView} enabled={schedulerView} computers={computers}
-        onClose={() => setShellView(undefined)} onOpenSession={(computerId, sessionId) => {
+        onClose={closeShellView} onOpenSession={(computerId, sessionId) => {
           if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
         }} />}
       <RuntimeDialog

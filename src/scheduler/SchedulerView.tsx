@@ -66,12 +66,12 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession }: {
               setError(undefined)
             } catch (caught) { setError(scheduleError(caught)) }
           } else { await scheduler.refresh(); setError(undefined) }
-        }}>Reload latest{form ? ' (replace draft)' : ''}</button>
+        }}>Reload latest{form?.editing ? ' (replace draft)' : ''}</button>
       </div>}
       {form ? <>
         <h3>{form.editing ? `Edit ${form.editing.name}` : 'Create schedule'}</h3>
         <ScheduleForm key={form.editing ? `${form.editing.id}:${form.editing.revision}` : 'new'}
-          initial={form.initial} editing={form.editing} computers={computers} pending={pending}
+          initial={form.initial} editing={form.editing} computers={computers} pending={pending} saveError={error}
           onCancel={() => { setForm(undefined); setError(undefined) }}
           onSave={async (definition) => {
             if (form.editing) {
@@ -107,7 +107,7 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession }: {
                   setForm({ initial: { ...editableSchedule(schedule), name: `${schedule.name.slice(0, 193)} (copy)`, enabled: false } })
                 }} aria-label={`Duplicate ${schedule.name}`}>Duplicate</button>
                 <button type="button" className="secondary-button" disabled={pending} onClick={() => act(`${path}/archived`, { revision: schedule.revision, archived: !schedule.archived })} aria-label={`${schedule.archived ? 'Restore' : 'Archive'} ${schedule.name}`}>{schedule.archived ? 'Restore paused' : 'Archive'}</button>
-                <button type="button" className="secondary-button" aria-label={`History for ${schedule.name}`} aria-pressed={historyId === schedule.id} onClick={() => setHistoryId(historyId === schedule.id ? undefined : schedule.id)}><History size={15} />History</button>
+                <button type="button" className="secondary-button" disabled={pending} aria-label={`History for ${schedule.name}`} aria-pressed={historyId === schedule.id} onClick={() => setHistoryId(historyId === schedule.id ? undefined : schedule.id)}><History size={15} />History</button>
               </div>
             </div>
           </li>

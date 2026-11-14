@@ -1773,6 +1773,91 @@ describe('multi-node hub', () => {
     }
   })
 
+  it('shows why a session on a node was interrupted', async () => {
+    const nodeDirectory = await temporaryDirectory('agentic-remote-interrupted-node')
+    const store = new SessionStore(path.join(nodeDirectory, 'state'))
+    await store.initialize()
+    await store.create(
+      {
+        id: 'stopped-terminal',
+        cwd: nodeDirectory,
+        title: 'Stopped terminal',
+        updatedAt: '2026-11-14T00:00:00.000Z',
+        status: 'idle',
+        isOpen: false,
+        messages: [],
+      },
+      { backend: 'terminal' },
+    )
+    const nodeService = new AgentService(
+      store,
+      {
+        start: async () => undefined,
+        stop: async () => [],
+        listSessions: async () => [],
+        rpc: {
+          models: { list: async () => ({ models: [] }) },
+          commands: { list: async () => ({ commands: [] }) },
+        },
+      } as unknown as CopilotClientLike,
+      async () => [],
+      async () => undefined,
+      async () => [],
+      async () => undefined,
+      {
+        has: vi.fn(async () => false),
+        send: vi.fn(async () => false),
+        cancel: vi.fn(async () => false),
+      },
+    )
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-interrupted-hub'),
+      logger: false,
+      role: 'hub',
+      service: new FakeSessionService(session('local-session', 'Local')),
+    })
+    const remote = await buildApp({
+      dataDirectory: path.join(nodeDirectory, 'app'),
+      logger: false,
+      role: 'node',
+      service: nodeService,
+      managerAgent: false,
+      cliCanary: false,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: {
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          token: remote.identity.token,
+          name: 'stopped-node',
+        },
+      })).statusCode).toBe(201)
+
+      // Viewing a terminal session whose terminal is gone interrupts it on the node.
+      const viewed = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remote.identity.info.id}/sessions/stopped-terminal`,
+      })
+      expect(viewed.statusCode, viewed.body).toBe(200)
+      expect(viewed.json().session).toMatchObject({
+        computerId: remote.identity.info.id,
+        interruption: { cause: 'terminal-stopped' },
+      })
+      const read = await hub.app.inject({
+        method: 'GET',
+        url: `/api/computers/${remote.identity.info.id}/sessions/stopped-terminal?passive=1`,
+      })
+      expect(read.json().session).toMatchObject({ interruption: { cause: 'terminal-stopped' } })
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
   it('routes context recovery through the authenticated node replacement chain', async () => {
     const localService = new FakeSessionService(session('local-session', 'Local'))
     const remoteService = new FakeSessionService({

@@ -2425,6 +2425,7 @@ describe('AgentService deletion', () => {
     )
     await service.start()
     const created = await service.createSession(directory, false)
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
 
     await expect(service.suspendSession(created.id)).resolves.toMatchObject({
       id: created.id,
@@ -2456,6 +2457,11 @@ describe('AgentService deletion', () => {
       expect.arrayContaining([expect.objectContaining({ name: 'model' })]),
     )
     expect(client.resumedSessionIds).toEqual([created.id])
+    expect(info.mock.calls.flat().filter((line) => typeof line === 'string' && line.includes('sessionLifecycle')))
+      .toEqual([
+        expect.stringContaining(`"sessionLifecycle":"suspended","sessionId":"${created.id}"`),
+        expect.stringContaining(`"sessionLifecycle":"resumed","sessionId":"${created.id}"`),
+      ])
   })
 
   it('serializes concurrent repeated suspension without tearing down twice', async () => {
@@ -6099,7 +6105,7 @@ describe('AgentService deletion', () => {
     expect(store.get(sessionId)).toMatchObject({
       isOpen: true,
       status: 'error',
-      interruption: expect.any(Object),
+      interruption: { cause: 'relaunch-failed', message: 'tmux pane could not be restored' },
     })
     await service.stop()
   })
@@ -6176,7 +6182,7 @@ describe('AgentService deletion', () => {
     expect(service.store.get(firstId)).toMatchObject({
       status: 'error',
       isOpen: true,
-      interruption: { previousStatus: 'idle' },
+      interruption: { previousStatus: 'idle', cause: 'terminal-stopped' },
     })
     expect(service.store.shouldRecoverTerminalSession(firstId)).toBe(true)
     expect(service.store.get(secondId)).toMatchObject({

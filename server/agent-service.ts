@@ -3286,7 +3286,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return this.publicSession(stored)
     }
     if (this.store.backend(id) === 'terminal') {
-      const interrupted = await this.store.markInterrupted(id)
+      const interrupted = await this.store.markInterrupted(id, 'terminal-stopped')
       this.publish(interrupted)
       return this.publicSession(interrupted)
     }
@@ -9290,7 +9290,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // The startup pump needs a positive owner, even if recovery cleanup has
     // already removed its startup marker. A FIFO alone cannot launch one.
     if (this.startupTerminalQueues.has(id) || session.queuedPrompts?.length) {
-      if (session.isOpen) this.publish(await this.store.markInterrupted(id))
+      if (session.isOpen) this.publish(await this.store.markInterrupted(id, 'queue-held'))
       return 'deferred'
     }
     this.launchingTerminalSessionIds.add(id)
@@ -9308,8 +9308,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const message = error instanceof Error ? error.message : String(error)
         try {
           if (this.store.get(id)) {
-            const failed = await this.store.markInterrupted(id)
-            this.publish(failed)
+            const failed = await this.store.markInterrupted(id, 'relaunch-failed', { message, replace: true })
+              .catch((cause: unknown) => {
+                // Already durably interrupted, the record stays reviewable;
+                // only the more specific cause could not be written.
+                if (this.store.get(id)?.interruption) return undefined
+                throw cause
+              })
+            if (failed) this.publish(failed)
           }
         } finally {
           this.publishError(
@@ -9519,8 +9525,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const indexed of this.store.discoveryIndex()) {
       const previous = before.get(indexed.id)
       if (previous?.revision === indexed.revision) continue
-      const lifecycleChanged =
-        Boolean(indexed.archivedAt && indexed.archivedAt !== previous?.archivedAt) ||
+      const archived = Boolean(indexed.archivedAt && indexed.archivedAt !== previous?.archivedAt)
+      const lifecycleChanged = archived ||
         Boolean(indexed.interruptedAt && indexed.interruptedAt !== previous?.interruptedAt)
       // History-only and closed records are not roster entries; publishing
       // them made every hub cache and re-probe them on each read.
@@ -9528,12 +9534,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const session = this.store.get(indexed.id)
       if (!session) continue
       this.publish(session)
-      if (lifecycleChanged) {
-        console.info(JSON.stringify({
-          sessionLifecycle: session.archivedAt ? 'archived' : 'interrupted',
-          sessionId: session.id,
-          at: session.archivedAt ?? session.interruption?.detectedAt,
-        }))
+      // The store logs each interruption when it records one.
+      if (archived) {
+        console.info(JSON.stringify({ sessionLifecycle: 'archived', sessionId: session.id, at: session.archivedAt }))
       }
     }
     this.nativeStartupDiscoveryReady = isCurrent()
@@ -9551,7 +9554,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.rediscoveredTerminalQueues.set(id, 'resume')
           continue
         }
-        const interrupted = await this.store.markInterrupted(id, true)
+        const interrupted = await this.store.markInterrupted(id, 'queue-held', { retainedQueueOnly: true })
         if (!isCurrent()) {
           this.nativeStartupDiscoveryReady = false
           return false

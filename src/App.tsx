@@ -11,6 +11,8 @@ import {
   useSyncExternalStore,
 } from 'react'
 import ReaderWorkspace, { READER_WIDTH_MIN } from './ReaderWorkspace'
+import { Composer } from './composer/Composer'
+import type { ComposerAttachment } from './composer/types'
 import {
   ManagerAssistant,
   ORACLE_CONVERSATION_WIDTH_MIN,
@@ -70,12 +72,8 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core'
 import {
   arrayMove,
-  SortableContext,
   sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import {
   ArrowUp,
   Bell,
@@ -92,26 +90,20 @@ import {
   FolderInput,
   FolderOpen,
   FileText,
-  GripVertical,
   History,
   LoaderCircle,
-  ListPlus,
   Maximize2,
   Menu,
   MessageCircleQuestion,
   MessageSquare,
   Minimize2,
-  Mic,
   MonitorCog,
-  Paperclip,
   Pencil,
   Plus,
   Plug,
   RefreshCw,
   Search,
   Settings,
-  SlidersHorizontal,
-  Square,
   SquareTerminal,
   Trash2,
   WifiOff,
@@ -186,7 +178,6 @@ import type { SideQuestionEntry, SideThread } from './SideQuestions'
 import {
   SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
   SIDE_QUESTION_EARLIER_LIMIT,
-  SIDE_QUESTION_MAX_LENGTH,
 } from '../shared/side-question'
 import type {
   AgentProvider,
@@ -413,21 +404,6 @@ function isAudioFile(file: File): boolean {
     file.type === 'video/mp4' ||
     /\.(?:aac|flac|m4a|mp3|mp4|ogg|wav|webm)$/i.test(file.name)
   )
-}
-
-type ComposerAttachment = {
-  id: string
-  ownerKey: string
-  computerId: string
-  sessionId: string
-  migratedFrom?: string
-  name: string
-  size: number
-  file?: File
-  status: 'uploading' | 'attached' | 'failed'
-  error?: string
-  retryable?: boolean
-  promptText?: string
 }
 
 let attachmentSequence = 0
@@ -2704,92 +2680,6 @@ function EmptyConversation({ onCreate, onKnowledge }: {
         </button>
       </div>
       <small>Copilot or Claude Agent. Files stay on their owning computer.</small>
-    </div>
-  )
-}
-
-/** One waiting message, draggable so the queue can be put in order. */
-function SortableQueuedPrompt({
-  prompt,
-  index,
-  editing,
-  busy,
-  suspended,
-  retained,
-  steering,
-  onEdit,
-  onRemove,
-}: {
-  prompt: QueuedPrompt
-  index: number
-  editing: boolean
-  busy: boolean
-  suspended: boolean
-  retained: boolean
-  steering: boolean
-  onEdit: () => void
-  onRemove: () => void
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: `queued:${prompt.id}`, disabled: retained })
-  // A retained session's queue is kept exactly as it was until Reopen.
-  const retainedTitle = retained ? 'Reopen this session to change its queue' : undefined
-  return (
-    <div
-      className={`queued-prompt${editing ? ' queued-prompt--editing' : ''}${
-        isDragging ? ' sortable-dragging' : ''
-      }`}
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-    >
-      <span
-        aria-label={`Reorder queued prompt ${index + 1}`}
-        className="drag-handle"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={13} />
-      </span>
-      <span>
-        {steering && (
-          <strong
-            className="queued-prompt__steer"
-            title="Waits for an empty terminal composer, then joins the running turn at the next safe input point"
-          >
-            Steer ·{' '}
-          </strong>
-        )}
-        {prompt.content}
-      </span>
-      <button
-        aria-label={`Edit queued prompt ${index + 1}`}
-        className={`icon-button${editing ? ' icon-button--active' : ''}`}
-        // The composer is closed while a session is put down, so opening a
-        // message for rewriting there gave a banner over a box that could not
-        // be typed in.
-        disabled={busy || suspended || retained}
-        onClick={onEdit}
-        title={retainedTitle ?? (suspended ? 'Resume this session to rewrite it' : undefined)}
-        type="button"
-      >
-        <Pencil size={14} />
-      </button>
-      <button
-        aria-label={`Remove queued prompt ${index + 1}`}
-        className="icon-button icon-button--danger"
-        disabled={busy || retained}
-        onClick={onRemove}
-        title={retainedTitle}
-        type="button"
-      >
-        <X size={15} />
-      </button>
     </div>
   )
 }
@@ -14482,163 +14372,29 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         ) : null}
 
         {selected ? (
-          <footer className="composer-area">
-            <div className="composer-context">
-            {selected.queuedDispatch || queuedEditUnconfirmed ? (
-              <div className="queued-edit-banner queued-edit-banner--dispatch" id="queued-dispatch-warning" role="status">
-                <span>
-                  {selected.queuedDispatch?.message ||
-                    'Queued delivery is pending or unconfirmed. Do not send the rewrite again until you have checked the provider.'}
-                </span>
-                {selected.queuedDispatch?.state === 'uncertain' ? (
-                  <button
-                    className="queued-edit-banner__save"
-                    disabled={Boolean(queueActionId) || sending || selectedRetained}
-                    onClick={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
-                    type="button"
-                  >
-                    Discard unconfirmed queue item
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-            {selected.queueState ? (
-              <div
-                className={`queued-edit-banner queued-edit-banner--queue-${selected.queueState.state}`}
-                role={selected.queueState.state === 'error' ? 'alert' : 'status'}
-              >
-                <span>{selected.queueState.message}</span>
-              </div>
-            ) : null}
-            {selected.queuedPrompts?.length ? (
-              <section
-                aria-description={
-                  selectedRetained
-                    ? 'Messages retained until this session is reopened'
-                    : selectedQueueHeadIsSteering
-                      ? 'The next message is waiting for a safe terminal composer to join the running turn'
-                      : 'Messages waiting for later delivery'
-                }
-                aria-label={
-                  selectedRetained
-                    ? 'Retained prompts'
-                    : selectedQueueHeadIsSteering
-                      ? 'Steering prompts'
-                      : 'Queued prompts'
-                }
-                className="queued-prompts"
-              >
-                <header>
-                  <strong>
-                    {selectedRetained
-                      ? 'Retained until reopened'
-                      : selectedQueueHeadIsSteering
-                        ? 'Steering when ready'
-                        : 'Queued for later'}
-                  </strong>
-                  <span>{selected.queuedPrompts.length}</span>
-                </header>
-                <DndContext
-                  collisionDetection={closestCenter}
-                  id="prompt-queue"
-                  onDragEnd={(event) => void queueDragEnded(event)}
-                  sensors={sensors}
-                >
-                  <SortableContext
-                    items={selected.queuedPrompts.map(
-                      (prompt) => `queued:${prompt.id}`,
-                    )}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="queued-prompts__list">
-                      {selected.queuedPrompts.map((prompt, index) => (
-                        <SortableQueuedPrompt
-                          busy={Boolean(queueActionId) || sending || Boolean(selected.queuedDispatch)}
-                          editing={editingQueuedPromptId === prompt.id}
-                          index={index}
-                          key={prompt.id}
-                          onEdit={() => editQueuedPrompt(prompt)}
-                          onRemove={() =>
-                            void manageQueuedPrompt(prompt.id, false)
-                          }
-                          suspended={selected.suspended === true}
-                          retained={selectedRetained}
-                          prompt={prompt}
-                          steering={index === 0 && selectedQueueHeadIsSteering}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
-                </DndContext>
-              </section>
-            ) : null}
-            {editingQueuedPromptId ? (
-              <div className="queued-edit-banner">
-                <Pencil size={13} />
-                <span>
-                  Editing a queued message.{' '}
-                  {phoneEnterCreatesNewline() ? (
-                    <strong>Save to queue</strong>
-                  ) : (
-                    <strong>Enter</strong>
-                  )}{' '}
-                  puts it back in the queue without moving it.
-                  {selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                    ? ' Send now delivers only this message.'
-                    : ''}
-                </span>
-                <button
-                  className="queued-edit-banner__save"
-                  disabled={!composer.trim() || Boolean(queueActionId) ||
-                    uploadingFile || transcribing ||
-                    Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
-                  onClick={() => void saveQueuedPromptEdit()}
-                  title="Put this back in the queue"
-                  type="button"
-                >
-                  Save to queue
-                </button>
-                <button
-                  aria-label="Stop editing this queued message"
-                  className="icon-button"
-                  disabled={Boolean(queueActionId)}
-                  onClick={cancelQueuedPromptEdit}
-                  title="Leave it as it was (Escape)"
-                  type="button"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            ) : null}
-            {selectedKey && composerDrafts[selectedKey]?.deliveryUncertain &&
-              !selected.queuedDispatch && !queuedEditUnconfirmed ? (
-              <div className="error-banner" id="composer-delivery-warning" role="status">
-                <span>
-                  Delivery could not be confirmed. Your message was restored; it may
-                  already have been sent or queued. Check the conversation and queue
-                  before sending again.
-                </span>
-              </div>
-            ) : null}
-            {composerStorageError ? (
-              <div className="error-banner" id="composer-storage-warning" role="alert">
-                <span>{composerStorageError}</span>
-              </div>
-            ) : null}
-            {acceptanceReceiptMissing ? (
-              <div className="error-banner" id="composer-acceptance-warning" role="status">
-                <span>
-                  {missingAcceptanceOwners.length === 1
-                    ? 'This send was accepted, but the browser has no saved receipt. '
-                    : 'These sends were accepted, but the browser has no saved receipts. '}
-                  Affected: {missingAcceptanceOwners.join('; ')}.
-                  {' '}Keep this tab open. Reloading may restore the submitted text as
-                  unconfirmed; check the conversation before sending it again.
-                </span>
-              </div>
-            ) : null}
-            </div>
-            {askingAside && selectedSideThread ? (
+          <Composer
+            selected={selected}
+            selectedRetained={selectedRetained}
+            selectedQueueHeadIsSteering={selectedQueueHeadIsSteering}
+            selectedQueueAvailable={selectedQueueAvailable}
+            selectedComputerOnline={selectedComputerOnline}
+            supportsQueuedPromptDispatch={selectedProviderCapability?.supportsQueuedPromptDispatch === true}
+            queueActionId={queueActionId}
+            sending={sending}
+            editingQueuedPromptId={editingQueuedPromptId}
+            queuedEditUnconfirmed={queuedEditUnconfirmed}
+            composer={composer}
+            uploadingFile={uploadingFile}
+            transcribing={transcribing}
+            deliveryUncertain={Boolean(selectedKey && composerDrafts[selectedKey]?.deliveryUncertain)}
+            composerStorageError={composerStorageError}
+            acceptanceReceiptMissing={acceptanceReceiptMissing}
+            missingAcceptanceOwners={missingAcceptanceOwners}
+            askingAside={askingAside}
+            sideQuestionDraft={sideQuestionDraft}
+            sideQuestionPending={sideQuestionPending}
+            sideQuestionHasEntries={Boolean(selectedSideThread?.entries.length)}
+            sideQuestionPanel={askingAside && selectedSideThread ? (
               <SideQuestionPanel
                 entries={selectedSideThread.entries}
                 markdownComponents={mermaidComponents}
@@ -14659,431 +14415,63 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                   : `Reconnect ${selected.computerName} to ask about this session.`}
               />
             ) : null}
-            <div
-              className={`composer ${
-                selectedQueueAvailable && !askingAside ? 'composer--running' : ''
-              } ${askingAside ? 'composer--aside' : ''}`}
-              // A file is for the session; while the bar asks aside it would
-              // land in the draft it is keeping out of sight. The drop is
-              // still taken here, so the browser does not open the file.
-              onDragOver={(event) => {
-                if (event.dataTransfer.types.includes('Files')) {
-                  event.preventDefault()
-                  if (askingAside) event.dataTransfer.dropEffect = 'none'
-                }
-              }}
-              onDrop={askingAside ? (event) => event.preventDefault() : audioDropped}
-            >
-              {showCommandMenu ? (
-                <div className="command-menu" role="listbox" aria-label="Commands">
-                  {commandSuggestions.map((command, index) => (
-                    <button
-                      aria-selected={index === selectedCommandIndex}
-                      className={`command-menu__item ${
-                        index === selectedCommandIndex
-                          ? 'command-menu__item--selected'
-                          : ''
-                      }`}
-                      key={command.name}
-                      onClick={() => selectCommand(command)}
-                      role="option"
-                      type="button"
-                    >
-                      <Command size={14} />
-                      <span>
-                        <strong>/{command.name}</strong>
-                        <small>{command.description}</small>
-                      </span>
-                      {command.inputHint ? <em>{command.inputHint}</em> : null}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {!askingAside && selectedAttachments.length > 0 ? (
-                <ul
-                  aria-label="Attachments"
-                  aria-live="polite"
-                  className="composer-attachments"
-                >
-                  {selectedAttachments.map((attachment) => (
-                    <li
-                      aria-label={`${attachment.name} attachment`}
-                      className={`composer-attachment composer-attachment--${attachment.status}`}
-                      key={attachment.id}
-                    >
-                      <FileText aria-hidden="true" size={18} />
-                      <span className="composer-attachment__details">
-                        <strong>{attachment.name}</strong>
-                        <small>
-                          {attachment.error ||
-                            (attachment.status === 'uploading'
-                              ? 'Uploading…'
-                              : 'Attached')}
-                          {' · '}
-                          {attachmentSize(attachment.size)}
-                        </small>
-                      </span>
-                      {attachment.status === 'failed' && attachment.retryable ? (
-                        <button
-                          aria-label={`Retry ${attachment.name}`}
-                          className="composer-attachment__action"
-                          disabled={uploadingFile || transcribing}
-                          onClick={() => void retryAttachment(attachment)}
-                          type="button"
-                        >
-                          <RefreshCw size={15} />
-                        </button>
-                      ) : null}
-                      <button
-                        aria-label={`Remove ${attachment.name}`}
-                        className="composer-attachment__action"
-                        disabled={
-                          attachment.status === 'uploading' ||
-                          sending ||
-                          queueActionId !== undefined
-                        }
-                        onClick={() => removeAttachment(attachment)}
-                        type="button"
-                      >
-                        <X size={15} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              <div className="composer-text-panel">
-                <textarea
-                  aria-label={askingAside ? 'Side question' : 'Message'}
-                  aria-describedby={askingAside ? undefined :
-                    [
-                      selected.queuedDispatch || queuedEditUnconfirmed
-                        ? 'queued-dispatch-warning'
-                        : selectedKey && composerDrafts[selectedKey]?.deliveryUncertain
-                          ? 'composer-delivery-warning'
-                          : undefined,
-                      composerStorageError ? 'composer-storage-warning' : undefined,
-                      acceptanceReceiptMissing ? 'composer-acceptance-warning' : undefined,
-                    ].filter(Boolean).join(' ') || undefined
-                  }
-                  // A suspended session has nothing running to send to. The
-                  // conversation stays here to be read; writing to it is what
-                  // resuming is for.
-                  // Asking aside reads the saved conversation, which a
-                  // suspended session still has.
-                  disabled={(selected.suspended === true || Boolean(selected.interruption || selected.archivedAt)) && !askingAside}
-                  maxLength={askingAside ? SIDE_QUESTION_MAX_LENGTH : undefined}
-                  onBeforeInput={askingAside ? undefined : composerBeforeInput}
-                  onCut={askingAside ? undefined : composerCut}
-                  onChange={(event) => {
-                    if (askingAside) {
-                      const draft = event.target.value
-                      updateSideThread(sessionKey(selected), (thread) => ({ ...thread, draft }))
-                      return
-                    }
-                    composerChanged(
-                      event.target.value,
-                      (event.nativeEvent as InputEvent).inputType,
-                    )
-                  }}
-                  onKeyDown={askingAside ? sideQuestionKeyDown : composerKeyDown}
-                  onPaste={askingAside ? undefined : composerPasted}
-                  placeholder={
-                    askingAside
-                      ? selectedSideThread?.entries.length
-                        ? 'Ask a follow-up…'
-                        : 'Ask about this conversation…'
-                      : selected.archivedAt
-                      ? 'Archived - reopen to send'
-                      : selected.interruption
-                      ? 'Interrupted - reopen to send'
-                      : selected.suspended
-                      ? 'Suspended · resume to send'
-                      : editingQueuedPromptId
-                        ? phoneEnterCreatesNewline()
-                          ? 'Editing a queued message · Save puts it back'
-                          : 'Editing a queued message · Enter puts it back'
-                        : `Message agent on ${selected.computerName}…`
-                  }
-                  ref={composerRef}
-                  rows={1}
-                  value={sideQuestionDraft ?? composer}
-                />
-              </div>
-              <input
-                accept="audio/*,.aac,.csv,.doc,.docx,.flac,.gif,.jpeg,.jpg,.json,.kql,.m4a,.md,.mp3,.mp4,.ofx,.ogg,.pdf,.png,.qfx,.tsv,.txt,.wav,.webm,.webp,.xls,.xlsx,.yaml,.yml"
-                aria-label="File attachment"
-                className="composer-audio-input"
-                onChange={audioFileChanged}
-                ref={audioInputRef}
-                multiple
-                type="file"
-              />
-              {recording ? (
-                <div className="recording-panel" role="status">
-                  <button
-                    className="recording-panel__cancel"
-                    onClick={() => stopRecording(true)}
-                    type="button"
-                  >
-                    Cancel
-                  </button>
-                  <span className="recording-panel__status">
-                    <i />
-                    Recording {recordingDuration(recordingSeconds)}
-                  </span>
-                  <button
-                    className="recording-panel__stop"
-                    onClick={() => stopRecording()}
-                    type="button"
-                  >
-                    <Square fill="currentColor" size={12} />
-                    Stop & transcribe
-                  </button>
-                </div>
-              ) : askingAside ? (
-                <div className="composer-actions">
-                  <span className="composer-actions__spacer" />
-                  <button
-                    aria-label="Ask side question"
-                    className="send-button send-button--aside"
-                    disabled={!sideQuestionDraft?.trim() || sideQuestionPending ||
-                      !selectedComputerOnline}
-                    onClick={submitSideQuestion}
-                    title={sideQuestionPending
-                      ? 'Waiting for the answer to the last side question'
-                      : 'Ask without sending anything to the session'}
-                    type="button"
-                  >
-                    <MessageCircleQuestion size={18} />
-                    <span className="send-button__label">Ask</span>
-                  </button>
-                  {selected.status === 'running' ? (
-                    <button
-                      aria-label="Stop response"
-                      className="send-button send-button--stop"
-                      disabled={cancelling}
-                      onClick={() => void stopSelectedSession()}
-                      type="button"
-                    >
-                      <Square fill="currentColor" size={15} />
-                    </button>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="composer-actions">
-                  <button
-                    aria-label={
-                      transcribing
-                        ? 'Transcribing audio'
-                        : uploadingFile
-                          ? 'Uploading file'
-                          : 'Attach file or audio recording'
-                    }
-                    className="send-button composer-attachment-button"
-                    disabled={transcribing || uploadingFile}
-                    onClick={() => audioInputRef.current?.click()}
-                    type="button"
-                  >
-                    {transcribing || uploadingFile ? (
-                      <LoaderCircle
-                        className="activity-message__spinner"
-                        size={17}
-                      />
-                    ) : (
-                      <Paperclip size={17} />
-                    )}
-                  </button>
-                  <button
-                    aria-label="Start microphone recording"
-                    className="send-button composer-record-button"
-                    disabled={transcribing || uploadingFile}
-                    onClick={() => void startRecording()}
-                    title="Record and transcribe"
-                    type="button"
-                  >
-                    <Mic size={17} />
-                  </button>
-                  <span className="composer-actions__spacer" />
-                  {selectedQueueAvailable ? (
-                    <button
-                      aria-description="Queues this message for later delivery"
-                      aria-label="Queue message"
-                      className="send-button send-button--queue"
-                      disabled={!composer.trim() || sending || transcribing ||
-                        uploadingFile || Boolean(queueActionId) ||
-                        Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
-                      onClick={() => void submitMessage(true)}
-                      title="Queue for later delivery"
-                      type="button"
-                    >
-                      <ListPlus size={17} />
-                    </button>
-                  ) : null}
-                  <button
-                    aria-label={
-                      readonlyResourceCommand
-                        ? readonlyResourceCommand.tab === 'skills' ? 'Open skills' : 'Open MCP servers'
-                        : editingQueuedPromptId
-                        ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                          ? 'Send edited message'
-                          : 'Put this back in the queue'
-                        : 'Send message'
-                    }
-                    className="send-button"
-                    disabled={!composer.trim() || sending || transcribing ||
-                      uploadingFile ||
-                      (!readonlyResourceCommand && (
-                      Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
-                      queuedEditUnconfirmed || selected.suspended === true || Boolean(selected.interruption || selected.archivedAt) ||
-                      Boolean(editingQueuedPromptId &&
-                        selectedProviderCapability?.supportsQueuedPromptDispatch === true &&
-                        (selected.status === 'running' || selected.status === 'waiting'))))}
-                    onClick={() => void submitMessage()}
-                    title={
-                      readonlyResourceCommand
-                        ? 'Open the read-only resource view without sending a prompt'
-                        : editingQueuedPromptId
-                        ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                          ? 'Send this queued message now'
-                          : 'Put this back in the queue'
-                        : selected.status === 'running'
-                          ? 'Send into the current response'
-                          : 'Send immediately'
-                    }
-                    type="button"
-                  >
-                    {readonlyResourceCommand ? <Search size={19} /> : <ArrowUp size={19} strokeWidth={2.4} />}
-                    <span className="send-button__label">
-                      {readonlyResourceCommand ? 'View' : editingQueuedPromptId
-                        ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                          ? 'Send now'
-                          : 'Save'
-                        : 'Send'}
-                    </span>
-                  </button>
-                  {selected.status === 'running' ? (
-                    <button
-                      aria-label="Stop response"
-                      className="send-button send-button--stop"
-                      disabled={cancelling}
-                      onClick={() => void stopSelectedSession()}
-                      type="button"
-                    >
-                      <Square fill="currentColor" size={15} />
-                    </button>
-                  ) : null}
-                </div>
-              )}
-            </div>
-            {!askingAside && composer && composerDraftRecovered && !composerStorageError ? (
-              <p
-                aria-label="Session draft status"
-                className="composer-draft-status"
-                role="status"
-              >
-                Recovered saved draft
-              </p>
-            ) : null}
-            {(statusline.provider ||
-              (statusline.model && selected.runtime?.model) ||
-              (statusline.effort && selected.runtime?.reasoningEffort) ||
-              (statusline.contextTier && selected.runtime?.contextTier) ||
-              (statusline.contextUsage &&
-                selected.runtime?.contextTokens !== undefined &&
-                selected.runtime.contextTokenLimit)) ? (
-              <button
-                aria-label="Configure model, effort, and context"
-                className="composer-runtime"
-                data-testid="composer-runtime"
-                onClick={() => setRuntimeOpen(true)}
-                type="button"
-              >
-                <SlidersHorizontal aria-hidden="true" size={12} />
-                {statusline.provider ? (
-                  <span>
-                    {providerName(selected.provider)}
-                    {executionModeName(selected.executionMode)
-                      ? ` · ${executionModeName(selected.executionMode)}`
-                      : ''}
-                  </span>
-                ) : null}
-                {statusline.model && selected.runtime?.model ? (
-                  <span>{selected.runtime.model}</span>
-                ) : null}
-                {statusline.effort && selected.runtime?.reasoningEffort ? (
-                  <span>effort {selected.runtime.reasoningEffort}</span>
-                ) : null}
-                {statusline.contextTier && selected.runtime?.contextTier ? (
-                  <span>
-                    {selected.runtime.contextTokenLimit
-                      ? `${compactTokens(
-                          selected.runtime.contextTokenLimit,
-                        )} context`
-                      : 'auto context'}
-                  </span>
-                ) : null}
-                {statusline.contextUsage &&
-                selected.runtime?.contextTokens !== undefined &&
-                selected.runtime.contextTokenLimit ? (
-                  <span>
-                      ctx {selected.runtime.contextEstimated ? '~' : ''}
-                      {compactTokens(selected.runtime.contextTokens)}/
-                      {compactTokens(selected.runtime.contextTokenLimit)} (
-                      {Math.round(
-                        (selected.runtime.contextTokens /
-                          selected.runtime.contextTokenLimit) *
-                          100,
-                      )}
-                      %)
-                  </span>
-                ) : null}
-              </button>
-            ) : null}
-            <p className="composer-hint">
-              {askingAside
-                ? (
-                  <>
-                    <span className="composer-hint__desktop">
-                      {sideQuestionPending
-                        ? 'Answering… you can type your follow-up · Esc back to your message'
-                        : 'Enter asks · Shift+Enter newline · Esc back to your message'}
-                    </span>
-                    <span className="composer-hint__mobile">
-                      {sideQuestionPending
-                        ? 'Answering… you can type your follow-up'
-                        : 'Tap Ask · Return adds a line'}
-                    </span>
-                  </>
-                )
-                : recording
-                ? `Recording ${recordingDuration(recordingSeconds)}…`
-                : transcribing
-                ? 'Transcribing audio…'
-                : uploadingFile
-                  ? 'Uploading file…'
-                  : (
-                    <>
-                      <span className="composer-hint__desktop">
-                        {editingQueuedPromptId
-                          ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                            ? 'Enter saves it back · ↑ sends this queued edit now · Esc leaves it as it was'
-                            : 'Enter saves it back · Shift+Enter newline · Esc leaves it as it was'
-                          : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue for later'}
-                      </span>
-                      <span className="composer-hint__mobile">
-                        {editingQueuedPromptId
-                          ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                            ? 'Save keeps its place · ↑ sends this queued edit now · Return adds a line'
-                            : 'Tap Save to put it back · Return adds a line'
-                          : 'Tap Send · Return adds a line'}
-                      </span>
-                    </>
-                  )}
-              {selected.queuedCount
-                ? ` · ${selected.queuedCount} queued`
-                : ''}
-            </p>
-          </footer>
+            showCommandMenu={showCommandMenu}
+            commandSuggestions={commandSuggestions}
+            selectedCommandIndex={selectedCommandIndex}
+            selectedAttachments={selectedAttachments}
+            recording={recording}
+            recordingSeconds={recordingSeconds}
+            cancelling={cancelling}
+            readonlyResourceCommand={readonlyResourceCommand}
+            composerDraftRecovered={composerDraftRecovered}
+            statusline={statusline}
+            phoneEnterCreatesNewline={phoneEnterCreatesNewline()}
+            composerRef={composerRef}
+            audioInputRef={audioInputRef}
+            sensors={sensors}
+            attachmentSize={attachmentSize}
+            recordingDuration={recordingDuration}
+            compactTokens={compactTokens}
+            onQueueDragEnd={(event) => void queueDragEnded(event)}
+            onEditQueuedPrompt={editQueuedPrompt}
+            onRemoveQueuedPrompt={(promptId) => void manageQueuedPrompt(promptId, false)}
+            onDiscardUnconfirmed={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
+            onSaveQueuedPromptEdit={() => void saveQueuedPromptEdit()}
+            onCancelQueuedPromptEdit={cancelQueuedPromptEdit}
+            // A file is for the session; while the bar asks aside it would
+            // land in the draft it is keeping out of sight. The drop is
+            // still taken here, so the browser does not open the file.
+            onDragOver={(event) => {
+              if (event.dataTransfer.types.includes('Files')) {
+                event.preventDefault()
+                if (askingAside) event.dataTransfer.dropEffect = 'none'
+              }
+            }}
+            onDrop={askingAside ? (event) => event.preventDefault() : audioDropped}
+            onSelectCommand={selectCommand}
+            onRetryAttachment={(attachment) => void retryAttachment(attachment)}
+            onRemoveAttachment={removeAttachment}
+            onBeforeInput={composerBeforeInput}
+            onCut={composerCut}
+            onChange={(event) => {
+              if (askingAside) {
+                const draft = event.target.value
+                updateSideThread(sessionKey(selected), (thread) => ({ ...thread, draft }))
+                return
+              }
+              composerChanged(event.target.value, (event.nativeEvent as InputEvent).inputType)
+            }}
+            onKeyDown={askingAside ? sideQuestionKeyDown : composerKeyDown}
+            onPaste={composerPasted}
+            onFileChange={audioFileChanged}
+            onStopRecording={stopRecording}
+            onSubmitSideQuestion={submitSideQuestion}
+            onStopSession={() => void stopSelectedSession()}
+            onOpenAttachmentInput={() => audioInputRef.current?.click()}
+            onStartRecording={() => void startRecording()}
+            onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
+            onOpenRuntime={() => setRuntimeOpen(true)}
+          />
         ) : null}
       </main>
 

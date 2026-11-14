@@ -6297,6 +6297,110 @@ describe('App', () => {
     )
   })
 
+  it('preserves both session drafts while a queued rewrite settles after switching sessions', async () => {
+    const { textarea, queuedSession, prompts, key } = await openTargetedQueueEditor()
+    let currentQueue = queuedSession
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : currentQueue,
+    )
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: secondSession }),
+      } as MessageEvent)
+    })
+    let accept!: (result: Awaited<ReturnType<typeof dispatchQueuedPrompt>>) => void
+    vi.mocked(dispatchQueuedPrompt).mockImplementationOnce(() =>
+      new Promise((resolve) => { accept = resolve }),
+    )
+    fireEvent.change(textarea, { target: { value: 'settling queued rewrite' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+    await waitFor(() => expect(dispatchQueuedPrompt).toHaveBeenCalledOnce())
+    fireEvent.change(textarea, { target: { value: 'new first-session draft' } })
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    fireEvent.change(textarea, { target: { value: 'unsent second-session draft' } })
+
+    currentQueue = { ...queuedSession, queuedPrompts: [prompts[0], prompts[2]], queuedCount: 2 }
+    await act(async () => accept({
+      outcome: 'sent', promptId: 'q2', attemptId: 'switch-settlement',
+      session: currentQueue,
+    }))
+    expect(textarea).toHaveValue('unsent second-session draft')
+    const first = screen.getAllByText('Project chat')
+      .find((element) => element.closest('.session-item'))
+    fireEvent.click(first!.closest('button')!)
+    await waitFor(() => expect(textarea).toHaveValue('new first-session draft'))
+    const queue = screen.getByRole('region', { name: 'Queued prompts' })
+    expect(within(queue).getByText('first original')).toBeInTheDocument()
+    expect(within(queue).getByText('third original')).toBeInTheDocument()
+    expect(within(queue).queryByText('second original')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save to queue' })).not.toBeInTheDocument()
+    const stored = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')
+    expect(stored[key]).toMatchObject({ text: 'new first-session draft' })
+    expect(stored[key].pendingSubmission).toBeUndefined()
+    expect(stored[key].queuedEdit).toBeUndefined()
+    expect(stored['computer-1:session-2'].text).toBe('unsent second-session draft')
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('preserves an unsent draft through socket replacement and reload', async () => {
+    const replacement: ManagedSession = {
+      ...session, id: 'socket-replacement', replacedSessionIds: [session.id], messages: [],
+    }
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'unsent before socket replacement' } })
+    vi.mocked(getSession).mockResolvedValue(replacement)
+    act(() => {
+      for (const event of [
+        { type: 'session.removed', computerId: computer.id, sessionId: session.id, replacedBy: replacement.id },
+        { type: 'session.upserted', session: replacement },
+      ]) {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify(event),
+        } as MessageEvent)
+      }
+    })
+    await waitFor(() => {
+      expect(window.location.search).toContain(`session=${replacement.id}`)
+      expect(textarea).toHaveValue('unsent before socket replacement')
+    })
+    fireEvent.change(textarea, { target: { value: 'unsent after socket replacement' } })
+    rendered.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('unsent after socket replacement')
+    const stored = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')
+    expect(stored['computer-1:socket-replacement'].text).toBe('unsent after socket replacement')
+    expect(stored['computer-1:session-1']).toBeUndefined()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('preserves an unsent draft when reconnect refreshes authoritative session state', async () => {
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'unsent before reconnect' } })
+    const refreshed: ManagedSession = {
+      ...session, revision: 2,
+      messages: [...session.messages, {
+        id: 'reconnected-message', role: 'assistant', content: 'Arrived while disconnected',
+        createdAt: '2026-11-14T17:00:00.000Z',
+      }],
+    }
+    vi.mocked(listSessions).mockResolvedValue([refreshed])
+    vi.mocked(getSession).mockResolvedValue(refreshed)
+    act(() => { MockWebSocket.instances.at(-1)?.onopen?.() })
+    await screen.findByText('Arrived while disconnected')
+    await waitFor(() => expect(listSessions).toHaveBeenCalledTimes(2))
+    expect(textarea).toHaveValue('unsent before reconnect')
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('unsent before reconnect')
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
   it('collapses a long paste while sending its full text in place', async () => {
     const pasted = Array.from(
       { length: 21 },

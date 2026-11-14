@@ -134,6 +134,8 @@ bundled into S3.
 
 The U1/U2 presentation components live in `src/session-setup/RuntimeDialog.tsx` and `src/session-setup/NewSessionDialog.tsx`, with their required shared runtime presentation helpers and types alongside them. `App.tsx` retains application state and callbacks; dialog-local state remains with each component. The extracted components never import `App.tsx`. Provider state stays on the owning computer and browser preferences with their existing owner.
 
+The composer presentation lives in `src/composer/Composer.tsx`, with attachment, queued-prompt, slash-command, and action-button subcomponents. It is controlled by props: `App.tsx` still owns draft and queue state, persistence, refs, effects, event handlers, and socket/replacement reconciliation. The side-question panel is passed as content so its session callbacks retain the same owner.
+
 U3 first extracts pure decisions, not a new global state-management framework.
 Keep Knowledge panel layout ownership distinct from per-session reader
 position, draft, and replacement continuity. A later hook extraction can be

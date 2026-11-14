@@ -49,10 +49,11 @@ describe('preview feature authority', () => {
     const preferences = {
       composerRefresh: true, desktopRail: true, settingsNavigation: true,
       notificationPanel: true, hostMonitorView: true, schedulerView: true,
+      healthCard: true,
     }
     expect(effectivePreviewFeatures(preferences, defaultHubFeatureFlags)).toEqual({
       composerRefresh: true, desktopRail: true, settingsNavigation: true,
-      notificationPanel: false, hostMonitorView: false, schedulerView: false,
+      notificationPanel: false, hostMonitorView: false, schedulerView: false, healthCard: true,
     })
     expect(preferences.notificationPanel).toBe(true)
     expect(effectivePreviewFeatures(preferences, {

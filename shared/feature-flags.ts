@@ -38,6 +38,10 @@ export const previewFeatureCatalogue = {
     label: 'Settings navigation',
     description: 'Browse app settings by category.',
   },
+  healthCard: {
+    label: 'Health card',
+    description: 'View read-only hub startup, version and connection diagnostics.',
+  },
   notificationPanel: {
     label: 'Notification panel',
     description: 'Browse and manage notifications from this hub.',

@@ -16,6 +16,7 @@ import { StatuslineControls } from './StatuslineControls'
 import type { AppSettingsDialogProps } from './types'
 import { DisplayNameSetting } from '../rail/DisplayNameSetting'
 import { ComputersBody } from '../computers/ComputersDialog'
+import { HealthCard } from './HealthCard'
 
 export type SettingsSectionProps = AppSettingsDialogProps & {
   categoryNavigation?: boolean
@@ -493,7 +494,7 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'App',
     icon: Settings,
     scope: 'device',
-    searchLabels: ['Display name', 'Settings sync', 'Hub connection', 'App updates', 'Version', 'Check for updates'],
+    searchLabels: ['Display name', 'Settings sync', 'Hub connection', 'App updates', 'Version', 'Check for updates', 'Health'],
     render: ({
       settingsSync,
       onDisplayNameChange,
@@ -520,6 +521,7 @@ export const settingsSections: readonly SettingsSection[] = [
               {settingsSyncMessage(settingsSync)}
             </p>
           </section>
+          <HealthCard />
           {shellSettingsAvailable() && (
             <section className="app-settings-section">
               <h4>Hub connection</h4>

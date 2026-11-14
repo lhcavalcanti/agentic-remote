@@ -1255,6 +1255,23 @@ export async function setupWorkspaceFixture(
       await respond({ version: '1.1.0', buildId: '1.1.0' })
       return
     }
+    if (method === 'GET' && path === '/api/diagnostics/health') {
+      await respond({
+        hub: { id: 'fixture-studio', name: 'Studio', role: 'hub', version: '1.54.0' },
+        release: { version: '1.54.0', buildId: 'fixture-release-2026-09-04' },
+        startup: [
+          { startupPhase: 'app.build', event: 'complete', elapsedMs: 184, durationMs: 184 },
+          { startupPhase: 'service.start', event: 'complete', elapsedMs: 426, durationMs: 242 },
+          { startupPhase: 'fastify.listen', event: 'complete', elapsedMs: 432, durationMs: 6 },
+        ],
+        computers: fixtureComputers.map((computer) => ({
+          id: computer.id, name: computer.name, role: computer.isLocal ? 'hub' : 'node',
+          online: computer.online, version: computer.isLocal ? '1.54.0' : computer.online ? '1.53.0' : undefined,
+        })),
+        hubFlags: state.hubFlags,
+      })
+      return
+    }
     if (method === 'POST' && path === '/api/transcriptions') {
       const file = await multipartFile(route, 'audio')
       if (!file || !file.type.startsWith('audio/')) {

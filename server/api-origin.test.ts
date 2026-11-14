@@ -52,6 +52,15 @@ afterEach(async () => {
 })
 
 describe('canonical API origin enforcement', () => {
+  it.each(prefixes)('guards read-only health diagnostics through %s', async (prefix) => {
+    for (const headers of untrusted) {
+      expect((await runtime.app.inject({ url: `${prefix}/diagnostics/health`, headers })).statusCode).toBe(403)
+    }
+    const result = await runtime.app.inject({ url: `${prefix}/diagnostics/health`, headers: trusted })
+    expect(result.statusCode).toBe(200)
+    expect(result.headers['cache-control']).toBe('no-store')
+    expect(result.json()).toMatchObject({ hub: { role: 'hub' }, startup: [], hubFlags: { hostMonitor: true } })
+  })
   it.each(prefixes)('guards host reads and live subscriptions through %s', async (prefix) => {
     const base = `${prefix}/computers/${runtime.identity.info.id}/host`
     for (const headers of untrusted) {

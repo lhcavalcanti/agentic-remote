@@ -4911,6 +4911,11 @@ button {
 .settings-navigation .app-settings-group__body { grid-template-columns: 1fr; }
 .settings-navigation [hidden] { display: none !important; }
 .settings-navigation__back { display: none; }
+.health-card__facts { display: grid; gap: 6px; font-size: 12px; }
+.health-card__facts > div { display: flex; justify-content: space-between; gap: 16px; }
+.health-card__facts dt { overflow-wrap: anywhere; }
+.health-card__facts dd { margin: 0; text-align: right; }
+.health-card__computers { padding-left: 18px; font-size: 12px; line-height: 1.8; }
 
 @media (max-width: 599px) {
   .settings-navigation { display: flex; flex-direction: column; gap: 12px; }

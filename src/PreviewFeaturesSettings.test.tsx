@@ -74,7 +74,7 @@ describe('Preview features settings', () => {
   it('starts off and persists a toggle through the hub profile and a remount', async () => {
     const server = hub()
     const view = settings(await server.client())
-    expect(screen.getAllByRole('checkbox')).toHaveLength(6)
+    expect(screen.getAllByRole('checkbox')).toHaveLength(7)
     for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).not.toBeChecked()
     const composer = screen.getByRole('checkbox', { name: 'Composer refresh' })
     expect(composer).toHaveAccessibleDescription('Try the refreshed composer controls and session status.')

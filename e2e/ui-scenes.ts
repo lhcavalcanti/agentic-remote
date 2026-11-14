@@ -43,6 +43,7 @@ export const uiSceneNames = [
   'preview-features',
   'settings-navigation',
   'settings-remote-machines',
+  'settings-health',
   'runtime-dialog',
   'new-session-dialog',
   'computers-dialog',
@@ -144,6 +145,13 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true, schedulerView: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
+      if (name === 'settings-health') {
+        state.settings.values = {
+          previewFeatures: { settingsNavigation: true, healthCard: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
+          displayName: 'Alex Morgan',
+        }
+        state.hubFlags = { ...state.hubFlags, hostMonitor: true, scheduler: true }
+      }
       if (name === 'settings-navigation' || name === 'settings-remote-machines') {
         state.settings.values = {
           previewFeatures: { settingsNavigation: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
@@ -170,7 +178,7 @@ export function createUIScenes(
         appearance: 'graphite',
         state,
         notifications: name === 'notification-panel' ? fixtureNotifications : undefined,
-        hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes' || name === 'settings-navigation' || name === 'settings-remote-machines',
+        hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes' || name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-health',
         hostMonitorWsl: name === 'host-monitor' || name === 'host-processes',
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: fixtureScheduleProposals,
@@ -213,6 +221,14 @@ export function createUIScenes(
         await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
+      } else if (name === 'settings-health') {
+        await openSessions(page)
+        await page.getByRole('button', { name: 'App settings', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+        await dialog.getByRole('button', { name: /^App This device/ }).click()
+        const health = dialog.getByRole('region', { name: 'Health', exact: true })
+        await expect(health).toContainText('fixture-release-2026-09-04')
+        await health.scrollIntoViewIfNeeded()
       } else if (name === 'settings-navigation' || name === 'settings-remote-machines') {
         await openSessions(page)
         await page.getByRole('button', { name: name === 'settings-navigation' ? 'App settings' : 'Manage computers', exact: true }).click()

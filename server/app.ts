@@ -705,6 +705,18 @@ export async function buildApp(
       reply.header('cache-control', 'no-store')
       return appVersion ?? { version: identity.info.version }
     })
+    app.get('/api/diagnostics/health', async (_request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return {
+        hub: { id: identity.info.id, name: identity.info.name, version: identity.info.version, role: 'hub' },
+        release: appVersion,
+        startup: startupPhases.snapshot?.() ?? [],
+        computers: manager!.listComputers().map(({ id, name, isLocal, version, online }) => ({
+          id, name, role: isLocal ? 'hub' : 'node', version, online,
+        })),
+        hubFlags,
+      }
+    })
     // Hub-local: browsers reach only the hub, so it sees every browser-facing
     // refusal, including those a node returned through it.
     app.get('/api/diagnostics/refusals', async (_request, reply) => {

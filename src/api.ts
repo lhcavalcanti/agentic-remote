@@ -1,4 +1,9 @@
 import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
+import type { HubHealth } from '../shared/hub-health'
+
+export async function getHubHealth(signal?: AbortSignal): Promise<HubHealth> {
+  return request('/api/diagnostics/health', { signal, cache: 'no-store' })
+}
 import type {
   AddComputerInput,
   AgentProvider,

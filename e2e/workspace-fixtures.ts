@@ -544,6 +544,9 @@ export const fixtureEndpoints = [
   'GET /api/schedules/runs',
   'GET /api/schedules/runs/:id',
   'POST /api/schedules/runs/:id/stop',
+  'GET /api/schedules/proposals',
+  'POST /api/schedules/proposals/:id/approve',
+  'POST /api/schedules/proposals/:id/reject',
   'GET /api/computers',
   'GET /api/computers/:computerId/host',
   'GET /api/computers/:computerId/host/history?range=24h',
@@ -589,7 +592,7 @@ export interface WorkspaceFixtureOptions {
   /** Omitted keeps host monitoring off; all data is fictional. */
   hostMonitor?: boolean
   /** Omitted keeps the hub scheduler disabled. All data remains fictional. */
-  scheduler?: { schedules: Schedule[]; runs: ScheduleRun[] }
+  scheduler?: { schedules: Schedule[]; runs: ScheduleRun[]; proposals?: import('../shared/schedule-proposals').ScheduleProposal[] }
   /** Use a native event socket only on the already-validated local fixture origin. */
   nativeLocalEvents?: boolean
   realClock?: boolean
@@ -904,6 +907,21 @@ export async function setupWorkspaceFixture(
       return
     }
     if (path === '/api/schedules' || path.startsWith('/api/schedules/')) {
+      if (path === '/api/schedules/proposals' && method === 'GET') {
+        await respond(options.scheduler ? { proposals: (scheduled.proposals ?? []).filter((entry) => entry.status === 'pending') }
+          : { error: 'Scheduler is disabled' }, options.scheduler ? 200 : 404)
+        return
+      }
+      if (/^\/api\/schedules\/proposals\/[^/]+\/(?:approve|reject)$/.test(path) && method === 'POST') {
+        if (!options.scheduler) { await respond({ error: 'Scheduler is disabled' }, 404); return }
+        const proposal = scheduled.proposals?.find((entry) => entry.id === path.split('/')[4])
+        if (!proposal) { await respond({ error: 'Proposal not found' }, 404); return }
+        if (proposal.status !== 'pending') { await respond({ error: 'Proposal is already resolved' }, 409); return }
+        proposal.status = path.endsWith('/approve') ? 'applied' : 'rejected'
+        emit({ type: 'schedule-proposals.changed', revision: ++scheduleRevision, proposalId: proposal.id })
+        await respond({ proposal })
+        return
+      }
       const known = (path === '/api/schedules' && ['GET', 'POST'].includes(method)) ||
         (/^\/api\/schedules\/[^/]+$/.test(path) && ['GET', 'PATCH', 'DELETE'].includes(method)) ||
         (/^\/api\/schedules\/[^/]+\/(?:enabled|archived|run)$/.test(path) && method === 'POST') ||

@@ -139,6 +139,10 @@ The current reader accepts legacy runs without full receipts or worktree records
 
 List/form, next-five preview, run history, Settings defaults, preview gating, and notifications.
 
-## Oracle — planned
+## Oracle proposals
 
-Read tools and Delegate-only, exact-payload/revision-bound approved proposals before every write.
+The scheduler transaction also retains at most 1,000 typed proposals (24-hour pending lifetime). Each binds an immutable operation, normalized payload, and existing schedule revision, with Oracle attribution and a pending/approved/rejected/expired/applied/failed lifecycle. Terminal proposals are evicted oldest-first; unresolved approvals are never evicted. Storing proposals with scheduler state makes schedule application and proposal settlement atomic, including the Run now admission fence. Repeated approvals, concurrent clicks, and restarts cannot apply a proposal twice.
+
+Approval revalidates the 20-active-Oracle-schedule limit, recurrence spacing, exact revision, and permission policy in the mutation transaction. The hub settings profile's `schedulerAllowAllForOracle` defaults to false when unset; true permits proposing allow-all but never bypasses explicit approval. Disabling or archiving does not grant any execution permission. Pending proposals expire at startup, scheduler sweeps, reads, and confirmation.
+
+Origin-enforced routes are `GET /api/schedules/proposals` (pending only, no-store), `POST /api/schedules/proposals/:id/approve`, and `POST /api/schedules/proposals/:id/reject`; actions accept no replacement payload. Socket invalidations use `schedule-proposals.changed` with a monotonic revision and proposal ID. These routes and storage remain unavailable without the hub scheduler flag. Oracle tools and confirmation cards are a separate layer.

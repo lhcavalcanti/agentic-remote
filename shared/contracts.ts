@@ -2,6 +2,7 @@ import type { ManagerEvent } from './manager.js'
 import type { SettingsProfileSnapshot } from './settings-profile.js'
 import type { NotificationsChanged } from './notification-center.js'
 import type { SchedulerChanged } from './schedules.js'
+import type { ScheduleProposalsChanged } from './schedule-proposals.js'
 import type { PromptAcceptanceReceipt, TerminationAcknowledgement } from './launch-identity.js'
 
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
@@ -580,6 +581,7 @@ export type HubEvent =
   | ManagerEvent
   | NotificationsChanged
   | SchedulerChanged
+  | ScheduleProposalsChanged
   | {
       type: 'session.upserted'
       session: ManagedSession

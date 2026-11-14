@@ -19,6 +19,7 @@ export const settingsProfileKeys = [
   'oracleResponseStyle',
   'notificationScope',
   'previewFeatures',
+  'schedulerAllowAllForOracle',
 ] as const
 
 export type SettingsProfileKey = (typeof settingsProfileKeys)[number]
@@ -89,6 +90,8 @@ export interface SettingsProfileValues {
   /** Unset sends every notification, as before the setting existed. */
   notificationScope?: NotificationScope
   previewFeatures?: PreviewFeatures
+  /** Unset is false. Still requires approval of each exact schedule proposal. */
+  schedulerAllowAllForOracle?: boolean
 }
 
 export interface SettingsProfileSnapshot {
@@ -171,6 +174,8 @@ export function parseSettingValue<K extends SettingsProfileKey>(
     value: parsed as NonNullable<SettingsProfileValues[K]>,
   })
   switch (key) {
+    case 'schedulerAllowAllForOracle':
+      return typeof value === 'boolean' ? valid(value) : invalid('must be true or false')
     case 'appearance':
       return oneOf(appearanceSettings, value) ? valid(value) : invalid('is not a known appearance')
     case 'accent':

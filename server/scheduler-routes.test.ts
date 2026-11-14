@@ -111,6 +111,29 @@ describe('scheduler hub API', () => {
     expect(launcher.launch).not.toHaveBeenCalled()
   })
 
+  it('lists and resolves proposals without accepting payload substitutions and enforces hostile origins', async () => {
+    const server = await app()
+    const proposal = await runtime.scheduler!.store.propose({ operation: 'create', payload: input() as never })
+    const listed = await server.inject({ url: '/api/schedules/proposals', headers })
+    expect(listed.headers['cache-control']).toBe('no-store')
+    expect(listed.json().proposals).toHaveLength(1)
+    for (const [method, suffix] of [
+      ['GET', '/proposals'], ['POST', `/proposals/${proposal.id}/approve`], ['POST', `/proposals/${proposal.id}/reject`],
+    ] as const) {
+      for (const prefix of ['/api/schedules', '/%61pi/schedules']) {
+        expect((await server.inject({ method, url: `${prefix}${suffix}`,
+          headers: { ...headers, origin: 'https://hostile.example' } })).statusCode).toBe(403)
+      }
+    }
+    const path = `/api/schedules/proposals/${proposal.id}/approve`
+    expect((await server.inject({ method: 'POST', url: path, headers, payload: { payload: { name: 'Substitute' } } })).statusCode).toBe(400)
+    expect(runtime.scheduler!.store.list()).toEqual([])
+    expect((await server.inject({ method: 'POST', url: path, headers })).json().proposal.status).toBe('applied')
+    expect((await server.inject({ method: 'POST', url: path, headers })).json().proposal.status).toBe('applied')
+    const rejected = await runtime.scheduler!.store.propose({ operation: 'create', payload: { ...input(), name: 'Another' } as never })
+    expect((await server.inject({ method: 'POST', url: `/api/schedules/proposals/${rejected.id}/reject`, headers })).json().proposal.status).toBe('rejected')
+    expect((await server.inject({ url: '/api/schedules/proposals', headers })).json().proposals).toEqual([])
+  })
   it('creates, lists, reads and updates with revision, enable/archive and deletion checks', async () => {
     const server = await app()
     const create = await server.inject({ method: 'POST', url: '/api/schedules', headers, payload: input() })
@@ -218,6 +241,7 @@ describe('scheduler hub API', () => {
       ['GET', ''], ['POST', ''], ['GET', '/id'], ['PATCH', '/id'], ['DELETE', '/id'],
       ['POST', '/id/enabled'], ['POST', '/id/archived'], ['POST', '/id/run'],
       ['GET', '/id/runs'], ['GET', '/runs'], ['GET', '/runs/id'], ['POST', '/runs/id/stop'],
+      ['GET', '/proposals'], ['POST', '/proposals/id/approve'], ['POST', '/proposals/id/reject'],
     ] as const) expect((await server.inject({ method, url: `/api/schedules${suffix}`, headers })).statusCode).toBe(404)
     expect((await readdir(directory)).includes('scheduler')).toBe(false)
     expect((await readdir(directory)).includes('schedule-worktrees')).toBe(false)

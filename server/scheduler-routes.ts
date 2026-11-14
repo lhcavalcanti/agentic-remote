@@ -6,7 +6,27 @@ import {
 import type { SchedulerDispatcher } from './scheduler-dispatcher.js'
 
 /** Inherits the hub's canonical Host/Origin hook, including encoded API paths. */
-export async function registerSchedulerRoutes(app: FastifyInstance, scheduler: SchedulerDispatcher): Promise<void> {
+export async function registerSchedulerRoutes(
+  app: FastifyInstance, scheduler: SchedulerDispatcher, allowAllForOracle: () => boolean = () => false,
+): Promise<void> {
+  app.get('/api/schedules/proposals', async (_request, reply) => {
+    reply.header('cache-control', 'no-store')
+    await scheduler.store.expireProposals()
+    return { proposals: scheduler.store.proposals().filter((proposal) => proposal.status === 'pending') }
+  })
+  app.post('/api/schedules/proposals/:id/approve', async (request) => {
+    scheduleActionSchema.parse(request.body ?? {})
+    const id = scheduleIdParamsSchema.parse(request.params).id
+    const proposal = await scheduler.store.approveProposal(id, allowAllForOracle())
+    if (proposal.operation === 'run-now' && proposal.status === 'approved') {
+      await scheduler.runNow(proposal.scheduleId, proposal.baseRevision, proposal.id)
+    }
+    return { proposal: scheduler.store.proposal(id) }
+  })
+  app.post('/api/schedules/proposals/:id/reject', async (request) => {
+    scheduleActionSchema.parse(request.body ?? {})
+    return { proposal: await scheduler.store.rejectProposal(scheduleIdParamsSchema.parse(request.params).id) }
+  })
   app.get('/api/schedules', async (request, reply) => {
     reply.header('cache-control', 'no-store')
     return { schedules: scheduler.store.list(scheduleListSchema.parse(request.query).archived) }

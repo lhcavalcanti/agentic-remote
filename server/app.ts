@@ -656,7 +656,8 @@ export async function buildApp(
         computers.hostTelemetryTarget(id!, localTelemetry), hostTelemetryLifetime?.signal)
     }
     await registerNotificationRoutes(app, notificationCenter)
-    if (scheduler) await registerSchedulerRoutes(app, scheduler)
+    if (scheduler) await registerSchedulerRoutes(app, scheduler,
+      () => settingsProfileStore?.snapshot().values.schedulerAllowAllForOracle === true)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
       ? new DelegatedTranscriptionService({

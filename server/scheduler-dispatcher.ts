@@ -74,6 +74,7 @@ export class SchedulerDispatcher {
   start(): Promise<void> {
     return this.starting ??= this.exclusive(async () => {
       await this.store.initialize()
+      await this.store.expireProposals()
       // Pending intent is reconciled too: no catch-up or fresh launch may run first.
       for (const run of this.store.allRuns().filter(isInFlight)) await this.reconcile(run)
       if (this.closed) return
@@ -105,8 +106,12 @@ export class SchedulerDispatcher {
     })
   }
 
-  runNow(scheduleId: string): Promise<ScheduleRun> {
+  runNow(scheduleId: string, expectedRevision?: number, proposalId?: string): Promise<ScheduleRun> {
     return this.exclusive(async () => {
+      if (proposalId) {
+        const proposal = this.store.proposal(proposalId)
+        if (proposal.status === 'applied' && proposal.appliedRunId) return this.store.getRun(proposal.appliedRunId)
+      }
       if (!this.active) throw Object.assign(new Error('Scheduler is not started'), { statusCode: 503 })
       const schedule = this.store.get(scheduleId)
       if (schedule.archived) throw Object.assign(new Error('Archived schedules cannot run'), { statusCode: 409 })
@@ -116,7 +121,7 @@ export class SchedulerDispatcher {
       do {
         occurrenceAt = this.at().replace(/Z$/, `${randomInt(1, 1_000_000_000_000).toString().padStart(12, '0')}Z`)
       } while (this.store.hasOccurrence(scheduleId, occurrenceAt))
-      const run = (await this.store.admit(scheduleId, occurrenceAt, 'manual', 'pending', undefined, undefined, schedule.revision))!
+      const run = (await this.store.admit(scheduleId, occurrenceAt, 'manual', 'pending', undefined, undefined, expectedRevision ?? schedule.revision, proposalId))!
       await this.overlap(run)
       await this.drain()
       this.planWake()
@@ -143,6 +148,7 @@ export class SchedulerDispatcher {
   }
 
   private async cycle(reconcile: boolean): Promise<void> {
+    await this.store.expireProposals()
     if (reconcile) {
       for (const run of this.store.allRuns().filter(isInFlight)) {
         if (run.status !== 'pending') await this.reconcile(run)

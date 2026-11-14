@@ -6,6 +6,10 @@ import path from 'node:path'
 import { z } from 'zod'
 import { validateRecurrence } from '../shared/schedule-recurrence.js'
 import {
+  scheduleProposalInputSchema, scheduleProposalSchema,
+  type ScheduleProposal, type ScheduleProposalInput, type ScheduleProposalsChanged,
+} from '../shared/schedule-proposals.js'
+import {
   scheduleCreateSchema, scheduleRunSchema, scheduleSchema, scheduleUpdateSchema,
   type Schedule, type ScheduleCreate, type ScheduleRun, type ScheduleRunPage,
   type ScheduleRunStatus, type ScheduleUpdate, type SchedulerChanged,
@@ -22,9 +26,10 @@ const stateSchema = z.object({
   runSchedules: z.record(z.string(), scheduleSchema),
   cursors: z.record(z.string(), timestamp),
   occurrences: z.record(z.string(), z.string()),
+  proposals: z.array(scheduleProposalSchema).max(1000).default([]),
 }).strict()
 type State = z.infer<typeof stateSchema>
-const empty = (): State => ({ version: 1, revision: 0, schedules: [], runs: [], runSchedules: {}, cursors: {}, occurrences: {} })
+const empty = (): State => ({ version: 1, revision: 0, schedules: [], runs: [], runSchedules: {}, cursors: {}, occurrences: {}, proposals: [] })
 const failure = (message: string, statusCode: number) => Object.assign(new Error(message), { statusCode })
 export const occurrenceKey = (scheduleId: string, occurrenceAt: string) => JSON.stringify([scheduleId, occurrenceAt])
 export const isInFlight = (run: ScheduleRun) =>
@@ -32,7 +37,7 @@ export const isInFlight = (run: ScheduleRun) =>
 export const holdsSlot = (run: ScheduleRun) => isInFlight(run) && run.status !== 'pending'
 
 /** One hub writer; the occurrence fence, intent, and launch identity commit together. */
-export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerChanged] }> {
+export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerChanged]; proposal: [event: ScheduleProposalsChanged] }> {
   readonly directory: string
   readonly statePath: string
   private state = empty()
@@ -137,6 +142,130 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     if (!result.valid) throw failure(result.errors.join('; '), 400)
   }
 
+  proposals(): ScheduleProposal[] { return structuredClone(this.state.proposals) }
+  proposal(id: string): ScheduleProposal {
+    const proposal = this.state.proposals.find((entry) => entry.id === id)
+    if (!proposal) throw failure('Schedule proposal not found', 404)
+    return structuredClone(proposal)
+  }
+
+  async propose(input: ScheduleProposalInput, allowAll = false): Promise<ScheduleProposal> {
+    const parsed = scheduleProposalInputSchema.parse(input)
+    return this.commit((next) => {
+      if (next.proposals.length >= 1000) {
+        const oldest = next.proposals.findIndex((entry) => !['pending', 'approved'].includes(entry.status))
+        if (oldest < 0) throw failure('Schedule proposal capacity reached', 409)
+        next.proposals.splice(oldest, 1)
+      }
+      const proposal = scheduleProposalSchema.parse({
+        ...parsed, id: randomUUID(), createdBy: 'oracle', createdAt: this.now(),
+        expiresAt: new Date(Date.parse(this.now()) + 24 * 60 * 60_000).toISOString(), status: 'pending',
+      })
+      this.proposalCandidate(next, proposal, allowAll)
+      next.proposals.push(proposal)
+      return { result: proposal, proposalId: proposal.id }
+    })
+  }
+
+  /** All approval guards and the schedule mutation share the durable transaction. */
+  async approveProposal(id: string, allowAll = false): Promise<ScheduleProposal> {
+    const proposal = await this.commit((next) => {
+      const proposal = next.proposals.find((entry) => entry.id === id)
+      if (!proposal) throw failure('Schedule proposal not found', 404)
+      if (['applied', 'approved'].includes(proposal.status)) return { result: proposal, proposalId: id }
+      if (proposal.status !== 'pending') throw failure(`Schedule proposal is ${proposal.status}`, proposal.status === 'expired' ? 410 : 409)
+      if (Date.parse(proposal.expiresAt) <= Date.parse(this.now())) {
+        proposal.status = 'expired'
+        return { result: proposal, proposalId: id }
+      }
+      try {
+        const schedule = this.proposalCandidate(next, proposal, allowAll)
+        if (proposal.operation === 'run-now') {
+          if (schedule.archived) throw failure('Archived schedules cannot run', 409)
+          proposal.status = 'approved'
+        } else {
+          if (proposal.operation === 'create') {
+            next.schedules.push(schedule)
+            next.cursors[schedule.id] = this.now()
+          } else {
+            const previous = this.requireSchedule(next, schedule.id)
+            next.schedules[next.schedules.indexOf(previous)] = schedule
+            if (proposal.operation === 'enable' || (proposal.operation === 'update' &&
+                (proposal.payload.recurrence !== undefined || proposal.payload.timezone !== undefined || proposal.payload.enabled))) {
+              next.cursors[schedule.id] = this.now()
+            }
+          }
+          proposal.status = 'applied'
+          proposal.appliedScheduleId = schedule.id
+        }
+        return { result: proposal, proposalId: id, scheduleId: proposal.operation === 'run-now' ? undefined : schedule.id }
+      } catch (error) {
+        proposal.status = 'failed'
+        proposal.error = (error as Error).message.slice(0, 2000)
+        return { result: proposal, proposalId: id }
+      }
+    })
+    if (proposal.status === 'expired') throw failure('Schedule proposal expired', 410)
+    if (proposal.status === 'failed') throw failure(proposal.error ?? 'Schedule proposal failed', 409)
+    return proposal
+  }
+
+  rejectProposal(id: string): Promise<ScheduleProposal> {
+    return this.commit((next) => {
+      const proposal = next.proposals.find((entry) => entry.id === id)
+      if (!proposal) throw failure('Schedule proposal not found', 404)
+      if (proposal.status !== 'pending' && proposal.status !== 'rejected') throw failure(`Schedule proposal is ${proposal.status}`, 409)
+      proposal.status = Date.parse(proposal.expiresAt) <= Date.parse(this.now()) ? 'expired' : 'rejected'
+      return { result: proposal, proposalId: id }
+    })
+  }
+
+  expireProposals(): Promise<void> {
+    return this.commit((next) => {
+      for (const proposal of next.proposals) {
+        if (proposal.status === 'pending' && Date.parse(proposal.expiresAt) <= Date.parse(this.now())) proposal.status = 'expired'
+      }
+      return { result: undefined, proposalId: '*' }
+    })
+  }
+
+  private proposalCandidate(next: State, proposal: ScheduleProposal, allowAll: boolean): Schedule {
+    let schedule: Schedule
+    if (proposal.operation === 'create') {
+      schedule = scheduleSchema.parse({
+        ...proposal.payload, id: proposal.id, revision: 1, archived: false, createdBy: 'oracle',
+        createdAt: this.now(), updatedAt: this.now(),
+      })
+    } else {
+      const previous = this.requireSchedule(next, proposal.scheduleId, proposal.baseRevision)
+      const changes = proposal.operation === 'update' ? proposal.payload
+        : proposal.operation === 'enable' ? { enabled: true }
+          : proposal.operation === 'disable' ? { enabled: false }
+            : proposal.operation === 'archive' ? { archived: true, enabled: false } : {}
+      schedule = scheduleSchema.parse({
+        ...previous, ...changes,
+        revision: previous.revision + (proposal.operation === 'run-now' ? 0 : 1), updatedAt: this.now(),
+      })
+    }
+    if (schedule.archived && schedule.enabled) throw failure('An archived schedule cannot be enabled', 409)
+    if (schedule.target.permissionPolicy === 'allow-all' && !allowAll &&
+        proposal.operation !== 'disable' && proposal.operation !== 'archive') {
+      throw failure('The hub does not permit allow-all for Oracle schedules', 403)
+    }
+    if (proposal.operation === 'create' || (proposal.operation === 'update' &&
+        (proposal.payload.recurrence !== undefined || proposal.payload.timezone !== undefined)) ||
+        (schedule.recurrence.type !== 'once' && ['enable', 'run-now'].includes(proposal.operation))) {
+      this.checkRecurrence(schedule)
+    }
+    const activeOthers = next.schedules.filter((entry) =>
+      entry.id !== schedule.id && entry.createdBy === 'oracle' && entry.enabled && !entry.archived).length
+    if (schedule.createdBy === 'oracle' && schedule.enabled && !schedule.archived && activeOthers >= 20) {
+      throw failure('At most 20 active Oracle-created schedules are allowed', 409)
+    }
+    this.checkName(next, schedule)
+    return schedule
+  }
+
   async create(input: ScheduleCreate, createdBy: Schedule['createdBy'] = 'user'): Promise<Schedule> {
     const parsed = scheduleCreateSchema.parse(input)
     return this.commit((next) => {
@@ -227,10 +356,15 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   /** Advances the due cursor in the same commit as the last admitted occurrence. */
   admit(
     scheduleId: string, occurrenceAt: string, trigger: ScheduleRun['trigger'],
-    status: ScheduleRunStatus = 'pending', cursor?: string, error?: string, expectedRevision?: number,
+    status: ScheduleRunStatus = 'pending', cursor?: string, error?: string, expectedRevision?: number, proposalId?: string,
   ): Promise<ScheduleRun | undefined> {
     return this.commit((next) => {
       const schedule = this.requireSchedule(next, scheduleId, expectedRevision)
+      const proposal = proposalId ? next.proposals.find((entry) => entry.id === proposalId) : undefined
+      if (proposalId && (!proposal || proposal.operation !== 'run-now' || proposal.scheduleId !== scheduleId ||
+          proposal.baseRevision !== schedule.revision || proposal.status !== 'approved')) {
+        throw failure('Schedule proposal does not authorize this run', 409)
+      }
       if (schedule.archived || (trigger !== 'manual' && !schedule.enabled)) {
         throw failure('Schedule is no longer eligible for dispatch', 409)
       }
@@ -255,7 +389,12 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       next.runs.push(run)
       next.runSchedules[run.id] = structuredClone(schedule)
       next.occurrences[key] = run.id
-      return { result: run, scheduleId, runId: run.id }
+      if (proposal) {
+        proposal.status = 'applied'
+        proposal.appliedRunId = run.id
+        proposal.appliedScheduleId = scheduleId
+      }
+      return { result: run, scheduleId, runId: run.id, proposalId }
     })
   }
 
@@ -279,18 +418,19 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
 
   async flush(): Promise<void> { await this.work }
 
-  private commit<T>(mutate: (next: State) => { result: T; scheduleId: string; runId?: string }): Promise<T> {
+  private commit<T>(mutate: (next: State) => { result: T; scheduleId?: string; runId?: string; proposalId?: string }): Promise<T> {
     const task = this.work.then(async () => {
       if (!this.initialized) throw new Error('Scheduler store is not initialized')
       if (this.poisoned) throw new Error('Scheduler commit outcome is uncertain; restart to reload durable state')
       const next = structuredClone(this.state)
-      const { result, scheduleId, runId } = mutate(next)
+      const { result, scheduleId, runId, proposalId } = mutate(next)
       if (JSON.stringify(next) !== JSON.stringify(this.state)) {
         const visible = JSON.stringify([next.schedules, next.runs]) !== JSON.stringify([this.state.schedules, this.state.runs])
         next.revision += 1
         await this.persist(next)
         this.state = next
-        if (visible) this.emit('changed', { type: 'schedules.changed', revision: next.revision, scheduleId, ...(runId ? { runId } : {}) })
+        if (visible && scheduleId) this.emit('changed', { type: 'schedules.changed', revision: next.revision, scheduleId, ...(runId ? { runId } : {}) })
+        if (proposalId) this.emit('proposal', { type: 'schedule-proposals.changed', revision: next.revision, proposalId })
       }
       return structuredClone(result)
     })

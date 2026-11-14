@@ -618,6 +618,7 @@ const settingNames: Record<SettingsProfileKey, string> = {
   oracleResponseStyle: 'Oracle’s response style',
   notificationScope: 'What notifies you',
   previewFeatures: 'Preview features',
+  schedulerAllowAllForOracle: 'Oracle schedule permissions',
 }
 
 /** Storage that may be blocked outright, as some private modes do. */

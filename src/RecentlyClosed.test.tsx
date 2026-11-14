@@ -105,7 +105,9 @@ describe('recently closed sessions', () => {
   }
 
   it('shows each session with when it closed, when it goes, and what it was about', () => {
-    const { dialog } = renderList()
+    const { dialog } = renderList({
+      sessions: [closed, session('fresh', { title: 'Fresh close', isOpen: false, closedAt: new Date(now).toISOString() })],
+    })
     const card = within(dialog).getByRole('article', { name: 'Release review' })
 
     expect(within(card).getByText('development')).toBeInTheDocument()
@@ -115,6 +117,7 @@ describe('recently closed sessions', () => {
     expect(within(card).getAllByRole('listitem').map((item) => item.textContent))
       .toEqual(['Draft the release notes', 'Add the migration step'])
     expect(card).toHaveTextContent('The notes are ready.')
+    expect(within(dialog).getByRole('article', { name: 'Fresh close' })).toHaveTextContent('Closed just now')
     expect(dialog).toHaveTextContent('Sessions closed on production appear here once it reconnects.')
   })
 

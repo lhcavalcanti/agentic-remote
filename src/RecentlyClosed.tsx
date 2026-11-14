@@ -8,7 +8,9 @@ import {
 import { DialogFrame } from './components/DialogFrame'
 import { computerTone, providerName, sessionKey, shortPath } from './session-presentation'
 
-const relativeTime = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
+// English like the rest of the interface, rather than the browser's language
+// inside an English sentence.
+const relativeTime = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 const minute = 60_000
 const hour = 60 * minute
 const day = 24 * hour
@@ -17,6 +19,7 @@ const day = 24 * hour
 function relative(at: number, now: number): string {
   const elapsed = at - now
   const distance = Math.abs(elapsed)
+  if (distance < minute) return elapsed > 0 ? 'in under a minute' : 'just now'
   if (distance < hour) return relativeTime.format(Math.round(elapsed / minute), 'minute')
   if (distance < day) return relativeTime.format(Math.round(elapsed / hour), 'hour')
   return relativeTime.format(Math.round(elapsed / day), 'day')

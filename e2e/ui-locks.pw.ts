@@ -581,7 +581,7 @@ test.describe('browser interaction contracts', () => {
     await expect(scheduler).toBeVisible()
     await expect(scheduler.locator('li[data-linked="true"]')).toContainText('missed')
     await expect(scheduler.locator('li[data-linked="true"]')).toBeInViewport()
-    expect(handle.requests).toContainEqual({ method: 'GET', path: '/api/schedules/fixture-daily-review/runs' })
+    expect(handle.requests).toContainEqual({ method: 'GET', path: '/api/schedules/fixture-daily-review/runs?limit=200' })
   })
 
   test('hands a pending schedule proposal to Oracle without approving it', async ({ page, baseURL }) => {

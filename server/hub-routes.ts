@@ -28,6 +28,7 @@ import type { SessionOrderStore } from './session-order-store.js'
 import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
 import type { ClientPresence } from './client-presence.js'
+import type { NotificationCenterService } from './notification-center-service.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
@@ -403,6 +404,7 @@ export async function registerHubRoutes(
   settingsProfile?: SettingsProfileStore,
   presence?: ClientPresence,
   oracleVoice?: OracleVoiceRouteOptions,
+  notifications?: NotificationCenterService,
 ): Promise<void> {
   const policy = originPolicy()
   // Assigned once the socket set exists further down. Until then a committed
@@ -669,6 +671,9 @@ export async function registerHubRoutes(
           request.params.computerId,
           request.params.sessionId,
         )
+      if (request.query.passive !== '1') {
+        await notifications?.sessionOpened(request.params.computerId, request.params.sessionId)
+      }
       return { session }
     },
   )
@@ -817,12 +822,14 @@ export async function registerHubRoutes(
 
   app.post<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/open',
-    async (request) => ({
-      session: await manager.activateSession(
+    async (request) => {
+      const session = await manager.activateSession(
         request.params.computerId,
         request.params.sessionId,
-      ),
-    }),
+      )
+      await notifications?.sessionOpened(request.params.computerId, request.params.sessionId)
+      return { session }
+    },
   )
 
   app.patch<{ Params: SessionParams }>(
@@ -1238,11 +1245,25 @@ export async function registerHubRoutes(
       presence?.remove(socket)
     })
   })
+  let broadcasts: Promise<unknown> = Promise.resolve()
   const broadcast = (event: HubEvent) => {
-    publications.broadcast(event)
+    if (!notifications) {
+      publications.broadcast(event)
+      return
+    }
+    const admitted = notifications.admission(event)
+    // Keep metadata and session publications in their original order while
+    // admission delays a signal the native producer may announce.
+    broadcasts = broadcasts.then(async () => {
+      await admitted
+      publications.broadcast(event)
+    }).catch((error: unknown) => {
+      app.log.error({ err: error }, 'Could not persist the notification for a hub event')
+    })
   }
   manager.on('event', broadcast)
   managerEvents?.on('event', broadcast)
+  notifications?.store.on('changed', broadcast)
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
   publishSettings = (settings) => broadcast({ type: 'settings.updated', settings })
@@ -1351,9 +1372,11 @@ export async function registerHubRoutes(
     closed = true
     manager.off('event', broadcast)
     managerEvents?.off('event', broadcast)
+    notifications?.store.off('changed', broadcast)
     manager.off('event', trackOrder)
     // Drain in-flight order work so a closing app leaves no write behind it.
     await seeding
     await orderWork
+    await broadcasts
   })
 }

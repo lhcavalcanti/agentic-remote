@@ -22,6 +22,7 @@ let runtime: Awaited<ReturnType<typeof buildApp>>
 beforeEach(async () => {
   vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.example.test')
   vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', '')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'on')
   directory = await mkdtemp(path.join(tmpdir(), 'agentic-origin-review-'))
   // Services are never started; no provider process or inference is needed.
   runtime = await buildApp({
@@ -44,6 +45,20 @@ afterEach(async () => {
 })
 
 describe('canonical API origin enforcement', () => {
+  it.each(prefixes)('guards notification reads and every mutation through %s', async (prefix) => {
+    for (const [method, suffix] of [
+      ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'],
+      ['POST', `/${'a'.repeat(64)}/read`], ['POST', `/${'a'.repeat(64)}/dismiss`],
+    ] as const) {
+      for (const headers of untrusted) {
+        expect((await runtime.app.inject({ method, url: `${prefix}/notifications${suffix}`, headers })).statusCode).toBe(403)
+      }
+    }
+    const listed = await runtime.app.inject({ url: `${prefix}/notifications`, headers: trusted })
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json()).toEqual({ notifications: [] })
+    expect(await runtime.notificationCenter!.store.unreadCount()).toBe(0)
+  })
   it.each(prefixes)('rejects untrusted reads and mutations through %s', async (prefix) => {
     for (const headers of untrusted) {
       const read = await runtime.app.inject({

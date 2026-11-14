@@ -73,6 +73,7 @@ import {
   saveSessionOrderLane,
   bootstrapSessionOrder,
   fetchSettingsProfile,
+  fetchHubFeatureFlags,
   saveSettingsChanges,
   importSettingsProfile,
   listClosedSessions,
@@ -1832,6 +1833,41 @@ describe('App', () => {
         body: 'Copilot CLI 1.0.98 did not start in a way Agentic Remote can use',
         urgent: true,
       }] : [])
+    })
+
+    it.each([false, true])('keeps native channel policy unchanged with notificationCenter=%s', async (notificationCenter) => {
+      vi.mocked(fetchHubFeatureFlags).mockResolvedValueOnce({ ...defaultHubFeatureFlags, notificationCenter })
+      vi.spyOn(shell, 'nativeShell').mockReturnValue(true)
+      const raised = vi.spyOn(shell, 'sendShellNotification').mockReturnValue(true)
+      seedHubSettings({ notificationScope: 'all' })
+      const muted = { ...secondSession, id: 'muted-native', status: 'running' as const }
+      vi.mocked(getPushSettings).mockResolvedValue({ mutedSessions: [`${muted.computerId}:${muted.id}`] })
+      vi.mocked(listSessions).mockResolvedValue([session, { ...secondSession, status: 'running' }, muted])
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
+      await act(async () => {})
+      const emit = (event: unknown) => act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify(event),
+      } as MessageEvent))
+      const question = { requestId: 'native-q', question: 'Where?', choices: [], allowFreeform: true }
+      emit({ type: 'notifications.changed', revision: 1, unreadCount: 1 })
+      emit({ type: 'session.upserted', session: { ...muted, pendingUserInput: question } })
+      emit({ type: 'session.upserted', session: { ...session, pendingUserInput: question } })
+      expect(raised).not.toHaveBeenCalled()
+      emit({ type: 'session.upserted', session: { ...secondSession, status: 'waiting', pendingUserInput: question } })
+      emit({ type: 'session.upserted', session: { ...secondSession, status: 'running' } })
+      emit({ type: 'session.upserted', session: { ...secondSession, status: 'idle' } })
+      emit({ type: 'error', notify: true, computerId: computer.id, message: 'Health alert' })
+      emit({ type: 'manager.message', message: { id: 'native-reply', role: 'assistant', replyTo: 'native-user', content: 'Done.', createdAt: 't' } })
+      emit({ type: 'manager.message', message: { id: 'native-user', role: 'user', content: 'Status?', state: 'done', createdAt: 't' } })
+      emit({ type: 'notifications.changed', revision: 2, unreadCount: 0 })
+      expect(raised.mock.calls.map(([notification]) => ({ tag: notification.tag, urgent: notification.urgent }))).toEqual([
+        { tag: `agentic-question-${secondSession.computerId}-${secondSession.id}`, urgent: true },
+        { tag: `agentic-finished-${secondSession.computerId}-${secondSession.id}`, urgent: false },
+        { tag: `agentic-alert-${computer.id}`, urgent: true },
+        { tag: 'agentic-oracle-reply', urgent: false },
+      ])
     })
 
     it('keeps the choice open when this device has notifications blocked', async () => {

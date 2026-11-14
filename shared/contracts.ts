@@ -1,5 +1,6 @@
 import type { ManagerEvent } from './manager.js'
 import type { SettingsProfileSnapshot } from './settings-profile.js'
+import type { NotificationsChanged } from './notification-center.js'
 
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
@@ -565,6 +566,7 @@ export type ServerEvent =
 
 export type HubEvent =
   | ManagerEvent
+  | NotificationsChanged
   | {
       type: 'session.upserted'
       session: ManagedSession

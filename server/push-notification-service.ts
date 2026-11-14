@@ -4,6 +4,7 @@ import type { PushSubscription, RequestOptions, SendResult } from 'web-push'
 import * as webPush from 'web-push'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
+import type { NotificationRecorder } from './notification-center-service.js'
 import {
   alertNotification,
   notificationAllowed,
@@ -55,6 +56,7 @@ export class PushNotificationService {
   private oracleSource?: OracleEventSource
   private readonly oracle = new OracleNotifier()
   private policy: PushPolicy = {}
+  private recorder?: NotificationRecorder
   private readonly notifiedActions = new Set<string>()
   private readonly sessionStatuses = new Map<string, ManagedSession['status']>()
 
@@ -115,6 +117,11 @@ export class PushNotificationService {
       .listSessions?.()
       .then((sessions) => {
         for (const session of sessions) {
+          if (this.recorder && !session.pendingPermission && !session.pendingUserInput) {
+            void this.recorder.hub({ type: 'session.upserted', session }, true).catch((error: unknown) => {
+              console.warn('Unable to seed notification center session state:', error)
+            })
+          }
           const key = this.sessionKey(session.computerId, session.id)
           if (!this.sessionStatuses.has(key)) {
             this.sessionStatuses.set(key, session.status)
@@ -131,6 +138,10 @@ export class PushNotificationService {
 
   setPolicy(policy: PushPolicy): void {
     this.policy = policy
+  }
+
+  setRecorder(recorder: NotificationRecorder | undefined): void {
+    this.recorder = recorder
   }
 
   /** Notifies Oracle's replies, failures, and requests for your OK. */
@@ -208,16 +219,36 @@ export class PushNotificationService {
   }
 
   private readonly handleOracleEvent = (event: ManagerEvent) => {
+    const persisted = this.recorder?.oracle(event)
+    if (persisted) {
+      void persisted.catch((error: unknown) => {
+        console.warn('Unable to persist Oracle notification:', error)
+      })
+    }
+    this.deliverOracleEvent(event, persisted)
+  }
+
+  private readonly deliverOracleEvent = (event: ManagerEvent, persisted?: Promise<void>) => {
     // Classified even when it will not be sent, so a notification held while
     // you watched Oracle is not sent later.
     const payload = this.oracle.next(event)
     if (!payload || this.policy.oracleWatched?.()) return
-    void this.sendPayload(payload, 'oracle').catch((error: unknown) => {
+    void this.sendPayload(payload, 'oracle', persisted).catch((error: unknown) => {
       console.warn('Unable to send Oracle push notification:', error)
     })
   }
 
   private readonly handleEvent = (event: HubEvent) => {
+    const persisted = this.recorder?.hub(event)
+    if (persisted) {
+      void persisted.catch((error: unknown) => {
+        console.warn('Unable to persist hub notification:', error)
+      })
+    }
+    this.deliverEvent(event, persisted)
+  }
+
+  private readonly deliverEvent = (event: HubEvent, persisted?: Promise<void>) => {
     if (event.type === 'computer.removed') {
       const prefix = `${event.computerId}:`
       for (const key of this.notifiedActions) {
@@ -251,7 +282,7 @@ export class PushNotificationService {
     }
     if (event.type === 'error') {
       if (event.notify) {
-        void this.notifyAlert(event.computerId, event.message).catch((error: unknown) => {
+        void this.notifyAlert(event.computerId, event.message, persisted).catch((error: unknown) => {
           console.warn('Unable to send alert push notification:', error)
         })
       }
@@ -285,7 +316,7 @@ export class PushNotificationService {
     if (action && !muted) {
       if (!this.notifiedActions.has(action.key)) {
         this.notifiedActions.add(action.key)
-        void this.notifyAction(session, action.brief).catch((error: unknown) => {
+        void this.notifyAction(session, action.brief, persisted).catch((error: unknown) => {
           console.warn('Unable to send action-needed push notification:', error)
         })
       }
@@ -298,7 +329,7 @@ export class PushNotificationService {
       !session.pendingUserInput &&
       !session.queuedCount
     ) {
-      void this.notifyCompletion(session).catch((error: unknown) => {
+      void this.notifyCompletion(session, persisted).catch((error: unknown) => {
         console.warn('Unable to send completion push notification:', error)
       })
     }
@@ -348,6 +379,7 @@ export class PushNotificationService {
   private async notifyAction(
     session: ManagedSession,
     action: string,
+    persisted?: Promise<void>,
   ): Promise<void> {
     await this.sendPayload({
       title: `Action needed · ${session.title}`,
@@ -357,17 +389,18 @@ export class PushNotificationService {
       data: {
         url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
       },
-    }, 'session')
+    }, 'session', persisted)
   }
 
   private async notifyAlert(
     computerId: string | undefined,
     message: string,
+    persisted?: Promise<void>,
   ): Promise<void> {
-    await this.sendPayload(alertNotification(computerId, message), 'alert')
+    await this.sendPayload(alertNotification(computerId, message), 'alert', persisted)
   }
 
-  private async notifyCompletion(session: ManagedSession): Promise<void> {
+  private async notifyCompletion(session: ManagedSession, persisted?: Promise<void>): Promise<void> {
     await this.sendPayload({
       title: `Finished · ${session.title}`,
       body: `${session.computerName} · No action needed`,
@@ -376,13 +409,14 @@ export class PushNotificationService {
       data: {
         url: `/?computer=${encodeURIComponent(session.computerId)}&session=${encodeURIComponent(session.id)}`,
       },
-    }, 'session')
+    }, 'session', persisted)
   }
 
   /** Without a category, as for a test, the scope does not apply. */
   private async sendPayload(
     payload: NotificationPayload,
     category?: NotificationCategory,
+    persisted?: Promise<void>,
   ): Promise<number> {
     if (category && !notificationAllowed(this.policy.scope?.(), category)) {
       return 0
@@ -391,11 +425,16 @@ export class PushNotificationService {
     if (state.subscriptions.length === 0) {
       return 0
     }
+    const subscriptions = persisted ? [...state.subscriptions] : state.subscriptions
+    // Admission starts before policy checks. Only external delivery waits for
+    // durability; event-time mute/presence/scope and clear-transfer semantics
+    // remain exactly the same even if disk I/O is slow.
+    if (persisted) await persisted
     const expired = new Set<string>()
     const failures: unknown[] = []
     let sent = 0
     await Promise.all(
-      state.subscriptions.map(async (subscription) => {
+      subscriptions.map(async (subscription) => {
         try {
           await this.sender(subscription, JSON.stringify(payload), {
             TTL: payload.priority === 'high' ? 3_600 : 900,

@@ -40,6 +40,9 @@ import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
 import { resolveDataDirectory } from './paths.js'
 import { PushNotificationService } from './push-notification-service.js'
+import { NotificationStore } from './notification-store.js'
+import { NotificationCenterService } from './notification-center-service.js'
+import { registerNotificationRoutes } from './notification-routes.js'
 import { ProviderSessionService } from './provider-session-service.js'
 import { registerPushRoutes } from './push-routes.js'
 import {
@@ -144,6 +147,7 @@ export async function buildApp(
   identity: NodeIdentityStore
   manager?: ComputerManager
   pushService?: PushNotificationService
+  notificationCenter?: NotificationCenterService
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
@@ -177,6 +181,7 @@ export async function buildApp(
   const app = Fastify({ logger: options.logger ?? true })
   if (hubFlags) app.log.info({ hubFlags }, 'Hub feature flags')
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
+  const startupPhases = options.startupPhases ?? silentStartupPhases
   const voiceSelection = readOracleVoiceSelection()
   let voiceConfig: OracleVoiceConfig = { enabled: false }
   let voiceConfigurationError: string | undefined
@@ -313,6 +318,7 @@ export async function buildApp(
 
   let manager: ComputerManager | undefined
   let pushService: PushNotificationService | undefined
+  let notificationCenter: NotificationCenterService | undefined
   let transcriptionService: TranscriptionService | undefined
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
@@ -357,6 +363,21 @@ export async function buildApp(
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
+    if (hubFlags?.notificationCenter) {
+      const store = new NotificationStore(dataDirectory, {
+        warn: (message) => app.log.warn(message),
+      })
+      await startupPhases.run('notifications.initialize', () => store.initialize())
+      notificationCenter = new NotificationCenterService(store, {
+        mutedSessions: () => pushService!.settings().mutedSessions,
+        readSession: (computerId, sessionId) => manager!.readSession(computerId, sessionId),
+      })
+      for (const computer of manager.listComputers()) {
+        await notificationCenter.hub({ type: 'computer.updated', computer }, true)
+      }
+    }
+    if (notificationCenter) pushService.setRecorder(notificationCenter)
+    else pushService.setRecorder?.(undefined)
     pushService.attach(manager)
     const presence = new ClientPresence()
     const profile = settingsProfileStore
@@ -519,6 +540,7 @@ export async function buildApp(
     } else {
       dreamerUnavailable = 'Dreamer is unavailable because Oracle is not running on this hub.'
     }
+    if (notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     await registerHubRoutes(
       app,
       manager,
@@ -542,8 +564,9 @@ export async function buildApp(
           ? 'Oracle voice is unavailable.'
           : voiceCapability.reason,
       },
+      notificationCenter,
     )
-    if (managerAgent) pushService.attachOracle(managerAgent)
+    if (!notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     app.get('/api/features', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
       return { hubFlags }
@@ -561,6 +584,7 @@ export async function buildApp(
       dreamerUnavailable ?? 'Dreamer is unavailable on this hub.',
     )
     await registerPushRoutes(app, pushService)
+    await registerNotificationRoutes(app, notificationCenter)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
       ? new DelegatedTranscriptionService({
@@ -619,7 +643,6 @@ export async function buildApp(
     : undefined
   // Ready only once the service has started, so the probe never races the
   // recovery of sessions that were open before a restart.
-  const startupPhases = options.startupPhases ?? silentStartupPhases
   app.addHook('onReady', async () => {
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
@@ -648,6 +671,7 @@ export async function buildApp(
     await managerAgent?.stop()
     manager?.stop()
     pushService?.stop()
+    await notificationCenter?.flush()
     await (transcriptionService ?? localTranscription).stop()
     await service.stop()
   })
@@ -658,6 +682,7 @@ export async function buildApp(
     identity,
     manager,
     pushService,
+    notificationCenter,
     transcriptionService: transcriptionService ?? localTranscription,
     knowledgeStore,
     sessionKnowledgeStore,

@@ -11186,7 +11186,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               ),
             ),
           )
-        } else {
+        } else if (event.type === 'error') {
           // A prompt that was handed over and then failed to send is gone from
           // the queue and was never in the composer, so the text comes back
           // here or nowhere. Anything typed since is newer and is left alone.

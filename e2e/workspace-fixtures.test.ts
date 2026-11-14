@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { KnowledgeRoot, ManagedSession, SessionKnowledgeBinding } from '../shared/contracts'
 import { ORACLE_VOICE_PROTOCOL, type VoiceCapabilities } from '../shared/oracle-voice'
 import type { SettingsProfileSnapshot, SettingsUpdateResult } from '../shared/settings-profile'
+import type { NotificationRecord } from '../shared/notification-center'
 import {
   createWorkspaceFixtureState,
   fixtureKnowledgeRoots,
@@ -12,7 +13,7 @@ import {
   setupWorkspaceFixture,
 } from './workspace-fixtures'
 
-async function fixtureApi() {
+async function fixtureApi(notifications?: NotificationRecord[]) {
   let handler!: (route: Route) => Promise<void>
   let socketHandler!: (socket: WebSocketRoute) => void
   const context = {
@@ -26,7 +27,7 @@ async function fixtureApi() {
     context: () => context,
   } as unknown as Page
   const state = createWorkspaceFixtureState()
-  const fixture = await setupWorkspaceFixture(page, { baseUrl: 'http://127.0.0.1:4840', state })
+  const fixture = await setupWorkspaceFixture(page, { baseUrl: 'http://127.0.0.1:4840', state, notifications })
   async function request<T = Record<string, unknown>>(path: string, method = 'GET', body?: object) {
     const multipart = body instanceof FormData
       ? new Request('http://127.0.0.1:4840', { method: 'POST', body })
@@ -150,6 +151,41 @@ describe('workspace fixture directory routing', () => {
 })
 
 describe('workspace fixture hub protocol', () => {
+  it('mocks disabled notification routes without failing closed on a known feature endpoint', async () => {
+    const { fixture, request } = await fixtureApi()
+    for (const [route, method] of [
+      ['/api/notifications', 'GET'], ['/api/notifications/unread-count', 'GET'],
+      ['/api/notifications/read-all', 'POST'], [`/api/notifications/${'a'.repeat(64)}/read`, 'POST'],
+      [`/api/notifications/${'a'.repeat(64)}/dismiss`, 'POST'],
+    ]) expect((await request(route, method)).status).toBe(404)
+    fixture.assertHealthy()
+  })
+
+  it('mocks enabled notification filters, mutations and typed socket invalidations', async () => {
+    const complete: NotificationRecord = {
+      id: 'a'.repeat(64), kind: 'session.completed', severity: 'info',
+      computerId: 'fixture-studio', sessionId: SELECTED_SESSION_ID,
+      title: 'Finished', body: 'No action needed', url: '/', createdAt: '2026-09-04T16:20:00.000Z',
+      coalesceKey: 'fixture', muted: false,
+    }
+    const failed: NotificationRecord = {
+      ...complete, id: 'b'.repeat(64), kind: 'session.failed', severity: 'error', sessionId: 'other',
+    }
+    const { fixture, request, openEvents } = await fixtureApi([complete, failed])
+    const sent = openEvents()
+    expect((await request('/api/features')).body).toMatchObject({ hubFlags: { notificationCenter: true } })
+    expect((await request('/api/notifications?failed=true')).body).toEqual({ notifications: [failed] })
+    await request(`/api/notifications/read-all?computerId=fixture-studio&sessionId=${SELECTED_SESSION_ID}`, 'POST')
+    expect((await request('/api/notifications/unread-count')).body).toEqual({ unreadCount: 1 })
+    await request(`/api/notifications/${failed.id}/read`, 'POST')
+    await request(`/api/notifications/${failed.id}/dismiss`, 'POST')
+    expect((await request('/api/notifications')).body).toEqual({ notifications: [expect.objectContaining({ id: complete.id, readAt: expect.any(String) })] })
+    expect(sent).toHaveLength(3)
+    expect(sent.at(-1)).toMatchObject({ type: 'notifications.changed', unreadCount: 0 })
+    fixture.emit({ type: 'notifications.changed', revision: 4, unreadCount: 0 })
+    expect(sent).toHaveLength(4)
+    fixture.assertHealthy()
+  })
   it('answers settings and voice as a current hub with voice switched off', async () => {
     const { fixture, request } = await fixtureApi()
     const initial = await request<{ settings: SettingsProfileSnapshot }>('/api/settings')

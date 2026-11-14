@@ -1,5 +1,6 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
 import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
+import type { NotificationRecord } from '../shared/notification-center'
 import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
 import {
@@ -459,6 +460,11 @@ export const fixtureKnowledgePositions = Object.fromEntries(
 
 export const fixtureEndpoints = [
   'GET /api/features',
+  'GET /api/notifications',
+  'GET /api/notifications/unread-count',
+  'POST /api/notifications/read-all',
+  'POST /api/notifications/:id/read',
+  'POST /api/notifications/:id/dismiss',
   'GET /api/computers',
   'GET /api/sessions',
   'GET /api/history',
@@ -495,6 +501,8 @@ export interface WorkspaceFixtureOptions {
   directoryListings?: Record<string, string[]>
   /** The manager agent's snapshot; absent keeps the manager hidden. */
   manager?: ManagerSnapshot
+  /** Omitted keeps the hub notification center disabled, as in production. */
+  notifications?: NotificationRecord[]
   /** Use a native event socket only on the already-validated local fixture origin. */
   nativeLocalEvents?: boolean
   realClock?: boolean
@@ -616,6 +624,8 @@ export async function setupWorkspaceFixture(
 ): Promise<WorkspaceFixture> {
   const baseUrl = fixtureBaseUrl(options.baseUrl)
   const state = options.state ?? createWorkspaceFixtureState()
+  const notifications = structuredClone(options.notifications ?? [])
+  let notificationRevision = 0
   const extraKnowledgeFiles = options.extraKnowledgeFiles ?? 0
   const directoryListings = options.directoryListings ?? {}
   if (!Number.isInteger(extraKnowledgeFiles) || extraKnowledgeFiles < 0 || extraKnowledgeFiles > 200) {
@@ -777,7 +787,45 @@ export async function setupWorkspaceFixture(
       })
 
     if (method === 'GET' && path === '/api/features') {
-      await respond({ hubFlags: state.hubFlags })
+      await respond({ hubFlags: {
+        ...state.hubFlags,
+        notificationCenter: state.hubFlags.notificationCenter || options.notifications !== undefined,
+      } })
+      return
+    }
+    if ((method === 'GET' && ['/api/notifications', '/api/notifications/unread-count'].includes(path)) ||
+        (method === 'POST' && (path === '/api/notifications/read-all' || /^\/api\/notifications\/[a-f0-9]{64}\/(?:read|dismiss)$/.test(path)))) {
+      if (options.notifications === undefined) {
+        await respond({ error: 'Notification center is disabled' }, 404)
+        return
+      }
+      const filtered = () => notifications.filter((record) =>
+        !record.dismissedAt &&
+        (!url.searchParams.has('unread') || !record.readAt === (url.searchParams.get('unread') === 'true')) &&
+        (!url.searchParams.has('failed') || (record.severity === 'error') === (url.searchParams.get('failed') === 'true')) &&
+        ['kind', 'sessionId', 'computerId'].every((key) =>
+          !url.searchParams.has(key) || record[key as 'kind' | 'sessionId' | 'computerId'] === url.searchParams.get(key)),
+      )
+      if (method === 'GET') {
+        await respond(path.endsWith('/unread-count')
+          ? { unreadCount: filtered().filter((record) => !record.readAt).length }
+          : { notifications: filtered() })
+        return
+      }
+      if (path.endsWith('/read-all')) {
+        filtered().forEach((record) => { record.readAt ??= FIXTURE_NOW })
+      } else {
+        const record = notifications.find((record) => record.id === path.split('/')[3])
+        if (!record) {
+          await respond({ error: 'Notification not found' }, 404)
+          return
+        }
+        if (path.endsWith('/dismiss')) record.dismissedAt ??= FIXTURE_NOW
+        else record.readAt ??= FIXTURE_NOW
+      }
+      emit({ type: 'notifications.changed', revision: ++notificationRevision,
+        unreadCount: notifications.filter((record) => !record.readAt && !record.dismissedAt).length })
+      await respond({ ok: true })
       return
     }
     if (method === 'GET' && path === '/api/computers') {

@@ -1528,6 +1528,46 @@ button {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+/* After the last computer, where older things live: a way back to what was
+   closed rather than another session. */
+.session-list__recently-closed {
+  display: flex;
+  width: calc(100% - 8px);
+  min-height: 40px;
+  margin: 14px 4px 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: var(--muted);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-small);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-list__recently-closed:hover,
+.session-list__recently-closed:focus-visible {
+  color: var(--text);
+  border-style: solid;
+}
+
+.session-list__recently-closed-label {
+  flex: 1;
+}
+
+.session-list__recently-closed-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--panel-raised);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .session-list__error {
   flex: 0 0 auto;
   margin: 0 4px 8px;
@@ -1921,32 +1961,38 @@ button {
 }
 
 .computer-session-group--tone-0,
-.session-item--tone-0 {
+.session-item--tone-0,
+.recently-closed-card--tone-0 {
   --computer-accent: #6ea8fe;
 }
 
 .computer-session-group--tone-1,
-.session-item--tone-1 {
+.session-item--tone-1,
+.recently-closed-card--tone-1 {
   --computer-accent: #9b8afb;
 }
 
 .computer-session-group--tone-2,
-.session-item--tone-2 {
+.session-item--tone-2,
+.recently-closed-card--tone-2 {
   --computer-accent: #e7a45f;
 }
 
 .computer-session-group--tone-3,
-.session-item--tone-3 {
+.session-item--tone-3,
+.recently-closed-card--tone-3 {
   --computer-accent: #55bfa7;
 }
 
 .computer-session-group--tone-4,
-.session-item--tone-4 {
+.session-item--tone-4,
+.recently-closed-card--tone-4 {
   --computer-accent: #db7fa8;
 }
 
 .computer-session-group--tone-5,
-.session-item--tone-5 {
+.session-item--tone-5,
+.recently-closed-card--tone-5 {
   --computer-accent: #c9b85f;
 }
 
@@ -2608,9 +2654,175 @@ button {
 }
 
 .primary-button:disabled,
-.secondary-button:disabled {
+.secondary-button:disabled,
+.danger-button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.danger-button {
+  display: inline-flex;
+  min-height: 42px;
+  max-width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 16px;
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 660;
+  cursor: pointer;
+}
+
+.danger-button:hover:not(:disabled),
+.danger-button:focus-visible {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/* Close keeps the session; deleting for good is offered below a rule, so the
+   two are never one tap apart. */
+.close-session-dialog__message {
+  margin: 0 0 18px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.close-session-dialog__actions {
+  display: grid;
+  gap: 8px;
+}
+
+.close-session-dialog__permanent {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.close-session-dialog__permanent .dialog-message {
+  margin: 0;
+}
+
+.dialog.recently-closed-dialog {
+  display: flex;
+  width: min(100%, 560px);
+  min-height: 0;
+  max-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.recently-closed-dialog .dialog__header {
+  flex: 0 0 auto;
+  margin-bottom: 10px;
+}
+
+.recently-closed-dialog__intro {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+
+.recently-closed-list {
+  display: flex;
+  min-height: 0;
+  margin: 0;
+  padding: 0 2px 2px 0;
+  flex-direction: column;
+  gap: 10px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.recently-closed-card {
+  --computer-accent: #788075;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--computer-accent);
+  border-radius: 12px;
+  background: var(--panel-raised);
+}
+
+.recently-closed-card h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 640;
+  overflow-wrap: anywhere;
+}
+
+.recently-closed-card__where,
+.recently-closed-card__when {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.recently-closed-card__computer {
+  color: var(--computer-accent);
+  font-weight: 600;
+}
+
+.recently-closed-card__folder {
+  overflow-wrap: anywhere;
+}
+
+.recently-closed-card__context {
+  margin-top: 10px;
+}
+
+.recently-closed-card__context h4 {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.recently-closed-card__context ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.recently-closed-card__context li,
+.recently-closed-card__context p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.recently-closed-card__context p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
+.recently-closed-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.recently-closed-card__actions > button {
+  flex: 1 1 150px;
 }
 
 .message-stack {

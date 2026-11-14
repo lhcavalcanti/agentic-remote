@@ -51,6 +51,7 @@ import {
   createSession,
   configureRuntime,
   configureRetention,
+  closeSession,
   deleteSession,
   dispatchQueuedPrompt,
   executeCommand,
@@ -73,6 +74,7 @@ import {
   fetchSettingsProfile,
   saveSettingsChanges,
   importSettingsProfile,
+  listClosedSessions,
   listDirectories,
   listHistory,
   listKnowledgeRoots,
@@ -249,6 +251,7 @@ vi.mock('./api', async (importOriginal) => ({
   dispatchQueuedPrompt: vi.fn(),
   listComputers: vi.fn(),
   listHistory: vi.fn(),
+  listClosedSessions: vi.fn(),
   listKnowledgeRoots: vi.fn(),
   addKnowledgeRoot: vi.fn(),
   deleteKnowledgeRoot: vi.fn(),
@@ -285,6 +288,7 @@ vi.mock('./api', async (importOriginal) => ({
   cancelSession: vi.fn(),
   askSession: vi.fn(),
   cancelBackgroundTask: vi.fn(),
+  closeSession: vi.fn(),
   deleteSession: vi.fn(),
   replyPermission: vi.fn(),
   replyUserInput: vi.fn(),
@@ -327,6 +331,7 @@ const computer: ComputerSummary = {
       terminalBacked: true,
       supportsTmuxMigration: true,
       supportsContextRecovery: true,
+      supportsRecoverableClose: true,
     },
     {
       id: 'claude',
@@ -548,6 +553,13 @@ function sessionAction(name: string) {
   return within(
     screen.getByRole('group', { name: 'Session actions' }),
   ).getByRole('button', { name })
+}
+
+/** Answers the Close confirmation: to reopen later, or for good. */
+function confirmClose(choice: 'Close session' | 'Delete permanently' | 'Cancel' = 'Close session') {
+  fireEvent.click(
+    within(screen.getByRole('dialog', { name: 'Close session' })).getByRole('button', { name: choice }),
+  )
 }
 
 async function findSessionAction(name: string) {
@@ -2436,6 +2448,15 @@ describe('App', () => {
       isOpen: true,
     })
     vi.mocked(deleteSession).mockResolvedValue()
+    vi.mocked(closeSession).mockImplementation(async (computerId, sessionId) => ({
+      ...session,
+      id: sessionId,
+      computerId,
+      isOpen: false,
+      closedAt: '2026-07-22T01:00:00.000Z',
+      messages: [],
+    }))
+    vi.mocked(listClosedSessions).mockResolvedValue([])
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     Element.prototype.scrollTo = vi.fn()
     Element.prototype.scrollIntoView = vi.fn()
@@ -8233,6 +8254,7 @@ describe('App', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
       await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
       fireEvent.click(sessionAction('Close session'))
+      confirmClose()
       await waitFor(() => expect(screen.queryByText('Project chat')).not.toBeInTheDocument())
       await act(async () => {
         if (outcome === 'accepted') {
@@ -17076,16 +17098,152 @@ describe('App', () => {
     })
   })
 
-  it('closes the owning Copilot session after confirmation', async () => {
+  it('closes the owning Copilot session to reopen once confirmed', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
 
     fireEvent.click(sessionAction('Close session'))
+    expect(screen.getByRole('dialog', { name: 'Close session' })).toHaveTextContent(
+      'Close “Project chat” on development? You can reopen it from Recently closed for 14 days.',
+    )
+    expect(closeSession).not.toHaveBeenCalled()
+    confirmClose()
+
+    await waitFor(() => {
+      expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-1')
+    })
+    expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Close session' })).not.toBeInTheDocument()
+    expect(deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('deletes a session for good from the Close confirmation', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(sessionAction('Close session'))
+    confirmClose('Delete permanently')
 
     await waitFor(() => {
       expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1')
     })
+    expect(closeSession).not.toHaveBeenCalled()
     expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
+  })
+
+  it('keeps a session open when its Close is cancelled', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close Project chat' }))
+    confirmClose('Cancel')
+
+    expect(screen.queryByRole('dialog', { name: 'Close session' })).not.toBeInTheDocument()
+    expect(closeSession).not.toHaveBeenCalled()
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect(screen.getByText('Hello agent')).toBeInTheDocument()
+  })
+
+  it('drops a Close confirmation whose session was closed elsewhere', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(sessionAction('Close session'))
+    expect(screen.getByRole('dialog', { name: 'Close session' })).toBeInTheDocument()
+
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.removed', computerId: computer.id, sessionId: session.id, closed: true }),
+      } as MessageEvent)
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Close session' })).not.toBeInTheDocument(),
+    )
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session }),
+      } as MessageEvent)
+    })
+
+    expect(await screen.findByRole('button', { name: /^Project chat,/ })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Close session' })).not.toBeInTheDocument()
+    expect(closeSession).not.toHaveBeenCalled()
+  })
+
+  it('lists recently closed sessions from the Sessions list and reopens one', async () => {
+    const closedReview: ManagedSession = {
+      ...secondSession,
+      id: 'session-3',
+      title: 'Release review',
+      isOpen: false,
+      closedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+      closedContext: {
+        title: 'Release review',
+        cwd: secondSession.cwd,
+        prompts: ['Draft the release notes'],
+        reply: 'The notes are ready.',
+      },
+    }
+    vi.mocked(listClosedSessions).mockResolvedValue([closedReview])
+    vi.mocked(activateSession).mockResolvedValue({ ...closedReview, isOpen: true, closedAt: undefined })
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Recently closed/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Recently closed' })
+    const card = await within(dialog).findByRole('article', { name: 'Release review' })
+    expect(card).toHaveTextContent('Draft the release notes')
+    expect(card).toHaveTextContent('Closed 2 hours ago')
+    expect(screen.getByRole('button', { name: 'Recently closed, 1 session' })).toBeInTheDocument()
+    fireEvent.click(within(card).getByRole('button', { name: 'Reopen Release review' }))
+
+    await waitFor(() => expect(activateSession).toHaveBeenCalledWith('computer-1', 'session-3'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Release review,/ })).toHaveAttribute('aria-current', 'page'),
+    )
+    expect(screen.queryByRole('dialog', { name: 'Recently closed' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Recently closed' })).toBeInTheDocument()
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('shows a session closed here under Recently closed, and deletes it for good from there', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(sessionAction('Close session'))
+    confirmClose()
+    const entry = await screen.findByRole('button', { name: 'Recently closed, 1 session' })
+    vi.mocked(listClosedSessions).mockResolvedValue([
+      { ...session, isOpen: false, closedAt: '2026-07-22T01:00:00.000Z', messages: [] },
+    ])
+
+    fireEvent.click(entry)
+    const dialog = await screen.findByRole('dialog', { name: 'Recently closed' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete Project chat permanently' }))
+
+    await waitFor(() => expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1'))
+    expect(await within(dialog).findByText(/Nothing closed in the last 14 days/)).toBeInTheDocument()
+  })
+
+  it('treats a closed session reopened on another device as usable again', async () => {
+    const target = resourceSession()
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(sessionAction('Close session'))
+    confirmClose()
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.removed', computerId: computer.id, sessionId: target.id, closed: true }),
+      } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: target }),
+      } as MessageEvent)
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Project chat,/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View session skills' }))
+
+    expect(await screen.findByRole('dialog', { name: 'Skills and MCP servers' })).toBeInTheDocument()
   })
 
   it('routes card Close and Pause actions to the remote session computer', async () => {
@@ -17112,23 +17270,27 @@ describe('App', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
 
-    expect(window.confirm).toHaveBeenCalledWith(
-      'Close "Second chat" on worker-node?\n\nThis permanently deletes the GitHub Copilot session and its history from that computer.',
+    // This computer cannot keep a closed session, so Close only deletes there.
+    expect(screen.getByRole('dialog', { name: 'Close session' })).toHaveTextContent(
+      'worker-node deletes closed sessions for good: this removes the GitHub Copilot session and its history.',
     )
+    confirmClose('Delete permanently')
     await waitFor(() =>
       expect(deleteSession).toHaveBeenCalledWith('computer-2', 'session-2'),
     )
+    expect(closeSession).not.toHaveBeenCalled()
   })
 
   it('reveals a card close failure from the phone session drawer', async () => {
     const originalWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
-    vi.mocked(deleteSession).mockRejectedValueOnce(new Error('Node refused the close'))
+    vi.mocked(closeSession).mockRejectedValueOnce(new Error('Node refused the close'))
     try {
       render(<App />)
       await screen.findAllByText('Project chat')
       fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
       fireEvent.click(screen.getByRole('button', { name: 'Close Project chat' }))
+      confirmClose()
 
       expect(await screen.findByRole('alert')).toHaveTextContent(
         'Node refused the close',
@@ -17154,15 +17316,16 @@ describe('App', () => {
       listed.find((entry) => entry.id === sessionId) || session,
     )
     let finishDelete: (() => void) | undefined
-    vi.mocked(deleteSession).mockReturnValueOnce(new Promise<void>((resolve) => {
-      finishDelete = resolve
+    vi.mocked(closeSession).mockReturnValueOnce(new Promise<ManagedSession>((resolve) => {
+      finishDelete = () => resolve({ ...session, isOpen: false, closedAt: '2026-07-22T01:00:00.000Z' })
     }))
     render(<App />)
     await screen.findByText('Hello agent')
 
     fireEvent.click(sessionAction('Close session'))
+    confirmClose()
     await waitFor(() =>
-      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+      expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-1'),
     )
     fireEvent.click(screen.getByRole('button', { name: /^Third chat,/ }))
     await waitFor(() =>
@@ -17193,6 +17356,7 @@ describe('App', () => {
     await screen.findByText('Hello agent')
 
     fireEvent.click(sessionAction('Close session'))
+    confirmClose()
 
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /^Second chat,/ }))
@@ -17207,15 +17371,16 @@ describe('App', () => {
       sessionId === secondSession.id ? secondSession : session,
     )
     let finishFirst: (() => void) | undefined
-    vi.mocked(deleteSession).mockReturnValueOnce(new Promise<void>((resolve) => {
-      finishFirst = resolve
+    vi.mocked(closeSession).mockReturnValueOnce(new Promise<ManagedSession>((resolve) => {
+      finishFirst = () => resolve({ ...session, isOpen: false, closedAt: '2026-07-22T01:00:00.000Z' })
     }))
     render(<App />)
     await screen.findAllByText('Second chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Project chat' }))
+    confirmClose()
     await waitFor(() =>
-      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1'),
+      expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-1'),
     )
     // Only the session being closed waits for its close.
     expect(screen.getByRole('button', { name: 'Close Project chat' })).toBeDisabled()
@@ -17224,8 +17389,9 @@ describe('App', () => {
     expect(closeSecond).toBeEnabled()
 
     fireEvent.click(closeSecond)
+    confirmClose()
     await waitFor(() =>
-      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+      expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-2'),
     )
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /^Second chat,/ })).not.toBeInTheDocument(),
@@ -17239,8 +17405,7 @@ describe('App', () => {
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
     )
-    expect(deleteSession).toHaveBeenCalledTimes(2)
-    expect(window.confirm).toHaveBeenCalledTimes(2)
+    expect(closeSession).toHaveBeenCalledTimes(2)
   })
 
   it('moves a reader off a closed session past one that is still closing', async () => {
@@ -17256,19 +17421,21 @@ describe('App', () => {
     vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
       listed.find((entry) => entry.id === sessionId) || session,
     )
-    vi.mocked(deleteSession).mockImplementation((_computerId, sessionId) =>
+    vi.mocked(closeSession).mockImplementation((_computerId, sessionId) =>
       sessionId === secondSession.id
-        ? new Promise<void>(() => {})
-        : Promise.resolve(),
+        ? new Promise<ManagedSession>(() => {})
+        : Promise.resolve({ ...session, isOpen: false, closedAt: '2026-07-22T01:00:00.000Z' }),
     )
     render(<App />)
     await screen.findByText('Hello agent')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
+    confirmClose()
     await waitFor(() =>
-      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+      expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-2'),
     )
     fireEvent.click(sessionAction('Close session'))
+    confirmClose()
 
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
@@ -17284,19 +17451,21 @@ describe('App', () => {
     vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
       sessionId === secondSession.id ? secondSession : session,
     )
-    vi.mocked(deleteSession).mockImplementation((_computerId, sessionId) =>
+    vi.mocked(closeSession).mockImplementation((_computerId, sessionId) =>
       sessionId === secondSession.id
-        ? new Promise<void>(() => {})
-        : Promise.resolve(),
+        ? new Promise<ManagedSession>(() => {})
+        : Promise.resolve({ ...session, isOpen: false, closedAt: '2026-07-22T01:00:00.000Z' }),
     )
     render(<App />)
     await screen.findByText('Hello agent')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
+    confirmClose()
     await waitFor(() =>
-      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+      expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-2'),
     )
     fireEvent.click(sessionAction('Close session'))
+    confirmClose()
 
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
@@ -17310,19 +17479,21 @@ describe('App', () => {
     vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
       sessionId === secondSession.id ? secondSession : session,
     )
-    vi.mocked(deleteSession).mockImplementation((_computerId, sessionId) =>
+    vi.mocked(closeSession).mockImplementation((_computerId, sessionId) =>
       sessionId === secondSession.id
-        ? new Promise<void>(() => {})
-        : Promise.resolve(),
+        ? new Promise<ManagedSession>(() => {})
+        : Promise.resolve({ ...session, isOpen: false, closedAt: '2026-07-22T01:00:00.000Z' }),
     )
     render(<App />)
     await screen.findByText('Hello agent')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
+    confirmClose()
     await waitFor(() =>
-      expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-2'),
+      expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-2'),
     )
     fireEvent.click(sessionAction('Close session'))
+    confirmClose()
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /^Project chat,/ })).not.toBeInTheDocument(),
     )
@@ -21870,7 +22041,7 @@ describe('App', () => {
     }
     expect(screen.getByRole('button', { name: 'Mute session notifications' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Close session' })).toHaveAccessibleDescription(
-      'Permanently deletes this session and history',
+      'Stops it; reopen it from Recently closed for 14 days',
     )
     expect(deleteSession).not.toHaveBeenCalled()
     expect(clearConversation).not.toHaveBeenCalled()
@@ -24686,6 +24857,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(sessionAction('Close session'))
+    confirmClose()
 
     await waitFor(() =>
       expect(

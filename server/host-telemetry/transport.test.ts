@@ -353,6 +353,30 @@ describe('gated hub and authenticated node host transport', () => {
     expect(node.hostTelemetry!.sampler.status().viewers).toBe(0)
   })
 
+  it.each([
+    ['malformed JSON', '{not-json', 502, /invalid host telemetry/],
+    ['schema-invalid JSON', '{"unexpected":"fictional"}', 502, /invalid host telemetry/],
+    ['connection failure', undefined, 503, /unavailable/],
+  ] as const)('maps %s through hub HTTP reads without changing computer connectivity', async (_label, body, statusCode, message) => {
+    const node = await make('node-fictional', { role: 'node' })
+    node.app.addHook('onSend', async (request, reply, payload) => {
+      if (!request.url.startsWith('/node-api/host')) return payload
+      if (body === undefined) {
+        reply.raw.destroy()
+        return payload
+      }
+      return body
+    })
+    const hub = await make('hub-fictional')
+    const prefix = await pair(hub, node)
+    for (const suffix of ['', '/history?range=24h', '/processes']) {
+      const response = await hub.app.inject({ url: prefix + suffix })
+      expect(response.statusCode).toBe(statusCode)
+      expect(response.json().error).toMatch(message)
+      expect(hub.manager!.listComputers().find((computer) => computer.id === node.identity.info.id)?.online).toBe(true)
+    }
+  })
+
   it('returns an actionable 409 for old nodes before HTTP reads or a live upgrade', async () => {
     const node = await make('old-fictional', { role: 'node' })
     const hub = await make('hub-fictional')

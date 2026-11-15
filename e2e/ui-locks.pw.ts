@@ -97,7 +97,12 @@ test.describe('browser interaction contracts', () => {
   })
 
   test('rail opens Oracle and offers only implemented views', async ({ page, baseURL }) => {
-    await open(page, baseURL, 'desktop-rail')
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.getByRole('button', { name: 'Close Oracle', exact: true }).click()
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }) })
+    }, handle.state.settings.revision)
     const navigation = page.getByRole('navigation', { name: 'App navigation' })
     await expect(navigation.getByRole('button', { name: 'Notifications' })).toHaveCount(0)
     await expect(navigation.getByRole('button', { name: 'Host monitor' })).toHaveCount(0)
@@ -107,8 +112,11 @@ test.describe('browser interaction contracts', () => {
   })
 
   test('keeps rail navigation and docked Oracle within layout budgets', async ({ page, baseURL }) => {
-    await open(page, baseURL, 'desktop-rail')
-    await page.getByRole('button', { name: 'Open Oracle', exact: true }).click()
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }) })
+    }, handle.state.settings.revision)
     await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
     for (const width of [1083, 1050, 1024, 1023, 990, 961]) {
       await page.setViewportSize({ width, height: 900 })

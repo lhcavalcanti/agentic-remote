@@ -2,7 +2,7 @@
 
 The client feature registry describes a label, lucide icon, optional ordered rail entry and open action. It has no server counterpart: a server plugin registry is unnecessary until a server feature needs one. Existing origin-enforced route registration and service startup remain authoritative.
 
-`desktopRail` is a default-off Interface preview. Above 960 px it adds a compact rail beside the unchanged session navigation; narrower layouts place the same footer entries at the bottom of the drawer. Existing shortcuts and session ownership do not change. The Oracle button opens the existing Oracle panel. Feature entries appear only when their views are implemented and their effective previews are on.
+`desktopRail` is a default-off Interface preview. Above 960 px it adds a compact rail beside the unchanged session navigation; narrower layouts place the same footer entries at the bottom of the drawer. Existing shortcuts and session ownership do not change. The Oracle button opens the existing Oracle panel. Feature entries appear only when their views are implemented and their effective previews are on: Notifications (with its unread badge), Host monitor and Scheduler each register their rail entry together with their view, so a preview never shows an entry that opens an unfinished placeholder.
 
 Oracle docking and width budgets include the 64 px rail. If the conversation cannot keep its 360 px minimum, Oracle temporarily overlays without changing the saved docking preference.
 

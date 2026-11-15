@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedSession, PendingPermission } from '../shared/contracts.js'
 import type { LaunchReconciliation, PromptAcceptanceReceipt, TerminationAcknowledgement } from '../shared/launch-identity.js'
 import type { ScheduleCreate } from '../shared/schedules.js'
+import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
+import { AgentService, type CopilotClientLike } from './agent-service.js'
 import { ComputerManager } from './computer-manager.js'
 import type { ComputerRegistry } from './computer-registry.js'
 import { JournalRecorder } from './manager-journal.js'
@@ -16,8 +18,9 @@ import { SessionScheduleLauncher, scheduleSessionTitle, type ScheduleLauncherHos
 import { ScheduleLaunchRefusedError, SchedulerDispatcher } from './scheduler-dispatcher.js'
 import { holdsSlot, SchedulerStore } from './scheduler-store.js'
 import type { SessionService } from './session-service.js'
+import { SessionStore } from './session-store.js'
 import type { ScheduleWorktreeService } from './schedule-worktrees.js'
-import { RemoteNodeTransportError } from './remote-node-errors.js'
+import { RemoteNodeRequestError, RemoteNodeTransportError } from './remote-node-errors.js'
 
 const directories: string[] = []
 const dispatchers: SchedulerDispatcher[] = []
@@ -227,6 +230,72 @@ describe('schedule runner', () => {
     await dispatcher.start()
     await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
     expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+  })
+
+  it.each(['empty-local', 'transport-local', 'timeout-local', 'empty-remote'] as const)(
+    'retries a transient second model refresh within the offline window: %s', async (failure) => {
+      const f = await fixture({ target: {
+        computerId: 'hub', folder: '/fictional/repo', provider: 'copilot', model: 'fictional-model',
+      } })
+      const ownerStore = new SessionStore(path.join(f.directory, 'owner'))
+      await ownerStore.initialize()
+      const models = vi.fn().mockResolvedValueOnce({ models: [{ id: 'fictional-model', name: 'Fictional model' }] })
+        .mockImplementation(async () => {
+          if (failure === 'transport-local') throw new TypeError('Model transport disconnected')
+          if (failure === 'timeout-local') throw Object.assign(new Error('Model refresh timed out'), { name: 'TimeoutError' })
+          return { models: [] }
+        })
+      const sdkCreate = vi.fn()
+      const owner = new AgentService(ownerStore, {
+        rpc: { models: { list: models } }, createSession: sdkCreate, stop: vi.fn(async () => []),
+      } as unknown as CopilotClientLike)
+      const remote = failure === 'empty-remote'
+      const [computer] = f.host.listComputers()
+      f.host.listComputers = () => [{ ...computer, isLocal: !remote }]
+      vi.mocked(f.host.validateSessionDirectory).mockResolvedValue(f.directory)
+      vi.mocked(f.host.providerRuntimeOptions).mockImplementation((_computer, provider) => owner.providerRuntimeOptions(provider))
+      vi.mocked(f.host.createSession).mockImplementation(async (computerId, input) => {
+        try {
+          const created = await owner.createSession(input.cwd, false, false, 'copilot', input.model,
+            input.reasoningEffort, input.contextTier, input.mode, input.launchId)
+          return { ...created, computerId, computerName: computer.name }
+        } catch (error) {
+          if (!remote) throw error
+          throw new RemoteNodeRequestError((error as Error).message,
+            (error as Error & { statusCode: number }).statusCode, undefined, deliveryUncertaintyFromError(error))
+        }
+      })
+      let now = Date.now()
+      const dispatcher = new SchedulerDispatcher(f.store, f.runner, { now: () => now })
+      dispatchers.push(dispatcher)
+      try {
+        await dispatcher.start()
+        await vi.waitFor(() => {
+          expect(models).toHaveBeenCalledTimes(2)
+          expect(f.store.getRun(f.run.id).status).toBe('pending')
+        })
+        const pending = f.store.getRun(f.run.id)
+        expect(pending.retryUntil).toBeDefined()
+        expect(holdsSlot(pending)).toBe(false)
+        expect(ownerStore.reconcileLaunch(f.run.launchId)).toBeUndefined()
+        expect(sdkCreate).not.toHaveBeenCalled()
+        now = Date.parse(pending.retryUntil!) + 1
+        await dispatcher.tick()
+        expect(f.store.getRun(f.run.id).status).toBe('missed')
+        expect(models).toHaveBeenCalledTimes(2)
+      } finally {
+        await dispatcher.stop()
+        await owner.stop()
+        await ownerStore.close()
+      }
+    },
+  )
+
+  it('does not retry a 503 creation response without definitive prelaunch evidence', async () => {
+    const f = await fixture()
+    const error = new RemoteNodeRequestError('Creation response was lost', 503)
+    vi.mocked(f.host.createSession).mockRejectedValue(error)
+    await expect(f.runner.launch(f.run, f.schedule)).rejects.toBe(error)
   })
 
   it('preserves Claude default-model creation with an explicit effort', async () => {

@@ -1,6 +1,6 @@
 import type { StatuslineSettings } from './types'
 
-const statuslineOptions: Array<{
+export const statuslineOptions: Array<{
   key: keyof Omit<StatuslineSettings, 'enabled'>
   label: string
 }> = [

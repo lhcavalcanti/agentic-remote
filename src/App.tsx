@@ -3777,7 +3777,6 @@ function fallbackSessionKey(
 
 function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClient }) {
   const desktopRail = usePreviewFeature('desktopRail')
-  const [shellView, setShellView] = useState<string>()
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -4246,8 +4245,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [sessionCreationError, setSessionCreationError] = useState<string>()
   const [computersOpen, setComputersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const navigationWidth = sidebarWidth + (desktopRail && desktopLayout ? 64 : 0)
   const oracleDockReservedLeft =
-    sidebarWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
+    navigationWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
   const oracleDockAvailable =
     desktopLayout &&
     viewportWidth - oracleDockReservedLeft >=
@@ -5413,7 +5413,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setCloseRequest(undefined)
   }
   const hasBlockingUi =
-    Boolean(shellView) ||
     newSessionOpen ||
     Boolean(closeRequestSession) ||
     recentlyClosedOpen ||
@@ -9396,7 +9395,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return true
     }
     const dialogs: [boolean, () => void][] = [
-      [Boolean(shellView), () => setShellView(undefined)],
       [Boolean(closeRequestSession), () => setCloseRequest(undefined)],
       [recentlyClosedOpen, () => setRecentlyClosedOpen(false)],
       [newSessionOpen, closeNewSession],
@@ -13054,7 +13052,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
         <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession}
           onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
-          onOpen={(id) => { setSidebarOpen(false); setShellView(id) }} />
+          onOracle={() => { setSidebarOpen(false); setOracleFocusRequest((request) => request + 1); setOracleOpen(true) }} />
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>
           <button
             aria-label="Back to sessions"
@@ -14434,10 +14432,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         updateRegistration={updateRegistration}
         updatingApp={updatingApp}
       />
-      {shellView && <DialogFrame title={shellView === 'host' ? 'Host monitor' : shellView === 'scheduler' ? 'Scheduler' : 'Notifications'}
-        eyebrow="Preview" onClose={() => setShellView(undefined)}>
-        <p className="dialog-message">This view is being prepared for the next preview.</p>
-      </DialogFrame>}
       <RuntimeDialog
         onClose={() => setRuntimeOpen(false)}
         onConfigured={(session) => {
@@ -14585,7 +14579,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         reservedLeft={
           effectiveOraclePlacement === 'docked'
             ? oracleDockReservedLeft
-            : sidebarWidth
+            : navigationWidth
         }
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}

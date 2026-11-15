@@ -1,40 +1,29 @@
-import { Bell, CalendarClock, Monitor, Plus, Settings, Sparkles } from 'lucide-react'
-import { railEntries, type ClientFeature } from '../features/registry'
+import { Plus, Settings, Sparkles } from 'lucide-react'
 import { usePreviewFeatures } from '../preview-features'
 import { initials, useDisplayName } from './display-name'
 import './rail.css'
 
-export function ShellNavigation({ displayName, onNewSession, onSettings, onOpen, unreadCount = 0 }: {
+export function ShellNavigation({ displayName, onNewSession, onSettings, onOracle }: {
   displayName?: string
   onNewSession(): void
   onSettings(): void
-  onOpen(id: string): void
-  unreadCount?: number
+  onOracle(): void
 }) {
   const { effective } = usePreviewFeatures()
-  const name = useDisplayName(displayName, effective.desktopRail)
+  const name = useDisplayName(displayName, effective.desktopRail) || 'User'
   if (!effective.desktopRail) return null
-  const features: ClientFeature[] = [
-    ...(effective.hostMonitorView ? [{ id: 'host', label: 'Host monitor', icon: Monitor, railEntry: { order: 10 }, open: () => onOpen('host') }] : []),
-    ...(effective.notificationPanel ? [{ id: 'notifications', label: 'Notifications', icon: Bell, railEntry: { order: 20, badge: unreadCount }, open: () => onOpen('notifications') }] : []),
-    ...(effective.schedulerView ? [{ id: 'scheduler', label: 'Scheduler', icon: CalendarClock, railEntry: { order: 30 }, open: () => onOpen('scheduler') }] : []),
-    { id: 'settings', label: 'App settings', icon: Settings, railEntry: { order: 100 }, open: onSettings },
-  ]
   return <nav className="shell-rail" aria-label="App navigation">
     <div className="shell-rail__top">
-      <Sparkles aria-label="Agentic Remote" size={24} />
+      <button type="button" aria-label="Open Oracle" title="Open Oracle" className="icon-button" onClick={onOracle}><Sparkles aria-hidden="true" size={24} /></button>
       <button aria-label="New session" title="New session" onClick={onNewSession} className="icon-button"><Plus size={22} /></button>
     </div>
     <div className="shell-rail__footer">
       <div className="shell-rail__identity" title={name}>
         <span className="shell-avatar" aria-hidden="true">{initials(name)}</span><span>{name}</span>
       </div>
-      {railEntries(features).map(({ id, label, icon: Icon, railEntry, open }) =>
-        <button key={id} type="button" className="shell-rail__entry" aria-label={label}
-          title={label} onClick={open}>
-          <Icon aria-hidden="true" size={20} /><span className="shell-rail__label">{label}</span>
-          {!!railEntry?.badge && <span className="shell-badge" aria-label={`${railEntry.badge} unread`}>{railEntry.badge > 99 ? '99+' : railEntry.badge}</span>}
-        </button>)}
+      <button type="button" className="shell-rail__entry" aria-label="App settings" title="App settings" onClick={onSettings}>
+        <Settings aria-hidden="true" size={20} /><span className="shell-rail__label">App settings</span>
+      </button>
     </div>
   </nav>
 }

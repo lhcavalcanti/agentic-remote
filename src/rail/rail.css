@@ -6,7 +6,7 @@
 .shell-rail__entry { position: relative; display: flex; align-items: center; gap: 10px; padding: 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; }
 .shell-rail__entry:hover { background: var(--accent-tint); }
 .shell-badge { border-radius: 12px; background: var(--accent-foreground); color: var(--bg); font-size: 10px; font-weight: 700; padding: 2px 5px; }
-@media (min-width: 1024px) {
+@media (min-width: 961px) {
   .app-shell--rail { grid-template-columns: calc(var(--sidebar-width) + 64px) minmax(0, 1fr); }
   .app-shell--rail.app-shell--oracle-docked { grid-template-columns: calc(var(--sidebar-width) + 64px) minmax(0, 1fr) var(--oracle-panel-width); }
   .app-shell--rail > .sidebar-resizer { left: calc(var(--sidebar-width) + 61px); }

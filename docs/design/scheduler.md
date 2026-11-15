@@ -149,6 +149,8 @@ The current reader accepts legacy runs without full receipts or worktree records
 
 ## Client UI preview
 
+Recent runs are optional enrichment: a failed recent-run request leaves schedule management available, shows a quiet availability notice beside the list, and labels last-result chips as unavailable rather than claiming there were no runs. Successful refreshes clear the notice; only schedule-list failures use the top-level error. Aborted refreshes cannot publish either data or enrichment errors.
+
 `schedulerView` requires the authoritative hub `scheduler` flag. The rail or drawer footer opens the list with recurrence summaries, next occurrences in each schedule's IANA timezone, recent-result chips, enable controls, manual Run now, edit, duplicate and archive. Duplicates and restored archives start paused. Archived schedules remain inspectable through the archive filter.
 
 The form separates Details, Target and Policies. All six recurrence presets use `shared/schedule-recurrence.ts` for the next-five preview; once uses an explicit ISO timestamp with offset, avoiding interpretation in the browser's timezone. Target selection includes the existing directory browser and provider model catalog, optional effort/context, and mode. An unpaired saved target remains visible as “not paired” instead of displaying another computer; saving requires explicitly selecting a currently paired computer. Offline paired computers remain valid schedule targets. Creation defaults to Autopilot, checkout, Ask permissions, Ask folder trust, skip catch-up/overlap, 60 minutes and attention-only notifications. No new settings default is needed for these existing safe schema defaults.

@@ -112,6 +112,7 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
           <p role="status">The linked schedule is no longer available. <button className="secondary-button" onClick={() => setHistorySelection({})}>Show all schedules</button></p>}
         <label className="schedule-check"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Show archived schedules</label>
         {scheduler.loading && <p role="status">Loading schedules…</p>}
+        {scheduler.recentError && <p role="status" className="schedule-caption">{scheduler.recentError}</p>}
         {!list.length && !scheduler.loading && <p className="scheduler-empty">{showArchived ? 'No archived schedules.' : 'No schedules yet. Create a saved prompt to get started.'}</p>}
         <ul className="schedule-list">{list.map((schedule) => {
           const last = scheduler.recent.filter((run) => run.scheduleId === schedule.id)
@@ -125,7 +126,7 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
             </div>
             <p className="schedule-next">{schedule.enabled ? 'Next' : 'Next if enabled'}: {nextRun(schedule, now)}</p>
             <p className="schedule-caption">{computers.find((computer) => computer.id === schedule.target.computerId)?.name ?? schedule.target.computerId} · {schedule.target.folder} · {schedule.target.provider} · {schedule.target.permissionPolicy}</p>
-            <div className="schedule-card__footer"><span>{last ? <RunStatus run={last} /> : <small>No recent run</small>}</span>
+            <div className="schedule-card__footer"><span>{last ? <RunStatus run={last} /> : <small>{scheduler.recentError ? 'Recent run unavailable' : 'No recent run'}</small>}</span>
               <div className="schedule-actions">
                 {!schedule.archived && <button type="button" className="secondary-button" disabled={pending} onClick={() => act(`${path}/run`, {})} aria-label={`Run ${schedule.name} now`}>Run now</button>}
                 <button type="button" className="secondary-button" disabled={pending} onClick={() => setForm({ initial: editableSchedule(schedule), editing: schedule })} aria-label={`Edit ${schedule.name}`}>Edit</button>

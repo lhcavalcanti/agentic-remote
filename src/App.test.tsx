@@ -18402,7 +18402,7 @@ describe('App', () => {
     await act(async () => { finish({ supported: true, runningCount: 0, tasks: [] }) })
   })
 
-  it.each(['computer', 'session', 're-added computer'] as const)('keeps newer %s updates when a connection check omits its computer', async (changed) => {
+  it.each(['computer', 'session', 're-added computer'] as const)('settles a newer %s update when a connection check omits its computer', async (changed) => {
     seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Live remote chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
@@ -18431,9 +18431,17 @@ describe('App', () => {
       } as MessageEvent)
     })
     await act(async () => { finish([computer]) })
-    if (changed !== 'session') expect(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` })).toBeVisible()
+    if (changed === 'session') {
+      // A session event alone does not re-pair its computer, so its owner state goes with the computer.
+      expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+      expect(screen.queryByText('Fresh remote chat')).not.toBeInTheDocument()
+      return
+    }
+    expect(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` })).toBeVisible()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
-    expect(document.querySelector('.conversation-header__title')).toHaveTextContent(changed === 'session' ? 'Fresh remote chat' : 'Live remote chat')
+    expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Live remote chat')
   })
 
   it('does not refill removed task state from an old response after the computer is re-paired', async () => {

@@ -451,6 +451,8 @@ describe('AgentService launch identity', () => {
     client.session.resolveSessionIdle()
     await vi.waitFor(async () => expect((await service.reconcileLaunch('root-run'))?.receipts[0])
       .toMatchObject({ state: 'delivered', outcome: 'succeeded' }))
+    await vi.waitFor(() => expect(service.getSession(created.id)?.messages.find((message) => message.role === 'user'))
+      .toMatchObject({ content: 'Exactly once', deliveryConfirmed: true }))
   })
 })
 

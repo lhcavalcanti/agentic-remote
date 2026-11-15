@@ -102,6 +102,10 @@ export interface ChatMessage {
   role: MessageRole
   content: string
   createdAt: string
+  /** Positive provider handoff evidence; admission or a retained user row is not delivery. */
+  deliveryConfirmed?: boolean
+  /** Locally retained user echoes, unlike records read from the provider's transcript. */
+  deliveryState?: 'pending' | 'refused' | 'uncertain'
   streaming?: boolean
   activityStatus?: ActivityStatus
   activityKind?: ActivityKind

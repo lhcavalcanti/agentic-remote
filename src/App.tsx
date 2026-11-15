@@ -13036,6 +13036,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     if (!desktopLayout) setSidebarOpen(true)
   }
   const shellNavigation = <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession}
+    oracleAvailable={oracleIndicator.available}
     unreadCount={notifications.unreadCount} offscreen={!desktopLayout && !sidebarOpen}
     onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
     onOpen={(id) => { if (id === 'scheduler') setScheduleLink(undefined); setSidebarOpen(false); setShellView(id) }}

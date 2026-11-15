@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { parseCronExpression } from './schedule-cron.js'
 import { promptAcceptanceReceiptSchema } from './launch-identity.js'
-import { scheduleWorktreeRecordSchema } from './schedule-worktrees.js'
+import { scheduleWorktreeInputSchema, scheduleWorktreeRecordSchema } from './schedule-worktrees.js'
 
 export const DEFAULT_SCHEDULE_TIMEZONE = 'America/Los_Angeles'
 export const SCHEDULE_PROMPT_MAX_LENGTH = 20_000
@@ -103,6 +103,7 @@ export const scheduleRunSchema = z.object({
   rootPromptReceipt: identifier.optional(),
   rootPromptAcceptance: promptAcceptanceReceiptSchema.optional(),
   worktree: scheduleWorktreeRecordSchema.optional(),
+  worktreeIntent: scheduleWorktreeInputSchema.optional(),
   sessionId: identifier.optional(),
   computerId: identifier,
   createdAt: timestamp.optional(),

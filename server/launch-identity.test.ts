@@ -197,6 +197,30 @@ describe('durable launch identity', () => {
 })
 
 describe('termination acknowledgement', () => {
+  it('does not use an idle event between acceptance and terminal handoff as termination proof', async () => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), launchId: 'run' }, { backend: 'terminal', managedOpen: true })
+    const accepted = await store.acceptIdentifiedPrompt('session', 'root', 'Synthetic root', true)
+    const acceptanceTime = Date.parse(accepted.promptReceipts![0].acceptedAt)
+    const handedAt = new Date(acceptanceTime + 2000).toISOString()
+    const claimed = await store.claimTerminalQueuedPrompt('session', accepted.queuedPrompts![0], () => true, true)
+    await store.settleTerminalQueuedPrompt('session', claimed.dispatch.id, {
+      kind: 'accepted', startedTurn: true, handedAt,
+    })
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    let events = [{
+      id: 'old-idle', type: 'session.idle', timestamp: new Date(acceptanceTime + 1000).toISOString(), parentId: null, data: {},
+    } as SessionEvent]
+    const service = new AgentService(restarted, {} as CopilotClientLike,
+      async () => [], async () => undefined, async () => events, undefined,
+      { has: async () => false, send: async () => false, cancel: async () => true })
+    vi.spyOn(service, 'listBackgroundTasks').mockResolvedValue({ supported: true, tasks: [], runningCount: 0 })
+    expect(await service.cancelWithAck('session', 10)).toMatchObject({ outcome: 'unknown' })
+    events = [{ ...events[0], id: 'new-idle', timestamp: new Date(acceptanceTime + 3000).toISOString() }]
+    expect(await service.cancelWithAck('session', 100)).toMatchObject({ outcome: 'stopped' })
+  })
+
   it('waits for provider evidence, not the abort return, and bounds hung aborts and probes', async () => {
     let stopped = false
     const pending = awaitTermination('session', 1000, async () => {}, async () => stopped)

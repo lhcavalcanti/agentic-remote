@@ -222,7 +222,7 @@ interface RecoveryResendClaim extends DeliveryBoundary {
 
 interface PendingTerminalQueueSettlement {
   dispatchId: string
-  outcome: TerminalQueueOutcome | { kind: 'feedback'; command: string; before: string | undefined }
+  outcome: TerminalQueueOutcome | { kind: 'feedback'; command: string; before: string | undefined; handedAt: string }
   overlayOpen: boolean
   failureReason?: string
   failureMessage?: string
@@ -7726,8 +7726,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const lifecycle = events.findLast(isForegroundLifecycleEvent)
       const providerStatus = statusFromEvents(events)
       const admittedAt = Math.max(0,
-        ...(current.promptReceipts || []).filter((receipt) => receipt.rootTurnId || receipt.state === 'delivered')
-          .map((receipt) => Date.parse(receipt.acceptedAt)),
+        ...(current.promptReceipts || []).filter((receipt) => receipt.state === 'accepted' || receipt.state === 'delivered')
+          .map((receipt) => receipt.handedAt ? Date.parse(receipt.handedAt)
+            : receipt.rootTurnId ? Date.parse(receipt.acceptedAt) : Infinity),
         ...current.messages.filter((message) => message.role === 'user').map((message) => Date.parse(message.createdAt)),
       )
       // A store's idle projection, an abort RPC result or a missing log is not proof.
@@ -11712,10 +11713,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw new Error('External terminal is no longer available')
         }
         this.awaitTranscriptEcho(sessionId, handedAt)
+        // Use the confirmed handoff, not FIFO acceptance or a pre-readiness timestamp.
+        const confirmedAt = new Date().toISOString()
         outcome = next.command
-          ? { kind: 'feedback', command: next.content, before }
+          ? { kind: 'feedback', command: next.content, before, handedAt: confirmedAt }
           // A steer joins the turn already running rather than starting one.
-          : { kind: 'accepted', startedTurn: !midTurnSteer }
+          : { kind: 'accepted', startedTurn: !midTurnSteer, handedAt: confirmedAt }
       } catch (error) {
         const uncertain = isUncertainDelivery(error)
         quiet = !uncertain && isTerminalNotReadyRefusal(error)
@@ -12020,7 +12023,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           sessionId, pending.outcome.command, pending.outcome.before, true,
         )
         if (this.stopped) return false
-        pending.outcome = { kind: 'accepted', startedTurn: feedback.startedTurn, notice: feedback.notice }
+        pending.outcome = {
+          kind: 'accepted', startedTurn: feedback.startedTurn, notice: feedback.notice, handedAt: pending.outcome.handedAt,
+        }
         pending.overlayOpen = feedback.overlayOpen
       }
       if (

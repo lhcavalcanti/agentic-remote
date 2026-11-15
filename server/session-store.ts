@@ -113,7 +113,7 @@ interface SdkQueueAdmission {
 }
 
 export type TerminalQueueOutcome =
-  | { kind: 'accepted'; startedTurn: boolean; notice?: string }
+  | { kind: 'accepted'; startedTurn: boolean; notice?: string; handedAt?: string }
   | { kind: 'failed'; uncertain: boolean; queueState?: QueueState }
 
 /**
@@ -2717,7 +2717,10 @@ export class SessionStore {
         : undefined
       if (outcome.kind === 'accepted') {
         const receipt = stored.promptReceipts?.find((entry) => entry.promptId === dispatch.prompt.id)
-        if (receipt) receipt.state = 'delivered'
+        if (receipt) {
+          receipt.state = 'delivered'
+          receipt.handedAt = outcome.handedAt
+        }
         stored.failedPrompt = undefined
         if (outcome.notice) {
           const createdAt = new Date().toISOString()

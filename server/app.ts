@@ -98,7 +98,7 @@ import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
 import { SchedulerStore } from './scheduler-store.js'
 import { SchedulerDispatcher, type ScheduleLauncher } from './scheduler-dispatcher.js'
 import { registerSchedulerRoutes } from './scheduler-routes.js'
-import { SessionScheduleLauncher } from './schedule-launcher.js'
+import { recordScheduleReplacement, SessionScheduleLauncher } from './schedule-launcher.js'
 import { configuredScheduleWorktreeRoots, ScheduleWorktreeService } from './schedule-worktrees.js'
 
 export type ServerRole = 'hub' | 'node'
@@ -595,6 +595,14 @@ export async function buildApp(
         await startupPhases.run('scheduler.provenance', () => managerStore!.initialize())
         managerStoreReady = true
       }
+      if (!forwardToJournal) {
+        forwardToJournal = (event) => {
+          void recordScheduleReplacement(managerStore!, event).catch((error: unknown) => {
+            app.log.warn({ err: error }, 'Schedule replacement provenance could not be saved')
+          })
+        }
+        manager.on('event', forwardToJournal)
+      }
       const scheduleStore = new SchedulerStore(dataDirectory, {
         warn: (message) => app.log.warn(message),
       })
@@ -750,6 +758,7 @@ export async function buildApp(
     await proactiveCoordinator?.stop()
     await dreamerService?.stop()
     await managerAgent?.stop()
+    await managerStore?.flush()
     manager?.stop()
     pushService?.stop()
     await notificationCenter?.flush()

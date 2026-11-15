@@ -8,6 +8,7 @@ import type { LaunchReconciliation, PromptAcceptanceReceipt, TerminationAcknowle
 import type { ScheduleCreate } from '../shared/schedules.js'
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import { AgentService, type CopilotClientLike } from './agent-service.js'
+import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
 import { ComputerManager } from './computer-manager.js'
 import type { ComputerRegistry } from './computer-registry.js'
 import { JournalRecorder } from './manager-journal.js'
@@ -73,9 +74,10 @@ async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' 
   const host: ScheduleLauncherHost = {
     listComputers: () => [{ id: schedule.target.computerId, name: 'Fictional studio', isLocal: true, online: true, providers }],
     validateSessionDirectory: vi.fn(async (_computer, folder) => folder),
-    providerRuntimeOptions: vi.fn(async () => ({
-      provider: 'claude', models: [{
-        id: 'fictional-model', name: 'Fictional model', reasoningEfforts: ['high'], contextTiers: ['default', 'long_context'],
+    providerRuntimeOptions: vi.fn(async (_computerId: string, provider: 'copilot' | 'claude') => ({
+      models: [{
+        id: 'fictional-model', name: 'Fictional model', reasoningEfforts: ['high'],
+        contextTiers: provider === 'claude' ? ['default'] : ['default', 'long_context'],
       }],
     })) as ScheduleLauncherHost['providerRuntimeOptions'],
     createSession: vi.fn(async (computerId) => {
@@ -113,15 +115,18 @@ async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' 
 }
 
 describe('schedule runner', () => {
-  it.each(['hub', 'worker'])('launches on %s with explicit runtime, ask policies, identity and durable provenance', async (computerId) => {
+  it.each([
+    ['hub', 'copilot', 'long_context'], ['worker', 'copilot', 'long_context'],
+    ['hub', 'claude', 'default'], ['worker', 'claude', 'default'],
+  ] as const)('launches on %s with supported %s/%s runtime, ask policies, identity and durable provenance', async (computerId, provider, context) => {
     const f = await fixture({ target: {
-      computerId, folder: '/fictional/repo', provider: 'claude', model: 'fictional-model',
-      effort: 'high', context: 'long_context', mode: 'plan',
+      computerId, folder: '/fictional/repo', provider, model: 'fictional-model',
+      effort: 'high', context, mode: 'plan',
     } })
     await f.runner.launch(f.run, f.schedule)
     expect(f.host.createSession).toHaveBeenCalledExactlyOnceWith(computerId, {
-      cwd: '/fictional/repo', launchId: f.run.launchId, provider: 'claude', terminalBacked: false,
-      allowAllPermissions: false, mode: 'plan', model: 'fictional-model', reasoningEffort: 'high', contextTier: 'long_context',
+      cwd: '/fictional/repo', launchId: f.run.launchId, provider, terminalBacked: false,
+      allowAllPermissions: false, mode: 'plan', model: 'fictional-model', reasoningEffort: 'high', contextTier: context,
     })
     expect(f.host.replyPermission).not.toHaveBeenCalled()
     expect(f.host.sendMessage).toHaveBeenCalledExactlyOnceWith(computerId, 'session-one', {
@@ -343,6 +348,42 @@ describe('schedule runner', () => {
     const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider: 'claude', effort: 'high' } })
     await f.runner.launch(f.run, f.schedule)
     expect(f.host.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({ provider: 'claude', reasoningEffort: 'high' }))
+  })
+
+  it.each([false, true])('rejects unsupported Claude long context using owner metadata with explicit model=%s', async (explicitModel) => {
+    const f = await fixture({ target: {
+      computerId: 'hub', folder: '/fictional/repo', provider: 'claude', context: 'long_context',
+      ...(explicitModel ? { model: 'fictional-model' } : {}),
+    } })
+    const ownerStore = new SessionStore(path.join(f.directory, 'claude-owner'))
+    await ownerStore.initialize()
+    const catalog = vi.fn(() => Object.assign((async function* () { yield* [] })(), {
+      supportedModels: async () => [{
+        value: 'fictional-model', displayName: 'Fictional model', description: 'Fictional catalog',
+        supportedEffortLevels: ['high'],
+      }],
+    }))
+    const owner = new ClaudeAgentService(ownerStore, '/bin/true', {
+      query: catalog as unknown as ClaudeSdk['query'],
+      deleteSession: vi.fn(), getSessionInfo: vi.fn(), renameSession: vi.fn(),
+    }, async () => ({ loggedIn: true }))
+    vi.mocked(f.host.providerRuntimeOptions).mockImplementation((_computer, provider) => owner.providerRuntimeOptions(provider))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    try {
+      await dispatcher.start()
+      await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+      expect(f.store.getRun(f.run.id).error).toMatch(/context.*not supported/i)
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(f.host.providerRuntimeOptions).toHaveBeenCalledExactlyOnceWith('hub', 'claude')
+      expect(catalog).toHaveBeenCalledOnce()
+      expect(f.host.createSession).not.toHaveBeenCalled()
+      expect(f.host.allocateScheduleWorktree).not.toHaveBeenCalled()
+    } finally {
+      await dispatcher.stop()
+      await owner.stop()
+      await ownerStore.close()
+    }
   })
 
   it('persists allocation intent before the RPC and reconciles a lost response into deferred ownership', async () => {

@@ -2,6 +2,7 @@ import type { HubEvent, ManagedSession, SessionStatus } from '../shared/contract
 import { scheduleProposalSummary, type ScheduleProposal } from '../shared/schedule-proposals.js'
 import {
   registryKey,
+  applySessionReplacement,
   type JournalDraft,
   type ManagerRegistry,
   type ManagerStore,
@@ -138,6 +139,11 @@ export class JournalRecorder {
       .map(([key]) => key)
   }
 
+  /** Waits for started registry work without forcing the batched journal to flush. */
+  pendingRegistryWrites(): Promise<void> {
+    return this.writing
+  }
+
   async flush(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer)
@@ -242,28 +248,28 @@ export class JournalRecorder {
       title: previous?.title,
       ...(replacedBy ? { replacedBy } : {}),
     })
-    this.changes.push((registry) => {
-      const entry = registry[key]
-      if (!entry) return
-      if (replacedBy) {
-        entry.replacedBy = replacedBy
-        entry.removedAt = now
-        const successorKey = registryKey(computerId, replacedBy)
-        registry[successorKey] = {
-          ...entry,
-          ...registry[successorKey],
-          sessionId: replacedBy,
-          origin: entry.origin,
-          originEvidence: entry.originEvidence,
-          task: entry.task,
-          firstSeenAt: registry[successorKey]?.firstSeenAt ?? now,
-        }
-        delete registry[successorKey].removedAt
-        delete registry[successorKey].replacedBy
+    if (replacedBy) {
+      let replacement: Promise<void>
+      if (!this.store.sessionOrigin(computerId, sessionId) && previous && this.changes.length) {
+        const changes = this.changes
+        this.changes = []
+        replacement = this.store.updateRegistry((registry) => {
+          for (const change of changes) change(registry)
+          applySessionReplacement(registry, computerId, sessionId, replacedBy, now)
+        })
+      } else if (!this.store.sessionOrigin(computerId, sessionId) && previous) {
+        replacement = this.writing.then(() => this.store.recordSessionReplacement(computerId, sessionId, replacedBy))
       } else {
-        entry.removedAt = now
+        replacement = this.store.recordSessionReplacement(computerId, sessionId, replacedBy)
       }
-    })
+      this.writing = Promise.all([this.writing, replacement]).then(() => undefined).catch((error: unknown) => {
+        console.warn('Manager replacement provenance write failed:', error)
+      })
+    } else {
+      this.changes.push((registry) => {
+        if (registry[key]) registry[key].removedAt = now
+      })
+    }
   }
 
   private schedule(): void {

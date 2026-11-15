@@ -296,11 +296,13 @@ describe('hub schedule notification integration', () => {
       await runtime.scheduler!.store.changeRun(admitted.id, { status: 'succeeded', sessionId: session.id })
       await runtime.scheduleNotifications!.flush()
       await runtime.notificationCenter?.flush()
-      await vi.waitFor(() => expect(observed.filter((event) => event.type === 'session.upserted')).toHaveLength(3))
-      expect(observed.filter((event) => event.type === 'session.upserted').every((event) => event.session.suppressOrdinaryNotifications)).toBe(true)
-      for (const event of observed.filter((event) => event.type === 'session.upserted')) {
+      await vi.waitFor(() => expect(observed.filter((event) => event.type === 'session.upserted')).toHaveLength(4))
+      const upserts = observed.filter((event) => event.type === 'session.upserted')
+      expect(upserts.every((event) => event.session.suppressOrdinaryNotifications)).toBe(true)
+      for (const event of upserts.slice(0, 3)) {
         expect(event.session.provenance).toBeUndefined()
       }
+      expect(upserts[3].session).toMatchObject({ status: 'idle', provenance: { origin: 'discovered' } })
       expect(observed.filter((event) => event.type === 'schedule.run.notification')).toEqual([])
       expect(sender).not.toHaveBeenCalled()
       if (runtime.notificationCenter) expect(await runtime.notificationCenter.store.list()).toEqual([])

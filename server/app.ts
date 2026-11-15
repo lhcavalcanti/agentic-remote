@@ -388,6 +388,7 @@ export async function buildApp(
   let managerUnavailable: string | undefined
   let forwardScheduleProvenance: ((event: HubEvent) => void) | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
+  let settleJournalProvenance: (() => Promise<void>) | undefined
   let forwardToSessionProvenance: ((event: HubEvent) => void) | undefined
   const provenanceWrites = new Set<Promise<void>>()
   let forwardToProactive: ((event: HubEvent) => void) | undefined
@@ -521,6 +522,7 @@ export async function buildApp(
       }
       if (recorder) {
         forwardToJournal = (event) => recorder.handle(event)
+        settleJournalProvenance = () => recorder.pendingRegistryWrites()
         manager.on('event', forwardToJournal)
       }
       managerAgent = recorder && new ManagerAgent({
@@ -661,16 +663,68 @@ export async function buildApp(
     }
     if (managerStoreReady && managerStore) {
       const store = managerStore
-      const pending = new Set<string>()
-      forwardToSessionProvenance = (event) => {
-        if (event.type !== 'session.upserted' || store.sessionOrigin(event.session.computerId, event.session.id)) return
-        const key = `${event.session.computerId}:${event.session.id}`
-        if (pending.has(key)) return
-        pending.add(key)
-        const work = store.recordDiscoveredSession(event.session)
-          .catch((error: unknown) => app.log.error({ err: error }, 'Session discovery origin could not be recorded'))
-          .finally(() => { pending.delete(key); provenanceWrites.delete(work) })
+      const published = new Map<string, string | undefined>()
+      const pending = new Map<string, { session?: ManagedSession; retired: boolean; writes: number; discovering: boolean }>()
+      const tracking = (key: string) => {
+        let state = pending.get(key)
+        if (!state) {
+          state = { retired: false, writes: 0, discovering: false }
+          pending.set(key, state)
+        }
+        return state
+      }
+      const publishAfter = (computerId: string, sessionId: string, persistence: Promise<void>) => {
+        const key = `${computerId}:${sessionId}`
+        const state = tracking(key)
+        state.writes++
+        const work = persistence.then(() => store.flush()).then(async () => {
+          if (state.retired || published.get(key) === JSON.stringify(store.sessionProvenance(computerId, sessionId))) return
+          const beforeRead = state.session
+          const current = await manager!.readSession(computerId, sessionId).catch(() => undefined)
+          const latest = state.session
+          let session = current
+          if (latest && (latest !== beforeRead || (current &&
+            (latest.revision === undefined || current.revision === undefined || latest.revision >= current.revision)))) session = latest
+          if (!session || state.retired || published.get(key) === JSON.stringify(store.sessionProvenance(computerId, sessionId))) return
+          published.set(key, JSON.stringify(store.sessionProvenance(computerId, sessionId)))
+          manager!.emit('event', { type: 'session.upserted', session })
+        }).catch((error: unknown) => app.log.error({ err: error }, 'Session origin could not be recorded or published'))
+          .finally(() => {
+            state.writes--
+            if (!state.writes) pending.delete(key)
+            provenanceWrites.delete(work)
+          })
         provenanceWrites.add(work)
+      }
+      forwardToSessionProvenance = (event) => {
+        if (event.type === 'session.upserted') {
+          const { computerId, id } = event.session
+          const key = `${computerId}:${id}`
+          const state = pending.get(key)
+          if (state) { state.session = event.session; state.retired = false }
+          published.set(key, JSON.stringify(store.sessionProvenance(computerId, id)))
+          if (store.sessionOrigin(computerId, id)) return
+          const discovery = tracking(key)
+          if (discovery.discovering) return
+          discovery.discovering = true
+          discovery.session = event.session
+          publishAfter(computerId, id, store.recordDiscoveredSession(event.session))
+        } else if (event.type === 'session.removed') {
+          const key = `${event.computerId}:${event.sessionId}`
+          const state = pending.get(key)
+          if (state) state.retired = true
+          published.delete(key)
+          if (event.replacedBy) {
+            // Share Oracle's replacement persistence; the store also deduplicates the schedule path.
+            publishAfter(event.computerId, event.replacedBy, settleJournalProvenance
+              ? settleJournalProvenance()
+              : store.recordSessionReplacement(event.computerId, event.sessionId, event.replacedBy))
+          }
+        } else if (event.type === 'computer.removed') {
+          const prefix = `${event.computerId}:`
+          for (const [key, state] of pending) if (key.startsWith(prefix)) state.retired = true
+          for (const key of published.keys()) if (key.startsWith(prefix)) published.delete(key)
+        }
       }
       manager.on('event', forwardToSessionProvenance)
     }

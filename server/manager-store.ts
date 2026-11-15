@@ -1,6 +1,7 @@
 import { appendFile, chmod, lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import type { AgentProvider, ManagedSession, SessionOrigin, SessionProvenance, SessionStatus } from '../shared/contracts.js'
 import type {
   ManagerClientDefaults,
@@ -100,6 +101,33 @@ export interface RegistryEntry {
 }
 
 export type ManagerRegistry = Record<string, RegistryEntry>
+
+export function applySessionReplacement(
+  registry: ManagerRegistry, computerId: string, sessionId: string, replacedBy: string, now: string,
+): boolean {
+  const key = registryKey(computerId, sessionId)
+  const previous = registry[key]
+  if (!previous || previous.computerId !== computerId || previous.sessionId !== sessionId || sessionId === replacedBy) return false
+  const successorKey = registryKey(computerId, replacedBy)
+  const current = registry[successorKey]
+  const explicit = current && (current.origin === 'manager' || current.origin === 'schedule' ||
+    (current.origin === 'user' && current.originEvidence === 'launch'))
+  const retired = { ...previous, removedAt: previous.removedAt ?? now, replacedBy }
+  const successor: RegistryEntry = explicit ? { ...current } : {
+    ...previous, ...current, computerId, sessionId: replacedBy,
+    origin: previous.origin, originEvidence: previous.originEvidence,
+    scheduleId: previous.scheduleId, scheduleRunId: previous.scheduleRunId, task: previous.task,
+    firstSeenAt: current?.firstSeenAt ?? now,
+  }
+  if (!explicit) {
+    delete successor.removedAt
+    delete successor.replacedBy
+  }
+  if (isDeepStrictEqual(previous, retired) && isDeepStrictEqual(current, successor)) return false
+  registry[key] = retired
+  registry[successorKey] = successor
+  return true
+}
 
 export interface ManagerStoreOptions {
   now?: () => Date
@@ -240,6 +268,19 @@ export class ManagerStore {
     return this.recordSessionOrigin(session, 'discovered')
   }
 
+  recordSessionReplacement(computerId: string, sessionId: string, replacedBy: string): Promise<void> {
+    const key = registryKey(computerId, sessionId)
+    const successorKey = registryKey(computerId, replacedBy)
+    const records: ManagerRegistry = {}
+    if (this.sessions[key]) records[key] = this.sessions[key]
+    if (this.sessions[successorKey]) records[successorKey] = this.sessions[successorKey]
+    if (!applySessionReplacement(records, computerId, sessionId, replacedBy, this.now().toISOString())) return Promise.resolve()
+    return this.updateRegistry((registry) => {
+      registry[key] = records[key]
+      registry[successorKey] = records[successorKey]
+    })
+  }
+
   private async prepareRegistryDirectory(): Promise<void> {
     await mkdir(this.directory, { recursive: true, mode: 0o700 })
     const metadata = await lstat(this.directory)
@@ -253,9 +294,9 @@ export class ManagerStore {
     const key = registryKey(session.computerId, session.id)
     if (origin === 'discovered' && this.sessions[key]) return
     await this.prepareRegistryDirectory()
+    const current = this.sessions[key]
+    if ((origin === 'discovered' && current) || current?.origin === 'manager' || current?.origin === 'schedule') return
     await this.updateRegistry((registry) => {
-      const current = registry[key]
-      if ((origin === 'discovered' && current) || current?.origin === 'manager' || current?.origin === 'schedule') return
       registry[key] = {
         ...current, computerId: session.computerId, sessionId: session.id,
         title: session.title, computerName: session.computerName, cwd: session.cwd, provider: session.provider,

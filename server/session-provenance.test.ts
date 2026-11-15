@@ -258,6 +258,24 @@ describe('hub session provenance projection', () => {
     } finally { await recorder.stop() }
   })
 
+  it.each(['user', 'manager', 'schedule'] as const)('does not downgrade an explicit %s successor during replacement carry', async (origin) => {
+    const store = await registry()
+    const successor = {
+      computerId: 'studio', sessionId: 'next', title: 'Independent explicit launch', origin,
+      originEvidence: 'launch' as const, firstSeenAt: session.updatedAt,
+      ...(origin === 'schedule' ? { scheduleId: 'new-schedule', scheduleRunId: 'new-run' } : {}),
+    }
+    await store.updateRegistry((registry) => {
+      registry['studio:one'] = { computerId: 'studio', sessionId: 'one', title: 'Predecessor', origin: 'schedule', originEvidence: 'launch', scheduleId: 'old-schedule', scheduleRunId: 'old-run', firstSeenAt: session.updatedAt }
+      registry['studio:next'] = successor
+    })
+    const writes = vi.spyOn(store, 'updateRegistry')
+    await store.recordSessionReplacement('studio', 'one', 'next')
+    await store.recordSessionReplacement('studio', 'one', 'next')
+    expect(store.registry()['studio:next']).toEqual(successor)
+    expect(writes).toHaveBeenCalledOnce()
+  })
+
   it.each(['manager', 'schedule'] as const)('does not let an API replay replace explicit %s ownership', async (origin) => {
     const store = await registry()
     await store.updateRegistry((entries) => {

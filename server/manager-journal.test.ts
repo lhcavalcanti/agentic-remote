@@ -1,11 +1,12 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedSession } from '../shared/contracts.js'
 import { JournalRecorder, recordScheduleProposal } from './manager-journal.js'
 import { SchedulerStore } from './scheduler-store.js'
 import { ManagerStore } from './manager-store.js'
+import { recordScheduleReplacement } from './schedule-launcher.js'
 
 function session(id: string, change: Partial<ManagedSession> = {}): ManagedSession {
   return {
@@ -114,6 +115,54 @@ describe('JournalRecorder', () => {
     expect(registry['hub:old'].replacedBy).toBe('new')
   })
 
+  it('exposes replacement provenance synchronously and persists it once', async () => {
+    await store.recordUserSession(session('old'))
+    await recorder.reconcile([session('old')], ['hub'])
+    await recorder.stop()
+    recorder = new JournalRecorder(store, { flushDelayMs: 60_000 })
+    const writes = vi.spyOn(store, 'updateRegistry')
+    const flush = vi.spyOn(recorder, 'flush')
+    recorder.handle({ type: 'session.removed', computerId: 'hub', sessionId: 'old', replacedBy: 'new' })
+    expect(store.sessionProvenance('hub', 'new')).toEqual({ origin: 'user' })
+    await recorder.pendingRegistryWrites()
+    expect(flush).not.toHaveBeenCalled()
+    await recorder.flush()
+    expect(writes).toHaveBeenCalledOnce()
+  })
+
+  it('carries a predecessor first observed in the still-unflushed journal batch', async () => {
+    await recorder.reconcile([], ['hub'])
+    recorder.handle({ type: 'session.upserted', session: session('old') })
+    recorder.handle({ type: 'session.removed', computerId: 'hub', sessionId: 'old', replacedBy: 'new' })
+    expect(store.sessionProvenance('hub', 'new')).toEqual({ origin: 'discovered' })
+    await recorder.flush()
+    expect(store.registry()['hub:old'].replacedBy).toBe('new')
+    expect(store.registry()['hub:new'].originEvidence).toBe('discovery')
+  })
+
+  it('carries a predecessor whose registry batch is already in flight', async () => {
+    await recorder.reconcile([], ['hub'])
+    recorder.handle({ type: 'session.upserted', session: session('old') })
+    const first = recorder.flush()
+    recorder.handle({ type: 'session.removed', computerId: 'hub', sessionId: 'old', replacedBy: 'new' })
+    await Promise.all([first, recorder.flush()])
+    expect(store.registry()['hub:old'].replacedBy).toBe('new')
+    expect(store.sessionProvenance('hub', 'new')).toEqual({ origin: 'discovered' })
+  })
+
+  it('does not write a replacement again when the schedule path already carried it', async () => {
+    await store.updateRegistry((registry) => {
+      registry['hub:old'] = { computerId: 'hub', sessionId: 'old', title: 'Scheduled task', origin: 'schedule', originEvidence: 'launch', scheduleId: 'daily', scheduleRunId: 'run', firstSeenAt: '2026-11-15T00:00:00Z' }
+    })
+    await recorder.reconcile([session('old')], ['hub'])
+    const writes = vi.spyOn(store, 'updateRegistry')
+    const event = { type: 'session.removed' as const, computerId: 'hub', sessionId: 'old', replacedBy: 'new' }
+    const persisted = recordScheduleReplacement(store, event)
+    recorder.handle(event)
+    expect(store.sessionProvenance('hub', 'new')).toEqual({ origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run' })
+    await Promise.all([persisted, recorder.flush()])
+    expect(writes).toHaveBeenCalledOnce()
+  })
   it('reconciles what it missed, only for computers that answered', async () => {
     await recorder.reconcile(
       [session('stay'), session('quiet'), session('remote', { computerId: 'node', computerName: 'production' })],

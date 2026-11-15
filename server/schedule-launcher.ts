@@ -48,21 +48,8 @@ export async function recordScheduleProvenance(
 
 export function recordScheduleReplacement(store: ManagerStore, event: HubEvent): Promise<void> {
   if (event.type !== 'session.removed' || !event.replacedBy) return Promise.resolve()
-  const previous = store.registry()[registryKey(event.computerId, event.sessionId)]
-  if (previous?.origin !== 'schedule') return Promise.resolve()
-  const successorId = event.replacedBy
-  const now = new Date().toISOString()
-  return store.updateRegistry((registry) => {
-    registry[registryKey(event.computerId, event.sessionId)] = { ...previous, removedAt: now, replacedBy: successorId }
-    const key = registryKey(event.computerId, successorId)
-    registry[key] = {
-      ...previous, ...registry[key], sessionId: successorId, origin: 'schedule',
-      scheduleId: previous.scheduleId, scheduleRunId: previous.scheduleRunId, task: previous.task,
-      firstSeenAt: registry[key]?.firstSeenAt ?? now,
-    }
-    delete registry[key].removedAt
-    delete registry[key].replacedBy
-  })
+  if (store.sessionOrigin(event.computerId, event.sessionId) !== 'schedule') return Promise.resolve()
+  return store.recordSessionReplacement(event.computerId, event.sessionId, event.replacedBy)
 }
 
 function provenance(run: ScheduleRun, schedule: Schedule): ScheduleProvenance {

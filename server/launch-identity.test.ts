@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -12,6 +13,8 @@ import { AgentService, type CopilotClientLike } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
 import { awaitTermination, LaunchCreations } from './launch-identity.js'
 import { SessionStore } from './session-store.js'
+import { ProviderSessionService } from './provider-session-service.js'
+import type { SessionService } from './session-service.js'
 
 const directories: string[] = []
 const stores: SessionStore[] = []
@@ -36,6 +39,17 @@ async function storeAt(root = '') {
 
 function session(id = 'session'): SessionDetail {
   return { id, cwd: process.cwd(), title: 'Synthetic launch', status: 'idle', isOpen: true, updatedAt: syntheticTime, messages: [] }
+}
+
+function storedProvider(store: SessionStore) {
+  return Object.assign(new EventEmitter(), {
+    getSession: (id: string) => store.get(id),
+    listHistory: () => store.list(),
+    deliveryIdentity: (deliveryId: string) => store.deliveryIdentity(deliveryId),
+    sendMessage: vi.fn(async (id: string, content: string, enqueue = false,
+      _acknowledgesFailure?: string, _replaceDraft?: boolean, deliveryId?: string) =>
+      store.acceptIdentifiedPrompt(id, deliveryId!, content, enqueue)),
+  })
 }
 
 beforeEach(() => {
@@ -164,6 +178,147 @@ describe('durable launch identity', () => {
     await restarted.create(session('third'))
     await expect(restarted.acceptIdentifiedPrompt('third', 'bounded:999', 'Wrong owner', true))
       .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    await expect(restarted.acceptIdentifiedPrompt('third', 'delivery', 'Evicted detail is not reusable', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    await restarted.close()
+    const reloaded = (await storeAt(location)).store
+    await expect(reloaded.acceptIdentifiedPrompt('third', 'delivery', 'Still reserved after reload', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+  })
+
+  it('reserves deliveries on deleted sessions even without a launch identity', async () => {
+    const { store, location } = await storeAt()
+    await store.create(session())
+    await store.acceptIdentifiedPrompt('session', 'delivery', 'Only once', true)
+    await store.remove('session')
+    await store.create(session('other'))
+    await expect(store.acceptIdentifiedPrompt('other', 'delivery', 'Wrong owner', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    await expect(restarted.acceptIdentifiedPrompt('other', 'delivery', 'Wrong owner after restart', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+  })
+
+  it.each(['copilot', 'claude'] as const)('checks deleted %s delivery ownership across provider stores after reload', async (ownerProvider) => {
+    const first = await storeAt()
+    const second = await storeAt()
+    await first.store.create({ ...session('owner'), provider: ownerProvider, launchId: 'run' })
+    await first.store.acceptIdentifiedPrompt('owner', 'constructor', 'Synthetic root', true)
+    await first.store.remove('owner')
+    await second.store.create({ ...session('other'), provider: ownerProvider === 'copilot' ? 'claude' : 'copilot' })
+    await first.store.close()
+    await second.store.close()
+    const owner = storedProvider((await storeAt(first.location)).store)
+    const other = storedProvider((await storeAt(second.location)).store)
+    const providers = ownerProvider === 'copilot' ? [owner, other] : [other, owner]
+    const aggregate = new ProviderSessionService(providers[0] as unknown as SessionService, providers[1] as unknown as SessionService)
+    await expect(aggregate.sendMessage('other', 'Must not run', true, undefined, false, 'constructor'))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    expect(other.sendMessage).not.toHaveBeenCalled()
+    await aggregate.sendMessage('other', 'Fresh root', true, undefined, false, 'fresh')
+    expect(other.sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it.each([true, false])('backfills legacy ownership but blocks unknown tokens when deleted history may already have been trimmed (launches: %s)', async (hasLaunchHistory) => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), launchId: 'run' })
+    await store.acceptIdentifiedPrompt('session', 'forgotten', 'Synthetic root', true)
+    await store.remove('session')
+    await store.create(session('active'))
+    await store.acceptIdentifiedPrompt('active', 'known', 'Known retry', true)
+    await store.close()
+    const filename = path.join(location, 'state.json')
+    const legacy = JSON.parse(await readFile(filename, 'utf8'))
+    delete legacy.deliveryOwners
+    legacy.launches.run.receipts = []
+    if (!hasLaunchHistory) delete legacy.launches
+    await writeFile(filename, JSON.stringify(legacy), { mode: 0o600 })
+    const migrated = (await storeAt(location)).store
+    await expect(migrated.acceptIdentifiedPrompt('active', 'known', 'Do not enqueue twice', true))
+      .resolves.toMatchObject({ queuedPrompts: [{ content: 'Known retry' }] })
+    for (const token of ['forgotten', 'fresh']) {
+      await expect(migrated.acceptIdentifiedPrompt('active', token, 'Cannot prove unused', true))
+        .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    }
+    await migrated.close()
+    const reloaded = (await storeAt(location)).store
+    await expect(reloaded.acceptIdentifiedPrompt('active', 'forgotten', 'Still cannot prove unused', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+  })
+
+  it('backfills complete legacy receipts without blocking new deliveries', async () => {
+    const { store, location } = await storeAt()
+    await store.create(session())
+    await store.acceptIdentifiedPrompt('session', 'delivery', 'Original root', true)
+    await store.close()
+    const filename = path.join(location, 'state.json')
+    const legacy = JSON.parse(await readFile(filename, 'utf8'))
+    delete legacy.deliveryOwners
+    await writeFile(filename, JSON.stringify(legacy), { mode: 0o600 })
+    const migrated = (await storeAt(location)).store
+    await migrated.acceptIdentifiedPrompt('session', 'delivery', 'Not another root', true)
+    await migrated.acceptIdentifiedPrompt('session', 'fresh', 'Fresh root', true)
+    expect(migrated.get('session')?.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['Original root', 'Fresh root'])
+    await migrated.create(session('other'))
+    await expect(migrated.acceptIdentifiedPrompt('other', 'delivery', 'Wrong owner', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+  })
+
+  it('accepts identified deliveries from main-format stores with retired and replaced sessions', async () => {
+    const makeMainFormat = async (id: string) => {
+      const location = await directory()
+      await writeFile(path.join(location, 'state.json'), JSON.stringify({
+        version: 1,
+        retiredSessionIds: [`old-${id}`],
+        sessions: { [id]: { ...session(id), replacedSessionIds: [`old-${id}`] } },
+      }), { mode: 0o600 })
+      return storeAt(location)
+    }
+    const first = await makeMainFormat('copilot-session')
+    const second = await makeMainFormat('claude-session')
+    expect(first.store.deliveryIdentity('root').historyComplete).toBe(true)
+    expect(second.store.deliveryIdentity('root').historyComplete).toBe(true)
+    await expect(first.store.acceptIdentifiedPrompt('copilot-session', 'direct', 'Direct synthetic root', true))
+      .resolves.toMatchObject({ promptReceipts: [{ deliveryId: 'direct', state: 'queued' }] })
+    const aggregate = new ProviderSessionService(
+      storedProvider(first.store) as unknown as SessionService,
+      storedProvider(second.store) as unknown as SessionService,
+    )
+    await expect(aggregate.sendMessage('claude-session', 'Aggregated synthetic root', true, undefined, false, 'root'))
+      .resolves.toMatchObject({ promptReceipts: [{ deliveryId: 'root', state: 'queued' }] })
+    await first.store.close()
+    await second.store.close()
+    const reloaded = (await storeAt(first.location)).store
+    await expect(reloaded.acceptIdentifiedPrompt('copilot-session', 'after-reload', 'Another synthetic root', true))
+      .resolves.toMatchObject({ promptReceipts: [{ deliveryId: 'direct' }, { deliveryId: 'after-reload' }] })
+  })
+
+  it.each([null, [], { 'bad/token': 'session' }, { delivery: '' }, { delivery: 'wrong-owner' }])(
+    'fails closed on invalid or conflicting delivery ownership metadata %j', async (deliveryOwners) => {
+      const { store, location } = await storeAt()
+      await store.create(session())
+      await store.acceptIdentifiedPrompt('session', 'delivery', 'Synthetic root', true)
+      await store.close()
+      const filename = path.join(location, 'state.json')
+      const saved = JSON.parse(await readFile(filename, 'utf8'))
+      saved.deliveryOwners = deliveryOwners
+      await writeFile(filename, JSON.stringify(saved), { mode: 0o600 })
+      await expect(storeAt(location)).rejects.toThrow('Invalid delivery ownership')
+    },
+  )
+
+  it('keeps ownership when a session record loses its detailed receipts', async () => {
+    const { store, location } = await storeAt()
+    await store.create(session())
+    await store.acceptIdentifiedPrompt('session', 'delivery', 'Only once', true)
+    await store.create(session())
+    await expect(store.acceptIdentifiedPrompt('session', 'delivery', 'Do not enqueue again', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    await store.close()
+    const reloaded = (await storeAt(location)).store
+    await expect(reloaded.acceptIdentifiedPrompt('session', 'delivery', 'Still reserved', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
   })
 
   it('carries launch authority through a conversation replacement and preserves its tombstone receipts', async () => {
@@ -204,6 +359,8 @@ describe('durable launch identity', () => {
     expect(restarted.get('replacement')?.promptReceipts).toEqual([
       expect.objectContaining({ sessionId: 'replacement', deliveryId: 'delivery', state: 'rejected' }),
     ])
+    await expect(restarted.acceptIdentifiedPrompt('replacement', 'delivery', 'Do not repeat', true))
+      .resolves.toMatchObject({ promptReceipts: [{ deliveryId: 'delivery', state: 'rejected' }], queuedPrompts: [] })
   })
 
   it('settles a cleared queue receipt and prevents recovery submissions from crossing a durable stop fence', async () => {

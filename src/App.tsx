@@ -10151,7 +10151,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     startedAtSequence: number,
     generation: number,
   ) {
-    if (generation <= computerRecordsSnapshotApplied.current) return
+    const forgotten = new Set<string>()
+    if (generation <= computerRecordsSnapshotApplied.current) return forgotten
     computerRecordsSnapshotApplied.current = generation
     const changedAt = (id: string) => Math.max(
       computerEventSequenceRef.current.get(id) || 0,
@@ -10167,14 +10168,15 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const knownIds = new Set([
       ...computersRef.current.map((computer) => computer.id),
       ...rootsRef.current.map((root) => root.computerId),
+      ...sessionsRef.current.map((session) => session.computerId),
     ])
     for (const id of knownIds) {
       if (
         !listedIds.has(id) &&
-        changedAt(id) <= startedAtSequence &&
-        !forgottenComputers.current.has(id)
+        changedAt(id) <= startedAtSequence
       ) {
-        forgetComputerKnowledge(id)
+        forgotten.add(id)
+        if (!forgottenComputers.current.has(id)) forgetComputerKnowledge(id)
       }
     }
     let reconciled = accepted
@@ -10185,6 +10187,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     computersRef.current = reconciled
     setComputers(reconciled)
+    return forgotten
   }
 
   /**
@@ -13068,7 +13071,41 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const generation = ++snapshotGeneration.current
     const startedAtSequence = eventSequenceRef.current
     const loaded = await listComputers()
-    applyComputerSnapshot(loaded, startedAtSequence, generation)
+    const forgotten = applyComputerSnapshot(loaded, startedAtSequence, generation)
+    if (forgotten.size) {
+      const preserved = new Set(sessionsRef.current.filter((session) =>
+        forgotten.has(session.computerId) &&
+        (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) > startedAtSequence,
+      ).map(sessionKey))
+      const keepSession = (session: ManagedSession) => !forgotten.has(session.computerId) || preserved.has(sessionKey(session))
+      const keepTasks = (key: string) => !forgotten.has(key.slice(0, key.indexOf(':'))) || preserved.has(key)
+      // Fence older responses even if the same computer is paired again before they finish.
+      const removedAtSequence = nextSessionEventSequence()
+      eventSequenceRef.current = removedAtSequence
+      for (const id of forgotten) computerEventSequenceRef.current.set(id, removedAtSequence)
+      for (const session of sessionsRef.current) {
+        if (!keepSession(session)) {
+          const key = sessionKey(session)
+          removedSessions.current.add(key)
+          sessionEventSequenceRef.current.set(key, removedAtSequence)
+        }
+      }
+      for (const key of new Set([
+        ...Object.keys(backgroundTaskSnapshotsRef.current),
+        ...backgroundTaskRequestsRef.current.keys(),
+      ])) {
+        if (!keepTasks(key)) {
+          backgroundTaskEventSequenceRef.current.set(key, removedAtSequence)
+          if (backgroundTaskRequestsRef.current.has(key)) queuedBackgroundTaskRefreshesRef.current.add(key)
+        }
+      }
+      sessionsRef.current = sessionsRef.current.filter(keepSession)
+      setSessions((current) => current.filter(keepSession))
+      const tasks = (current: Record<string, BackgroundTaskSnapshot>) =>
+        Object.fromEntries(Object.entries(current).filter(([key]) => keepTasks(key)))
+      backgroundTaskSnapshotsRef.current = tasks(backgroundTaskSnapshotsRef.current)
+      setBackgroundTaskSnapshots(tasks)
+    }
     return computersRef.current
   }
 

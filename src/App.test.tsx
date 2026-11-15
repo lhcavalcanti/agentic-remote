@@ -18366,6 +18366,113 @@ describe('App', () => {
     expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
   })
 
+  it('removes unpaired computer sessions and task cache on a connection check', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote = { ...secondComputer, providers: taskComputer.providers }
+    const remoteSession = { ...session, id: 'remote-task-session', computerId: remote.id, computerName: remote.name, title: 'Remote task chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    const tasks = {
+      supported: true, runningCount: 1,
+      tasks: [{ id: 'remote-task', type: 'shell' as const, description: 'Discard old cached task', status: 'running' as const, startedAt: session.updatedAt, canCancel: false }],
+    }
+    vi.mocked(listBackgroundTasks).mockResolvedValue(tasks)
+    render(<App />)
+    await screen.findByRole('button', { name: 'View background tasks for Remote task chat' })
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+    let finish!: (value: BackgroundTaskSnapshot) => void
+    const pending = new Promise<BackgroundTaskSnapshot>((resolve) => { finish = resolve })
+    vi.mocked(listBackgroundTasks).mockReturnValue(pending)
+    const before = vi.mocked(listBackgroundTasks).mock.calls.length
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledTimes(before + 1))
+    expect(screen.queryByRole('button', { name: 'View background tasks for Remote task chat' })).not.toBeInTheDocument()
+    await act(async () => { finish({ supported: true, runningCount: 0, tasks: [] }) })
+  })
+
+  it.each(['computer', 'session', 're-added computer'] as const)('keeps newer %s updates when a connection check omits its computer', async (changed) => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Live remote chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Live remote chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finish!: (value: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    act(() => {
+      if (changed === 're-added computer') {
+        MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }) } as MessageEvent)
+        MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: { ...secondComputer, registrationId: 'new-pairing' } }) } as MessageEvent)
+        MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: { ...remoteSession, revision: 2 } }) } as MessageEvent)
+        return
+      }
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify(changed === 'computer'
+          ? { type: 'computer.updated', computer: { ...secondComputer, registrationId: 'new-pairing' } }
+          : { type: 'session.upserted', session: { ...remoteSession, revision: 2, title: 'Fresh remote chat' } }),
+      } as MessageEvent)
+    })
+    await act(async () => { finish([computer]) })
+    if (changed !== 'session') expect(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` })).toBeVisible()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    expect(document.querySelector('.conversation-header__title')).toHaveTextContent(changed === 'session' ? 'Fresh remote chat' : 'Live remote chat')
+  })
+
+  it('does not refill removed task state from an old response after the computer is re-paired', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote = { ...secondComputer, providers: taskComputer.providers }
+    const remoteSession = { ...session, id: 'remote-task-session', computerId: remote.id, computerName: remote.name, title: 'Remote task chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    let oldFinish!: (value: BackgroundTaskSnapshot) => void
+    let newFinish!: (value: BackgroundTaskSnapshot) => void
+    vi.mocked(listBackgroundTasks)
+      .mockReturnValueOnce(new Promise((resolve) => { oldFinish = resolve }))
+      .mockReturnValueOnce(new Promise((resolve) => { newFinish = resolve }))
+    render(<App />)
+    await screen.findAllByText('Remote task chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await act(async () => { oldFinish({
+      supported: true, runningCount: 1,
+      tasks: [{ id: 'stale-task', type: 'shell', description: 'Stale old pairing response', status: 'running', startedAt: session.updatedAt, canCancel: false }],
+    }) })
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledTimes(2))
+    try {
+      expect(screen.queryByRole('button', { name: 'View background tasks for Remote task chat' })).not.toBeInTheDocument()
+    } finally { await act(async () => { newFinish({ supported: true, runningCount: 0, tasks: [] }) }) }
+  })
+
   it('ignores a connection check overtaken by a newer computer snapshot', async () => {
     seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])

@@ -184,7 +184,7 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
     const remote = dialog.getByRole('button', { name: /^Remote machines/ })
     await remote.focus()
     await remote.press('ArrowDown')
-    await expect(dialog.getByRole('button', { name: /^Notifications/ })).toBeFocused()
+    await expect(dialog.getByRole('button', { name: /^Oracle/ })).toBeFocused()
   } finally { fixture.assertHealthy() }
 })
 

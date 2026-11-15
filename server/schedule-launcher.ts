@@ -2,6 +2,7 @@ import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import { chmod, lstat } from 'node:fs/promises'
 import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
 import type { Schedule, ScheduleRun } from '../shared/schedules.js'
+import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import type { ComputerManager } from './computer-manager.js'
 import { registryKey, type ManagerStore } from './manager-store.js'
 import {
@@ -150,7 +151,14 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
       folderTrust: schedule.target.folderTrust ?? 'ask',
       title: scheduleSessionTitle(schedule, run.occurrenceAt), provenance: provenance(run, schedule),
     }).catch((error: unknown) => {
-      if (error instanceof Error && error.name === 'RuntimeConfigurationError') {
+      const status = error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : undefined
+      const uncertainty = deliveryUncertaintyFromError(error)
+      const prelaunch = uncertainty === false ||
+        (uncertainty !== true && error instanceof Error && error.name === 'RuntimeConfigurationError')
+      if (prelaunch && status !== undefined && (status >= 500 || status === 408 || status === 429)) {
+        throw new ScheduleTargetUnavailableError('Runtime models are temporarily unavailable. Try again.')
+      }
+      if (prelaunch && status !== undefined && status >= 400 && status < 500 && error instanceof Error) {
         throw new ScheduleLaunchRefusedError(error.message)
       }
       throw error

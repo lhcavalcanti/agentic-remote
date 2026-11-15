@@ -3970,6 +3970,15 @@ button {
   white-space: nowrap;
 }
 
+.composer-runtime__hint {
+  flex: 0 0 auto;
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer-runtime__detail,
 .composer-runtime__mode {
   flex: 0 0 auto;
@@ -4028,6 +4037,13 @@ button {
   stroke: var(--border-strong);
 }
 
+.composer-context-ring__unavailable {
+  fill: currentColor;
+  font-size: 13px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
 .composer-secondary-overflow {
   display: none;
 }
@@ -4039,9 +4055,10 @@ button {
 .composer-session-panel .session-actions__panel {
   top: auto;
   right: 0;
-  bottom: calc(100% + 10px);
+  /* Keep the anchor independent of the growing editor and leave room for the runtime line below it. */
+  bottom: 0;
   max-width: min(320px, calc(100vw - 32px));
-  max-height: min(420px, 60dvh);
+  max-height: min(420px, calc(var(--visual-viewport-height, 100svh) - 100px));
   overflow: auto;
 }
 
@@ -4158,6 +4175,18 @@ button {
   }
   .composer-secondary-overflow {
     display: flex;
+  }
+}
+
+@container composer (max-width: 360px) {
+  .composer--refresh .composer-actions--refresh > .send-button:has(.send-button__label) {
+    width: 40px;
+    min-width: 40px;
+    flex: 0 0 40px;
+    padding: 0;
+  }
+  .composer-actions--refresh .send-button__label {
+    display: none;
   }
 }
 

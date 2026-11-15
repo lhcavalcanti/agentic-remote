@@ -36,6 +36,121 @@ for (const viewport of uiViewports) {
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
 
+for (const width of [320, 360]) {
+  test.describe(`narrow composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test('shows the idle-only hint without hover while retaining the model glyph and mode', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const summary = page.getByTestId('composer-runtime')
+        await expect(summary.getByText('applies when idle', { exact: true })).toBeVisible()
+        await expect(summary.locator('[data-model-family]')).toBeVisible()
+        await expect(summary.locator('.composer-runtime__mode')).toHaveText('plan')
+        const layout = await summary.evaluate((element) => {
+          const button = element.getBoundingClientRect()
+          return {
+            height: button.height,
+            childrenFit: [...element.children].filter((child) => child.getBoundingClientRect().width > 0)
+              .every((child) => {
+                const rect = child.getBoundingClientRect()
+                return rect.left >= button.left && rect.right <= button.right
+              }),
+          }
+        })
+        expect(layout.height).toBeGreaterThanOrEqual(40)
+        expect(layout.childrenFit).toBe(true)
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+    test('keeps every busy action at least 40px wide and inside the composer', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        await message(page).fill('Check the narrow phone layout.')
+        const row = page.locator('.composer-actions--refresh')
+        const bounds = await row.evaluate((element) => {
+          const row = element.getBoundingClientRect()
+          return [...element.querySelectorAll('button')].filter((button) => button.getClientRects().length > 0)
+            .map((button) => {
+              const rect = button.getBoundingClientRect()
+              return { label: button.getAttribute('aria-label'), width: rect.width, height: rect.height,
+                inside: rect.left >= row.left && rect.right <= row.right }
+            })
+        })
+        for (const button of bounds) {
+          expect(button.width, button.label ?? '').toBeGreaterThanOrEqual(40)
+          expect(button.height, button.label ?? '').toBeGreaterThanOrEqual(40)
+          expect(button.inside, button.label ?? '').toBe(true)
+        }
+        await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeInViewport({ ratio: 1 })
+        await page.getByRole('button', { name: 'Queue message', exact: true }).click()
+        await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the narrow phone layout.')
+        await page.getByRole('button', { name: 'Stop response', exact: true }).click()
+        await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeHidden()
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+    test('distinguishes unavailable context from zero without hovering', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-button-row')!.setup(page)
+      try {
+        const session = fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+        session.runtime = { ...session.runtime, contextTokens: undefined }
+        session.revision = (session.revision ?? 0) + 1
+        fixture.emit({ type: 'session.upserted', session })
+        await page.getByRole('button', { name: 'Session panel', exact: true }).click()
+        const unavailable = page.getByRole('button', { name: 'Context: usage unavailable', exact: true })
+        await expect(unavailable.getByText('?')).toBeVisible()
+        session.runtime = { ...session.runtime, contextTokens: 0, contextTokenLimit: 100 }
+        session.revision = (session.revision ?? 0) + 1
+        fixture.emit({ type: 'session.upserted', session })
+        const zero = page.getByRole('button', { name: 'Context: 0% used', exact: true })
+        await expect(zero).toBeVisible()
+        await expect(zero.getByText('?')).toHaveCount(0)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+    test('keeps the session panel and its last action inside a keyboard-sized visual viewport', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        await message(page).fill(Array.from({ length: 10 }, (_, index) => `Unsent line ${index}`).join('\n'))
+        await message(page).focus()
+        await page.evaluate(() => {
+          const viewport = new EventTarget()
+          Object.defineProperties(viewport, { height: { value: 400 }, offsetTop: { value: 0 } })
+          Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+          window.dispatchEvent(new Event('resize'))
+        })
+        await expect(page.locator('.app-shell')).toHaveClass(/app-shell--keyboard-open/)
+        await expect(page.locator('.app-shell')).toHaveCSS('--visual-viewport-height', '400px')
+        await page.getByRole('button', { name: 'Session panel', exact: true }).click()
+        const panel = page.getByRole('group', { name: 'Session panel', exact: true })
+        const layout = await panel.evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            top: rect.top, bottom: rect.bottom, maxHeight: getComputedStyle(element).maxHeight,
+            anchor: (element as HTMLElement).offsetParent?.className,
+            keyboardOpen: Boolean(element.closest('.app-shell--keyboard-open')),
+            inset: getComputedStyle(element).bottom,
+          }
+        })
+        expect(layout.top, JSON.stringify(layout)).toBeGreaterThanOrEqual(0)
+        expect(layout.bottom, JSON.stringify(layout)).toBeLessThanOrEqual(400)
+        const lastAction = panel.getByRole('button').last()
+        await lastAction.scrollIntoViewIfNeeded()
+        await expect(lastAction).toBeInViewport({ ratio: 1 })
+        await expect(lastAction).toBeEnabled()
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
 // App.test.tsx covers reconciliation, receipt failures, serialized queue races,
 // clipboard variants and history ownership. These locks add real-browser event
 // and HTTP wiring rather than duplicating that component-level matrix.

@@ -135,6 +135,17 @@ describe('SessionLauncher', () => {
     expect(host.cancelWithAck).toHaveBeenCalledWith('hub', 'session-1', 123)
   })
 
+  it('surfaces a rejected identified receipt instead of reporting the prompt sent', async () => {
+    const receipt = {
+      deliveryId: 'root', sessionId: 'session-1', promptId: 'discarded',
+      acceptedAt: '2026-11-14T06:00:00.000Z', state: 'rejected' as const, outcome: 'stopped' as const,
+    }
+    vi.mocked(host.sendMessage).mockResolvedValue(session({ promptReceipts: [receipt] }))
+    await expect(launcher.deliverPrompt({ session: session(), folderTrust: 'ask' }, 'Root', { deliveryId: 'root' }))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false, receipt })
+    expect(host.sendMessage).toHaveBeenCalledOnce()
+  })
+
   it('keeps the creation response and records its original title when naming fails', async () => {
     vi.mocked(host.renameSession).mockRejectedValue(new Error('Rename unavailable'))
     const launch = await launcher.createSession(launchInput({ title: 'Review app' }))

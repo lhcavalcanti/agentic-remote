@@ -161,6 +161,11 @@ export class SessionLauncher<Provenance extends object> {
       })
       const receipt = delivered.promptReceipts?.find((entry) => entry.deliveryId === options.deliveryId)
       if (!receipt) throw new Error('The owning computer did not return a prompt acceptance receipt. Reconcile before retrying.')
+      if (receipt.state === 'rejected') {
+        throw Object.assign(new Error('The owning computer rejected this prompt; it was not delivered.'), {
+          statusCode: 409, uncertainDelivery: false, receipt,
+        })
+      }
       return { outcome: receipt.state === 'queued' ? 'queued' : 'sent', delivered, receipt }
     }
     if (options.steer) {

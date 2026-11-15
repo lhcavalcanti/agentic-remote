@@ -54,6 +54,23 @@ afterEach(async () => {
 })
 
 describe('durable launch identity', () => {
+  it('reconciles the public interrupted and recovery status rather than the stored idle projection', async () => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), status: 'running', launchId: 'run' }, { backend: 'sdk', managedOpen: true })
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    expect(restarted.get('session')?.status).toBe('error')
+    expect(restarted.reconcileLaunch('run')?.sessionStatus).toBe('error')
+    const recovery = await restarted.claimSdkRecovery('session')
+    await restarted.settleSdkRecovery('session', recovery.generation, { state: 'waiting-permission' })
+    await restarted.update('session', (stored) => {
+      stored.status = 'idle'
+      stored.pendingPermission = { requestId: 'trust', title: 'Synthetic trust request', options: [] }
+    })
+    expect(restarted.get('session')?.status).toBe('waiting')
+    expect(restarted.reconcileLaunch('run')?.sessionStatus).toBe('waiting')
+  })
+
   it('coalesces creation before returning and finds the session after a lost response and restart', async () => {
     const { store, location } = await storeAt()
     const creations = new LaunchCreations()
@@ -123,6 +140,30 @@ describe('durable launch identity', () => {
     await expect(new LaunchCreations().run(restarted, 'constructor', create)).rejects.toMatchObject({ statusCode: 409 })
     expect(create).not.toHaveBeenCalled()
     expect(restarted.reconcileLaunch('toString')).toBeUndefined()
+  })
+
+  it('reserves deleted launch delivery tokens across restart and bounds their tombstone receipts', async () => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), launchId: 'run' })
+    await store.acceptIdentifiedPrompt('session', 'delivery', 'Never repeat', true)
+    await store.remove('session')
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    await restarted.create({ ...session('other'), launchId: 'other-run' })
+    await expect(restarted.acceptIdentifiedPrompt('other', 'delivery', 'Wrong owner', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    await restarted.update('other', (stored) => {
+      stored.promptReceipts = Array.from({ length: 1000 }, (_, index) => ({
+        deliveryId: `bounded:${index}`, sessionId: 'other', promptId: `prompt:${index}`, state: 'rejected',
+        acceptedAt: new Date(Date.now() + index + 1000).toISOString(),
+      }))
+    })
+    await restarted.remove('other')
+    expect(restarted.reconcileLaunch('run')).toMatchObject({ deleted: true, receipts: [] })
+    expect(restarted.reconcileLaunch('other-run')?.receipts).toHaveLength(1000)
+    await restarted.create(session('third'))
+    await expect(restarted.acceptIdentifiedPrompt('third', 'bounded:999', 'Wrong owner', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
   })
 
   it('carries launch authority through a conversation replacement and preserves its tombstone receipts', async () => {
@@ -197,6 +238,60 @@ describe('durable launch identity', () => {
 })
 
 describe('termination acknowledgement', () => {
+  it.each(['copilot', 'claude'] as const)('commits the %s fence before starting the provider timeout and rejects failed fence writes', async (provider) => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), launchId: 'run' })
+    const service = provider === 'copilot'
+      ? new AgentService(store, {} as CopilotClientLike)
+      : new ClaudeAgentService(store, '/bin/true', {} as ClaudeSdk)
+    if (service instanceof AgentService) {
+      vi.spyOn(service, 'listBackgroundTasks').mockResolvedValue({ supported: false, tasks: [], runningCount: 0 })
+    }
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const stop = store.stopLaunchWork.bind(store)
+    vi.spyOn(store, 'stopLaunchWork').mockImplementationOnce(async (id) => {
+      await gate
+      return stop(id)
+    })
+    let resolved = false
+    const pending = service.cancelWithAck('session', 1).finally(() => { resolved = true })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const returnedBeforeFence = resolved
+    release()
+    await expect(pending).resolves.toMatchObject({ outcome: 'unknown' })
+    expect(returnedBeforeFence).toBe(false)
+    vi.mocked(store.stopLaunchWork).mockRejectedValueOnce(new Error('Synthetic fence write failed'))
+    await expect(service.cancelWithAck('session', 1)).rejects.toThrow('Synthetic fence write failed')
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    await expect(restarted.acceptIdentifiedPrompt('session', 'late', 'Never admit', true)).rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('does not use an idle event between acceptance and terminal handoff as termination proof', async () => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), launchId: 'run' }, { backend: 'terminal', managedOpen: true })
+    const accepted = await store.acceptIdentifiedPrompt('session', 'root', 'Synthetic root', true)
+    const acceptanceTime = Date.parse(accepted.promptReceipts![0].acceptedAt)
+    const handedAt = new Date(acceptanceTime + 2000).toISOString()
+    const claimed = await store.claimTerminalQueuedPrompt('session', accepted.queuedPrompts![0], () => true, true)
+    await store.settleTerminalQueuedPrompt('session', claimed.dispatch.id, {
+      kind: 'accepted', startedTurn: true, handedAt,
+    })
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    let events = [{
+      id: 'old-idle', type: 'session.idle', timestamp: new Date(acceptanceTime + 1000).toISOString(), parentId: null, data: {},
+    } as SessionEvent]
+    const service = new AgentService(restarted, {} as CopilotClientLike,
+      async () => [], async () => undefined, async () => events, undefined,
+      { has: async () => false, send: async () => false, cancel: async () => true })
+    vi.spyOn(service, 'listBackgroundTasks').mockResolvedValue({ supported: true, tasks: [], runningCount: 0 })
+    expect(await service.cancelWithAck('session', 10)).toMatchObject({ outcome: 'unknown' })
+    events = [{ ...events[0], id: 'new-idle', timestamp: new Date(acceptanceTime + 3000).toISOString() }]
+    expect(await service.cancelWithAck('session', 100)).toMatchObject({ outcome: 'stopped' })
+  })
+
   it('waits for provider evidence, not the abort return, and bounds hung aborts and probes', async () => {
     let stopped = false
     const pending = awaitTermination('session', 1000, async () => {}, async () => stopped)

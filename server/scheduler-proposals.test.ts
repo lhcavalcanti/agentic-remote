@@ -140,4 +140,19 @@ describe('durable schedule proposals', () => {
     } finally { await dispatcher.stop() }
   })
 
+  it.each(['enable', 'update'] as const)('preserves due cursors for already-enabled %s approvals', async (operation) => {
+    const schedule = await store.create(input())
+    const cursor = store.cursor(schedule.id)
+    now += 60_000
+    const proposal = await store.propose(operation === 'enable'
+      ? { operation, scheduleId: schedule.id, baseRevision: 1, payload: {} }
+      : { operation, scheduleId: schedule.id, baseRevision: 1, payload: { enabled: true, prompt: 'Revised guide review' } })
+    await store.approveProposal(proposal.id)
+    expect(store.cursor(schedule.id)).toBe(cursor)
+    await store.update(schedule.id, { revision: 2, enabled: false })
+    const enable = await store.propose({ operation: 'enable', scheduleId: schedule.id, baseRevision: 3, payload: {} })
+    await store.approveProposal(enable.id)
+    expect(store.cursor(schedule.id)).toBe(new Date(now).toISOString())
+  })
+
 })

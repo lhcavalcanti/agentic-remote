@@ -197,8 +197,8 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
           } else {
             const previous = this.requireSchedule(next, schedule.id)
             next.schedules[next.schedules.indexOf(previous)] = schedule
-            if (proposal.operation === 'enable' || (proposal.operation === 'update' &&
-                (proposal.payload.recurrence !== undefined || proposal.payload.timezone !== undefined || proposal.payload.enabled))) {
+            if ((!previous.enabled && schedule.enabled) || (proposal.operation === 'update' &&
+                (proposal.payload.recurrence !== undefined || proposal.payload.timezone !== undefined))) {
               next.cursors[schedule.id] = this.now()
             }
           }

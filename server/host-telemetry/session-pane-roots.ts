@@ -28,16 +28,18 @@ export class SessionPaneRoots {
     ], { timeout: 2_000, maxBuffer: 1024 * 1024 })).stdout,
   ) {}
 
-  async observe(sessionId: string, pane: { target: string; rootPid: number }, ownerPid = pane.rootPid): Promise<void> {
+  async observe(sessionId: string, pane: { target: string; rootPid: number }, ownerPid: number, ownerStartTime: number | undefined): Promise<void> {
+    if (ownerStartTime === undefined) return
     const previous = this.roots.get(sessionId)
-    if (previous?.target === pane.target && previous.panePid === pane.rootPid && previous.ownerPid === ownerPid) return
+    if (previous?.target === pane.target && previous.panePid === pane.rootPid &&
+        previous.ownerPid === ownerPid && previous.ownerStartTime === ownerStartTime) return
     try {
       const observed = parseProcessStat(await this.readStat(pane.rootPid))
       const owner = ownerPid === pane.rootPid ? observed : parseProcessStat(await this.readStat(ownerPid))
-      if (observed?.pid !== pane.rootPid || owner?.pid !== ownerPid) return
+      if (observed?.pid !== pane.rootPid || owner?.pid !== ownerPid || owner.startTime !== ownerStartTime) return
       this.roots.set(sessionId, {
         sessionId, target: pane.target, panePid: pane.rootPid, paneStartTime: observed.startTime,
-        ownerPid, ownerStartTime: owner.startTime,
+        ownerPid, ownerStartTime,
       })
     } catch {
       // Telemetry must not change whether a terminal operation succeeds.

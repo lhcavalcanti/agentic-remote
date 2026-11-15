@@ -2351,7 +2351,7 @@ button {
 }
 
 .session-item__body:has(> .session-origin-run-link) .session-item__where,
-.session-item__body:has(> .session-origin-run-link) .session-item__text > strong {
+.session-item__body:not(.session-item__body--task-status):has(> .session-origin-run-link) .session-item__text > strong {
   padding-right: 40px;
 }
 

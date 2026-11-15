@@ -123,6 +123,17 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
   } finally { fixture.assertHealthy() }
 })
 
+test('Health search leads to its preview toggle while off and its card after enabling', async ({ page, baseURL }) => {
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-health-search')!.setup(page)
+  try {
+    const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+    await expect(dialog.getByRole('button', { name: /^App This device/ })).toHaveCount(0)
+    await dialog.getByRole('checkbox', { name: 'Health card', exact: true }).check()
+    await dialog.getByRole('button', { name: /^App This device/ }).click()
+    await expect(dialog.getByRole('region', { name: 'Health', exact: true })).toBeVisible()
+  } finally { fixture.assertHealthy() }
+})
+
 // App.test.tsx covers reconciliation, receipt failures, serialized queue races,
 // clipboard variants and history ownership. These locks add real-browser event
 // and HTTP wiring rather than duplicating that component-level matrix.

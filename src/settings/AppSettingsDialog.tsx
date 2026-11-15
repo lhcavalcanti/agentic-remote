@@ -56,6 +56,7 @@ const settingsTakeoverEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown']
 export function AppSettingsDialog(props: AppSettingsDialogProps) {
   const navigation = usePreviewFeature('settingsNavigation')
   const scheduler = usePreviewFeature('schedulerView')
+  const healthCardEnabled = usePreviewFeature('healthCard')
   const navigationSections = scheduler
     ? [...navigableSettingsSections.slice(0, 5), schedulerSettingsSection, ...navigableSettingsSections.slice(5)]
     : navigableSettingsSections
@@ -382,6 +383,7 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
   const sectionProps: SettingsSectionProps = {
     ...props,
     categoryNavigation: navigation,
+    healthCardEnabled,
     oracle,
     runtimeErrors,
     runtimeLoading,

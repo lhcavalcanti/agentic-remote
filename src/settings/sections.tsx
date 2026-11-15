@@ -22,6 +22,7 @@ import { providerName } from '../session-presentation'
 
 export type SettingsSectionProps = AppSettingsDialogProps & {
   categoryNavigation?: boolean
+  healthCardEnabled?: boolean
   oracle: ReturnType<typeof useOracleSettings>
   runtimeErrors: Partial<Record<AgentProvider, string>>
   runtimeLoading: boolean
@@ -525,7 +526,10 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'App',
     icon: Settings,
     scope: 'device',
-    searchLabels: ['Display name', 'Settings sync', 'Hub connection', 'App updates', 'Version', 'Check for updates', 'Health'],
+    searchLabels: ({ healthCardEnabled }) => [
+      'Display name', 'Settings sync', 'Hub connection', 'App updates', 'Version', 'Check for updates',
+      ...(healthCardEnabled ? ['Health', 'Refresh health'] : []),
+    ],
     render: ({
       settingsSync,
       onDisplayNameChange,

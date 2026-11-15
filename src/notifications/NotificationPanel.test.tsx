@@ -80,3 +80,37 @@ it('shows scheduled attention records with a human-readable outcome label', () =
   expect(screen.getByText('Scheduled · Needs input')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Daily review' })).toBeTruthy()
 })
+
+it('provides independent item, session-group and all read and dismiss scopes', () => {
+  const mutate = vi.fn()
+  render(<NotificationPanel enabled onClose={vi.fn()} onOpen={vi.fn()} notifications={{
+    records: [record('old'), record('new', { createdAt: '2026-11-14T18:01:00Z' }), record('other', { sessionId: 'two' })],
+    mutate, mutating: false, loading: false, error: undefined, unreadCount: 3,
+  }} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss Record new' }))
+  expect(mutate).toHaveBeenLastCalledWith(['new'], 'dismiss')
+  fireEvent.click(screen.getByText('Session notifications (2)'))
+  fireEvent.click(screen.getByRole('button', { name: 'Mark Record old read' }))
+  expect(mutate).toHaveBeenLastCalledWith(['old'], 'read')
+  fireEvent.click(screen.getByRole('button', { name: 'Mark session read' }))
+  expect(mutate).toHaveBeenLastCalledWith(['new', 'old'], 'read')
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss session' }))
+  expect(mutate).toHaveBeenLastCalledWith(['new', 'old'], 'dismiss')
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss all in All' }))
+  expect(mutate.mock.lastCall?.[0]).toEqual(expect.arrayContaining(['new', 'old', 'other']))
+})
+
+it('sends one bounded request for a large read or dismiss action', async () => {
+  vi.mocked(request).mockResolvedValue({ notifications: [record('one')] })
+  const { result } = renderHook(() => useNotifications(true))
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  vi.mocked(request).mockClear()
+  const ids = Array.from({ length: 1000 }, (_, index) => String(index))
+  for (const action of ['read', 'dismiss'] as const) {
+    await act(async () => result.current.mutate(ids, action))
+    expect(vi.mocked(request).mock.calls.filter(([, init]) => init?.method === 'POST')).toEqual([
+      ['/api/notifications/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) }],
+    ])
+    vi.mocked(request).mockClear()
+  }
+})

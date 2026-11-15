@@ -214,6 +214,19 @@ export class NotificationStore extends EventEmitter<{
     })
   }
 
+  mutateMany(ids: readonly string[], action: 'read' | 'dismiss'): Promise<void> {
+    if (ids.length > NOTIFICATION_LIMIT) throw new Error('Notification batch exceeds the record limit')
+    const selected = new Set(ids)
+    return this.commit((next) => {
+      const now = new Date(this.now()).toISOString()
+      for (const record of next.records) {
+        if (!selected.has(record.id)) continue
+        if (action === 'read') record.readAt ??= now
+        else record.dismissedAt ??= now
+      }
+    })
+  }
+
   async flush(): Promise<void> {
     await this.commits
   }

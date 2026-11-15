@@ -236,7 +236,7 @@ export function createUIScenes(
         }
       } else if (name === 'notification-panel') {
         await openSessions(page)
-        await page.getByRole('button', { name: 'Notifications', exact: true }).click()
+        await page.getByRole('button', { name: /^Notifications(?:, \d+ unread)?$/ }).click()
         await expect(page.getByRole('dialog', { name: 'Notifications', exact: true })).toContainText('Workspace review complete')
       } else if (name === 'host-monitor' || name === 'host-processes') {
         await openSessions(page)

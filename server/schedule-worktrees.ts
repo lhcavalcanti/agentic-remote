@@ -94,7 +94,13 @@ export class ScheduleWorktreeService {
     const selected = requested ?? this.roots[0]
     if (!selected) throw failure('Configure an explicitly allowed schedule worktree root on this computer')
     const resolved = await validateSessionDirectory(selected)
-    const allowed = await Promise.all(this.roots.map((root) => validateSessionDirectory(root)))
+    const allowed = await Promise.all(this.roots.map(async (root) => {
+      const real = await validateSessionDirectory(root)
+      if (!path.isAbsolute(root) || path.resolve(root) !== real) {
+        throw failure('Worktree roots must be absolute real directories without symbolic links')
+      }
+      return real
+    }))
     if (!allowed.includes(resolved)) throw failure('Worktree root is not explicitly allowed on this computer')
     // Pin the configured spelling too; a root retargeted through a symlink is never accepted.
     if (!path.isAbsolute(selected) || path.resolve(selected) !== resolved) {

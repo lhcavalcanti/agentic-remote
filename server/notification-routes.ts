@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { notificationKinds, type NotificationFilter } from '../shared/notification-center.js'
 import type { NotificationCenterService } from './notification-center-service.js'
+import { NOTIFICATION_LIMIT } from './notification-store.js'
 
 const booleanQuery = z.enum(['true', 'false']).transform((value) => value === 'true')
 const filters = z.object({
@@ -37,6 +38,15 @@ export async function registerNotificationRoutes(
   app.post('/api/notifications/read-all', async (request) => {
     const store = await ready()
     await store.readAll(filters.parse(request.query) as NotificationFilter)
+    return { ok: true }
+  })
+  app.post('/api/notifications/bulk', async (request) => {
+    const store = await ready()
+    const batch = z.object({
+      ids: z.array(params.shape.id).min(1).max(NOTIFICATION_LIMIT),
+      action: z.enum(['read', 'dismiss']),
+    }).strict().parse(request.body)
+    await store.mutateMany(batch.ids, batch.action)
     return { ok: true }
   })
   app.post('/api/notifications/:id/read', async (request) => {

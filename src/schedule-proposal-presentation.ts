@@ -50,7 +50,7 @@ export function proposalSchedule(proposal: ScheduleProposal, base?: Schedule): P
   }
 }
 export function proposalTiming(schedule: ProposalSchedule, operation: ScheduleProposal['operation'], now: Date): string {
-  const recurrence = `${schedule.recurrence.type === 'once' ? 'Once' : recurrenceLabel(schedule.recurrence, schedule.timezone)} ${zoneName(schedule.timezone, now)}`
+  const recurrence = `${recurrenceLabel(schedule.recurrence, schedule.timezone)} ${zoneName(schedule.timezone, now)}`
   if (operation === 'run-now') return `Once after approval ${zoneName(schedule.timezone, now)} · next now`
   if (operation === 'archive') return `${recurrence} · no automatic run after archiving`
   if (!schedule.enabled) return `${recurrence} · paused; no automatic run`
@@ -61,6 +61,12 @@ export function proposalTiming(schedule: ProposalSchedule, operation: SchedulePr
     hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
   }).format(next)
   return `${recurrence} · next ${formatted}`
+}
+export function proposalUnavailableReason(proposal: ScheduleProposal, base: Schedule | undefined, now: number): string | undefined {
+  if (Date.parse(proposal.expiresAt) <= now) return 'This proposal expired. Request a fresh proposal.'
+  const schedule = proposalSchedule(proposal, base)
+  if (schedule?.recurrence.type === 'once' && ['create', 'update', 'enable'].includes(proposal.operation) &&
+      Date.parse(schedule.recurrence.at) <= now) return 'The one-off time has passed. Request a fresh proposal with a future time.'
 }
 export function proposalConsequence(operation: ScheduleProposal['operation'], schedule: ProposalSchedule): string | undefined {
   switch (operation) {

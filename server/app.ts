@@ -99,7 +99,7 @@ import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
 import { SchedulerStore } from './scheduler-store.js'
 import { SchedulerDispatcher, type ScheduleLauncher } from './scheduler-dispatcher.js'
 import { registerSchedulerRoutes } from './scheduler-routes.js'
-import { SessionScheduleLauncher } from './schedule-launcher.js'
+import { recordScheduleReplacement, SessionScheduleLauncher } from './schedule-launcher.js'
 import { configuredScheduleWorktreeRoots, ScheduleWorktreeService } from './schedule-worktrees.js'
 import { ScheduleNotificationService } from './schedule-notification-service.js'
 
@@ -409,6 +409,26 @@ export async function buildApp(
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
+    if (hubFlags?.scheduler) {
+      managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      await startupPhases.run('scheduler.provenance', () => managerStore!.initialize())
+      managerStoreReady = true
+      forwardToJournal = (event) => {
+        void recordScheduleReplacement(managerStore!, event).catch((error: unknown) => {
+          app.log.warn({ err: error }, 'Schedule replacement provenance could not be saved')
+        })
+      }
+      manager.on('event', forwardToJournal)
+      const scheduleStore = new SchedulerStore(dataDirectory, {
+        warn: (message) => app.log.warn(message),
+      })
+      scheduler = new SchedulerDispatcher(scheduleStore,
+        options.scheduleLauncher ?? new SessionScheduleLauncher(manager, scheduleStore, managerStore), {
+        targetOnline: (computerId) => manager!.listComputers().some((computer) => computer.id === computerId && computer.online),
+        warn: (message) => app.log.warn(message),
+      })
+      await startupPhases.run('scheduler.initialize', () => scheduleStore.initialize())
+    }
     if (hubFlags?.notificationCenter) {
       const store = new NotificationStore(dataDirectory, {
         warn: (message) => app.log.warn(message),
@@ -434,7 +454,6 @@ export async function buildApp(
     }
     if (notificationCenter) pushService.setRecorder(notificationCenter)
     else pushService.setRecorder?.(undefined)
-    if (!hubFlags?.scheduler) pushService.attach(manager)
     const presence = new ClientPresence()
     const profile = settingsProfileStore
     pushService.setPolicy({
@@ -442,6 +461,7 @@ export async function buildApp(
       oracleWatched: () => presence.oracleWatched(),
       isScheduledSession,
     })
+    pushService.attach(manager)
     const managerSettings = managerRuntimeSettings()
     managerStructuredMemory = await initializeManagerStructuredMemory(
       path.join(dataDirectory, 'manager'),
@@ -461,10 +481,10 @@ export async function buildApp(
     } else if (!agent) {
       managerUnavailable = 'Oracle needs the built-in Copilot session service.'
     } else {
-      managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      managerStore ??= new ManagerStore(path.join(dataDirectory, 'manager'))
       // The manager is an addition to the hub; a hub whose manager cannot
       // start still serves everything else.
-      const initialized = await managerStore.initialize().then(() => true, (error: unknown) => {
+      const initialized = managerStoreReady || await managerStore.initialize().then(() => true, (error: unknown) => {
         app.log.error({ err: error }, 'The manager agent could not start')
         managerUnavailable = `Oracle could not start: ${error instanceof Error ? error.message : String(error)}`
         return false
@@ -489,6 +509,7 @@ export async function buildApp(
         )
       }
       if (recorder) {
+        if (forwardToJournal) manager.off('event', forwardToJournal)
         forwardToJournal = (event) => recorder.handle(event)
         manager.on('event', forwardToJournal)
       }
@@ -604,29 +625,14 @@ export async function buildApp(
     } else {
       dreamerUnavailable = 'Dreamer is unavailable because Oracle is not running on this hub.'
     }
-    if (hubFlags?.scheduler) {
-      if (!managerStoreReady) {
-        managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
-        await startupPhases.run('scheduler.provenance', () => managerStore!.initialize())
-        managerStoreReady = true
-      }
-      const scheduleStore = new SchedulerStore(dataDirectory, {
-        warn: (message) => app.log.warn(message),
-      })
-      scheduler = new SchedulerDispatcher(scheduleStore,
-        options.scheduleLauncher ?? new SessionScheduleLauncher(manager, scheduleStore, managerStore!), {
-        targetOnline: (computerId) => manager!.listComputers().some((computer) => computer.id === computerId && computer.online),
-        warn: (message) => app.log.warn(message),
-      })
+    if (scheduler) {
       const store = scheduler.store
-      await startupPhases.run('scheduler.initialize', () => store.initialize())
       scheduleNotifications = new ScheduleNotificationService(store, {
         admit: notificationCenter ? (event) => notificationCenter!.hub(event) : undefined,
         mutedSessions: () => pushService!.settings().mutedSessions,
         warn: (error) => app.log.error({ err: error }, 'Could not deliver a schedule outcome'),
       })
       pushService.attachScheduleNotifications(scheduleNotifications)
-      pushService.attach(manager)
       store.on('proposal', () => {
         const proposals = store.proposals()
         scheduleJournal = scheduleJournal.then(async () => {
@@ -789,6 +795,7 @@ export async function buildApp(
     await proactiveCoordinator?.stop()
     await dreamerService?.stop()
     await managerAgent?.stop()
+    await managerStore?.flush()
     manager?.stop()
     pushService?.stop()
     await notificationCenter?.flush()

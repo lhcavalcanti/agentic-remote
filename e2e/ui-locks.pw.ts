@@ -520,6 +520,13 @@ test.describe('browser interaction contracts', () => {
   test('shows host history, conservative process links and offline computers', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'host-monitor')
     const monitor = page.getByRole('dialog', { name: 'Host monitor', exact: true })
+    for (const minutes of [1, 5, 15]) {
+      await expect(monitor.getByText(`Load · ${minutes} min`, { exact: true })).toBeVisible()
+      await expect(monitor.getByRole('img', { name: `Load · ${minutes} min trend`, exact: true })).toBeVisible()
+    }
+    for (const tab of await monitor.getByRole('tab').all()) {
+      expect(await tab.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(40)
+    }
     await monitor.getByRole('button', { name: '24 h · minute averages', exact: true }).click()
     await expect(monitor).toContainText('1440 minute aggregates')
     await monitor.getByRole('tab', { name: 'Processes', exact: true }).click()

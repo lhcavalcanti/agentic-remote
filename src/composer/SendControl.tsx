@@ -19,6 +19,7 @@ export function SendControl({
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const chevron = useRef<HTMLButtonElement>(null)
+  const opener = useRef<HTMLButtonElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const id = useId()
   const visible = enabled && open
@@ -28,9 +29,13 @@ export function SendControl({
   }
   const close = (restoreFocus = true) => {
     setOpen(false)
-    if (restoreFocus) trigger.current?.focus()
+    if (restoreFocus) opener.current?.focus()
   }
-  const show = () => { if (!disabled) setOpen(true) }
+  const show = (button: HTMLButtonElement) => {
+    if (disabled) return
+    opener.current = button
+    setOpen(true)
+  }
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
   useEffect(() => {
     if (!visible) return
@@ -56,11 +61,12 @@ export function SendControl({
     'aria-controls': id,
     'aria-expanded': visible,
     'aria-haspopup': 'menu',
-    onClick: show,
-    onContextMenu: (event) => { event.preventDefault(); show() },
+    onClick: (event) => show(event.currentTarget),
+    onContextMenu: (event) => { event.preventDefault(); show(event.currentTarget) },
     onPointerDown: (event) => {
       clearPress()
-      if (event.button === 0) timer.current = setTimeout(show, 500)
+      const button = event.currentTarget
+      if (event.button === 0) timer.current = setTimeout(() => show(button), 500)
     },
     onPointerUp: clearPress,
     onPointerLeave: clearPress,
@@ -69,7 +75,7 @@ export function SendControl({
       if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10') ||
           (event.altKey && event.key === 'ArrowDown')) {
         event.preventDefault()
-        show()
+        show(event.currentTarget)
       }
     },
   } : { onClick: () => onSubmit() }
@@ -80,14 +86,17 @@ export function SendControl({
         <button
           aria-controls={id} aria-expanded={visible} aria-haspopup="menu" aria-label="Send options"
           className="composer-tool composer-send-options" disabled={disabled}
-          onClick={show} ref={chevron} title="Steer or queue" type="button"
+          onClick={(event) => show(event.currentTarget)} ref={chevron} title="Steer or queue" type="button"
         ><ChevronDown aria-hidden="true" size={16} /></button>
       ) : null}
       {visible ? (
         <div
           aria-label="Message delivery" className="composer-send-menu" id={id} ref={root} role="menu"
+          onBlur={(event) => {
+            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) close(false)
+          }}
           onKeyDown={(event) => {
-            if (event.key === 'Escape' || event.key === 'Tab') {
+            if (event.key === 'Escape') {
               event.preventDefault()
               event.stopPropagation()
               close()
@@ -104,12 +113,12 @@ export function SendControl({
           <button
             aria-description={steerUnavailableReason}
             aria-disabled={disabled || Boolean(steerUnavailableReason)}
-            onClick={() => choose(false)} role="menuitem" type="button"
+            onClick={() => choose(false)} role="menuitem" tabIndex={-1} type="button"
           >
             <strong>Steer — guide the active turn</strong>
             {steerUnavailableReason ? <small>{steerUnavailableReason}</small> : null}
           </button>
-          <button aria-disabled={disabled} onClick={() => choose(true)} role="menuitem" type="button">
+          <button aria-disabled={disabled} onClick={() => choose(true)} role="menuitem" tabIndex={-1} type="button">
             <strong>Queue — run after this turn</strong>
             <small>Delivers automatically after the current turn.</small>
           </button>

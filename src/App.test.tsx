@@ -18320,6 +18320,65 @@ describe('App', () => {
     expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
   })
 
+  it.each(['removed', 'offline'] as const)('keeps a newer %s computer state during a connection check', async (change) => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finish!: (computers: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify(change === 'removed'
+          ? { type: 'computer.removed', computerId: secondComputer.id }
+          : { type: 'computer.updated', computer: { ...secondComputer, online: false } }),
+      } as MessageEvent)
+    })
+    await act(async () => { finish([computer, secondComputer]) })
+    if (change === 'removed') {
+      expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+      expect(within(dialog).getByRole('status')).not.toHaveTextContent(secondComputer.name)
+    } else {
+      expect(within(dialog).getByText(/Offline · Node/)).toBeVisible()
+      expect(within(dialog).getByRole('status')).toHaveTextContent(`${secondComputer.name}: Offline`)
+    }
+  })
+
+  it('reconciles computers missing from a connection-check snapshot', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValueOnce([computer, secondComputer]).mockResolvedValue([computer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+  })
+
+  it('ignores a connection check overtaken by a newer computer snapshot', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finish!: (computers: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    act(() => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument())
+    await act(async () => { finish([computer, secondComputer]) })
+    expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+  })
+
   it('converges after cancelling even when no event arrives', async () => {
     const running = {
       ...session,

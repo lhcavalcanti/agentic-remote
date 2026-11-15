@@ -32,6 +32,7 @@ export type AppSettingsDialogProps = {
   computers: ComputerSummary[]
   onComputerAdded?: (computer: ComputerSummary) => void
   onComputerRemoved?: (computerId: string) => void
+  onCheckComputerConnections?: () => Promise<ComputerSummary[]>
   onOpenHostMonitor?: () => void
   onClose: () => void
   onApplyUpdate: () => void

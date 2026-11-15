@@ -4105,6 +4105,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // one simply because it finished last.
   const snapshotGeneration = useRef(0)
   const snapshotApplied = useRef(0)
+  const computerRecordsSnapshotApplied = useRef(0)
   // The newest refresh that actually reached each computer.
   const computerSnapshotApplied = useRef(new Map<string, number>())
   // Computers whose sessions the most recent list actually reached. A computer
@@ -6914,7 +6915,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         // without it a deep link to its ancestor has no way through.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(reconciled)
-        applyComputerSnapshot(loadedComputers, startedAtSequence)
+        applyComputerSnapshot(loadedComputers, startedAtSequence, asked)
         // A live removal can arrive before this list does, so the address may
         // name a session that has already been replaced, possibly more than
         // once. Falling through to `sessions[0]` would open something the
@@ -7359,7 +7360,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       // first. Selection is only set when nothing has been chosen yet, so
       // this never moves a reader who is already somewhere.
       applyInitialSelection(reconciledForClaim, answeredFor)
-      applyComputerSnapshot(loadedComputers, startedAtSequence)
+      applyComputerSnapshot(loadedComputers, startedAtSequence, asked)
       // A session that changed while the refresh was in flight is described
       // more recently by the event than by the snapshot, exactly as the two
       // reconciliations above assume. A clear moves the mute to a replacement
@@ -10145,7 +10146,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   function applyComputerSnapshot(
     loaded: ComputerSummary[],
     startedAtSequence: number,
+    generation: number,
   ) {
+    if (generation <= computerRecordsSnapshotApplied.current) return
+    computerRecordsSnapshotApplied.current = generation
     const changedAt = (id: string) => Math.max(
       computerEventSequenceRef.current.get(id) || 0,
       computerRecordSequenceRef.current.get(id) || 0,
@@ -13054,6 +13058,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       Object.entries(current).filter(([key]) => !key.startsWith(`${computerId}:`))))
   }
 
+  async function checkComputerConnections() {
+    const generation = ++snapshotGeneration.current
+    const startedAtSequence = eventSequenceRef.current
+    const loaded = await listComputers()
+    applyComputerSnapshot(loaded, startedAtSequence, generation)
+    return computersRef.current
+  }
+
   return (
     <div
       className={`app-shell ${desktopRail ? 'app-shell--rail' : ''} ${
@@ -14396,6 +14408,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         onAdded={computerAdded}
         onClose={() => setComputersOpen(false)}
         onRemoved={computerRemoved}
+        onCheckConnection={checkComputerConnections}
         open={computersOpen}
       />
       <StatuslineDialog
@@ -14431,6 +14444,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         onDisplayNameChange={(name) => saveSetting('displayName', name)}
         onComputerAdded={computerAdded}
         onComputerRemoved={computerRemoved}
+        onCheckComputerConnections={checkComputerConnections}
         onOpenHostMonitor={hostMonitorView ? () => {
           setSettingsOpen(false)
           setSidebarOpen(false)

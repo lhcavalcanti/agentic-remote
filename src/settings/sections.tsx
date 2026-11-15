@@ -586,11 +586,11 @@ export const navigableSettingsSections: readonly SettingsSection[] = [
     icon: MonitorCog,
     scope: 'hub',
     searchLabels: ['Name', 'Node URL', 'Pairing token', 'Add computer', 'Remove', 'Check connection', 'Version', 'Status', 'Role', 'Host monitor'],
-    render: ({ computers, onComputerAdded, onComputerRemoved, onOpenHostMonitor }) => (
+    render: ({ computers, onComputerAdded, onComputerRemoved, onCheckComputerConnections, onOpenHostMonitor }) => (
       <>
         {onOpenHostMonitor ? <button className="secondary-button" onClick={onOpenHostMonitor} type="button">Open Host monitor</button> : null}
         <ComputersBody computers={computers} enhanced onAdded={onComputerAdded ?? (() => undefined)}
-          onRemoved={onComputerRemoved ?? (() => undefined)} />
+          onRemoved={onComputerRemoved ?? (() => undefined)} onCheckConnection={onCheckComputerConnections} />
       </>
     ),
   },

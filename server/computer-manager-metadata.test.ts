@@ -83,6 +83,22 @@ async function fixture() {
 }
 
 describe('ComputerManager passive session metadata', () => {
+  it('lists known open sessions without contacting cached or unanswered nodes', async () => {
+    const { manager, service, worker, unrelated } = await fixture()
+    worker.active.mockResolvedValue([session('known'), { ...session('closed-remote'), isOpen: false }])
+    await manager.lookupSessionMetadata('worker', 'known')
+    worker.active.mockClear()
+    service.listSessions.mockReturnValue([session('local'), { ...session('closed-local'), isOpen: false }])
+    expect(manager.listCachedSessions().map((entry) => [entry.computerId, entry.id])).toEqual([
+      ['hub', 'local'], ['worker', 'known'],
+    ])
+    expect(worker.active).not.toHaveBeenCalled()
+    expect(unrelated.active).not.toHaveBeenCalled()
+    expect(RemoteNodeClient.prototype.getSession).not.toHaveBeenCalled()
+    await manager.removeComputer('worker')
+    expect(manager.listCachedSessions().map((entry) => entry.id)).toEqual(['local'])
+  })
+
   it('does not wait for an unrelated hung node for local active or historical identities', async () => {
     const { manager, service, worker, unrelated } = await fixture()
     expect(await manager.lookupSessionMetadata('hub', 'local')).toMatchObject({

@@ -25,7 +25,7 @@ const session = (id: string, revision = 1): ManagedSession => ({
   cwd: '/fictional', status: 'idle', messages: [], updatedAt: '2026-11-15T19:00:00Z',
 })
 
-async function fixture(origin?: SessionOrigin, scheduler = false, evidence = true) {
+async function fixture(origin?: SessionOrigin, scheduler = false, evidence = true, earlySessions: ManagedSession[] = []) {
   vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'http://localhost')
   vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', scheduler ? 'on' : 'off')
   vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'off')
@@ -49,11 +49,20 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
     if (!value) throw Object.assign(new Error('Session not found'), { statusCode: 404 })
     return structuredClone(value)
   })
+  const listCachedSessions = vi.fn(() => [...current.values()])
+  const managerEvents: HubEvent[] = []
   const manager = Object.assign(new EventEmitter(), {
-    initialize: async () => undefined, stop: () => undefined, readSession,
+    initialize: async () => {
+      for (const value of earlySessions) {
+        current.set(value.id, value)
+        manager.emit('event', { type: 'session.upserted', session: value, summary: true })
+      }
+    },
+    stop: () => undefined, readSession, listCachedSessions,
     listComputers: () => [{ id: 'studio', name: 'Studio', online: true, isLocal: true }],
     createSession: async () => current.get('next')!,
   }) as unknown as ComputerManager
+  manager.on('event', (event) => managerEvents.push(event))
   const runtime = await buildApp({ dataDirectory: directory, manager, managerAgent: false, logger: false, serveStatic: false })
   applications.push(runtime.app)
   await runtime.app.ready()
@@ -62,7 +71,7 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
   const messages: HubEvent[] = []
   socket.on('message', (data) => messages.push(JSON.parse(data.toString())))
   return {
-    manager, current, messages, readSession,
+    manager, current, messages, readSession, managerEvents, listCachedSessions,
     async createUser() {
       return runtime.app.inject({ method: 'POST', url: '/api/computers/studio/sessions', headers: { host: 'localhost', origin: 'http://localhost' }, payload: { cwd: '/fictional' } })
     },
@@ -79,6 +88,21 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
 }
 
 describe('hub provenance publication', () => {
+  it('reconciles an initial resync before attachment through discovery exactly once', async () => {
+    const record = vi.spyOn(ManagerStore.prototype, 'recordDiscoveredSession')
+    const f = await fixture(undefined, false, true, [session('early-external')])
+    await vi.waitFor(async () => expect((await f.persisted())['studio:early-external']).toMatchObject({
+      origin: 'discovered', originEvidence: 'discovery',
+    }))
+    await vi.waitFor(() => expect(f.managerEvents.filter((event) => event.type === 'session.upserted')).toHaveLength(2))
+    expect(f.managerEvents.at(-1)).toMatchObject({ type: 'session.upserted', summary: true, session: { id: 'early-external' } })
+    expect(f.listCachedSessions).toHaveBeenCalledOnce()
+    f.upsert(session('early-external'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(record).toHaveBeenCalledOnce()
+    expect(f.readSession).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ['user', 'before'], ['user', 'after'], ['manager', 'before'], ['manager', 'after'],
     ['schedule', 'before'], ['schedule', 'after'],

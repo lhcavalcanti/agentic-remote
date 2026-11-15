@@ -727,6 +727,9 @@ export async function buildApp(
         }
       }
       manager.on('event', forwardToSessionProvenance)
+      for (const session of manager.listCachedSessions?.() ?? []) {
+        forwardToSessionProvenance({ type: 'session.upserted', session, summary: true })
+      }
     }
     if (notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     await registerHubRoutes(

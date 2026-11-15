@@ -239,6 +239,15 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return (await this.listSessionsWithAuthority()).sessions
   }
 
+  /** Already-known open sessions only; never waits for a node or starts a read. */
+  listCachedSessions(): ManagedSession[] {
+    const local = this.localService.listSessions()
+      .map((session) => managedSession(session, this.localComputer()))
+    const remote = this.registry.list().flatMap((computer) => this.sessionCache.get(computer.id) ?? [])
+    return [...local, ...remote].filter((session) => session.isOpen !== false)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+  }
+
   /**
    * Sessions, and which computers actually answered for their own.
    *

@@ -11,25 +11,25 @@ import {
 import { parseSettingValue, settingsValuesFrom } from './settings-profile.js'
 
 describe('hub feature flags', () => {
-  it.each(['on', 'true', '1', ' ON ', 'TrUe'])('accepts enabled value %s', (value) => {
+  it.each(['on', ' ON ', 'On'])('accepts enabled value %s', (value) => {
     expect(parseFeatureFlag('AGENTIC_REMOTE_FEATURE_SCHEDULER', value)).toBe(true)
   })
 
-  it.each(['off', 'false', '0', ' OFF ', 'FaLsE'])('accepts disabled value %s', (value) => {
+  it.each(['off', ' OFF ', 'OfF'])('accepts disabled value %s', (value) => {
     expect(parseFeatureFlag('AGENTIC_REMOTE_FEATURE_SCHEDULER', value)).toBe(false)
   })
 
-  it.each(['', ' ', 'yes', 'enabled', '2', 'on,off'])('rejects invalid value %j with its variable name', (value) => {
+  it.each(['', ' ', 'yes', 'enabled', '2', 'on,off', 'true', 'false', '1', '0', ' TrUe ', ' FaLsE '])('rejects invalid value %j with its variable name', (value) => {
     expect(() => parseFeatureFlag('AGENTIC_REMOTE_FEATURE_SCHEDULER', value))
-      .toThrow('Invalid AGENTIC_REMOTE_FEATURE_SCHEDULER')
+      .toThrow('Invalid AGENTIC_REMOTE_FEATURE_SCHEDULER: expected on|off')
   })
 
   it('defaults every unset flag off and reads each declared environment variable', () => {
     expect(readHubFeatureFlags({})).toEqual(defaultHubFeatureFlags)
     expect(readHubFeatureFlags({
       AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER: 'on',
-      AGENTIC_REMOTE_FEATURE_HOST_MONITOR: 'true',
-      AGENTIC_REMOTE_FEATURE_SCHEDULER: '1',
+      AGENTIC_REMOTE_FEATURE_HOST_MONITOR: ' ON ',
+      AGENTIC_REMOTE_FEATURE_SCHEDULER: 'On',
     })).toEqual({ notificationCenter: true, hostMonitor: true, scheduler: true })
   })
 

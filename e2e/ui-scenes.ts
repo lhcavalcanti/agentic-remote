@@ -299,6 +299,9 @@ export function createUIScenes(
           await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible()
         }
       }
+      if (name === 'scheduler-name-conflict' || name === 'scheduler-stale-link') {
+        await page.getByRole('dialog', { name: 'Scheduler', exact: true }).evaluate((element) => { element.scrollTop = 0 })
+      }
       await page.evaluate(() => document.fonts.ready)
       await page.mouse.move(0, 0)
       fixture.assertHealthy()

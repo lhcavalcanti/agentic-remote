@@ -54,6 +54,7 @@ it('saves a trimmed display-name edit and refuses invalid names', () => {
 })
 
 it('removes a closed drawer navigation from keyboard and accessibility reach', () => {
+  vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
   const preferences = { desktopRail: true }
   const { container } = render(<PreviewFeaturesContext value={{
     preferences, hubFlags: defaultHubFeatureFlags,

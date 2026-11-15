@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SkillSettingsService, skillFrontmatter } from './skill-settings.js'
+import { skillNameSchema, skillSettingsSchema } from '../shared/skill-settings.js'
 
 let home: string
 let copilotHome: string
@@ -150,6 +151,7 @@ describe('read-only skill discovery and settings changes', () => {
     await skill(path.join(copilotHome, 'skills'), folder, `---\n${fields}\n---\nDo not execute.`)
     const snapshot = await service.snapshot()
     expect(snapshot.skills).toHaveLength(1)
+    expect(skillSettingsSchema.safeParse(snapshot).success).toBe(true)
     expect(snapshot.skills[0]).toMatchObject({ manageable: false, reason: expect.stringMatching(reason), enabled: false })
     await expect(service.update({ name: snapshot.skills[0].name, enabled: true, confirmed: true, revision: snapshot.revision })).rejects.toThrow(/frontmatter/i)
   })
@@ -157,6 +159,22 @@ describe('read-only skill discovery and settings changes', () => {
   it('accepts the CLI name alphabet, including case, namespaces, dots, underscores and spaces', () => {
     expect(skillFrontmatter('---\nname: "My Plugin:review_code.v2"\ndescription: Valid text\n---'))
       .toEqual({ name: 'My Plugin:review_code.v2', description: 'Valid text' })
+  })
+
+  it('returns a schema-valid full snapshot when invalid names coexist with usable skills', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'usable')
+    for (const [index, name] of ['slash/name', '../escape', '_unsupported', '🚫', 'x'.repeat(65)].entries()) {
+      await skill(path.join(copilotHome, 'skills'), `invalid-${index}`, `---\nname: ${JSON.stringify(name)}\ndescription: A fictional invalid skill.\n---`)
+    }
+    const snapshot = skillSettingsSchema.parse(await service.snapshot())
+    expect(snapshot.skills).toHaveLength(6)
+    const invalid = snapshot.skills.filter((entry) => entry.manageable === false)
+    expect(invalid).toHaveLength(5)
+    expect(new Set(invalid.map((entry) => entry.name)).size).toBe(5)
+    expect(invalid.every((entry) => skillNameSchema.safeParse(entry.name).success && !entry.enabled && entry.reason?.includes('name'))).toBe(true)
+    expect((await service.snapshot()).skills.map((entry) => entry.name)).toEqual(snapshot.skills.map((entry) => entry.name))
+    const changed = await service.update({ name: 'usable', enabled: false, confirmed: true, revision: snapshot.revision })
+    expect(skillSettingsSchema.parse(changed).skills.find((entry) => entry.name === 'usable')?.enabled).toBe(false)
   })
 
   it('keeps untrusted repository skills read-only without granting folder trust', async () => {

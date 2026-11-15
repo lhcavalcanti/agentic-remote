@@ -247,7 +247,8 @@ export class SkillSettingsService {
       try {
         const fields = frontmatterFields(await readBounded(path.join(directory, 'SKILL.md')))
         const invalid = frontmatterReason(fields)
-        const bare = (fields?.name || path.basename(directory)).slice(0, 64)
+        const parsedName = skillFrontmatterNameSchema.safeParse(fields?.name)
+        const bare = parsedName.success ? parsedName.data : `invalid-${createHash('sha256').update(directory).digest('hex').slice(0, 16)}`
         const name = root.plugin ? `${root.plugin}:${bare}` : bare
         const fromRepository = repositoryDisabled.has(name.toLowerCase()) || repositoryDisabled.has(bare.toLowerCase())
         const blanketDisabled = Boolean(root.plugin && disabled.has(bare.toLowerCase()))

@@ -336,13 +336,59 @@ describe('hub schedule dispatcher', () => {
     expect(restarted.getRun(run.id)).toMatchObject({ status: 'running', sessionId: 'recovered-session', rootPromptReceipt: 'recovered-root' })
   })
 
-  it('does not treat an offline reconciliation error as authoritative absence', async () => {
-    const { store, schedule, dispatcher, launcher } = await fixture()
+  it('keeps an unlaunched pending intent retryable when offline reconciliation fails', async () => {
+    const { store, schedule, dispatcher, launcher } = await fixture({}, () => false)
     const run = (await store.admit(schedule.id, INITIAL, 'schedule'))!
     launcher.reconcile.mockRejectedValue(new Error('offline'))
     await dispatcher.start()
     await settle(dispatcher)
-    expect(store.getRun(run.id).status).toBe('launching')
+    expect(store.getRun(run.id).status).toBe('pending')
+    expect(launcher.launch).not.toHaveBeenCalled()
+  })
+
+  it.each(['offline-unknown', 'offline-error', 'online-noop'] as const)(
+    'expires never-launched pending work after restart instead of leaking a slot (%s)', async (mode) => {
+      const { directory, store, schedule, dispatcher, launcher } = await fixture({}, () => false)
+      await dispatcher.start()
+      const run = await dispatcher.runNow(schedule.id)
+      expect(store.getRun(run.id)).toMatchObject({ status: 'pending', retryUntil: '2026-11-14T08:10:00.000Z' })
+      await dispatcher.stop()
+      const restarted = new SchedulerStore(directory)
+      const owner = mode === 'online-noop' ? new NoopScheduleLauncher() : launcher
+      if (mode === 'offline-error') launcher.reconcile.mockRejectedValue(new Error('Synthetic offline lookup'))
+      else launcher.reconcile.mockResolvedValue({ state: 'unknown' })
+      const recovered = new SchedulerDispatcher(restarted, owner, { targetOnline: () => mode === 'online-noop' })
+      dispatchers.push(recovered)
+      vi.setSystemTime(new Date(Date.parse(INITIAL) + 60_000))
+      await recovered.start()
+      await settle(recovered)
+      await vi.waitFor(() => expect(restarted.getRun(run.id))
+        .toMatchObject({ status: 'pending', retryUntil: '2026-11-14T08:10:00.000Z' }))
+      expect(restarted.allRuns().filter(holdsSlot)).toHaveLength(0)
+      vi.setSystemTime(new Date(Date.parse(INITIAL) + SCHEDULER_LATE_MS + 1))
+      await settle(recovered)
+      expect(restarted.getRun(run.id)).toMatchObject({ status: 'missed' })
+      expect(restarted.allRuns().filter(holdsSlot)).toHaveLength(0)
+      expect(launcher.launch).not.toHaveBeenCalled()
+    },
+  )
+
+  it('reserves a recovered pending launch with positive identity evidence even after the retry deadline', async () => {
+    const { directory, store, schedule, dispatcher, launcher } = await fixture({}, () => false)
+    await dispatcher.start()
+    const run = await dispatcher.runNow(schedule.id)
+    await dispatcher.stop()
+    launcher.states.set(run.launchId, { state: 'unknown', sessionId: 'accepted-session', rootPromptReceipt: 'accepted-root' })
+    vi.setSystemTime(new Date(Date.parse(INITIAL) + SCHEDULER_LATE_MS + 1))
+    const restarted = new SchedulerStore(directory)
+    const recovered = new SchedulerDispatcher(restarted, launcher, { targetOnline: () => false })
+    dispatchers.push(recovered)
+    await recovered.start()
+    await settle(recovered)
+    expect(restarted.getRun(run.id)).toMatchObject({
+      status: 'launching', sessionId: 'accepted-session', rootPromptReceipt: 'accepted-root',
+    })
+    expect(restarted.allRuns().filter(holdsSlot)).toHaveLength(1)
     expect(launcher.launch).not.toHaveBeenCalled()
   })
 

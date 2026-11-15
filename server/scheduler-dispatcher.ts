@@ -279,6 +279,11 @@ export class SchedulerDispatcher {
       if (run.status !== 'pending' && !this.launches.has(run.id)) {
         await this.finish(run, 'interrupted', 'Owning computer confirms this launch is absent')
       }
+    } else if (run.status === 'pending' && result.state === 'unknown' &&
+        !run.sessionId && !run.rootPromptReceipt && !result.sessionId && !result.rootPromptReceipt) {
+      // Unknown/no-op is not launch evidence. Never-launched intent stays pending
+      // and retryable; drain enforces retryUntil and releases it as missed.
+      await this.store.changeRun(run.id, details)
     } else {
       await this.store.changeRun(run.id, {
         ...details,

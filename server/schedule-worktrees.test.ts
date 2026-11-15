@@ -98,6 +98,14 @@ describe('owned schedule worktrees', () => {
     expect(await new ScheduleWorktreeService(directory, [root]).read(launchId)).toEqual(result)
   })
 
+  it('refuses the real target of a symlinked configured root', async () => {
+    const linked = path.join(directory, 'configured-link')
+    await symlink(root, linked)
+    const linkedService = new ScheduleWorktreeService(directory, [linked])
+    await expect(linkedService.allocate({ launchId, folder: repository, root })).rejects.toThrow('without symbolic links')
+    expect(await readdir(root)).toEqual([])
+  })
+
   it('removes clean pushed work without force and retains a durable tombstone', async () => {
     const record = await service.allocate({ launchId, folder: repository })
     expect(await service.cleanup(launchId)).toMatchObject({ state: 'removed' })

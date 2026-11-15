@@ -51,7 +51,7 @@ function parseField(
       values.add(label === 'day-of-week' && value === 7 ? 0 : value)
     }
   }
-  return { values: [...values].sort((a, b) => a - b), wildcard: source.startsWith('*') }
+  return { values: [...values].sort((a, b) => a - b), wildcard: source === '*' }
 }
 
 export function parseCronExpression(expression: string): ParsedCronExpression {

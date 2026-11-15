@@ -10,6 +10,7 @@ import {
   classifyHubNotification,
   classifyHostNotification,
   classifyOracleNotification,
+  type NotificationCursors,
 } from './notification-classifier.js'
 import { NotificationStore } from './notification-store.js'
 
@@ -23,6 +24,9 @@ export class NotificationCenterService implements NotificationRecorder {
   private work: Promise<unknown> = Promise.resolve()
   private readonly preferences: NotificationKindPreferences = {}
   private readonly admissions = new WeakMap<object, Promise<void>>()
+  private readonly hostArrivals = new Map<string, { sample: string; at: number }>()
+  private readonly hostObservations: NotificationCursors = {}
+  private readonly oracleReplies = new Map<string, string>()
 
   constructor(
     readonly store: NotificationStore,
@@ -64,7 +68,7 @@ export class NotificationCenterService implements NotificationRecorder {
 
   oracle(event: ManagerEvent): Promise<void> {
     const snapshot = structuredClone(event)
-    const admitted = this.enqueue(() => this.store.ingest(() => classifyOracleNotification(snapshot, this.now())
+    const admitted = this.enqueue(() => this.store.ingest(() => classifyOracleNotification(snapshot, this.now(), this.oracleReplies)
       .filter((record) => this.inApp(record))))
     this.admissions.set(event, admitted)
     return admitted
@@ -72,8 +76,16 @@ export class NotificationCenterService implements NotificationRecorder {
 
   host(computer: ComputerSummary, snapshot: HostSnapshot | undefined): Promise<void> {
     const observation = structuredClone({ computer, snapshot })
+    if (!computer.isLocal && observation.snapshot?.latest && observation.snapshot.sampleAgeMs === undefined) {
+      const sample = observation.snapshot.latest.at
+      const at = (this.options.now ?? Date.now)()
+      const previous = this.hostArrivals.get(computer.id)
+      const arrival = previous?.sample === sample ? previous : { sample, at }
+      this.hostArrivals.set(computer.id, arrival)
+      observation.snapshot.sampleAgeMs = Math.max(0, at - arrival.at)
+    }
     return this.enqueue(() => this.store.ingest((cursors) =>
-      classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now())
+      classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now(), this.hostObservations)
         .filter((record) => this.inApp(record))))
   }
 

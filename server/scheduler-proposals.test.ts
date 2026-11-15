@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SchedulerStore } from './scheduler-store.js'
 import { NoopScheduleLauncher, SchedulerDispatcher } from './scheduler-dispatcher.js'
 
@@ -120,5 +120,47 @@ describe('durable schedule proposals', () => {
       expect(store.allRuns()).toHaveLength(1)
       expect(store.proposal(proposal.id)).toMatchObject({ status: 'applied', appliedRunId: first.id })
     } finally { await dispatcher.stop() }
+  })
+
+  it('recovers Run now after approval without requiring the HTTP handler to admit it', async () => {
+    const schedule = await store.create({ ...input(), enabled: false })
+    const proposal = await store.propose({ operation: 'run-now', scheduleId: schedule.id, baseRevision: 1, payload: {} })
+    const approved = await store.approveProposal(proposal.id)
+    expect(approved).toMatchObject({ status: 'applied', appliedRunId: expect.any(String) })
+    const reopened = new SchedulerStore(directory, { now: () => now })
+    const launch = vi.fn(async () => {})
+    const dispatcher = new SchedulerDispatcher(reopened, {
+      launch, reconcile: async () => ({ state: 'absent' }), stop: async () => ({ outcome: 'stopped' }),
+    }, { now: () => now })
+    try {
+      await dispatcher.start()
+      await vi.waitFor(() => expect(launch).toHaveBeenCalledTimes(1))
+      expect(reopened.allRuns()).toHaveLength(1)
+      expect((await reopened.approveProposal(proposal.id)).appliedRunId).toBe(approved.appliedRunId)
+    } finally { await dispatcher.stop() }
+  })
+
+  it.each(['enable', 'update'] as const)('preserves due cursors for already-enabled %s approvals', async (operation) => {
+    const schedule = await store.create(input())
+    const cursor = store.cursor(schedule.id)
+    now += 60_000
+    const proposal = await store.propose(operation === 'enable'
+      ? { operation, scheduleId: schedule.id, baseRevision: 1, payload: {} }
+      : { operation, scheduleId: schedule.id, baseRevision: 1, payload: { enabled: true, prompt: 'Revised guide review' } })
+    await store.approveProposal(proposal.id)
+    expect(store.cursor(schedule.id)).toBe(cursor)
+    await store.update(schedule.id, { revision: 2, enabled: false })
+    const enable = await store.propose({ operation: 'enable', scheduleId: schedule.id, baseRevision: 3, payload: {} })
+    await store.approveProposal(enable.id)
+    expect(store.cursor(schedule.id)).toBe(new Date(now).toISOString())
+  })
+
+  it('does not clone state when an expiry sweep has nothing to expire', async () => {
+    await store.propose({ operation: 'create', payload: input() })
+    const clone = vi.spyOn(globalThis, 'structuredClone')
+    try {
+      await store.expireProposals()
+      expect(clone).not.toHaveBeenCalled()
+    } finally { clone.mockRestore() }
   })
 })

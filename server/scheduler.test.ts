@@ -374,7 +374,7 @@ describe('hub schedule dispatcher', () => {
   )
 
   it('reserves a recovered pending launch with positive identity evidence even after the retry deadline', async () => {
-    const { directory, store, schedule, dispatcher, launcher } = await fixture({}, () => false)
+    const { directory, schedule, dispatcher, launcher } = await fixture({}, () => false)
     await dispatcher.start()
     const run = await dispatcher.runNow(schedule.id)
     await dispatcher.stop()

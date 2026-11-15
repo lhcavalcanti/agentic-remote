@@ -151,7 +151,7 @@ Origin-enforced routes are `GET /api/schedules/proposals` (pending only, no-stor
 
 ## Oracle tools and confirmation cards
 
-Scheduler-enabled hubs register `list_schedules`, `get_schedule`, and bounded `list_schedule_runs` for Ask, Delegate, voice and proactive reads. `create_schedule`, revision-checked `update_schedule`, `set_schedule_enabled`, `run_schedule_now` and `archive_schedule` only create proposals in typed Delegate turns. Voice, proactive, Ask and durable-task turns cannot propose writes; there is no delete tool or confirmation bypass.
+Scheduler-enabled hubs register `list_schedules`, `get_schedule`, and bounded `list_schedule_runs` for Ask, Delegate, voice and proactive reads. List tools return at most 20 compact summaries within a 13K-character output budget, with omitted counts and continuation offsets; exact prompts and targets remain available through `get_schedule`. Approval cards retain full one-off timestamps and disable approval at proposal expiry or when a proposed one-off time passes, including after a background tab resumes. `create_schedule`, revision-checked `update_schedule`, `set_schedule_enabled`, `run_schedule_now` and `archive_schedule` only create proposals in typed Delegate turns. Voice, proactive, Ask and durable-task turns cannot propose writes; there is no delete tool or confirmation bypass.
 
 Each proposal and observed outcome is recorded in the manager journal, including confirmation, rejection, expiry and failure, with startup replay for interrupted journal delivery. Proposal IDs are not session ownership. Schedule-started sessions retain the registry's `schedule` origin and cannot be promoted to Oracle ownership; Oracle-created schedules are not Oracle-owned sessions.
 

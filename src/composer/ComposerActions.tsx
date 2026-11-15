@@ -216,6 +216,7 @@ export function ComposerActions({
     {refresh && historyOpen ? (
       <SentMessages
         messages={selected.messages}
+        receipts={selected.promptReceipts}
         onCancel={() => {
           if (historyChosen) onCancelSentMessage()
           setHistoryOpen(false)

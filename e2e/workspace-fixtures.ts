@@ -216,6 +216,7 @@ export const fixtureSessions: ManagedSession[] = [
       {
         id: 'fixture-plan-user',
         role: 'user',
+        deliveryConfirmed: true,
         content:
           'Help me make this workspace easier to scan. Keep the conversation close while I read our field guide.',
         createdAt: '2026-09-04T16:15:00.000Z',
@@ -250,6 +251,7 @@ export const fixtureSessions: ManagedSession[] = [
       {
         id: 'fixture-recovery-user',
         role: 'user',
+        deliveryConfirmed: true,
         content: 'Review how a reader returns to work after reconnecting.',
         createdAt: '2026-09-04T16:13:00.000Z',
       },
@@ -1497,7 +1499,7 @@ export async function setupWorkspaceFixture(
           session.queuedPrompts = [...(session.queuedPrompts ?? []), { id, content: input.content, createdAt: FIXTURE_NOW }]
           session.queuedCount = session.queuedPrompts.length
         } else {
-          session.messages.push({ id, role: 'user', content: input.content, createdAt: FIXTURE_NOW })
+          session.messages.push({ id, role: 'user', deliveryConfirmed: true, content: input.content, createdAt: FIXTURE_NOW })
           session.status = 'running'
           session.activity = 'Working on the follow-up'
         }

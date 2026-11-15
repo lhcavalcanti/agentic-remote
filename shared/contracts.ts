@@ -100,6 +100,8 @@ export interface ChatMessage {
   role: MessageRole
   content: string
   createdAt: string
+  /** Positive provider handoff evidence; admission or a retained user row is not delivery. */
+  deliveryConfirmed?: boolean
   streaming?: boolean
   activityStatus?: ActivityStatus
   activityKind?: ActivityKind

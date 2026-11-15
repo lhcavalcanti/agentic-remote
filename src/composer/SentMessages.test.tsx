@@ -10,11 +10,23 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 const messages: ChatMessage[] = [
-  { id: 'one', role: 'user', content: 'First full message', createdAt: '2026-11-13T12:00:00Z' },
-  { id: 'two', role: 'user', content: 'Newest full message', createdAt: '2026-11-14T12:00:00Z' },
+  { id: 'one', role: 'user', deliveryConfirmed: true, content: 'First full message', createdAt: '2026-11-13T12:00:00Z' },
+  { id: 'two', role: 'user', deliveryConfirmed: true, content: 'Newest full message', createdAt: '2026-11-14T12:00:00Z' },
 ]
 
 describe('SentMessages', () => {
+  it('portals outside composer containers but inside the viewport-owning shell', () => {
+    const shell = document.createElement('div')
+    shell.className = 'app-shell'
+    document.body.append(shell)
+    render(<div className="composer-area">
+      <SentMessages messages={messages} onChoose={vi.fn()} onCancel={vi.fn()} onUse={vi.fn()} />
+    </div>, { container: shell })
+    const dialog = screen.getByRole('dialog', { name: 'Sent messages' })
+    expect(dialog.closest('.app-shell')).toBe(shell)
+    expect(dialog.closest('.composer-area')).toBeNull()
+  })
+
   it.each([
     ['ArrowUp', 'one'],
     ['ArrowDown', 'two'],

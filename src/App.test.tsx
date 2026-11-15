@@ -18909,8 +18909,14 @@ describe('App', () => {
     seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const sentSession = {
       ...session,
+      promptReceipts: [{
+        deliveryId: 'history-delivery', sessionId: session.id, promptId: 'history-prompt',
+        acceptedAt: '2026-11-14T12:00:00Z', state: 'delivered' as const, userMessageId: 'sent-message',
+      }],
       messages: [
         { id: 'sent-message', role: 'user' as const, content: 'Searchable full history text', createdAt: '2026-11-14T12:00:00Z' },
+        { id: 'refused-message', role: 'user' as const, content: 'History prompt refused before provider start', createdAt: '2026-11-14T12:01:00Z' },
+        { id: 'dispatching-message', role: 'user' as const, content: 'History prompt still dispatching', createdAt: '2026-11-14T12:02:00Z' },
       ],
     }
     vi.mocked(listSessions).mockResolvedValue([sentSession])
@@ -18923,6 +18929,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
     const picker = screen.getByRole('dialog', { name: 'Sent messages' })
     fireEvent.change(within(picker).getByRole('combobox'), { target: { value: 'HISTORY' } })
+    expect(within(picker).getAllByRole('option')).toHaveLength(1)
     fireEvent.click(within(picker).getByRole('option'))
     expect(textarea).toHaveValue('Searchable full history text')
     expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')['computer-1:session-1'])

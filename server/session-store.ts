@@ -3387,6 +3387,20 @@ export class SessionStore {
     })
   }
 
+  async confirmPromptDelivery(
+    sessionId: string, assistantId: string, echo?: { content: string; createdAt: string },
+  ): Promise<SessionDetail | undefined> {
+    return this.updateIf(sessionId, (session) => {
+      const index = session.messages.findIndex((message) => message.id === assistantId && message.role === 'assistant')
+      const user = session.messages[index - 1]
+      if (user?.role !== 'user' || user.deliveryConfirmed) return false
+      if (echo && (echo.content !== user.content || !Number.isFinite(Date.parse(echo.createdAt)) ||
+        Date.parse(echo.createdAt) < Date.parse(user.createdAt))) return false
+      user.deliveryConfirmed = true
+      return true
+    })
+  }
+
   async finishMessage(sessionId: string, messageId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const message = session.messages.find((entry) => entry.id === messageId)

@@ -709,6 +709,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
           role: 'user',
           content,
           createdAt: event.timestamp,
+          deliveryConfirmed: true,
         })
       }
       continue
@@ -5988,6 +5989,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       releasePending()
       await this.recordDelivery(sessionId, answers, delivery)
+      void this.store.confirmPromptDelivery(sessionId, assistantId)
+        .then((session) => { if (session) this.publish(session) })
+        .catch((error: unknown) => this.publishError(sessionId, error))
       return this.store.get(sessionId) || prepared
     } catch (error) {
       if (delivery?.accepted) {
@@ -10898,6 +10902,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.rememberLiveActivityEvent(sessionId, event)
     this.handleSessionMetadata(sessionId, event, Boolean(stored))
 
+    if (activePrompt && event.type === 'user.message' && !eventAgentId(event) &&
+      !stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
+      void this.store.confirmPromptDelivery(sessionId, activePrompt.assistantMessageId, {
+        content: visibleUserContent(event.data.content), createdAt: event.timestamp,
+      })
+        .then((session) => { if (session) this.publish(session) })
+        .catch((error: unknown) => this.publishError(sessionId, error))
+    }
+
     if (
       (event.type === 'session.background_tasks_changed' ||
         event.type === 'subagent.started' ||
@@ -11136,6 +11149,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? assistantMessageId
         : this.activePrompts.get(sessionId)?.assistantMessageId ||
           assistantMessageId
+      if (response || delivery?.accepted) {
+        void this.store.confirmPromptDelivery(sessionId, assistantMessageId)
+          .then((session) => { if (session) this.publish(session) })
+          .catch((error: unknown) => this.publishError(sessionId, error))
+      }
       if (
         response?.data.content &&
         !this.completedTaskPromptMessages.has(

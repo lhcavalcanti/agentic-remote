@@ -1,10 +1,18 @@
 import type { ChatMessage } from '../../shared/contracts'
+import type { PromptAcceptanceReceipt } from '../../shared/launch-identity'
 
-/** Sent history only: queued items and optimistic echoes are not user turns. */
-export function filterSentMessages(messages: readonly ChatMessage[], query = ''): ChatMessage[] {
+/** Missing confirmation is unknown, not evidence that a retained prompt was sent. */
+export function filterSentMessages(
+  messages: readonly ChatMessage[], query = '', receipts: readonly PromptAcceptanceReceipt[] = [],
+): ChatMessage[] {
   const search = query.trim().toLowerCase()
+  const confirmedIds = new Set(receipts.filter((receipt) =>
+    receipt.state === 'delivered' ||
+    (receipt.state === 'accepted' && receipt.handedAt),
+  ).map((receipt) => receipt.userMessageId))
   return messages
-    .filter((message) => message.role === 'user' && message.content.trim() &&
+    .filter((message) => message.role === 'user' &&
+      (message.deliveryConfirmed === true || confirmedIds.has(message.id)) && message.content.trim() &&
       !message.streaming && message.activityStatus !== 'pending' &&
       message.content.toLowerCase().includes(search))
     .map((message, index) => ({ message, index, time: Date.parse(message.createdAt) || 0 }))

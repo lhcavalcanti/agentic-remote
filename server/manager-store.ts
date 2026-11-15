@@ -228,25 +228,8 @@ export class ManagerStore {
     await this.loadSessionRegistry()
   }
 
-  private normalizeSessionOrigins(registry: ManagerRegistry): boolean {
-    let changed = false
-    for (const entry of Object.values(registry)) {
-      if (entry?.origin === 'user' && entry.originEvidence !== 'launch') {
-        entry.origin = 'discovered'
-        entry.originEvidence = 'discovery'
-        changed = true
-      }
-    }
-    return changed
-  }
-
   private async loadSessionRegistry(): Promise<void> {
-    const registry = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
-    if (this.normalizeSessionOrigins(registry)) {
-      await this.prepareRegistryDirectory()
-      await this.writeJson('sessions.json', registry)
-    }
-    this.sessions = registry
+    this.sessions = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
   }
 
   recordUserSession(session: ManagedSession): Promise<void> {
@@ -422,11 +405,11 @@ export class ManagerStore {
     return this.sessions[registryKey(computerId, sessionId)]?.origin
   }
 
+  /** UI/API projection only; Oracle policy continues to read the stored origin. */
   sessionProvenance(computerId: string, sessionId: string): SessionProvenance | undefined {
     const entry = this.sessions[registryKey(computerId, sessionId)]
     if (!entry || entry.computerId !== computerId || entry.sessionId !== sessionId) return undefined
-    // Older user tags came from discovery timing, not proof of an app launch.
-    if (entry.origin === 'user' && entry.originEvidence !== 'launch') return undefined
+    if (entry.origin === 'user' && entry.originEvidence !== 'launch') return { origin: 'discovered' }
     return entry.origin === 'schedule'
       ? { origin: entry.origin, scheduleId: entry.scheduleId, scheduleRunId: entry.scheduleRunId }
       : { origin: entry.origin }
@@ -435,7 +418,6 @@ export class ManagerStore {
   updateRegistry(change: (registry: ManagerRegistry) => void): Promise<void> {
     const next = structuredClone(this.sessions)
     change(next)
-    this.normalizeSessionOrigins(next)
     this.sessions = this.pruneTombstones(next)
     const snapshot = structuredClone(this.sessions)
     return this.serialized(() => this.writeJson('sessions.json', snapshot))

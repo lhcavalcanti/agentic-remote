@@ -474,6 +474,9 @@ function sessionInUseConflictMessage(pane: string): string {
 }
 
 class RuntimeConfigurationError extends Error {
+  // Configuration guards fail before launch or runtime mutation, including 503s.
+  readonly uncertainDelivery = false
+
   constructor(
     message: string,
     readonly statusCode: number,

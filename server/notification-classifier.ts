@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { HubEvent, ManagedSession, SessionStatus } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
 import type { NotificationKind, NotificationRecord } from '../shared/notification-center.js'
-import { alertNotification, notificationBrief, ORACLE_NOTIFICATION_URL } from '../shared/notifications.js'
+import { alertNotification, notificationBrief, notificationPlainText, ORACLE_NOTIFICATION_URL } from '../shared/notifications.js'
 
 export interface NotificationCursor {
   status?: SessionStatus
@@ -121,7 +121,7 @@ export function classifyHubNotification(
     const computer = event.computer
     const key = JSON.stringify(['computer', computer.id, computer.lifecycleGeneration])
     const before = cursors[key]
-    const offline = before?.online === true && !computer.online
+    const offline = !baseline && before?.online === true && !computer.online
     const episode = (before?.episode ?? 0) + (offline ? 1 : 0)
     cursors[key] = { online: computer.online, episode, touchedAt: now }
     if (offline) return [record('computer.offline', [computer.id, computer.lifecycleGeneration, String(episode)], {
@@ -138,9 +138,22 @@ export function classifyHubNotification(
 }
 
 /** Oracle's work inbox is not consumed or acknowledged by notification reads. */
-export function classifyOracleNotification(event: ManagerEvent, now: string): NotificationRecord[] {
+export function classifyOracleNotification(event: ManagerEvent, now: string, replies: Map<string, string>): NotificationRecord[] {
+  if (event.type === 'manager.reset') replies.clear()
   if (event.type !== 'manager.message') return []
   const message = event.message
+  if (message.role === 'assistant') {
+    // Stop also stores a partial assistant reply. Only the user's terminal
+    // outcome proves that this text belongs to a successfully completed turn.
+    if (message.replyTo && message.content.trim()) {
+      replies.delete(message.replyTo)
+      replies.set(message.replyTo, message.content)
+      if (replies.size > 50) replies.delete(replies.keys().next().value!)
+    }
+    return []
+  }
+  const reply = message.role === 'user' ? replies.get(message.id) : undefined
+  if (message.role === 'user') replies.delete(message.id)
   let suffix: string
   let title: string
   let body: string
@@ -150,21 +163,17 @@ export function classifyOracleNotification(event: ManagerEvent, now: string): No
     title = 'Oracle needs your OK'
     body = message.content
     severity = 'warning'
-  } else if (message.role === 'assistant' && message.content.trim()) {
-    suffix = 'done'
-    title = 'Oracle replied'
-    body = message.content
   } else if (message.role === 'user' && message.state === 'done') {
     suffix = 'done'
     title = 'Oracle replied'
-    body = 'Open Oracle to see what it did.'
+    body = (reply && notificationBrief(notificationPlainText(reply))) || 'Open Oracle to see what it did.'
   } else if (message.role === 'user' && message.state === 'failed') {
     suffix = 'failed'
     title = 'Oracle couldn’t answer'
     body = message.error || 'Your message is kept; press Retry.'
     severity = 'error'
   } else return []
-  return [record('oracle.message', [message.role === 'assistant' ? message.replyTo ?? message.id : message.id, suffix], {
+  return [record('oracle.message', [message.id, suffix], {
     severity,
     title,
     body: notificationBrief(body),

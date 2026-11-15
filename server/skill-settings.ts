@@ -6,6 +6,7 @@ import path from 'node:path'
 import { skillFrontmatterNameSchema, type SkillSettingsSnapshot, type SkillToggle } from '../shared/skill-settings.js'
 import { isWithin, validateSessionDirectory } from './session-directory.js'
 import { parseSkillSettings, replaceDisabledSkills } from './skill-settings-jsonc.js'
+import { builtinSkillDirectories } from './skill-builtin-roots.js'
 
 const MAX_FILE_BYTES = 1024 * 1024
 const MAX_SKILLS = 1000
@@ -226,22 +227,7 @@ export class SkillSettingsService {
       }
     }
     await visitPlugins(installed)
-    for (const directory of (this.env.PATH?.split(path.delimiter) ?? []).filter(Boolean).slice(0, 100)) {
-      const executable = await realpath(path.join(directory, process.platform === 'win32' ? 'copilot.exe' : 'copilot')).catch(() => undefined)
-      if (!executable) continue
-      const installation = path.dirname(executable)
-      const report = process.platform === 'linux' ? process.report.getReport() as { header?: { glibcVersionRuntime?: string } } : undefined
-      const platform = process.platform === 'linux' && !report?.header?.glibcVersionRuntime ? 'linuxmusl' : process.platform
-      for (const location of [
-        path.join(installation, 'builtin-skills'),
-        path.join(installation, 'node_modules', '@github', `copilot-${platform}-${process.arch}`, 'builtin-skills'),
-      ]) {
-        if (!(await lstat(location).catch(() => undefined))?.isDirectory()) continue
-        roots.push({ location, source: 'builtin' })
-        break
-      }
-      break
-    }
+    for (const location of await builtinSkillDirectories(this.home, this.env)) roots.push({ location, source: 'builtin' })
     const ignored = new Set<string>()
     for (const value of ignoredLocations.slice(0, 1000)) {
       if (!path.isAbsolute(value) && value !== '~' && !value.startsWith('~/')) {
@@ -261,7 +247,8 @@ export class SkillSettingsService {
       try {
         const fields = frontmatterFields(await readBounded(path.join(directory, 'SKILL.md')))
         const invalid = frontmatterReason(fields)
-        const bare = (fields?.name || path.basename(directory)).slice(0, 64)
+        const parsedName = skillFrontmatterNameSchema.safeParse(fields?.name)
+        const bare = parsedName.success ? parsedName.data : `invalid-${createHash('sha256').update(directory).digest('hex').slice(0, 16)}`
         const name = root.plugin ? `${root.plugin}:${bare}` : bare
         const fromRepository = repositoryDisabled.has(name.toLowerCase()) || repositoryDisabled.has(bare.toLowerCase())
         const blanketDisabled = Boolean(root.plugin && disabled.has(bare.toLowerCase()))

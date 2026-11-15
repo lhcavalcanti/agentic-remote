@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SkillSettingsService, skillFrontmatter } from './skill-settings.js'
+import { skillNameSchema, skillSettingsSchema } from '../shared/skill-settings.js'
 
 let home: string
 let copilotHome: string
@@ -78,6 +79,41 @@ describe('read-only skill discovery and settings changes', () => {
     expect(JSON.parse(await readFile(path.join(copilotHome, 'settings.json'), 'utf8')).disabledSkills).toEqual(['unknown-skill'])
   })
 
+  it.each(['default', 'override', 'xdg'])('discovers the newest complete stable builtin cache using the %s root', async (kind) => {
+    const cache = kind === 'override' ? path.join(home, 'custom-cache')
+      : kind === 'xdg' ? path.join(home, 'xdg', 'copilot') : path.join(home, '.cache', 'copilot')
+    const packages = path.join(cache, 'pkg', `${process.platform}-${process.arch}`)
+    await skill(path.join(packages, '1.0.99', 'builtin'), 'old-builtin')
+    await skill(path.join(packages, '1.0.112', 'builtin'), 'current-builtin')
+    await skill(path.join(packages, '2.0.0-beta.1', 'builtin'), 'preview-builtin')
+    await mkdir(path.join(packages, '1.0.113'))
+    const env = kind === 'override' ? { COPILOT_CACHE_HOME: cache } : kind === 'xdg' ? { XDG_CACHE_HOME: path.join(home, 'xdg') } : {}
+    const discovery = new SkillSettingsService({ home, copilotHome, env, folders: () => [] })
+    expect((await discovery.snapshot()).skills.map((entry) => [entry.name, entry.source])).toEqual([['current-builtin', 'builtin']])
+  })
+
+  it('prefers the cached version selected by the executable over a newer download', async () => {
+    const packages = path.join(home, '.cache', 'copilot', 'pkg', `${process.platform}-${process.arch}`)
+    const running = path.join(packages, '1.0.109')
+    await skill(path.join(running, 'builtin'), 'running-builtin')
+    await skill(path.join(packages, '1.0.112', 'builtin'), 'newer-builtin')
+    await writeFile(path.join(running, 'copilot'), 'Fixture executable; never invoke.')
+    const discovery = new SkillSettingsService({ home, copilotHome, env: { PATH: running }, folders: () => [] })
+    expect((await discovery.snapshot()).skills.map((entry) => entry.name)).toEqual(['running-builtin'])
+  })
+
+  it('honors builtin exclusions and does not follow a cached builtin directory outside its version', async () => {
+    const packages = path.join(home, '.cache', 'copilot', 'pkg', `${process.platform}-${process.arch}`)
+    const safe = path.join(packages, '1.0.109', 'builtin')
+    await skill(safe, 'safe-builtin')
+    await skill(path.join(home, 'outside-cache'), 'not-a-builtin')
+    await mkdir(path.join(packages, '1.0.112'))
+    await symlink(path.join(home, 'outside-cache'), path.join(packages, '1.0.112', 'builtin'))
+    expect((await service.snapshot()).skills.map((entry) => entry.name)).toEqual(['safe-builtin'])
+    await writeFile(path.join(copilotHome, 'settings.json'), JSON.stringify({ ignoredSkillsLocations: [safe] }))
+    expect((await service.snapshot()).skills).toEqual([])
+  })
+
   it('honors ignored directories and their descendants, including canonical aliases', async () => {
     const ignored = await skill(path.join(copilotHome, 'skills'), 'excluded')
     await skill(path.join(copilotHome, 'skills'), 'visible')
@@ -115,6 +151,7 @@ describe('read-only skill discovery and settings changes', () => {
     await skill(path.join(copilotHome, 'skills'), folder, `---\n${fields}\n---\nDo not execute.`)
     const snapshot = await service.snapshot()
     expect(snapshot.skills).toHaveLength(1)
+    expect(skillSettingsSchema.safeParse(snapshot).success).toBe(true)
     expect(snapshot.skills[0]).toMatchObject({ manageable: false, reason: expect.stringMatching(reason), enabled: false })
     await expect(service.update({ name: snapshot.skills[0].name, enabled: true, confirmed: true, revision: snapshot.revision })).rejects.toThrow(/frontmatter/i)
   })
@@ -122,6 +159,22 @@ describe('read-only skill discovery and settings changes', () => {
   it('accepts the CLI name alphabet, including case, namespaces, dots, underscores and spaces', () => {
     expect(skillFrontmatter('---\nname: "My Plugin:review_code.v2"\ndescription: Valid text\n---'))
       .toEqual({ name: 'My Plugin:review_code.v2', description: 'Valid text' })
+  })
+
+  it('returns a schema-valid full snapshot when invalid names coexist with usable skills', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'usable')
+    for (const [index, name] of ['slash/name', '../escape', '_unsupported', '🚫', 'x'.repeat(65)].entries()) {
+      await skill(path.join(copilotHome, 'skills'), `invalid-${index}`, `---\nname: ${JSON.stringify(name)}\ndescription: A fictional invalid skill.\n---`)
+    }
+    const snapshot = skillSettingsSchema.parse(await service.snapshot())
+    expect(snapshot.skills).toHaveLength(6)
+    const invalid = snapshot.skills.filter((entry) => entry.manageable === false)
+    expect(invalid).toHaveLength(5)
+    expect(new Set(invalid.map((entry) => entry.name)).size).toBe(5)
+    expect(invalid.every((entry) => skillNameSchema.safeParse(entry.name).success && !entry.enabled && entry.reason?.includes('name'))).toBe(true)
+    expect((await service.snapshot()).skills.map((entry) => entry.name)).toEqual(snapshot.skills.map((entry) => entry.name))
+    const changed = await service.update({ name: 'usable', enabled: false, confirmed: true, revision: snapshot.revision })
+    expect(skillSettingsSchema.parse(changed).skills.find((entry) => entry.name === 'usable')?.enabled).toBe(false)
   })
 
   it('keeps untrusted repository skills read-only without granting folder trust', async () => {
@@ -171,10 +224,20 @@ describe('read-only skill discovery and settings changes', () => {
     expect((await service.snapshot()).skills[0].enabled).toBe(false)
   })
 
-  it.each([
-    '{"disabledSkills":[/* keep entry explanation */]}',
-    '{"disabledSkills":[],"disabledSkills":[]}',
-  ])('refuses writes that would lose comments or retain ambiguous keys', async (raw) => {
+  it('toggles a skill in a commented array without losing entry explanations', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    await writeFile(file, '{"disabledSkills":[/* keep entry explanation */]}')
+    const before = await service.snapshot()
+    const disabled = await service.update({ name: 'sample', enabled: false, confirmed: true, revision: before.revision })
+    expect(disabled.skills[0].enabled).toBe(false)
+    const enabled = await service.update({ name: 'sample', enabled: true, confirmed: true, revision: disabled.revision })
+    expect(enabled.skills[0].enabled).toBe(true)
+    expect(await readFile(file, 'utf8')).toContain('/* keep entry explanation */')
+  })
+
+  it('refuses writes with ambiguous duplicate keys', async () => {
+    const raw = '{"disabledSkills":[],"disabledSkills":[]}'
     await skill(path.join(copilotHome, 'skills'), 'sample')
     const file = path.join(copilotHome, 'settings.json')
     await writeFile(file, raw)
@@ -211,7 +274,7 @@ describe('read-only skill discovery and settings changes', () => {
     const before = await service.snapshot()
     const after = await service.update({ name: 'sample', enabled: false, confirmed: true, revision: before.revision })
     expect(after.skills[0].enabled).toBe(false)
-    expect(JSON.parse(await readFile(path.join(copilotHome, 'settings.json'), 'utf8'))).toEqual({ ...original, disabledSkills: ['sample', 'uninstalled-skill'] })
+    expect(JSON.parse(await readFile(path.join(copilotHome, 'settings.json'), 'utf8'))).toEqual({ ...original, disabledSkills: ['uninstalled-skill', 'sample'] })
     expect((await stat(path.join(copilotHome, 'settings.json'))).mode & 0o777).toBe(0o600)
     expect((await readdir(copilotHome)).filter((name) => name.startsWith('.settings-'))).toEqual([])
   })

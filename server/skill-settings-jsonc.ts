@@ -53,10 +53,10 @@ export function parseSkillSettings(raw: string): Record<string, unknown> {
   return document(raw).value
 }
 
-/** Replaces one value span; all unrelated bytes, comments and formatting survive. */
+/** Edits element tokens and separators without moving or dropping array comments. */
 export function replaceDisabledSkills(raw: string, names: string[]): string {
   if (!raw) return `{\n  "disabledSkills": ${JSON.stringify(names)}\n}\n`
-  const { tokens, comments } = document(raw)
+  const { tokens, value: settings } = document(raw)
   const values: Array<{ start: number; end: number }> = []
   let depth = 0
   for (let index = 0; index < tokens.length; index++) {
@@ -83,10 +83,51 @@ export function replaceDisabledSkills(raw: string, names: string[]): string {
   if (values.length > 1) throw new Error('CLI settings repeat disabledSkills. Edit it manually before changing skills.')
   const value = values[0]
   if (value) {
-    if (comments.some((comment) => comment.start >= value.start && comment.end <= value.end)) {
-      throw new Error('Comments inside disabledSkills cannot be preserved safely. Edit it manually instead.')
+    if (!Array.isArray(settings.disabledSkills) || settings.disabledSkills.some((name) => typeof name !== 'string')) {
+      throw new Error('CLI disabledSkills must be a list of strings.')
     }
-    return `${raw.slice(0, value.start)}${JSON.stringify(names)}${raw.slice(value.end)}`
+    const array = tokens.filter((token) => token.start > value.start && token.end < value.end)
+    const elements = array.filter((token) => token.quoted)
+    const commas = array.filter((token) => token.text === ',')
+    const remaining = new Map<string, number>()
+    for (const name of names) remaining.set(name, (remaining.get(name) ?? 0) + 1)
+    const kept = elements.map((token) => {
+      const name = JSON.parse(token.text) as string
+      const count = remaining.get(name) ?? 0
+      if (count) remaining.set(name, count - 1)
+      return count > 0
+    })
+    const added = [...remaining].flatMap(([name, count]) => Array.from({ length: count }, () => name))
+    const trailing = array.at(-1)?.text === ','
+    const lastKept = kept.lastIndexOf(true)
+    const edits: Array<{ start: number; end: number; text: string }> = []
+    const insertions = new Map<number, string>()
+    const insert = (at: number, text: string) => insertions.set(at, (insertions.get(at) ?? '') + text)
+    elements.forEach((element, index) => {
+      if (!kept[index]) edits.push({ ...element, text: '' })
+      const needsComma = kept[index] && (index !== lastKept || added.length > 0 || trailing)
+      if (commas[index] && !needsComma) edits.push({ ...commas[index], text: '' })
+      if (!commas[index] && needsComma) insert(element.end, ',')
+    })
+    if (added.length) {
+      const close = value.end - 1
+      const multiline = raw.slice(value.start, value.end).includes('\n')
+      const newline = raw.includes('\r\n') ? '\r\n' : '\n'
+      const closingIndent = /\n([\t ]*)$/.exec(raw.slice(0, close))?.[1]
+      const first = elements[0]
+      const firstIndent = first ? raw.slice(raw.lastIndexOf('\n', first.start - 1) + 1, first.start) : ''
+      const indent = first && /^[\t ]*$/.test(firstIndent) ? firstIndent : `${closingIndent ?? ''}  `
+      const prefix = multiline
+        ? closingIndent === undefined ? `${newline}${indent}` : indent.slice(closingIndent.length)
+        : raw.slice(value.start + 1, close).trim() ? ' ' : ''
+      insert(close, `${prefix}${added.map((name) => JSON.stringify(name)).join(multiline ? `,${newline}${indent}` : ', ')}${trailing ? ',' : ''}${multiline ? `${newline}${closingIndent ?? ''}` : ''}`)
+    }
+    for (const [at, text] of insertions) edits.push({ start: at, end: at, text })
+    let updated = raw
+    for (const edit of edits.sort((a, b) => b.start - a.start)) {
+      updated = `${updated.slice(0, edit.start)}${edit.text}${updated.slice(edit.end)}`
+    }
+    return updated
   }
   const closing = tokens.at(-1)!.start
   const separator = tokens.length > 2 && tokens.at(-2)?.text !== ',' ? ',' : ''

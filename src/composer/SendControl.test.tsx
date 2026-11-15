@@ -55,4 +55,28 @@ describe('busy send choices', () => {
     fireEvent.keyDown(send, { key: 'F10', shiftKey: true })
     expect(screen.getByRole('menu')).toBeInTheDocument()
   })
+  it('restores Escape focus to the chevron that actually opened the menu', () => {
+    show()
+    const options = screen.getByRole('button', { name: 'Send options' })
+    fireEvent.click(options)
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(options).toHaveFocus()
+  })
+  it.each([false, true])('preserves native Tab navigation and closes on leaving (shift: %s)', (shiftKey) => {
+    render(<>
+      <SendControl enabled disabled={false} onSubmit={vi.fn()}>
+        {(props) => <button {...props} type="button">Send</button>}
+      </SendControl>
+      <button type="button">After</button>
+    </>)
+    fireEvent.click(screen.getByRole('button', { name: 'Send options' }))
+    const menu = screen.getByRole('menu')
+    expect(fireEvent.keyDown(menu, { key: 'Tab', shiftKey })).toBe(true)
+    const next = screen.getByRole('button', { name: shiftKey ? 'Send options' : 'After' })
+    fireEvent.blur(menu, { relatedTarget: next })
+    next.focus()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(next).toHaveFocus()
+  })
 })

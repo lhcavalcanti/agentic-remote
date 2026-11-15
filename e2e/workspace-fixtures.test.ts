@@ -210,7 +210,9 @@ describe('workspace fixture hub protocol', () => {
     const original = fixtureSchedules[0]
     const base = `/api/schedules/${original.id}`
     expect((await request(base)).body).toEqual({ schedule: original })
-    expect((await request('/api/schedules/runs?limit=1')).body).toMatchObject({ total: 1, nextOffset: null })
+    const globalRuns = await request('/api/schedules/runs?limit=1')
+    expect(globalRuns.status).toBe(200)
+    expect(globalRuns.body).toEqual({ runs: fixtureScheduleRuns, total: 1, nextOffset: null })
     expect((await request(`/api/schedules/runs/${fixtureScheduleRuns[0].id}`)).body).toEqual({ run: fixtureScheduleRuns[0] })
     expect((await request(`${base}/runs?status=succeeded`)).body).toMatchObject({ total: 1 })
     expect((await request(`${base}/enabled`, 'POST', { revision: 1, enabled: false })).body)
@@ -246,7 +248,7 @@ describe('workspace fixture hub protocol', () => {
     const { fixture, request } = await fixtureApi()
     for (const [route, method] of [
       ['/api/notifications', 'GET'], ['/api/notifications/unread-count', 'GET'],
-      ['/api/notifications/read-all', 'POST'], [`/api/notifications/${'a'.repeat(64)}/read`, 'POST'],
+      ['/api/notifications/read-all', 'POST'], ['/api/notifications/bulk', 'POST'], [`/api/notifications/${'a'.repeat(64)}/read`, 'POST'],
       [`/api/notifications/${'a'.repeat(64)}/dismiss`, 'POST'],
     ]) expect((await request(route, method)).status).toBe(404)
     fixture.assertHealthy()
@@ -268,8 +270,8 @@ describe('workspace fixture hub protocol', () => {
     expect((await request('/api/notifications?failed=true')).body).toEqual({ notifications: [failed] })
     await request(`/api/notifications/read-all?computerId=fixture-studio&sessionId=${SELECTED_SESSION_ID}`, 'POST')
     expect((await request('/api/notifications/unread-count')).body).toEqual({ unreadCount: 1 })
-    await request(`/api/notifications/${failed.id}/read`, 'POST')
-    await request(`/api/notifications/${failed.id}/dismiss`, 'POST')
+    await request('/api/notifications/bulk', 'POST', { ids: [failed.id], action: 'read' })
+    await request('/api/notifications/bulk', 'POST', { ids: [failed.id], action: 'dismiss' })
     expect((await request('/api/notifications')).body).toEqual({ notifications: [expect.objectContaining({ id: complete.id, readAt: expect.any(String) })] })
     expect(sent).toHaveLength(3)
     expect(sent.at(-1)).toMatchObject({ type: 'notifications.changed', unreadCount: 0 })
@@ -362,9 +364,26 @@ describe('workspace fixture hub protocol', () => {
 describe('workspace fixture composer routes', () => {
   const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 
+  it('executes an advertised command immediately unless queueing is explicit', async () => {
+    const { fixture, request, state } = await fixtureApi()
+    const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+    session.status = 'running'
+    const command = ['/help', ...Array.from({ length: 21 }, () => 'Synthetic detail')].join('\n')
+    const response = await request<{ session: ManagedSession }>(`${sessionPath}/commands`, 'POST', { command, enqueue: false })
+    expect(response.status).toBe(200)
+    expect(response.body.session.messages.at(-1)?.content).toBe(command)
+    expect(session.queuedPrompts ?? []).toHaveLength(0)
+    await request(`${sessionPath}/commands`, 'POST', { command: '/help queued', enqueue: true })
+    expect(session.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['/help queued'])
+    fixture.assertHealthy()
+  })
+
   it.each([
     ['/messages', 'POST', { content: '' }],
     ['/messages', 'POST', { content: 'A note', enqueue: 'yes' }],
+    ['/commands', 'POST', { command: '/unknown' }],
+    ['/commands', 'POST', { command: '/help', enqueue: 'yes' }],
+    ['/commands', 'POST', { command: '/help', replaceTerminalDraft: 'yes' }],
     ['/queue', 'PUT', { order: ['first', 'first'] }],
     ['/queue/missing', 'PATCH', { content: 'A revision' }],
     ['/runtime', 'PATCH', { model: 'unknown', reasoningEffort: 'high', contextTier: 'default', mode: 'plan' }],

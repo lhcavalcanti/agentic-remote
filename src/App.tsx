@@ -4269,7 +4269,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [computersOpen, setComputersOpen] = useState(false)
   const settingsNavigation = usePreviewFeature('settingsNavigation')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const navigationWidth = sidebarWidth + (desktopRail && viewportWidth >= 1024 ? 64 : 0)
+  const navigationWidth = sidebarWidth + (desktopRail && desktopLayout ? 64 : 0)
   const oracleDockReservedLeft =
     navigationWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
   const oracleDockAvailable =
@@ -13041,7 +13041,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const shellNavigation = <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession}
     unreadCount={notifications.unreadCount} offscreen={!desktopLayout && !sidebarOpen}
     onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
-    onOpen={(id) => { if (id === 'scheduler') setScheduleLink(undefined); setSidebarOpen(false); setShellView(id) }} />
+    onOpen={(id) => { if (id === 'scheduler') setScheduleLink(undefined); setSidebarOpen(false); setShellView(id) }}
+    onOracle={() => { setSidebarOpen(false); setOracleFocusRequest((request) => request + 1); setOracleOpen(true) }} />
+
   function computerAdded(computer: ComputerSummary) {
     forgottenComputers.current.delete(computer.id)
     eventSequenceRef.current = nextSessionEventSequence()
@@ -13116,7 +13118,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         tabIndex={0}
       />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
-        {viewportWidth >= 1024 ? shellNavigation : null}
+        {desktopLayout ? shellNavigation : null}
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>
           <button
             aria-label="Back to sessions"
@@ -13495,7 +13497,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             <MonitorCog aria-hidden="true" size={18} />
           </button>
         </div>
-        {viewportWidth < 1024 ? shellNavigation : null}
+        {!desktopLayout ? shellNavigation : null}
       </aside>
 
       {sidebarOpen ? (
@@ -14028,6 +14030,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             editingQueuedPromptId={editingQueuedPromptId}
             queuedEditUnconfirmed={queuedEditUnconfirmed}
             composer={composer}
+            expandedComposer={terminalDraftExpandedContent}
             uploadingFile={uploadingFile}
             transcribing={transcribing}
             deliveryUncertain={Boolean(selectedKey && composerDrafts[selectedKey]?.deliveryUncertain)}

@@ -14,6 +14,7 @@ export function DisplayNameSetting({ value, onChange }: { value?: string; onChan
     <p className="dialog-message">Hub · every device. A display label, not an account.</p>
     <form onSubmit={(event) => {
       event.preventDefault()
+      if (draft === undefined && !name) return
       const parsed = parseSettingValue('displayName', draft ?? name)
       if (!parsed.ok) { setError(parsed.error); return }
       onChange?.(parsed.value)
@@ -22,7 +23,7 @@ export function DisplayNameSetting({ value, onChange }: { value?: string; onChan
     }}>
       <label>Display name<input maxLength={60} value={draft ?? name}
         onChange={(event) => setDraft(event.target.value)} /></label>
-      <button className="secondary-button" type="submit">Save display name</button>
+      <button className="secondary-button" type="submit" disabled={draft === undefined && !name}>Save display name</button>
       {error && <p role="alert">{error}</p>}
     </form>
   </section>

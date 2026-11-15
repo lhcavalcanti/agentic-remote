@@ -32,11 +32,12 @@ export function HostMonitorView({ computers, enabled, onClose, onOpenSession }: 
   </DialogFrame>
 }
 
-function Sparkline({ label, values, ceiling }: { label: string; values: (number | null)[]; ceiling?: number }) {
-  const path = sparkPath(values, ceiling)
+function Sparkline({ label, values, ceiling, range = '60s' }: { label: string; values: { at: number; value: number | null }[]; ceiling?: number; range?: '60s' | '24h' }) {
+  const path = sparkPath(values, ceiling, range === '60s' ? 60_000 : 86_400_000)
+  const singlePoint = values.filter((point) => point.value !== null).length === 1 ? path.match(/^M([\d.]+),([\d.]+)/) : null
   return <svg className="host-spark" viewBox="0 0 120 34" role="img" aria-label={`${label} trend${path ? '' : ' unavailable'}`}>
     <path d={path} fill="none" stroke="currentColor" strokeWidth="2" />
-    {values.length === 1 && path && <circle cx="2" cy={Number(path.split(',')[1])} r="2" fill="currentColor" />}
+    {singlePoint && <circle cx={singlePoint[1]} cy={singlePoint[2]} r="2" fill="currentColor" />}
     {!path && <text x="60" y="22" textAnchor="middle" fill="currentColor" fontSize="10">No data</text>}
   </svg>
 }
@@ -65,6 +66,11 @@ function HostComputerView({ computer, onHostname, onOpenSession }: {
     { label: 'Memory', icon: MemoryStick, value: `${bytes(latest?.memoryUsedBytes)} / ${bytes(info?.totalMemoryBytes)}`, metrics: ['memoryUsedBytes'], ceiling: info?.totalMemoryBytes },
     { label: 'Network', icon: Network, value: `↓ ${bytes(latest?.netRxBytesPerSec)}/s · ↑ ${bytes(latest?.netTxBytesPerSec)}/s`, metrics: ['netRxBytesPerSec', 'netTxBytesPerSec'] },
     { label: 'Disk I/O', icon: Activity, value: `Read ${bytes(latest?.diskReadBytesPerSec)}/s · Write ${bytes(latest?.diskWriteBytesPerSec)}/s`, metrics: ['diskReadBytesPerSec', 'diskWriteBytesPerSec'] },
+    ...(['load1', 'load5', 'load15'] as const).map((metric, index) => ({
+      label: `Load · ${[1, 5, 15][index]} min`, icon: Activity,
+      value: latest?.[metric] == null ? 'Unavailable' : (latest[metric] === 0 ? 0 : Math.max(0.01, latest[metric])).toFixed(2),
+      metrics: [metric], ceiling: info?.logicalCpus,
+    })),
   ]
   const inventory = (processes?.rows ?? []).filter((row) => filter === 'All' ||
     (filter === 'Agentic Remote' ? row.owner === 'agentic-remote' || row.owner === 'shared-runtime' : row.owner === 'session' || row.owner === 'shared-runtime'))
@@ -87,10 +93,10 @@ function HostComputerView({ computer, onHostname, onOpenSession }: {
       </div>
       {monitor.historyError && range === '24h' && <p role="alert">{monitor.historyError}</p>}
       <dl className="host-metrics">{rows.map(({ label, icon: Icon, value, metrics, ceiling }) =>
-        <div className="host-metric" key={label}><dt><Icon size={18} aria-hidden="true" />{label}</dt><dd><strong>{value}</strong><Sparkline label={label} values={trend(snapshot, history, range, metrics)} ceiling={ceiling} /></dd></div>)}
+        <div className="host-metric" key={label}><dt><Icon size={18} aria-hidden="true" />{label}</dt><dd><strong>{value}</strong><Sparkline label={label} values={trend(snapshot, history, range, metrics)} ceiling={ceiling} range={range} /></dd></div>)}
         <div className="host-metric"><dt><HardDrive size={18} aria-hidden="true" />Disk space</dt><dd>
           <strong>{snapshot?.disk ? `${bytes(snapshot.disk.freeBytes)} free / ${bytes(snapshot.disk.totalBytes)}` : 'Unavailable'}</strong>
-          <Sparkline label="Disk space" values={range === '60s' ? shown.diskSamples.map((sample) => sample.free) : []} ceiling={snapshot?.disk?.totalBytes} />
+          <Sparkline label="Disk space" values={range === '60s' ? shown.diskSamples.map((sample) => ({ at: Date.parse(sample.at), value: sample.free })) : []} ceiling={snapshot?.disk?.totalBytes} range={range} />
         </dd></div>
       </dl>
       <p className="host-caption">Disk space history starts when this view opens; 24 h disk-capacity history is not collected.</p>

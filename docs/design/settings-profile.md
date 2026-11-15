@@ -64,6 +64,8 @@ Some related state is already hub-owned and is unchanged:
 
 Preview preferences sync through the same revision and conflict rules as other settings. They never enable hub behavior. The effective hub flags come from `GET /api/features` (`{hubFlags: {notificationCenter, hostMonitor, scheduler}}`), are read once at hub startup, and are not cached by the browser. The browser refreshes them on hub reconnect and authoritative refresh, as well as focus and online events. Dependent previews are unavailable when their hub flag is off, without discarding the user's preference. These are hub-owned rollout controls, so nodes do not report them; future node-specific services must negotiate their own capabilities.
 
+Hub rollout environment values accept only `on` or `off`, case-insensitively with surrounding whitespace ignored. Unset variables default off; any other value stops startup and names the variable.
+
 `newSessionBackend` covers sessions you create. Oracle's sessions follow its
 own hub setting (`/api/manager/settings` `sessionBackend`).
 

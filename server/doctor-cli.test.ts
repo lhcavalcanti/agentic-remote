@@ -262,11 +262,27 @@ describe('read-only doctor CLI', () => {
     expect(await readFile(context.calls, 'utf8')).not.toContain('devtunnel access list')
   })
 
-  it('skips tunnels when devtunnel is absent from the isolated PATH', async () => {
+  it('skips tunnels only when no tunnel is selected and devtunnel is absent', async () => {
     const context = await fixture({ devtunnel: false })
+    await context.configure({ AGENTIC_REMOTE_DEVTUNNEL_ID: '' })
     const result = await context.run()
     expect(result.code).toBe(0)
     expect(checks(result).filter((item) => item.check.startsWith('tunnel.')).every((item) => item.status === 'skip')).toBe(true)
+  })
+
+  it.each([
+    ['configured', []],
+    ['explicit', ['--tunnel', 'explicit.usw2']],
+  ])('fails closed without devtunnel for a %s tunnel', async (_source, args) => {
+    const context = await fixture({ devtunnel: false })
+    const result = await context.run(['--json', ...args])
+    expect(result.code).toBe(1)
+    for (const name of ['tunnel.auth', 'tunnel.acl', 'tunnel.port-acl']) {
+      expect(check(result, name)).toMatchObject({
+        status: 'fail', detail: expect.stringContaining('devtunnel is not on PATH'),
+      })
+    }
+    expect(await readFile(context.calls, 'utf8')).not.toContain('devtunnel')
   })
 
   it('skips unconfigured optional providers and assets without invoking Claude', async () => {

@@ -355,7 +355,9 @@ function originCheck() {
 function tunnelChecks() {
   if (!tunnel || !executable('devtunnel')) {
     for (const check of ['tunnel.auth', 'tunnel.acl', 'tunnel.port-acl']) {
-      add(check, 'skip', !tunnel ? 'No tunnel ID configured (use --tunnel ID)' : 'devtunnel is not on PATH')
+      add(check, tunnel ? 'fail' : 'skip', !tunnel
+        ? 'No tunnel ID configured (use --tunnel ID)'
+        : 'devtunnel is not on PATH; cannot verify the selected tunnel (fail closed; ACLs unchanged)')
     }
     return
   }

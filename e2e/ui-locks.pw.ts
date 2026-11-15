@@ -96,6 +96,40 @@ test.describe('browser interaction contracts', () => {
     fixture = undefined
   })
 
+  test('rail opens Oracle and offers only implemented views', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.getByRole('button', { name: 'Close Oracle', exact: true }).click()
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }) })
+    }, handle.state.settings.revision)
+    const navigation = page.getByRole('navigation', { name: 'App navigation' })
+    await expect(navigation.getByRole('button', { name: 'Notifications' })).toHaveCount(0)
+    await expect(navigation.getByRole('button', { name: 'Host monitor' })).toHaveCount(0)
+    await expect(navigation.getByRole('button', { name: 'Scheduler' })).toHaveCount(0)
+    await navigation.getByRole('button', { name: 'Open Oracle', exact: true }).click()
+    await expect(page.locator('#oracle-panel')).toBeVisible()
+  })
+
+  test('keeps rail navigation and docked Oracle within layout budgets', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }) })
+    }, handle.state.settings.revision)
+    await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
+    for (const width of [1083, 1050, 1024, 1023, 990, 961]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(page.locator('#oracle-panel')).not.toHaveClass(/manager-panel--docked/)
+      await expect.poll(() => page.getByRole('main').evaluate((main) => main.getBoundingClientRect().width)).toBeGreaterThanOrEqual(360)
+      expect(await page.locator('.shell-rail').evaluate((rail) => rail.getBoundingClientRect().width)).toBe(64)
+      await assertNoHorizontalOverflow(page)
+    }
+    expect(await page.evaluate(() => localStorage.getItem('agentic-remote:oracle-placement'))).toBe('docked')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
+  })
+
   test('sends, queues while busy, edits in place, reorders with the keyboard, and stops', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'conversation')
     const session = handle.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!

@@ -1,28 +1,27 @@
-import { Bell, CalendarClock, Monitor, Plus, Settings, Sparkles } from 'lucide-react'
+import { Bell, Plus, Settings, Sparkles } from 'lucide-react'
 import { railEntries, type ClientFeature } from '../features/registry'
 import { usePreviewFeatures } from '../preview-features'
 import { initials, useDisplayName } from './display-name'
 import './rail.css'
 
-export function ShellNavigation({ displayName, onNewSession, onSettings, onOpen, unreadCount = 0 }: {
+export function ShellNavigation({ displayName, onNewSession, onSettings, onOracle, onOpen, unreadCount = 0 }: {
   displayName?: string
   onNewSession(): void
   onSettings(): void
-  onOpen(id: string): void
+  onOracle(): void
+  onOpen?(id: string): void
   unreadCount?: number
 }) {
   const { effective } = usePreviewFeatures()
-  const name = useDisplayName(displayName, effective.desktopRail)
-  if (!effective.desktopRail && !effective.notificationPanel && !effective.hostMonitorView && !effective.schedulerView) return null
+  const name = useDisplayName(displayName, effective.desktopRail) || 'User'
+  if (!effective.desktopRail && !effective.notificationPanel) return null
   const features: ClientFeature[] = [
-    ...(effective.hostMonitorView ? [{ id: 'host', label: 'Host monitor', icon: Monitor, railEntry: { order: 10 }, open: () => onOpen('host') }] : []),
-    ...(effective.notificationPanel ? [{ id: 'notifications', label: 'Notifications', icon: Bell, railEntry: { order: 20, badge: unreadCount }, open: () => onOpen('notifications') }] : []),
-    ...(effective.schedulerView ? [{ id: 'scheduler', label: 'Scheduler', icon: CalendarClock, railEntry: { order: 30 }, open: () => onOpen('scheduler') }] : []),
+    ...(effective.notificationPanel ? [{ id: 'notifications', label: 'Notifications', icon: Bell, railEntry: { order: 20, badge: unreadCount }, open: () => onOpen?.('notifications') }] : []),
     ...(effective.desktopRail ? [{ id: 'settings', label: 'App settings', icon: Settings, railEntry: { order: 100 }, open: onSettings }] : []),
   ]
   return <nav className="shell-rail" aria-label="App navigation">
     {effective.desktopRail && <div className="shell-rail__top">
-      <Sparkles aria-label="Agentic Remote" size={24} />
+      <button type="button" aria-label="Open Oracle" title="Open Oracle" className="icon-button" onClick={onOracle}><Sparkles aria-hidden="true" size={24} /></button>
       <button aria-label="New session" title="New session" onClick={onNewSession} className="icon-button"><Plus size={22} /></button>
     </div>}
     <div className="shell-rail__footer">

@@ -59,9 +59,10 @@ function ComputerSkills({ computer }: { computer: ComputerSummary }) {
       {!pending ? <ul className="skills-settings__list">{skills?.map((skill) => (
         <li key={`${skill.source}:${skill.location}`}>
           <div><strong>{skill.name}</strong><p>{skill.description || 'No description provided.'}</p>
-            <small>{skill.source} · {skill.location}</small></div>
+            <small>{skill.source} · {skill.location}</small>
+            {skill.reason ? <p className="dialog-message">{skill.reason}</p> : null}</div>
           <button aria-label={`${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`} className="secondary-button"
-            disabled={busy || Boolean(pending) || !computer.online} onClick={() => setPending({ name: skill.name, enabled: !skill.enabled })} type="button">
+            disabled={skill.manageable === false || busy || Boolean(pending) || !computer.online} onClick={() => setPending({ name: skill.name, enabled: !skill.enabled })} type="button">
             {skill.enabled ? 'Disable' : 'Enable'}
           </button>
         </li>

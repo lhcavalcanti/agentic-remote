@@ -3,6 +3,7 @@ import { Bell, BookOpen, Bot, Clock, Folder, MessageSquare, MonitorCog, Settings
 import type { LucideIcon } from 'lucide-react'
 import type { AgentProvider, RuntimeModelOption } from '../../shared/contracts'
 import type { NewSessionBackendSetting, OracleResponseStyle } from '../../shared/settings-profile'
+import { previewFeatureCatalogue, previewFeatureNames } from '../../shared/feature-flags'
 import type { SettingsProfileState } from '../settings-profile'
 import type { useOracleSettings } from '../use-oracle-settings'
 import { DreamerSettings } from '../OracleDreamer'
@@ -12,15 +13,17 @@ import { SchedulerPermissionSettings } from './SchedulerPermissionSettings'
 import { openShellSettings, shellSettingsAvailable } from '../shell'
 import { DefaultRuntimeControls, DefaultSessionFolderControl, SettingScope, ShortcutEditor } from './controls'
 import { accentThemes, appearanceOptions, notificationScopeOptions } from './options'
-import { StatuslineControls } from './StatuslineControls'
+import { StatuslineControls, statuslineOptions } from './StatuslineControls'
 import type { AppSettingsDialogProps } from './types'
 import { DisplayNameSetting } from '../rail/DisplayNameSetting'
 import { ComputersBody } from '../computers/ComputersDialog'
 import { HealthCard } from './HealthCard'
 import { SkillsSettings } from './SkillsSettings'
+import { providerName } from '../session-presentation'
 
 export type SettingsSectionProps = AppSettingsDialogProps & {
   categoryNavigation?: boolean
+  healthCardEnabled?: boolean
   oracle: ReturnType<typeof useOracleSettings>
   runtimeErrors: Partial<Record<AgentProvider, string>>
   runtimeLoading: boolean
@@ -49,8 +52,12 @@ export type SettingsSection = {
   title: string
   icon: LucideIcon
   scope: 'hub' | 'device'
-  searchLabels?: readonly string[]
+  searchLabels?: readonly string[] | ((props: SettingsSectionProps) => readonly string[])
   render: (props: SettingsSectionProps) => ReactNode
+}
+
+export function settingsSectionLabels(section: SettingsSection, props: SettingsSectionProps): readonly string[] {
+  return [section.title, ...(typeof section.searchLabels === 'function' ? section.searchLabels(props) : section.searchLabels ?? [])]
 }
 
 function settingsSyncMessage(state: SettingsProfileState): string {
@@ -76,7 +83,11 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Models',
     icon: Bot,
     scope: 'hub',
-    searchLabels: ['New sessions', 'GitHub Copilot default model', 'Claude Agent default model', 'effort', 'context', 'Start new sessions in'],
+    searchLabels: [
+      'New sessions', 'Model', 'Reasoning effort', 'Context size', 'Agent mode', 'Start new sessions in', 'How new sessions start',
+      ...(['copilot', 'claude'] as const).flatMap((provider) =>
+        ['model', 'reasoning effort', 'context size', 'agent mode'].map((field) => `${providerName(provider)} default ${field}`)),
+    ],
     render: ({
       runtimeErrors,
       runtimeLoading,
@@ -142,7 +153,14 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Folders',
     icon: Folder,
     scope: 'hub',
-    searchLabels: ['New sessions', "Oracle's session folder"],
+    searchLabels: ({ computers }) => [
+      'New sessions', 'Oracle', "Oracle's session folder",
+      ...computers.flatMap((computer) => [
+        `Session folders on ${computer.name}`,
+        ...['default session folder', "Oracle's session folder"].flatMap((label) =>
+          [`Browse ${label} for ${computer.name}`, `Remove ${label} for ${computer.name}`]),
+      ]),
+    ],
     render: ({ computers, defaultSessionFolders, onDefaultSessionFoldersChange, oracle }) => (
       <>
         <p className="dialog-message">
@@ -205,7 +223,13 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Oracle',
     icon: MessageSquare,
     scope: 'hub',
-    searchLabels: ['Model', 'Reasoning effort', 'Response style', 'Notify me about', 'What notifies you', 'Memory', 'Voice', 'Dreamer', 'Opens new sessions with'],
+    searchLabels: [
+      'Model', 'Oracle settings', 'Oracle model', 'Reasoning effort', 'Oracle reasoning effort',
+      'Response style', 'Oracle response style', 'Notify me about', 'What notifies you', 'Memory', 'Voice',
+      'Dreamer', 'Dreamer settings', 'Enable Dreamer', 'Dreamer timezone', 'Opens new sessions with',
+      'How Oracle opens sessions', "Closing Oracle's sessions",
+      ...notificationScopeOptions.map((option) => option.name),
+    ],
     render: ({
       hubCopilotModels,
       hubCopilotError,
@@ -373,7 +397,15 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'Interface',
     icon: SlidersHorizontal,
     scope: 'hub',
-    searchLabels: ['Appearance', 'Reading surfaces', 'Accent color', 'Status line', 'Keyboard shortcuts', 'Preview features'],
+    searchLabels: ({ shortcuts }) => [
+      'Appearance', 'Reading surfaces', 'Accent color', 'Status line', 'Show status line', 'Keyboard shortcuts',
+      'Recall previous message', 'Preview features',
+      ...appearanceOptions.flatMap((option) => [option.name, `${option.name} appearance`]),
+      ...accentThemes.flatMap((theme) => [theme.name, `${theme.name} accent`]),
+      ...statuslineOptions.map((option) => option.label),
+      ...previewFeatureNames.map((name) => previewFeatureCatalogue[name].label),
+      ...shortcuts.flatMap((shortcut) => [shortcut.label, `Change the keys for ${shortcut.label}`, `Reset the keys for ${shortcut.label}`]),
+    ],
     render: ({
       appearance,
       onAppearanceChange,
@@ -495,7 +527,10 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'App',
     icon: Settings,
     scope: 'device',
-    searchLabels: ['Display name', 'Settings sync', 'Hub connection', 'App updates', 'Version', 'Check for updates', 'Health'],
+    searchLabels: ({ healthCardEnabled }) => [
+      'Display name', 'Settings sync', 'Hub connection', 'App updates', 'Version', 'Check for updates',
+      ...(healthCardEnabled ? ['Health', 'Refresh health'] : []),
+    ],
     render: ({
       settingsSync,
       onDisplayNameChange,
@@ -588,12 +623,15 @@ export const navigableSettingsSections: readonly SettingsSection[] = [
     title: 'Remote machines',
     icon: MonitorCog,
     scope: 'hub',
-    searchLabels: ['Name', 'Node URL', 'Pairing token', 'Add computer', 'Remove', 'Check connection', 'Version', 'Status', 'Role', 'Host monitor'],
-    render: ({ computers, onComputerAdded, onComputerRemoved, onOpenHostMonitor }) => (
+    searchLabels: ({ computers }) => [
+      'Name (optional)', 'Node URL', 'Pairing token', 'Add computer', 'Remove', 'Check connection', 'Version', 'Status', 'Role', 'Host monitor',
+      ...computers.map((computer) => `Remove ${computer.name}`),
+    ],
+    render: ({ computers, onComputerAdded, onComputerRemoved, onCheckComputerConnections, onOpenHostMonitor }) => (
       <>
         {onOpenHostMonitor ? <button className="secondary-button" onClick={onOpenHostMonitor} type="button">Open Host monitor</button> : null}
         <ComputersBody computers={computers} enhanced onAdded={onComputerAdded ?? (() => undefined)}
-          onRemoved={onComputerRemoved ?? (() => undefined)} />
+          onRemoved={onComputerRemoved ?? (() => undefined)} onCheckConnection={onCheckComputerConnections} />
       </>
     ),
   },
@@ -619,6 +657,6 @@ export const skillsSettingsSection: SettingsSection = {
   title: 'Skills',
   icon: BookOpen,
   scope: 'hub',
-  searchLabels: ['Computer', 'Search skills', 'Enable', 'Disable', 'Refresh skills'],
+  searchLabels: ['Computer', 'Skills computer', 'Search skills', 'Enable', 'Disable', 'Refresh skills'],
   render: ({ computers }) => <SkillsSettings computers={computers} />,
 }

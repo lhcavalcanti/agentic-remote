@@ -160,6 +160,10 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
     await dialog.getByRole('button', { name: /^Interface/ }).click()
     await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeVisible()
     await expect(dialog.getByRole('heading', { name: 'Keyboard shortcuts', exact: true })).toBeHidden()
+    await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Settings navigation')
+    await dialog.getByRole('button', { name: /^Interface/ }).click()
+    await expect(dialog.getByRole('checkbox', { name: 'Settings navigation', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeHidden()
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
     await page.getByRole('button', { name: 'Manage computers', exact: true }).click()
@@ -168,6 +172,25 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
     await remote.focus()
     await remote.press('ArrowDown')
     await expect(dialog.getByRole('button', { name: /^Notifications/ })).toBeFocused()
+  } finally { fixture.assertHealthy() }
+})
+
+test('Health search leads to its preview toggle while off and its card after enabling', async ({ page, baseURL }) => {
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-health-search')!.setup(page)
+  try {
+    const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+    await expect(dialog.getByRole('button', { name: /^App This device/ })).toHaveCount(0)
+    await dialog.getByRole('checkbox', { name: 'Health card', exact: true }).check()
+    await dialog.getByRole('button', { name: /^App This device/ }).click()
+    await expect(dialog.getByRole('region', { name: 'Health', exact: true })).toBeVisible()
+  } finally { fixture.assertHealthy() }
+})
+
+test('invalid skills explain why they cannot change CLI configuration', async ({ page, baseURL }) => {
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-invalid-skill')!.setup(page)
+  try {
+    await expect(page.getByRole('button', { name: 'Enable invalid-checklist', exact: true })).toBeDisabled()
+    expect(fixture.requests.filter((request) => request.method === 'PATCH' && request.path.endsWith('/skills'))).toEqual([])
   } finally { fixture.assertHealthy() }
 })
 

@@ -2094,6 +2094,7 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - A jump bar MUST reach each group and stay in view while the settings scroll.
 - Opened from Oracle's model, App settings MUST open at Oracle's model;
   opened any other way, at the top.
+- With category navigation enabled, search MUST find every rendered field label, including preview names, status-line items, and keyboard shortcuts, and show its matching card without changing saved values.
 
 ### 9.3 Settings profile
 

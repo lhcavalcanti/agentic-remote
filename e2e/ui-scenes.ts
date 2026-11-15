@@ -47,10 +47,13 @@ export const uiSceneNames = [
   'app-settings',
   'preview-features',
   'settings-navigation',
+  'settings-search',
+  'settings-health-search',
   'settings-remote-machines',
   'settings-health',
   'settings-skills',
   'settings-skill-confirmation',
+  'settings-invalid-skill',
   'runtime-dialog',
   'new-session-dialog',
   'computers-dialog',
@@ -166,7 +169,7 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true, schedulerView: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
-      if (name === 'settings-skills' || name === 'settings-skill-confirmation') {
+      if (name === 'settings-skills' || name === 'settings-skill-confirmation' || name === 'settings-invalid-skill') {
         state.settings.values = {
           previewFeatures: { settingsNavigation: true, skillToggles: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
           displayName: 'Alex Morgan',
@@ -180,7 +183,7 @@ export function createUIScenes(
         }
         state.hubFlags = { ...state.hubFlags, hostMonitor: true, scheduler: true }
       }
-      if (name === 'settings-navigation' || name === 'settings-remote-machines') {
+      if (name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-search' || name === 'settings-health-search') {
         state.settings.values = {
           previewFeatures: { settingsNavigation: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
           displayName: 'Alex Morgan',
@@ -270,13 +273,23 @@ export function createUIScenes(
         await expect(page.getByRole('button', { name: '2 subagents running', exact: true })).toBeVisible()
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
-      } else if (name === 'settings-skills' || name === 'settings-skill-confirmation') {
+      } else if (name === 'settings-skills' || name === 'settings-skill-confirmation' || name === 'settings-invalid-skill') {
         await openSessions(page)
         await page.getByRole('button', { name: 'App settings', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
         await dialog.getByRole('button', { name: /^Skills Hub/ }).click()
         await expect(dialog.getByRole('button', { name: 'Disable review-notes', exact: true })).toBeVisible()
-        if (name === 'settings-skill-confirmation') {
+        if (name === 'settings-invalid-skill') {
+          await dialog.getByRole('searchbox', { name: 'Search skills' }).fill('invalid-checklist')
+          await expect(dialog.getByRole('button', { name: 'Enable invalid-checklist', exact: true })).toBeDisabled()
+          const actionLines = await dialog.getByRole('button', { name: 'Enable invalid-checklist', exact: true }).evaluate((button) => {
+            const text = document.createRange()
+            text.selectNodeContents(button)
+            return text.getClientRects().length
+          })
+          expect(actionLines).toBe(1)
+          await expect(dialog.getByText('SKILL.md frontmatter description is required and must be at most 1024 characters.')).toBeVisible()
+        } else if (name === 'settings-skill-confirmation') {
           await dialog.getByRole('combobox', { name: 'Skills computer' }).selectOption('fixture-build')
           await dialog.getByRole('button', { name: 'Disable review-notes', exact: true }).click()
           await expect(dialog.getByRole('group', { name: 'Confirm skill change' })).toContainText('every session on Build node')
@@ -289,12 +302,17 @@ export function createUIScenes(
         const health = dialog.getByRole('region', { name: 'Health', exact: true })
         await expect(health).toContainText('fixture-release-2026-09-04')
         await health.scrollIntoViewIfNeeded()
-      } else if (name === 'settings-navigation' || name === 'settings-remote-machines') {
+      } else if (name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-search' || name === 'settings-health-search') {
         await openSessions(page)
-        await page.getByRole('button', { name: name === 'settings-navigation' ? 'App settings' : 'Manage computers', exact: true }).click()
+        await page.getByRole('button', { name: name === 'settings-remote-machines' ? 'Manage computers' : 'App settings', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
         await expect(dialog.getByRole('textbox', { name: 'Search settings' }).or(dialog.getByRole('searchbox', { name: 'Search settings' }))).toBeVisible()
-        if (name === 'settings-remote-machines') {
+        if (name === 'settings-search' || name === 'settings-health-search') {
+          const label = name === 'settings-search' ? 'Settings navigation' : 'Health'
+          await dialog.getByRole('searchbox', { name: 'Search settings' }).fill(label)
+          await dialog.getByRole('button', { name: /^Interface/ }).click()
+          await expect(dialog.getByRole('checkbox', { name: label === 'Health' ? 'Health card' : label, exact: true })).toBeVisible()
+        } else if (name === 'settings-remote-machines') {
           await expect(dialog.getByRole('button', { name: 'Check connection', exact: true })).toBeVisible()
         } else {
           const models = dialog.getByRole('combobox', { name: 'GitHub Copilot default model', exact: true })

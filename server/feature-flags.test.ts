@@ -57,8 +57,8 @@ describe('effective hub feature state', () => {
 
   it('captures environment flags once, not on each request or from client preferences', async () => {
     vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'on')
-    vi.stubEnv('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', 'true')
-    vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', '1')
+    vi.stubEnv('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', ' ON ')
+    vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', 'On')
     const app = await hub()
     for (const flag of Object.values(hubFlagCatalogue)) vi.stubEnv(flag.env, 'off')
     const response = await app.inject({ url: '/api/features', headers: { host: 'localhost' } })
@@ -67,9 +67,11 @@ describe('effective hub feature state', () => {
     })
   })
 
-  it.each(Object.values(hubFlagCatalogue))('refuses startup for malformed $env', async (flag) => {
-    vi.stubEnv(flag.env, 'enabled')
-    await expect(hub()).rejects.toThrow(`Invalid ${flag.env}`)
+  it.each(Object.values(hubFlagCatalogue).flatMap(({ env }) =>
+    ['enabled', 'true', 'false', '1', '0'].map((value) => ({ env, value })),
+  ))('refuses startup for malformed $env=$value', async ({ env, value }) => {
+    vi.stubEnv(env, value)
+    await expect(hub()).rejects.toThrow(`Invalid ${env}: expected on|off`)
   })
 
   it('does not advertise hub-owned rollout flags on a node', async () => {

@@ -154,7 +154,7 @@ for (const width of [320, 360]) {
     test('sends an expanded pasted slash command without offering to queue it', async ({ page, baseURL }) => {
       const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
       try {
-        const content = ['/review', ...Array.from({ length: 21 }, () => 'Synthetic review detail')].join('\n')
+        const content = ['/help', ...Array.from({ length: 21 }, () => 'Synthetic review detail')].join('\n')
         await message(page).evaluate((element, content) => {
           const clipboardData = new DataTransfer()
           clipboardData.setData('text/plain', content)
@@ -162,11 +162,12 @@ for (const width of [320, 360]) {
         }, content)
         await expect(message(page)).toHaveValue('[Paste #1 - 22 lines]')
         await expect(page.getByRole('button', { name: 'Send options', exact: true })).toHaveCount(0)
-        const sent = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/messages`)
+        const sent = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/commands`)
         await page.getByRole('button', { name: 'Send message', exact: true }).click()
         const payload = (await sent).postDataJSON()
-        expect(payload.content).toBe(content)
+        expect(payload.command).toBe(content)
         expect(payload.enqueue).not.toBe(true)
+        expect(fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.queuedPrompts ?? []).toHaveLength(0)
         await expect(page.getByRole('menu', { name: 'Message delivery' })).toHaveCount(0)
         await assertNoHorizontalOverflow(page)
       } finally {

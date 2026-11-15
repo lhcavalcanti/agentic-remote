@@ -1469,6 +1469,27 @@ export async function setupWorkspaceFixture(
         session.updatedAt = FIXTURE_NOW
         emit({ type: 'session.upserted', session })
       }
+      if (method === 'POST' && action === '/commands') {
+        const input = request.postDataJSON() as { command?: unknown; enqueue?: unknown; replaceTerminalDraft?: unknown }
+        if (typeof input.command !== 'string' || !/^\/help(?:\s|$)/.test(input.command.trim()) ||
+          input.command.trim().length > 10_000 ||
+          (input.enqueue !== undefined && typeof input.enqueue !== 'boolean') ||
+          (input.replaceTerminalDraft !== undefined && typeof input.replaceTerminalDraft !== 'boolean')) {
+          await reject(route, 'Unexpected fixture command')
+          return
+        }
+        const content = input.command.trim()
+        const id = `fixture-command-${session.revision}`
+        if (input.enqueue) {
+          session.queuedPrompts = [...(session.queuedPrompts ?? []), { id, content, createdAt: FIXTURE_NOW }]
+          session.queuedCount = session.queuedPrompts.length
+        } else {
+          session.messages.push({ id, role: 'user', content, createdAt: FIXTURE_NOW })
+        }
+        commitSession()
+        await respond({ session })
+        return
+      }
       if (method === 'POST' && action === '/messages') {
         const input = request.postDataJSON() as { content?: unknown; enqueue?: unknown; deliveryId?: unknown }
         if (typeof input.content !== 'string' || !input.content.trim() ||

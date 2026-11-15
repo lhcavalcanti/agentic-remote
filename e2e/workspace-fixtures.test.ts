@@ -362,9 +362,26 @@ describe('workspace fixture hub protocol', () => {
 describe('workspace fixture composer routes', () => {
   const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 
+  it('executes an advertised command immediately unless queueing is explicit', async () => {
+    const { fixture, request, state } = await fixtureApi()
+    const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+    session.status = 'running'
+    const command = ['/help', ...Array.from({ length: 21 }, () => 'Synthetic detail')].join('\n')
+    const response = await request<{ session: ManagedSession }>(`${sessionPath}/commands`, 'POST', { command, enqueue: false })
+    expect(response.status).toBe(200)
+    expect(response.body.session.messages.at(-1)?.content).toBe(command)
+    expect(session.queuedPrompts ?? []).toHaveLength(0)
+    await request(`${sessionPath}/commands`, 'POST', { command: '/help queued', enqueue: true })
+    expect(session.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['/help queued'])
+    fixture.assertHealthy()
+  })
+
   it.each([
     ['/messages', 'POST', { content: '' }],
     ['/messages', 'POST', { content: 'A note', enqueue: 'yes' }],
+    ['/commands', 'POST', { command: '/unknown' }],
+    ['/commands', 'POST', { command: '/help', enqueue: 'yes' }],
+    ['/commands', 'POST', { command: '/help', replaceTerminalDraft: 'yes' }],
     ['/queue', 'PUT', { order: ['first', 'first'] }],
     ['/queue/missing', 'PATCH', { content: 'A revision' }],
     ['/runtime', 'PATCH', { model: 'unknown', reasoningEffort: 'high', contextTier: 'default', mode: 'plan' }],

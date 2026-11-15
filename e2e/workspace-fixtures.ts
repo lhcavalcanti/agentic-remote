@@ -900,6 +900,7 @@ export async function setupWorkspaceFixture(
       return
     }
     if (path === '/api/schedules' || path.startsWith('/api/schedules/')) {
+      // The single-segment GET matcher includes the reserved global /api/schedules/runs route.
       const known = (path === '/api/schedules' && ['GET', 'POST'].includes(method)) ||
         (/^\/api\/schedules\/[^/]+$/.test(path) && ['GET', 'PATCH', 'DELETE'].includes(method)) ||
         (/^\/api\/schedules\/[^/]+\/(?:enabled|archived|run)$/.test(path) && method === 'POST') ||

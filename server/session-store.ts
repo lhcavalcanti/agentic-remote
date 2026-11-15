@@ -43,6 +43,26 @@ function carryLaunchIdentity(state: StoredState, existing: StoredSession, replac
     ...(receipt.state === 'queued' && !kept.has(receipt.promptId) ? { state: 'rejected' as const, outcome: 'stopped' as const } : {}),
   }))
   state.sessions[replacementId].launchTermination = undefined
+  if (existing.promptReceipts?.length) {
+    state.deliveryOwners = { ...state.deliveryOwners }
+    for (const receipt of existing.promptReceipts) state.deliveryOwners[receipt.deliveryId] = replacementId
+  }
+}
+
+function rememberDeliveryOwners(state: StoredState, sessionId: string, receipts: readonly PromptAcceptanceReceipt[] = []): boolean {
+  const additions: Record<string, string> = {}
+  for (const receipt of receipts) {
+    if (!promptAcceptanceReceiptSchema.safeParse(receipt).success || receipt.sessionId !== sessionId) {
+      throw new Error('Invalid delivery ownership receipt')
+    }
+    const owner = Object.hasOwn(state.deliveryOwners || {}, receipt.deliveryId)
+      ? state.deliveryOwners![receipt.deliveryId] : undefined
+    if (owner !== undefined && owner !== sessionId) throw new Error('Invalid delivery ownership: conflicting session')
+    if (owner === undefined) additions[receipt.deliveryId] = sessionId
+  }
+  if (!Object.keys(additions).length) return false
+  state.deliveryOwners = { ...state.deliveryOwners, ...additions }
+  return true
 }
 
 export interface TerminalQueueDispatch {
@@ -160,6 +180,8 @@ interface StoredState {
   version: 1
   sessions: Record<string, StoredSession>
   launches?: Record<string, { sessionId: string; receipts?: PromptAcceptanceReceipt[]; termination?: TerminationAcknowledgement }>
+  deliveryOwners?: Record<string, string>
+  deliveryIdentityHistoryIncomplete?: boolean
   retiredSessionIds?: string[]
   sdkRestartRecoveries?: Record<string, SdkRestartRecovery>
   sdkAcceptedReplies?: Record<string, SdkAcceptedReply>
@@ -559,7 +581,7 @@ function cloneSession(session: StoredSession): SessionDetail {
 export class SessionStore {
   private readonly directory: string
   private readonly statePath: string
-  private state: StoredState = { version: 1, sessions: {} }
+  private state: StoredState = { version: 1, sessions: {}, deliveryOwners: {} }
   private checkpoint = this.state
   private writeQueue: Promise<void> = Promise.resolve()
   private closed = false
@@ -638,12 +660,35 @@ export class SessionStore {
         }
       }
     }
+    if (loaded.deliveryOwners !== undefined && (
+      !loaded.deliveryOwners || typeof loaded.deliveryOwners !== 'object' || Array.isArray(loaded.deliveryOwners) ||
+      Object.entries(loaded.deliveryOwners).some(([deliveryId, owner]) =>
+        !launchIdentitySchema.safeParse(deliveryId).success || typeof owner !== 'string' || !owner)
+    )) throw new Error('Invalid delivery ownership metadata')
+    if (loaded.deliveryIdentityHistoryIncomplete !== undefined && typeof loaded.deliveryIdentityHistoryIncomplete !== 'boolean') {
+      throw new Error('Invalid delivery ownership history')
+    }
+    const legacyDeliveryHistory = loaded.deliveryOwners === undefined && (loaded.launches !== undefined ||
+      Object.values(loaded.sessions).some((session) => session.promptReceipts !== undefined))
+    let deliveryOwnersChanged = false
+    // Pre-identity stores have no delivery history, regardless of session retirement.
+    // Only builds that persisted launch/receipt data could have discarded delivery IDs.
+    // Preserve known retries, but never guess that a new token was unused.
+    if (legacyDeliveryHistory && (loaded.retiredSessionIds?.length ||
+        Object.values(loaded.sessions).some((session) => session.replacedSessionIds?.length) ||
+        Object.values(loaded.launches || {}).some((owner) => !Object.hasOwn(loaded.sessions, owner.sessionId)))) {
+      loaded.deliveryIdentityHistoryIncomplete = true
+    }
+    loaded.deliveryOwners ??= {}
+    for (const owner of Object.values(loaded.launches || {})) {
+      deliveryOwnersChanged = rememberDeliveryOwners(loaded, owner.sessionId, owner.receipts) || deliveryOwnersChanged
+    }
     const replies = loaded.sdkAcceptedReplies || {}
     for (const recovery of Object.values(recoveries)) validateSdkRestartRecovery(recovery)
     for (const reply of Object.values(replies)) validateSdkAcceptedReply(reply)
     const legacyRetirements: string[] = []
     const interrupted: string[] = []
-    let staleSdkInteractionMarked = Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
+    let staleSdkInteractionMarked = deliveryOwnersChanged || Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
       Object.keys(replies).some((id) => !Object.hasOwn(loaded.sessions, id))
     for (const [id, session] of Object.entries(loaded.sessions)) {
       if (session.launchId !== undefined && (!launchIdentitySchema.safeParse(session.launchId).success ||
@@ -661,6 +706,7 @@ export class SessionStore {
           new Set(session.promptReceipts.map((receipt) => receipt.deliveryId)).size !== session.promptReceipts.length)) {
         throw new Error('Invalid prompt acceptance receipts')
       }
+      staleSdkInteractionMarked = rememberDeliveryOwners(loaded, id, session.promptReceipts) || staleSdkInteractionMarked
       if (session.retention !== undefined && !sessionRetentionSchema.safeParse(session.retention).success) {
         throw new Error('Invalid session retention metadata')
       }
@@ -986,6 +1032,7 @@ export class SessionStore {
       throw new Error('Invalid session retirement metadata')
     }
     return this.change((state) => {
+      rememberDeliveryOwners(state, incoming.id, incoming.promptReceipts)
       if (incoming.launchId !== undefined) {
         launchIdentitySchema.parse(incoming.launchId)
         const owner = Object.hasOwn(state.launches || {}, incoming.launchId) ? state.launches![incoming.launchId] : undefined
@@ -2171,6 +2218,14 @@ export class SessionStore {
     }
   }
 
+  deliveryIdentity(deliveryId: string): { sessionId?: string; historyComplete: boolean } {
+    launchIdentitySchema.parse(deliveryId)
+    return {
+      ...(Object.hasOwn(this.state.deliveryOwners || {}, deliveryId) ? { sessionId: this.state.deliveryOwners![deliveryId] } : {}),
+      historyComplete: this.state.deliveryIdentityHistoryIncomplete !== true,
+    }
+  }
+
   async acceptIdentifiedPrompt(
     sessionId: string,
     deliveryId: string,
@@ -2182,18 +2237,17 @@ export class SessionStore {
       throw Object.assign(new Error('Message must contain between 1 and 200000 characters.'), { statusCode: 400 })
     }
     return this.change((state) => {
-      const owner = Object.values(state.sessions).find((candidate) =>
-        candidate.promptReceipts?.some((receipt) => receipt.deliveryId === deliveryId))
-      const deletedOwner = Object.values(state.launches || {}).find((candidate) =>
-        !state.sessions[candidate.sessionId] && candidate.receipts?.some((receipt) => receipt.deliveryId === deliveryId))
-      if (deletedOwner) {
-        throw Object.assign(new Error('Delivery identity belongs to a deleted session.'), { statusCode: 409, uncertainDelivery: false })
-      }
-      if (owner) {
-        if (owner.id !== sessionId) {
+      const owner = Object.hasOwn(state.deliveryOwners || {}, deliveryId) ? state.deliveryOwners![deliveryId] : undefined
+      if (owner !== undefined) {
+        if (owner !== sessionId || !state.sessions[sessionId]?.promptReceipts?.some((receipt) => receipt.deliveryId === deliveryId)) {
           throw Object.assign(new Error('Delivery identity belongs to another session.'), { statusCode: 409, uncertainDelivery: false })
         }
         return () => this.requireSession(sessionId)
+      }
+      if (state.deliveryIdentityHistoryIncomplete) {
+        throw Object.assign(new Error('Delivery identity history is incomplete; new identified prompts are disabled.'), {
+          statusCode: 409, uncertainDelivery: false,
+        })
       }
       const existing = state.sessions[sessionId]
       if (!existing || this.retiredIds(state).has(sessionId)) throw new Error('Session not found')
@@ -2211,6 +2265,7 @@ export class SessionStore {
       session.promptReceipts = [...(session.promptReceipts || []), {
         deliveryId, sessionId, acceptedAt: prompt.createdAt, state: 'queued', promptId: prompt.id,
       }]
+      rememberDeliveryOwners(state, sessionId, session.promptReceipts)
       session.revision = (existing.revision ?? 0) + 1
       state.sessions[sessionId] = session
       return () => this.requireSession(sessionId)
@@ -3126,6 +3181,7 @@ export class SessionStore {
     await this.change((state) => {
       const existing = state.sessions[sessionId]
       if (existing) {
+        rememberDeliveryOwners(state, sessionId, existing.promptReceipts)
         if (existing.launchId && state.launches?.[existing.launchId]) {
           state.launches = {
             ...state.launches,
@@ -3142,6 +3198,7 @@ export class SessionStore {
       delete state.sessions[sessionId]
       const tombstones = Object.entries(state.launches || {}).filter(([, owner]) =>
         !state.sessions[owner.sessionId] && owner.receipts?.length)
+      // Bound detailed reconciliation history, never the deliveryOwners fence.
       const retained = new Set(tombstones.flatMap(([, owner]) => owner.receipts!)
         .sort((left, right) => Date.parse(right.acceptedAt) - Date.parse(left.acceptedAt))
         .slice(0, 1000).map((receipt) => receipt.deliveryId))
@@ -3664,6 +3721,8 @@ export class SessionStore {
           try {
             const resolve = change.apply(draft)
             durableChange ||= (
+              draft.deliveryOwners !== candidate.deliveryOwners ||
+              draft.deliveryIdentityHistoryIncomplete !== candidate.deliveryIdentityHistoryIncomplete ||
               draft.retiredSessionIds !== candidate.retiredSessionIds ||
               Object.keys(draft.sessions).length !== Object.keys(candidate.sessions).length ||
               Object.entries(draft.sessions).some(

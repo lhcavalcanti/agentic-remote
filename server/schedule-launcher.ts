@@ -1,4 +1,4 @@
-import type { ManagedSession } from '../shared/contracts.js'
+import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import { chmod, lstat } from 'node:fs/promises'
 import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
 import type { Schedule, ScheduleRun } from '../shared/schedules.js'
@@ -41,6 +41,25 @@ export async function recordScheduleProvenance(
       origin: 'schedule', scheduleId: provenance.scheduleId, scheduleRunId: provenance.scheduleRunId,
       task: provenance.task.slice(0, 400),
     }
+  })
+}
+
+export function recordScheduleReplacement(store: ManagerStore, event: HubEvent): Promise<void> {
+  if (event.type !== 'session.removed' || !event.replacedBy) return Promise.resolve()
+  const previous = store.registry()[registryKey(event.computerId, event.sessionId)]
+  if (previous?.origin !== 'schedule') return Promise.resolve()
+  const successorId = event.replacedBy
+  const now = new Date().toISOString()
+  return store.updateRegistry((registry) => {
+    registry[registryKey(event.computerId, event.sessionId)] = { ...previous, removedAt: now, replacedBy: successorId }
+    const key = registryKey(event.computerId, successorId)
+    registry[key] = {
+      ...previous, ...registry[key], sessionId: successorId, origin: 'schedule',
+      scheduleId: previous.scheduleId, scheduleRunId: previous.scheduleRunId, task: previous.task,
+      firstSeenAt: registry[key]?.firstSeenAt ?? now,
+    }
+    delete registry[key].removedAt
+    delete registry[key].replacedBy
   })
 }
 

@@ -34,7 +34,10 @@ describe('hub health snapshot', () => {
       expect(response.statusCode).toBe(200)
       expect(response.json()).toMatchObject({
         hub: { id: runtime.identity.info.id, role: 'hub', version: runtime.identity.info.version },
-        startup: [{ startupPhase: 'fixture.start', event: 'begin' }, { startupPhase: 'fixture.start', event: 'complete', durationMs: 0 }],
+        startup: [
+          { startupPhase: 'fixture.start', event: 'begin' }, { startupPhase: 'fixture.start', event: 'complete', durationMs: 0 },
+          { startupPhase: 'sessions.provenance', event: 'begin' }, { startupPhase: 'sessions.provenance', event: 'complete' },
+        ],
         computers: [{ id: runtime.identity.info.id, online: true, role: 'hub' }],
       })
       expect(start).not.toHaveBeenCalled()

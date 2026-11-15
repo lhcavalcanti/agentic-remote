@@ -246,11 +246,13 @@ describe('gated hub and authenticated node host transport', () => {
     const runtime = await make('fictional-computer', {
       role, startupPhases: createStartupPhases({ write: (line) => lines.push(line) }),
     })
+    // Other startup phases (for example session provenance) may log while the app is built.
+    const hostPhases = () => lines.map((line) => JSON.parse(line)).filter((line) => line.startupPhase === 'hostTelemetry.start')
     expect(runtime.hostTelemetry!.sampler.status().running).toBe(false)
-    expect(lines).toEqual([])
+    expect(hostPhases()).toEqual([])
     await runtime.app.ready()
     expect(runtime.hostTelemetry!.sampler.status().running).toBe(true)
-    expect(lines.map((line) => JSON.parse(line))).toEqual([
+    expect(hostPhases()).toEqual([
       expect.objectContaining({ startupPhase: 'hostTelemetry.start', event: 'begin' }),
       expect.objectContaining({ startupPhase: 'hostTelemetry.start', event: 'complete' }),
     ])

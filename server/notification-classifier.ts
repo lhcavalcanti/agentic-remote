@@ -121,7 +121,7 @@ export function classifyHubNotification(
     const computer = event.computer
     const key = JSON.stringify(['computer', computer.id, computer.lifecycleGeneration])
     const before = cursors[key]
-    const offline = before?.online === true && !computer.online
+    const offline = !baseline && before?.online === true && !computer.online
     const episode = (before?.episode ?? 0) + (offline ? 1 : 0)
     cursors[key] = { online: computer.online, episode, touchedAt: now }
     if (offline) return [record('computer.offline', [computer.id, computer.lifecycleGeneration, String(episode)], {

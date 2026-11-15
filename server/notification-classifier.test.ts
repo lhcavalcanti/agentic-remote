@@ -103,6 +103,18 @@ describe('canonical hub notification classifier', () => {
     expect(classifyHubNotification({ type: 'computer.updated', computer: { ...computer, online: false } }, cursors, now)[0]!.id).not.toBe(first.id)
   })
 
+  it('seeds a restarted computer baseline without creating or advancing an offline episode', () => {
+    const computer = { id: 'c', name: 'Worker', online: true, isLocal: false, lifecycleGeneration: 'pairing-1' }
+    const key = JSON.stringify(['computer', computer.id, computer.lifecycleGeneration])
+    const cursors: NotificationCursors = { [key]: { online: true, episode: 3, touchedAt: now } }
+    expect(classifyHubNotification({ type: 'computer.updated', computer: { ...computer, online: false } }, cursors, now, true)).toEqual([])
+    expect(cursors[key]).toMatchObject({ online: false, episode: 3 })
+    expect(classifyHubNotification({ type: 'computer.updated', computer }, cursors, now)).toEqual([])
+    const records = classifyHubNotification({ type: 'computer.updated', computer: { ...computer, online: false } }, cursors, now)
+    expect(records).toHaveLength(1)
+    expect(records[0]!.id).toBe(notificationIdentity('computer.offline', 'c', 'pairing-1', '4'))
+  })
+
   it('records failures and needs-input even with queued work; root IDs cannot alias request namespaces', () => {
     const cursors: NotificationCursors = {}
     classifyHubNotification({ type: 'session.upserted', session: running }, cursors, now)

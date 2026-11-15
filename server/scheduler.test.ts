@@ -202,6 +202,30 @@ describe('scheduler durable store', () => {
 })
 
 describe('hub schedule dispatcher', () => {
+  it('lets an archive queued before the launch transition stop a pending drain atomically', async () => {
+    let archive: Promise<unknown> | undefined
+    const state = await fixture({}, () => {
+      archive ??= state.store.setArchived(state.schedule.id, state.schedule.revision, true)
+      return true
+    })
+    await state.dispatcher.start()
+    const run = await state.dispatcher.runNow(state.schedule.id)
+    await archive
+    await settle(state.dispatcher)
+    expect(state.store.get(state.schedule.id).archived).toBe(true)
+    expect(state.launcher.launch).not.toHaveBeenCalled()
+    expect(state.store.getRun(run.id)).toMatchObject({ status: 'stopped' })
+  })
+
+  it('still permits manually accepted work on a disabled schedule', async () => {
+    const { dispatcher, launcher, store, schedule } = await fixture({ enabled: false })
+    await dispatcher.start()
+    const run = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    expect(store.getRun(run.id).status).toBe('running')
+    expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ['2026-03-08T09:00:00.000Z', '02:30', '2026-03-08T10:30:00.000Z'],
     ['2026-11-01T07:00:00.000Z', '01:30', '2026-11-01T08:30:00.000Z'],

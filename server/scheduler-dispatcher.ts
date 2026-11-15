@@ -223,9 +223,8 @@ export class SchedulerDispatcher {
       if (this.store.allRuns().filter(holdsSlot).length >= SCHEDULER_CONCURRENCY ||
           this.store.allRuns().some((other) => other.id !== run.id &&
             other.scheduleId === run.scheduleId && holdsSlot(other))) continue
-      const launching = await this.store.changeRun(run.id, {
-        status: 'launching', startedAt: this.at(), error: undefined, retryUntil: undefined,
-      })
+      const launching = await this.store.beginLaunch(run.id, this.at())
+      if (launching.status !== 'launching') continue
       // The write above is the uncertainty boundary. Never call launch twice
       // after it, except for an explicit definitive, side-effect-free refusal.
       const operation = Promise.resolve().then(() => this.launcher.launch(launching, schedule))

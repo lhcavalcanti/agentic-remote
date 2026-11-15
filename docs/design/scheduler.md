@@ -75,7 +75,7 @@ Policies:
 - **Overlap:** `skip` records the new run as missed; `queue` keeps it pending FIFO; `replace` stops older pending intents without launching them, moves existing live work to `stopping`, and waits for authoritative termination before the replacement can launch.
 - **Runtime:** the accepted definition's `maxRuntimeMin` moves live work to `stopping`. Offline targets and unknown stop acknowledgements retain the slot until stop/reconcile proves termination. A launch still awaiting its response cannot accept premature negative lookup/stop proof; once reconciliation binds a session, the runner's durable admission fence protects cancellation from late prompt delivery.
 - **Offline launch:** retry a pending occurrence until ten minutes after its occurrence. Manual and catch-up runs use their admission time instead. Persist the deadline so a target returning after expiry cannot launch stale work. Queue/concurrency waiting alone does not consume an offline retry window.
-- **Enable/archive:** disabling stops future recurrence, not accepted work; manual Run now is allowed while disabled. Archive prevents new/manual work and stops never-launched pending intents, without implicitly cancelling live sessions.
+- **Enable/archive:** disabling stops future recurrence, not accepted work; manual Run now is allowed while disabled. Archive prevents new/manual work and stops never-launched pending intents, without implicitly cancelling live sessions. The pending-to-launching transition checks archive state inside the same serialized store commit queue: an archive ordered first prevents launch; an already committed launch boundary remains in flight.
 
 ## Hub API and events
 

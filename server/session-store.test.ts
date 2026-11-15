@@ -36,6 +36,55 @@ function lifecycleLines(info: MockInstance<typeof console.info>): unknown[] {
 }
 
 describe('SessionStore', () => {
+  describe('prompt delivery confirmation', () => {
+    it('does not confirm a provider-start refusal and persists only the acknowledged turn', async () => {
+      const { directory, store } = await createStore()
+      await store.create({
+        id: 'delivery', cwd: directory, title: 'Delivery check', status: 'idle',
+        updatedAt: new Date().toISOString(), messages: [],
+      })
+      await store.beginPrompt('delivery', 'Refused before provider start', 'refused', () => true)
+      expect(store.get('delivery')?.messages[0].deliveryState).toBe('pending')
+      await store.cancelPromptAdmission('delivery', 'refused', () => true, {
+        message: 'Not sent: provider startup failed',
+      })
+      expect(store.get('delivery')?.messages[0].deliveryConfirmed).toBeUndefined()
+      expect(store.get('delivery')?.messages[0].deliveryState).toBe('refused')
+      await store.beginPrompt('delivery', 'Provider acknowledged', 'accepted', () => true)
+      expect(await store.confirmPromptDelivery('delivery', 'accepted', {
+        content: 'Different turn', createdAt: new Date().toISOString(),
+      })).toBeUndefined()
+      await store.confirmPromptDelivery('delivery', 'accepted')
+      expect(store.get('delivery')?.messages.filter((message) => message.role === 'user')
+        .map((message) => message.deliveryConfirmed)).toEqual([undefined, true])
+      expect(store.get('delivery')?.messages.find((message) => message.content === 'Provider acknowledged')?.deliveryState)
+        .toBeUndefined()
+      expect(await store.confirmPromptDelivery('delivery', 'accepted')).toBeUndefined()
+      await store.close()
+      const reopened = new SessionStore(directory)
+      await reopened.initialize()
+      expect(reopened.get('delivery')?.messages.find((message) => message.content === 'Provider acknowledged'))
+        .toMatchObject({ deliveryConfirmed: true })
+      await reopened.close()
+    })
+
+    it('leaves an in-flight queued admission unconfirmed', async () => {
+      const { directory, store } = await createStore()
+      await store.create({
+        id: 'delivery', cwd: directory, title: 'Delivery check', status: 'idle',
+        updatedAt: new Date().toISOString(), messages: [],
+        queuedPrompts: [{ id: 'queued', content: 'Waiting for the provider', createdAt: new Date().toISOString() }],
+      })
+      const { reservation } = await store.reserveQueuedPrompt('delivery', () => true)
+      await store.beginPrompt('delivery', 'Waiting for the provider', 'assistant', () => true, reservation)
+      const user = store.get('delivery')?.messages.find((message) => message.role === 'user')
+      expect(user).toMatchObject({ content: 'Waiting for the provider' })
+      expect(user?.deliveryConfirmed).toBeUndefined()
+      expect(user?.deliveryState).toBe('pending')
+      await store.close()
+    })
+  })
+
   describe('SDK restart recovery', () => {
     async function interruptedSdkStore() {
       const { directory, store } = await createStore()

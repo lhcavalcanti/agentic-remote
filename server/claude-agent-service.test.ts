@@ -563,6 +563,8 @@ describe('ClaudeAgentService', () => {
 
     await service.sendMessage(sessionId, 'hello')
     await waitForIdle(service, sessionId)
+    expect(service.getSession(sessionId)?.messages.find((message) => message.role === 'user'))
+      .toMatchObject({ content: 'hello', deliveryConfirmed: true })
     expect(service.getSession(sessionId)?.messages.at(-1)).toMatchObject({
       role: 'assistant',
       content: 'Hello from Claude',
@@ -897,8 +899,12 @@ describe('ClaudeAgentService', () => {
     await vi.waitFor(() =>
       expect(service.getSession(sessionId)?.status).toBe('error'),
     )
+    expect(service.getSession(sessionId)?.messages.find((message) => message.content === 'first')?.deliveryConfirmed)
+      .toBeUndefined()
     await service.sendMessage(sessionId, 'retry')
     await waitForIdle(service, sessionId)
+    expect(service.getSession(sessionId)?.messages.find((message) => message.content === 'retry')?.deliveryConfirmed)
+      .toBe(true)
 
     const runOptions = queryCalls.filter(
       (options) => options.sessionId || options.resume,

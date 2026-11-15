@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defaultHubFeatureFlags, effectivePreviewFeatures } from '../shared/feature-flags'
 import { scheduleProposalSchema } from '../shared/schedule-proposals'
@@ -30,7 +30,7 @@ beforeEach(() => {
   vi.mocked(listScheduleProposals).mockReset().mockResolvedValue([proposal])
   vi.mocked(resolveScheduleProposal).mockReset().mockResolvedValue({ ...proposal, status: 'applied' })
 })
-afterEach(() => { cleanup(); vi.restoreAllMocks() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
 const context = (flag = true, preview = true) => {
   const hubFlags = { ...defaultHubFeatureFlags, scheduler: flag }
   const preferences = { schedulerView: preview }
@@ -40,6 +40,34 @@ function cards({ flag = true, preview = true, active = true } = {}) {
   return render(<PreviewFeaturesContext value={context(flag, preview)}><ScheduleProposalCards active={active} /></PreviewFeaturesContext>)
 }
 describe('schedule confirmation cards', () => {
+  it.each(['expiry', 'one-off'] as const)('disables approval exactly at the %s boundary without a refresh', async (boundary) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const at = Date.parse('2026-09-04T16:20:00Z')
+    const pending = scheduleProposalSchema.parse({
+      ...proposal, expiresAt: new Date(at + (boundary === 'expiry' ? 1000 : 86_400_000)).toISOString(),
+      payload: { ...proposal.payload, ...(boundary === 'one-off' ? { recurrence: { type: 'once', at: new Date(at + 1000).toISOString() } } : {}) },
+    })
+    vi.mocked(listScheduleProposals).mockResolvedValue([pending])
+    await act(async () => { cards() })
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
+    vi.mocked(Date.now).mockReturnValue(at + 1000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent(boundary === 'expiry' ? 'proposal expired' : 'one-off time has passed')
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    expect(resolveScheduleProposal).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled()
+  })
+
+  it.each(['disable', 'archive'] as const)('shows the full one-off target time before %s approval', async (operation) => {
+    vi.mocked(getSchedule).mockResolvedValue({ ...base, recurrence: { type: 'once', at: '2026-09-07T16:00:00Z' } })
+    vi.mocked(listScheduleProposals).mockResolvedValue([scheduleProposalSchema.parse({
+      ...proposal, operation, scheduleId: base.id, baseRevision: base.revision, payload: {},
+    })])
+    cards()
+    expect(await screen.findByText(/Once at Sep 7, 2026, 9:00 AM PDT/)).toBeVisible()
+  })
+
   it.each([{ flag: false }, { preview: false }, { active: false }])('does not read or render when gated: %j', async (options) => {
     cards(options)
     expect(listScheduleProposals).not.toHaveBeenCalled()

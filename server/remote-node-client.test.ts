@@ -27,6 +27,7 @@ function client(baseUrl: string): RemoteNodeClient {
 }
 
 afterEach(async () => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   await Promise.all(servers.splice(0).map((server) => {
     const closed = new Promise<void>((resolve, reject) => {
@@ -39,6 +40,31 @@ afterEach(async () => {
 
 describe('host telemetry request safety', () => {
   const info = { id: 'paired-node', name: 'Fictional node', version: '1.0.0', hostTelemetry: { version: 1, enabled: true } }
+
+  it.each(['snapshot', 'history', 'processes'] as const)('keeps session connectivity online when a slow %s read times out', async (read) => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(info))
+    const owner = client('http://fixture.invalid')
+    const target = await owner.hostTelemetryTarget()
+    const status = vi.fn()
+    owner.on('status', status)
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockImplementationOnce((ms) => {
+      setTimeout(() => controller.abort(new DOMException('Synthetic slow host read', 'TimeoutError')), ms)
+      return controller.signal
+    })
+    fetch.mockImplementationOnce(async (_url, init) => new Promise((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true })
+    }))
+    const pending = expect(target[read]()).rejects.toMatchObject({ statusCode: 503 })
+    await vi.advanceTimersByTimeAsync(5001)
+    await pending
+    expect(owner.online).toBe(true)
+    expect(status).not.toHaveBeenCalled()
+    fetch.mockResolvedValueOnce(Response.json({ session }))
+    await expect(owner.getSession(session.id)).resolves.toEqual(session)
+    owner.stop()
+  })
 
   it('rejects malformed peer snapshots, history and inventories as upstream failures', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(info))

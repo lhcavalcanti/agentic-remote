@@ -2430,7 +2430,7 @@ export class TmuxTerminalSessionController
     for (const processInfo of candidates) {
       const pane = await tmuxTargetForPid(processInfo.pid)
       if (pane && (!expectedTarget || pane.target === expectedTarget)) {
-        await this.processPaneRoots.observe(sessionId, pane, processInfo.pid)
+        await this.processPaneRoots.observe(sessionId, pane, processInfo.pid, processInfo.startTime)
         return {
           pid: processInfo.pid,
           target: pane.target,

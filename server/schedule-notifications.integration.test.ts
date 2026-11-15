@@ -6,6 +6,9 @@ import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
 import { buildApp } from './app.js'
 import { PushNotificationService } from './push-notification-service.js'
+import { ComputerManager } from './computer-manager.js'
+import { NotificationCenterService } from './notification-center-service.js'
+import * as managerMemoryRuntime from './manager-structured-memory-runtime.js'
 
 const headers = { host: 'localhost', origin: 'http://localhost' }
 let directory: string
@@ -24,6 +27,7 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   await runtime?.app.close()
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   await rm(directory, { recursive: true, force: true })
 })
@@ -53,6 +57,47 @@ async function run(notify: 'never' | 'always') {
 }
 
 describe('hub schedule notification integration', () => {
+  it('records startup session and offline events exactly once before Oracle initialization finishes', async () => {
+    let manager!: ComputerManager
+    const initializeManager = ComputerManager.prototype.initialize
+    vi.spyOn(ComputerManager.prototype, 'initialize').mockImplementation(async function (this: ComputerManager) {
+      await initializeManager.call(this)
+      manager = this
+    })
+    const initializeMemory = managerMemoryRuntime.initializeManagerStructuredMemory
+    vi.spyOn(managerMemoryRuntime, 'initializeManagerStructuredMemory').mockImplementation(async (...args) => {
+      const memory = await initializeMemory(...args)
+      const computer = manager.listComputers()[0]
+      const session: ManagedSession = {
+        id: 'startup-session', computerId: computer.id, computerName: computer.name,
+        cwd: '/fictional/repo', title: 'Startup review', status: 'running', updatedAt: new Date().toISOString(),
+        messages: [{ id: 'startup-root', role: 'user', content: 'Review', createdAt: new Date().toISOString() }],
+      }
+      manager.emit('event', { type: 'session.upserted', session })
+      manager.emit('event', { type: 'session.upserted', session: { ...session, status: 'idle' } })
+      manager.emit('event', { type: 'computer.updated', computer: { ...computer, online: false } })
+      return memory
+    })
+    const push = new PushNotificationService(directory, sender)
+    await push.initialize()
+    await push.subscribe({ endpoint: 'https://push.example.test/startup', keys: { p256dh: 'public', auth: 'auth' } })
+    const attach = vi.spyOn(push, 'attach')
+    const recorded = vi.spyOn(NotificationCenterService.prototype, 'hub')
+    runtime = await buildApp({
+      dataDirectory: directory, logger: false, managerAgent: false, pushService: push,
+      transcriptionService: { initialize: async () => {}, stop: async () => {}, transcribe: vi.fn() },
+    })
+    await runtime.app.ready()
+    await runtime.notificationCenter!.flush()
+    expect(await runtime.notificationCenter!.store.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'session.completed', sessionId: 'startup-session' }),
+      expect.objectContaining({ kind: 'computer.offline' }),
+    ]))
+    expect(recorded.mock.calls.filter(([event]) => event.type === 'session.upserted' && event.session.id === 'startup-session')).toHaveLength(2)
+    expect(attach).toHaveBeenCalledOnce()
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+  })
+
   it.each(['never', 'always'] as const)('runs an approved Oracle proposal through the real runner with %s notifications and schedule ownership', async (notify) => {
     await hub()
     const host = runtime.manager!
@@ -133,6 +178,24 @@ describe('hub schedule notification integration', () => {
     if (expected) expect((await runtime.notificationCenter!.store.list())[0].kind).toBe('schedule.run.succeeded')
     expect((await runtime.app.inject({ method: 'POST', url: `/api/schedules/proposals/${runProposal.id}/approve`, headers })).statusCode).toBe(200)
     expect(create).toHaveBeenCalledOnce()
+    const archived = await runtime.scheduler!.store.setArchived(schedule.id, schedule.revision, true)
+    await runtime.scheduler!.store.delete(schedule.id, archived.revision)
+    expect(runtime.scheduler!.store.allRuns()).toEqual([])
+    host.emit('event', { type: 'session.removed', computerId, sessionId: session.id, replacedBy: 'replacement-session' })
+    const replacement: ManagedSession = {
+      ...session, id: 'replacement-session', launchId: undefined, status: 'running',
+      messages: [{ id: 'user-follow-up', role: 'user', content: 'Review again', createdAt: new Date().toISOString() }],
+    }
+    host.emit('event', { type: 'session.upserted', session: replacement })
+    host.emit('event', { type: 'session.upserted', session: { ...replacement, status: 'idle' } })
+    await runtime.notificationCenter!.flush()
+    expect(await runtime.notificationCenter!.store.list()).toHaveLength(expected)
+    expect(sender).toHaveBeenCalledTimes(expected)
+    vi.mocked(host.readSession).mockResolvedValue(replacement)
+    const detail = await runtime.app.inject({
+      url: `/api/computers/${computerId}/sessions/${replacement.id}?passive=1`, headers,
+    })
+    expect(detail.json().session.suppressOrdinaryNotifications).toBe(true)
   })
 
   it.each(['on', 'off'] as const)('the never policy suppresses ordinary paths but keeps HTTP/socket state with center %s', async (centerFlag) => {

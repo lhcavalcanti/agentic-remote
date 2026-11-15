@@ -229,7 +229,7 @@ export function createUIScenes(
         }
       } else if (name === 'notification-panel') {
         await openSessions(page)
-        await page.getByRole('button', { name: 'Notifications', exact: true }).click()
+        await page.getByRole('button', { name: /^Notifications(?:, \d+ unread)?$/ }).click()
         await expect(page.getByRole('dialog', { name: 'Notifications', exact: true })).toContainText('Workspace review complete')
       } else if (name === 'runtime-dialog' || name === 'composer-session-setup') {
         await page.getByRole('button', { name: 'Configure model, effort, and context', exact: true }).click()

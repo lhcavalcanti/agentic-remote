@@ -514,4 +514,27 @@ test.describe('browser interaction contracts', () => {
     await expect(panel.getByRole('button', { name: 'Oracle has an update', exact: true })).toBeVisible()
     await expect(panel.getByRole('button', { name: 'Workspace review complete', exact: true })).toBeHidden()
   })
+
+  test('announces unread counts, opens notifications and dismisses a single grouped item in one batch', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'notification-panel')
+    const panel = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await panel.getByRole('button', { name: 'Close', exact: true }).click()
+    const bell = page.getByRole('button', { name: 'Notifications, 5 unread', exact: true })
+    await expect(bell.locator('.shell-badge')).toHaveText('5')
+    await bell.click()
+    const batch = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/notifications/bulk')
+    await panel.getByRole('button', { name: 'Dismiss Workspace review complete', exact: true }).click()
+    expect((await batch).postDataJSON()).toEqual({ ids: ['2'.padStart(64, '0')], action: 'dismiss' })
+    await expect(panel.getByRole('button', { name: 'Workspace review needs you', exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Notifications, 4 unread', exact: true })).toBeVisible()
+  })
+
+  test('keeps scheduled notifications without a session available when Scheduler is unavailable', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'notification-panel')
+    const panel = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await panel.getByRole('button', { name: 'Daily workspace review · missed', exact: true }).click()
+    await expect(panel).toBeVisible()
+    await expect(page.getByText('This view is being prepared for the next preview.')).toHaveCount(0)
+  })
 })

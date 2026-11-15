@@ -42,6 +42,7 @@ All routes use the hub's existing canonical Host/Origin enforcement, including e
 | `POST /api/notifications/:id/read` | Idempotent mark read, or `404` for an unknown ID |
 | `POST /api/notifications/:id/dismiss` | Idempotent dismiss, or `404` for an unknown ID |
 | `POST /api/notifications/read-all` | Mark only matching records read |
+| `POST /api/notifications/bulk` | `{ ids, action: "read" \| "dismiss" }`, 1–1,000 validated IDs, one durable transaction; expired or missing IDs are harmless |
 
 List, unread-count, and read-all accept query filters `unread=true|false`, `failed=true|false`, `kind`, `sessionId`, and `computerId`. `failed` means error severity, including Oracle and health failures. Include the computer when scoping a potentially non-unique session ID. Invalid filters/IDs return `400`; unknown records return `404`.
 
@@ -53,8 +54,8 @@ No new node capability is required: classification stays at the hub and consumes
 
 ## Client panel preview
 
-Scheduled outcomes use the canonical `schedule.run.*` records, with outcome-specific icons and explicit Scheduled labels. A same-hub root URL containing `schedule` and optional `run` identifiers opens the scheduler when its preview is available; otherwise a bound session remains the fallback. Foreign origins, non-root paths, duplicate identifiers and invalid IDs cannot navigate the feature view. The runner's notification policy and channel suppression remain unchanged.
+Scheduled outcomes use the canonical `schedule.run.*` records, with outcome-specific icons and explicit Scheduled labels. At this layer they open a bound session when one exists; otherwise the notification stays available. A later Scheduler view can consume validated same-hub schedule/run links. The runner's notification policy and channel suppression remain unchanged.
 
 `notificationPanel` requires the hub's effective `notificationCenter` flag. Its bell is available in the rail, or the existing drawer footer if the rail preview is off. The badge counts unread, non-dismissed records. The desktop popover and narrow-screen sheet use the existing modal focus/restore contract. Rows group matching records by computer and session, display the latest record and count, and otherwise retain a record's coalescing identity.
 
-All, Unread, Failed and Oracle tabs combine with case-insensitive title/body search. Mark-all uses the corresponding server filter; with search it marks only the visible matching IDs. Row read/dismiss affects that row's group. Opening a session or Oracle marks its group read without changing Oracle's work queue. Read errors and disabled/empty states are explicit. The global hub socket forwards typed invalidations to a small client event subscription; reconnects refetch too. This never raises a native notification or changes session transcript ordering.
+All, Unread, Failed and Oracle tabs combine with case-insensitive title/body search. Mark-all uses the corresponding server filter; with search it marks only the visible matching IDs. Dismiss-all affects the current tab/search. A row's read/dismiss controls affect that item only. Expand Session notifications to act on an older item or the matching session group. Explicit-ID actions use one bounded bulk request and durable write rather than one per item. Opening a session additionally marks its records read on the server without changing Oracle's work queue. Read errors and disabled/empty states are explicit. The global hub socket forwards typed invalidations to a small client event subscription; reconnects refetch too. This never raises a native notification or changes session transcript ordering.

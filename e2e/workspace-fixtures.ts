@@ -530,6 +530,7 @@ export const fixtureEndpoints = [
   'GET /api/notifications',
   'GET /api/notifications/unread-count',
   'POST /api/notifications/read-all',
+  'POST /api/notifications/bulk',
   'POST /api/notifications/:id/read',
   'POST /api/notifications/:id/dismiss',
   'GET /api/schedules',
@@ -1025,7 +1026,7 @@ export async function setupWorkspaceFixture(
       await reject(route, `Unmocked schedule request: ${method} ${path}`); return
     }
     if ((method === 'GET' && ['/api/notifications', '/api/notifications/unread-count'].includes(path)) ||
-        (method === 'POST' && (path === '/api/notifications/read-all' || /^\/api\/notifications\/[a-f0-9]{64}\/(?:read|dismiss)$/.test(path)))) {
+        (method === 'POST' && (['/api/notifications/read-all', '/api/notifications/bulk'].includes(path) || /^\/api\/notifications\/[a-f0-9]{64}\/(?:read|dismiss)$/.test(path)))) {
       if (options.notifications === undefined) {
         await respond({ error: 'Notification center is disabled' }, 404)
         return
@@ -1043,7 +1044,18 @@ export async function setupWorkspaceFixture(
           : { notifications: filtered() })
         return
       }
-      if (path.endsWith('/read-all')) {
+      if (path.endsWith('/bulk')) {
+        const batch = route.request().postDataJSON() as { ids: string[]; action: 'read' | 'dismiss' }
+        if (!Array.isArray(batch.ids) || !batch.ids.length || batch.ids.length > 1000 ||
+            batch.ids.some((id) => !/^[a-f0-9]{64}$/.test(id)) || !['read', 'dismiss'].includes(batch.action)) {
+          await respond({ error: 'Invalid notification batch' }, 400)
+          return
+        }
+        notifications.filter((record) => batch.ids.includes(record.id)).forEach((record) => {
+          if (batch.action === 'read') record.readAt ??= FIXTURE_NOW
+          else record.dismissedAt ??= FIXTURE_NOW
+        })
+      } else if (path.endsWith('/read-all')) {
         filtered().forEach((record) => { record.readAt ??= FIXTURE_NOW })
       } else {
         const record = notifications.find((record) => record.id === path.split('/')[3])

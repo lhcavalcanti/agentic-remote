@@ -246,7 +246,7 @@ describe('workspace fixture hub protocol', () => {
     const { fixture, request } = await fixtureApi()
     for (const [route, method] of [
       ['/api/notifications', 'GET'], ['/api/notifications/unread-count', 'GET'],
-      ['/api/notifications/read-all', 'POST'], [`/api/notifications/${'a'.repeat(64)}/read`, 'POST'],
+      ['/api/notifications/read-all', 'POST'], ['/api/notifications/bulk', 'POST'], [`/api/notifications/${'a'.repeat(64)}/read`, 'POST'],
       [`/api/notifications/${'a'.repeat(64)}/dismiss`, 'POST'],
     ]) expect((await request(route, method)).status).toBe(404)
     fixture.assertHealthy()
@@ -268,8 +268,8 @@ describe('workspace fixture hub protocol', () => {
     expect((await request('/api/notifications?failed=true')).body).toEqual({ notifications: [failed] })
     await request(`/api/notifications/read-all?computerId=fixture-studio&sessionId=${SELECTED_SESSION_ID}`, 'POST')
     expect((await request('/api/notifications/unread-count')).body).toEqual({ unreadCount: 1 })
-    await request(`/api/notifications/${failed.id}/read`, 'POST')
-    await request(`/api/notifications/${failed.id}/dismiss`, 'POST')
+    await request('/api/notifications/bulk', 'POST', { ids: [failed.id], action: 'read' })
+    await request('/api/notifications/bulk', 'POST', { ids: [failed.id], action: 'dismiss' })
     expect((await request('/api/notifications')).body).toEqual({ notifications: [expect.objectContaining({ id: complete.id, readAt: expect.any(String) })] })
     expect(sent).toHaveLength(3)
     expect(sent.at(-1)).toMatchObject({ type: 'notifications.changed', unreadCount: 0 })

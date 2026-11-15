@@ -43,14 +43,17 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
   const [step, setStep] = useState<'Details' | 'Target' | 'Policies'>('Details')
   const [clock] = useState(() => new Date())
   const { recurrence, target } = draft
+  const targetPaired = computers.some((computer) => computer.id === target.computerId)
   useEffect(() => {
     let active = true
     setModels([])
+    setModelsError(undefined)
+    if (!targetPaired) return
     void getProviderRuntimeOptions(target.computerId, target.provider).then((options) => {
       if (active) { setModels(options.models); setModelsError(undefined) }
     }).catch((caught) => { if (active) setModelsError(scheduleError(caught)) })
     return () => { active = false }
-  }, [target.computerId, target.provider])
+  }, [target.computerId, target.provider, targetPaired])
   const preview = useMemo(() => {
     try { return { dates: nextOccurrences(recurrence, draft.timezone, clock, 5), error: undefined } }
     catch (caught) { return { dates: [], error: caught instanceof Error ? caught.message : 'Invalid recurrence' } }
@@ -62,6 +65,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
   return <form noValidate className="schedule-form" onSubmit={async (event) => {
     event.preventDefault()
     setError(undefined)
+    if (!targetPaired) { setStep('Target'); setError('Choose a paired computer before saving this schedule.'); return }
     if (target.permissionPolicy === 'allow-all' && !confirmed) { setError('Confirm Allow-all permissions explicitly before saving.'); return }
     const parsed = scheduleCreateSchema.safeParse(draft)
     if (!parsed.success) {
@@ -111,15 +115,18 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
     </fieldset>
     <fieldset disabled={pending} hidden={step !== 'Target'}>
       <legend>Session target</legend>
+      {!targetPaired && <p role="status" className="schedule-caption">This target computer is not paired. Choose a paired computer before saving.</p>}
       <div className="schedule-grid">
         <label className="field">Computer<select className="dialog-select" value={target.computerId} onChange={(event) => {
           update('target', { ...target, computerId: event.target.value, model: undefined, effort: undefined, context: undefined })
-        }}>{computers.map((computer) => <option key={computer.id} value={computer.id}>{computer.name} · {computer.isLocal ? 'Hub' : 'Node'}{computer.online ? '' : ' · Offline'}</option>)}</select></label>
+        }}>
+          {!targetPaired && <option value={target.computerId} disabled>{target.computerId ? `${target.computerId} (not paired)` : 'Choose a paired computer'}</option>}
+          {computers.map((computer) => <option key={computer.id} value={computer.id}>{computer.name} · {computer.isLocal ? 'Hub' : 'Node'}{computer.online ? '' : ' · Offline'}</option>)}</select></label>
         <label className="field">Provider<select className="dialog-select" value={target.provider} onChange={(event) =>
           update('target', { ...target, provider: event.target.value as ScheduleTarget['provider'], model: undefined, effort: undefined, context: undefined })}>
           <option value="copilot">GitHub Copilot</option><option value="claude">Claude Agent</option></select></label>
         <label className="field schedule-wide">Folder<input className="dialog-input" placeholder="/path/inside/allowed/roots" value={target.folder} onChange={(event) => updateTarget('folder', event.target.value)} /></label>
-        <FolderPicker key={target.computerId} computerId={target.computerId} value={target.folder} onSelect={(path) => updateTarget('folder', path)} />
+        {targetPaired && <FolderPicker key={target.computerId} computerId={target.computerId} value={target.folder} onSelect={(path) => updateTarget('folder', path)} />}
         <label className="field">Model<select className="dialog-select" value={target.model ?? ''} onChange={(event) => {
           update('target', { ...target, model: event.target.value || undefined, effort: undefined, context: undefined })
         }}><option value="">Provider default</option>
@@ -160,7 +167,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
     <div className="schedule-form__actions">
       <button type="button" className="secondary-button" disabled={pending} onClick={onCancel}>Cancel edit</button>
       {step !== 'Policies' ? <button type="button" className="primary-button" onClick={() => setStep(step === 'Details' ? 'Target' : 'Policies')}>Next: {step === 'Details' ? 'Target' : 'Policies'}</button> :
-        <button type="submit" className="primary-button" disabled={pending || (target.permissionPolicy === 'allow-all' && !confirmed)}>{pending ? 'Saving…' : 'Save schedule'}</button>}
+        <button type="submit" className="primary-button" disabled={pending || !targetPaired || (target.permissionPolicy === 'allow-all' && !confirmed)}>{pending ? 'Saving…' : 'Save schedule'}</button>}
     </div>
   </form>
 }

@@ -1,4 +1,5 @@
-import type { AgentProviderCapability, ChatMessage, ManagedSession } from '../../shared/contracts'
+import type { AgentProviderCapability, ChatMessage, ManagedSession, SessionDetail } from '../../shared/contracts.js'
+import type { PromptAcceptanceReceipt } from '../../shared/launch-identity.js'
 
 export function composerSteeringUnavailableReason(
   session: Pick<ManagedSession, 'provider' | 'status' | 'pendingPermission' | 'pendingUserInput'>,
@@ -17,13 +18,54 @@ export function composerSteeringUnavailableReason(
   return undefined
 }
 
-/** Sent history only: queued items and optimistic echoes are not user turns. */
-export function filterSentMessages(messages: readonly ChatMessage[], query = ''): ChatMessage[] {
+export type SentHistoryContext = Partial<Pick<SessionDetail,
+  'status' | 'failedPrompt' | 'queuedDispatch' | 'terminalQueueDispatchPending'
+>>
+
+// Provider transcripts and replies attest delivery. Only local echoes need explicit
+// confirmation; legacy rows stay available except known failures or an unfinished trailing turn.
+export function filterSentMessages(
+  messages: readonly ChatMessage[], query = '', receipts: readonly PromptAcceptanceReceipt[] = [],
+  context: SentHistoryContext = {},
+): ChatMessage[] {
   const search = query.trim().toLowerCase()
+  const confirmedIds = new Set(receipts.filter((receipt) =>
+    receipt.state === 'delivered' ||
+    (receipt.state === 'accepted' && receipt.handedAt),
+  ).map((receipt) => receipt.userMessageId))
+  const pendingIds = new Set(receipts.filter((receipt) =>
+    !confirmedIds.has(receipt.userMessageId),
+  ).map((receipt) => receipt.userMessageId))
+  const replied = new Set<string>()
+  const failed = new Set<string>()
+  const waiting = new Set<string>()
+  let latestUser: ChatMessage | undefined
+  for (const message of messages) {
+    if (message.role === 'user') latestUser = message
+    else if (latestUser && message.role === 'assistant') {
+      const content = message.content.trim()
+      if (message.activityStatus === 'failed' ||
+        /^(?:Not sent:|Provider start outcome is uncertain:|Follow-up delivery is uncertain:|Unable to complete the response:)/i.test(content)) {
+        failed.add(latestUser.id)
+      } else if (content) replied.add(latestUser.id)
+      else if (message.streaming) waiting.add(latestUser.id)
+    }
+  }
+  const unfinished = context.status === 'running' || context.status === 'waiting' || context.status === 'error' ||
+    context.queuedDispatch || context.terminalQueueDispatchPending
   return messages
-    .filter((message) => message.role === 'user' && message.content.trim() &&
+    .filter((message) => message.role === 'user' &&
+      message.content.trim() &&
       !message.streaming && message.activityStatus !== 'pending' &&
       message.content.toLowerCase().includes(search))
+    .filter((message) => {
+      if (message.deliveryConfirmed || confirmedIds.has(message.id)) return true
+      if (message.deliveryState) return false
+      if (replied.has(message.id)) return true
+      if (pendingIds.has(message.id) || failed.has(message.id) || waiting.has(message.id)) return false
+      return message.id !== latestUser?.id ||
+        (!unfinished && message.content !== context.failedPrompt?.content)
+    })
     .map((message, index) => ({ message, index, time: Date.parse(message.createdAt) || 0 }))
     .sort((left, right) => right.time - left.time || right.index - left.index)
     .map(({ message }) => message)

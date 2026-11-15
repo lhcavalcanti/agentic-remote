@@ -127,7 +127,7 @@ export async function preparePrompt(
       throw queueConflict('Resolve the queued dispatch before starting another turn.')
     }
     session.messages.push(
-      { id: userId, role: 'user', content, createdAt },
+      { id: userId, role: 'user', content, createdAt, deliveryState: 'pending' },
       { id: assistantId, role: 'assistant', content: '', createdAt, streaming: true },
     )
     session.updatedAt = createdAt

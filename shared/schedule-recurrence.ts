@@ -128,7 +128,7 @@ function calendarFor(recurrence: Exclude<ScheduleRecurrence, { type: 'once' }>):
       const end = minuteOfDay(recurrence.windowEnd ?? '24:00')
       const duration = (end - start + 1440) % 1440 || 1440
       const minutes: number[] = []
-      for (let elapsed = 0; elapsed < duration; elapsed += recurrence.everyHours * 60) {
+      for (let elapsed = 0; elapsed < duration; elapsed += Math.round(recurrence.everyHours * 60)) {
         minutes.push((start + elapsed) % 1440)
       }
       return { minutes: minutes.sort((a, b) => a - b), matches: () => true }

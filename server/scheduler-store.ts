@@ -277,6 +277,25 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     })
   }
 
+  beginLaunch(id: string, startedAt: string): Promise<ScheduleRun> {
+    return this.commit((next) => {
+      const position = next.runs.findIndex((run) => run.id === id)
+      if (position < 0) throw failure('Schedule run not found', 404)
+      const previous = next.runs[position]
+      const schedule = this.requireSchedule(next, previous.scheduleId)
+      // Disabling affects new recurrence admission, not already accepted or manual work.
+      // Archive and this launch boundary share the same commit queue.
+      const run = previous.status !== 'pending' ? previous : scheduleRunSchema.parse({
+        ...previous,
+        ...(schedule.archived
+          ? { status: 'stopped', endedAt: startedAt, error: 'Schedule was archived before launch' }
+          : { status: 'launching', startedAt, error: undefined, retryUntil: undefined }),
+      })
+      next.runs[position] = run
+      return { result: run, scheduleId: run.scheduleId, runId: id }
+    })
+  }
+
   async flush(): Promise<void> { await this.work }
 
   private commit<T>(mutate: (next: State) => { result: T; scheduleId: string; runId?: string }): Promise<T> {

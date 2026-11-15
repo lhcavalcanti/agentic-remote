@@ -11,6 +11,8 @@ export interface PromptAcceptanceReceipt {
   deliveryId: string
   sessionId: string
   acceptedAt: string
+  /** Confirmed provider handoff, distinct from durable FIFO acceptance. */
+  handedAt?: string
   state: 'accepted' | 'queued' | 'delivered' | 'rejected'
   promptId: string
   rootTurnId?: string
@@ -43,6 +45,7 @@ export const promptAcceptanceReceiptSchema: z.ZodType<PromptAcceptanceReceipt> =
   deliveryId: launchIdentitySchema,
   sessionId: z.string().min(1),
   acceptedAt: timestampSchema,
+  handedAt: timestampSchema.optional(),
   state: z.enum(['accepted', 'queued', 'delivered', 'rejected']),
   promptId: z.string().min(1),
   rootTurnId: z.string().min(1).optional(),

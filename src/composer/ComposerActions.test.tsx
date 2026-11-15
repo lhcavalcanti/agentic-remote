@@ -67,7 +67,11 @@ describe('context usage ring', () => {
   })
 
   it('does not present missing context as zero usage', () => {
-    render(<ContextRing onOpen={vi.fn()} />)
+    const { rerender } = render(<ContextRing onOpen={vi.fn()} />)
     expect(screen.getByRole('button')).toHaveAccessibleName('Context: usage unavailable')
+    expect(screen.getByText('?')).toBeVisible()
+    rerender(<ContextRing runtime={{ contextTokens: 0, contextTokenLimit: 100 }} onOpen={vi.fn()} />)
+    expect(screen.getByRole('button')).toHaveAccessibleName('Context: 0% used')
+    expect(screen.queryByText('?')).not.toBeInTheDocument()
   })
 })

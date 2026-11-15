@@ -25,6 +25,9 @@ export function SentMessages({
     setChosen(message.id)
     onChoose(message.id)
   }
+  const nextIndex = (key: string, index: number) => !matches.length ? -1 : index < 0
+    ? key === 'ArrowDown' ? 0 : matches.length - 1
+    : (index + (key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length
   return createPortal(
     <div onKeyDown={(event) => {
       if (event.key === 'Escape') {
@@ -40,15 +43,13 @@ export function SentMessages({
           aria-controls={listId}
           aria-expanded="true"
           aria-label="Search sent messages"
-          autoFocus
+          autoFocus={!window.matchMedia?.('(pointer: coarse), (max-width: 600px)').matches}
           className="composer-history__search"
           onChange={(event) => { setQuery(event.target.value); setActive(-1) }}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
               event.preventDefault()
-              setActive((index) => matches.length
-                ? (index + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length
-                : -1)
+              setActive((index) => nextIndex(event.key, index))
             } else if (event.key === 'Enter' && matches.length) {
               event.preventDefault()
               choose(matches[Math.max(0, Math.min(active, matches.length - 1))])
@@ -64,7 +65,7 @@ export function SentMessages({
           onKeyDown={(event) => {
             if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && matches.length) {
               event.preventDefault()
-              const next = (active + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length
+              const next = nextIndex(event.key, active)
               setActive(next)
               document.getElementById(`${listId}-${matches[next].id}`)?.focus()
             }

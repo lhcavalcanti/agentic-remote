@@ -4055,15 +4055,11 @@ button {
 .composer-session-panel .session-actions__panel {
   top: auto;
   right: 0;
-  bottom: calc(100% + 10px);
-  max-width: min(320px, calc(100vw - 32px));
-  max-height: min(420px, calc(var(--visual-viewport-height, 100svh) * 0.6));
-  overflow: auto;
-}
-
-.app-shell--keyboard-open .composer-session-panel .session-actions__panel {
+  /* Keep the anchor independent of the growing editor and leave room for the runtime line below it. */
   bottom: 0;
+  max-width: min(320px, calc(100vw - 32px));
   max-height: min(420px, calc(var(--visual-viewport-height, 100svh) - 100px));
+  overflow: auto;
 }
 
 .composer-session-panel .session-action {

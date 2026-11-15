@@ -128,9 +128,17 @@ for (const width of [320, 360]) {
         await expect(page.locator('.app-shell')).toHaveCSS('--visual-viewport-height', '400px')
         await page.getByRole('button', { name: 'Session panel', exact: true }).click()
         const panel = page.getByRole('group', { name: 'Session panel', exact: true })
-        const rect = await panel.boundingBox()
-        expect(rect!.y).toBeGreaterThanOrEqual(0)
-        expect(rect!.y + rect!.height).toBeLessThanOrEqual(400)
+        const layout = await panel.evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            top: rect.top, bottom: rect.bottom, maxHeight: getComputedStyle(element).maxHeight,
+            anchor: (element as HTMLElement).offsetParent?.className,
+            keyboardOpen: Boolean(element.closest('.app-shell--keyboard-open')),
+            inset: getComputedStyle(element).bottom,
+          }
+        })
+        expect(layout.top, JSON.stringify(layout)).toBeGreaterThanOrEqual(0)
+        expect(layout.bottom, JSON.stringify(layout)).toBeLessThanOrEqual(400)
         const lastAction = panel.getByRole('button').last()
         await lastAction.scrollIntoViewIfNeeded()
         await expect(lastAction).toBeInViewport({ ratio: 1 })

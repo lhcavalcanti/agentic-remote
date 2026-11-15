@@ -36,6 +36,34 @@ for (const viewport of uiViewports) {
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
 
+for (const width of [320, 360, 600, 601, 820, 960, 961, 1440]) {
+  test.describe(`sent history layout ${width}px`, () => {
+    test.use({ viewport: { width, height: 900 }, isMobile: width <= 600, hasTouch: width <= 960 })
+    test('uses a coherent sheet or popover without opening the touch keyboard', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-sent-messages')!.setup(page)
+      try {
+        const dialog = page.getByRole('dialog', { name: 'Sent messages', exact: true })
+        const rect = (await dialog.boundingBox())!
+        const search = dialog.getByRole('combobox', { name: 'Search sent messages' })
+        if (width <= 960) {
+          expect(rect.x).toBe(0)
+          expect(rect.width).toBe(width)
+          expect(rect.y + rect.height).toBeCloseTo(900, 0)
+          await expect(search).not.toBeFocused()
+          await expect(dialog).toBeFocused()
+        } else {
+          expect(rect.width).toBeLessThanOrEqual(560)
+          expect(rect.y + rect.height).toBeLessThan(800)
+          await expect(search).toBeFocused()
+        }
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
 for (const width of [320, 360]) {
   test.describe(`narrow composer ${width}px`, () => {
     test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })

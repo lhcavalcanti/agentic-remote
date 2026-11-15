@@ -4037,6 +4037,13 @@ button {
   stroke: var(--border-strong);
 }
 
+.composer-context-ring__unavailable {
+  fill: currentColor;
+  font-size: 13px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
 .composer-secondary-overflow {
   display: none;
 }

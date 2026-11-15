@@ -84,7 +84,7 @@ export class HostTelemetrySampler {
   private timer?: ReturnType<typeof setTimeout>
   private attempt?: SamplingAttempt
   private lastStartedAt = 0
-  private previous?: { at: number; cpu?: CpuCounters; network?: DeviceCounters; disk?: DeviceCounters }
+  private previous?: { networkAt: number; diskAt: number; cpu?: CpuCounters; network?: DeviceCounters; disk?: DeviceCounters }
   private info: HostInfo | null = null
   private latest: HostSample | null = null
   private disk: DiskSpace | null = null
@@ -96,7 +96,6 @@ export class HostTelemetrySampler {
   private lastError: HostTelemetrySamplerStatus['lastError'] = null
 
   constructor(options: HostTelemetrySamplerOptions) {
-    this.reader = options.reader ?? createLinuxHostTelemetryReader({ dataDirectory: options.dataDirectory })
     this.clock = {
       now: () => Date.now(),
       monotonicNow: () => performance.now(),
@@ -104,6 +103,10 @@ export class HostTelemetrySampler {
       clearTimeout: (timer) => clearTimeout(timer),
       ...options.clock,
     }
+    this.reader = options.reader ?? createLinuxHostTelemetryReader({
+      dataDirectory: options.dataDirectory,
+      monotonicNow: this.clock.monotonicNow,
+    })
     this.sampleTimeoutMs = options.sampleTimeoutMs ?? HOST_TELEMETRY_SAMPLE_TIMEOUT_MS
     if (!Number.isFinite(this.sampleTimeoutMs) || this.sampleTimeoutMs <= 0) {
       throw new RangeError('sampleTimeoutMs must be positive and finite')
@@ -240,9 +243,12 @@ export class HostTelemetrySampler {
       if (files[file] !== undefined && !valid) errors.push(`/proc/${file}: INVALID`)
     }
     if (errors.length) this.recordError(errors.join('; ').slice(0, 1000))
-    const elapsed = this.previous ? monotonicAt - this.previous.at : 0
-    const networkRate = deviceRates(this.previous?.network, network, elapsed)
-    const diskRate = deviceRates(this.previous?.disk, disk, elapsed, 512n)
+    const networkAt = reading.capturedAt?.netDev ?? this.lastStartedAt
+    const diskAt = reading.capturedAt?.diskstats ?? this.lastStartedAt
+    const networkElapsed = this.previous ? networkAt - this.previous.networkAt : 0
+    const diskElapsed = this.previous ? diskAt - this.previous.diskAt : 0
+    const networkRate = deviceRates(this.previous?.network, network, networkElapsed)
+    const diskRate = deviceRates(this.previous?.disk, disk, diskElapsed, 512n)
     const sample: HostSample = {
       at: new Date(at).toISOString(),
       cpuPercent: cpuUtilization(this.previous?.cpu, cpu),
@@ -257,7 +263,7 @@ export class HostTelemetrySampler {
       load5: load?.load5 ?? null,
       load15: load?.load15 ?? null,
     }
-    this.previous = { at: monotonicAt, cpu, network, disk }
+    this.previous = { networkAt, diskAt, cpu, network, disk }
     this.info = {
       ...reading.info,
       totalMemoryBytes: memory.totalMemoryBytes ?? reading.info.totalMemoryBytes,

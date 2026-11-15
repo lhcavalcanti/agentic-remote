@@ -100,6 +100,30 @@ describe('HostTelemetrySampler', () => {
     })
   })
 
+  it('uses each proc capture timestamp for throughput despite variable completion latency', async () => {
+    let index = 0
+    const sampler = makeSampler(async () => {
+      const value = index++
+      const capturedAt = Date.now()
+      const reading = {
+        ...readingFixture({
+          netDev: `eth0: ${value * 1000} 0 0 0 0 0 0 0 ${value * 2000} 0 0 0 0 0 0 0`,
+          diskstats: `8 0 sda 0 0 ${value * 10} 0 0 0 ${value * 20} 0 0 0 0`,
+        }),
+        capturedAt: { netDev: capturedAt, diskstats: capturedAt + (value ? 100 : 0) },
+      }
+      await new Promise((resolve) => setTimeout(resolve, value ? 200 : 800))
+      return reading
+    })
+    sampler.setViewers(1)
+    sampler.start()
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(sampler.status().samples).toBe(2)
+    expect(sampler.snapshot().latest).toMatchObject({ netRxBytesPerSec: 1000, netTxBytesPerSec: 2000 })
+    expect(sampler.snapshot().latest?.diskReadBytesPerSec).toBeCloseTo(5120 / 1.1)
+    expect(sampler.snapshot().latest?.diskWriteBytesPerSec).toBeCloseTo(10_240 / 1.1)
+  })
+
   it('does not overlap slow reads, even when viewer cadence changes mid-read', async () => {
     const first = deferredReading()
     const second = deferredReading()

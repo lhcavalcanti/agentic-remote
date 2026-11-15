@@ -1,6 +1,7 @@
 import { readFile, statfs } from 'node:fs/promises'
 import { cpus, hostname, release, totalmem, type, uptime } from 'node:os'
 import { resolve } from 'node:path'
+import { performance } from 'node:perf_hooks'
 import type { DiskSpace, HostInfo } from '../../shared/host-telemetry.js'
 import { detectWsl, parseDataMount } from './parsers.js'
 
@@ -16,6 +17,8 @@ export type HostTelemetryProcFile = keyof typeof hostTelemetryProcFiles
 export interface HostTelemetryReading {
   info: HostInfo
   files: Partial<Record<HostTelemetryProcFile, string>>
+  /** Per-file monotonic capture times, in the sampler clock's domain. */
+  capturedAt?: Partial<Record<HostTelemetryProcFile, number>>
   disk: DiskSpace | null
   errors: string[]
 }
@@ -28,6 +31,7 @@ export interface HostTelemetryReaderOptions {
   systemInfo?: () => HostInfo
   uptime?: () => number
   wslDistro?: string
+  monotonicNow?: () => number
 }
 
 function systemInfo(): HostInfo {
@@ -54,11 +58,13 @@ export function createLinuxHostTelemetryReader(options: HostTelemetryReaderOptio
   const dataDirectory = resolve(options.dataDirectory)
   const readText = options.readText ?? ((path, signal) => readFile(path, { encoding: 'utf8', signal }))
   const readSpace = options.readSpace ?? statfs
+  const monotonicNow = options.monotonicNow ?? (() => performance.now())
   let metadata: { info: HostInfo; mount: string } | undefined
 
   return async (signal) => {
     signal.throwIfAborted()
     const errors: string[] = []
+    const capturedAt: Partial<Record<HostTelemetryProcFile, number>> = {}
     const text = async (path: string) => {
       try {
         return await readText(path, signal)
@@ -103,7 +109,11 @@ export function createLinuxHostTelemetryReader(options: HostTelemetryReaderOptio
     }
     const [metadataResult, entriesResult, diskResult] = await Promise.allSettled([
       readMetadata(),
-      Promise.all(Object.entries(hostTelemetryProcFiles).map(async ([name, path]) => [name, await text(path)] as const)),
+      Promise.all(Object.entries(hostTelemetryProcFiles).map(async ([name, path]) => {
+        const value = await text(path)
+        if (value !== undefined) capturedAt[name as HostTelemetryProcFile] = monotonicNow()
+        return [name, value] as const
+      })),
       readDisk(),
     ])
     signal.throwIfAborted()
@@ -116,6 +126,7 @@ export function createLinuxHostTelemetryReader(options: HostTelemetryReaderOptio
     return {
       info: { ...staticInfo.info, uptimeSeconds: (options.uptime ?? uptime)() },
       files: Object.fromEntries(entries.filter(([, value]) => value !== undefined)),
+      capturedAt,
       disk: disk ? { mount: staticInfo.mount, ...disk } : null,
       errors,
     }

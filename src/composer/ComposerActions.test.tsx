@@ -13,7 +13,7 @@ const props = (): ComponentProps<typeof ComposerActions> => ({
   selected: { id: 'one', computerId: 'studio', computerName: 'Studio', status: 'running' } as ComponentProps<typeof ComposerActions>['selected'],
   selectedComputerOnline: true, selectedQueueAvailable: true, supportsQueuedPromptDispatch: true,
   recording: false, recordingSeconds: 0, askingAside: false, sideQuestionPending: false,
-  cancelling: false, transcribing: false, uploadingFile: false, composer: 'Draft',
+  cancelling: false, transcribing: false, uploadingFile: false, composer: 'Draft', expandedComposer: 'Draft',
   sending: false, queuedEditUnconfirmed: false, recordingDuration: String,
   onStopRecording: vi.fn(), onSubmitSideQuestion: vi.fn(), onStopSession: vi.fn(),
   onOpenAttachmentInput: vi.fn(), onStartRecording: vi.fn(), onSubmitMessage: vi.fn(),
@@ -23,6 +23,19 @@ const props = (): ComponentProps<typeof ComposerActions> => ({
 })
 
 describe('refreshed composer actions', () => {
+  it('sends an expanded multiline slash command without offering delivery choices', () => {
+    const callbacks = {
+      ...props(),
+      composer: '[Paste #1 - 22 lines]',
+      expandedComposer: ['/review', ...Array.from({ length: 21 }, () => 'Review detail')].join('\n'),
+    }
+    render(<ComposerActions {...callbacks} />)
+    expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(callbacks.onSubmitMessage).toHaveBeenCalledExactlyOnceWith()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
   it('reuses attachment, microphone, setup, queue, send and stop handlers', () => {
     const callbacks = props()
     render(<ComposerActions {...callbacks} />)

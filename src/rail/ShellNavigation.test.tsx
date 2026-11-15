@@ -55,6 +55,20 @@ it('offers Oracle only while its authoritative availability signal is true', () 
   expect(screen.queryByRole('button', { name: 'Open Oracle' })).toBeNull()
 })
 
+it('renders navigation when only the desktop rail preview is enabled', () => {
+  vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
+  const preferences = { desktopRail: true }
+  render(<PreviewFeaturesContext value={{
+    preferences, hubFlags: defaultHubFeatureFlags,
+    effective: effectivePreviewFeatures(preferences, defaultHubFeatureFlags), set: vi.fn(),
+  }}><ShellNavigation displayName="Alex Morgan" onNewSession={vi.fn()} onSettings={vi.fn()} onOracle={vi.fn()} /></PreviewFeaturesContext>)
+  expect(screen.getByRole('navigation', { name: 'App navigation' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'App settings' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Notifications' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Host monitor' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Scheduler' })).toBeNull()
+})
+
 it('saves a trimmed display-name edit and refuses invalid names', () => {
   vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
   const onChange = vi.fn()

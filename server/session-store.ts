@@ -668,9 +668,11 @@ export class SessionStore {
     if (loaded.deliveryIdentityHistoryIncomplete !== undefined && typeof loaded.deliveryIdentityHistoryIncomplete !== 'boolean') {
       throw new Error('Invalid delivery ownership history')
     }
-    const legacyDeliveryHistory = loaded.deliveryOwners === undefined
+    const legacyDeliveryHistory = loaded.deliveryOwners === undefined && (loaded.launches !== undefined ||
+      Object.values(loaded.sessions).some((session) => session.promptReceipts !== undefined))
     let deliveryOwnersChanged = false
-    // Older releases may already have discarded a deleted session's IDs.
+    // Pre-identity stores have no delivery history, regardless of session retirement.
+    // Only builds that persisted launch/receipt data could have discarded delivery IDs.
     // Preserve known retries, but never guess that a new token was unused.
     if (legacyDeliveryHistory && (loaded.retiredSessionIds?.length ||
         Object.values(loaded.sessions).some((session) => session.replacedSessionIds?.length) ||

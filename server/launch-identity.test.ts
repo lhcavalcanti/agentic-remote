@@ -220,7 +220,7 @@ describe('durable launch identity', () => {
     expect(other.sendMessage).toHaveBeenCalledOnce()
   })
 
-  it('backfills legacy ownership but blocks unknown tokens when deleted history may already have been trimmed', async () => {
+  it.each([true, false])('backfills legacy ownership but blocks unknown tokens when deleted history may already have been trimmed (launches: %s)', async (hasLaunchHistory) => {
     const { store, location } = await storeAt()
     await store.create({ ...session(), launchId: 'run' })
     await store.acceptIdentifiedPrompt('session', 'forgotten', 'Synthetic root', true)
@@ -232,6 +232,7 @@ describe('durable launch identity', () => {
     const legacy = JSON.parse(await readFile(filename, 'utf8'))
     delete legacy.deliveryOwners
     legacy.launches.run.receipts = []
+    if (!hasLaunchHistory) delete legacy.launches
     await writeFile(filename, JSON.stringify(legacy), { mode: 0o600 })
     const migrated = (await storeAt(location)).store
     await expect(migrated.acceptIdentifiedPrompt('active', 'known', 'Do not enqueue twice', true))
@@ -262,6 +263,35 @@ describe('durable launch identity', () => {
     await migrated.create(session('other'))
     await expect(migrated.acceptIdentifiedPrompt('other', 'delivery', 'Wrong owner', true))
       .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+  })
+
+  it('accepts identified deliveries from main-format stores with retired and replaced sessions', async () => {
+    const makeMainFormat = async (id: string) => {
+      const location = await directory()
+      await writeFile(path.join(location, 'state.json'), JSON.stringify({
+        version: 1,
+        retiredSessionIds: [`old-${id}`],
+        sessions: { [id]: { ...session(id), replacedSessionIds: [`old-${id}`] } },
+      }), { mode: 0o600 })
+      return storeAt(location)
+    }
+    const first = await makeMainFormat('copilot-session')
+    const second = await makeMainFormat('claude-session')
+    expect(first.store.deliveryIdentity('root').historyComplete).toBe(true)
+    expect(second.store.deliveryIdentity('root').historyComplete).toBe(true)
+    await expect(first.store.acceptIdentifiedPrompt('copilot-session', 'direct', 'Direct synthetic root', true))
+      .resolves.toMatchObject({ promptReceipts: [{ deliveryId: 'direct', state: 'queued' }] })
+    const aggregate = new ProviderSessionService(
+      storedProvider(first.store) as unknown as SessionService,
+      storedProvider(second.store) as unknown as SessionService,
+    )
+    await expect(aggregate.sendMessage('claude-session', 'Aggregated synthetic root', true, undefined, false, 'root'))
+      .resolves.toMatchObject({ promptReceipts: [{ deliveryId: 'root', state: 'queued' }] })
+    await first.store.close()
+    await second.store.close()
+    const reloaded = (await storeAt(first.location)).store
+    await expect(reloaded.acceptIdentifiedPrompt('copilot-session', 'after-reload', 'Another synthetic root', true))
+      .resolves.toMatchObject({ promptReceipts: [{ deliveryId: 'direct' }, { deliveryId: 'after-reload' }] })
   })
 
   it.each([null, [], { 'bad/token': 'session' }, { delivery: '' }, { delivery: 'wrong-owner' }])(

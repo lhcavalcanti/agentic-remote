@@ -687,7 +687,7 @@ export async function buildApp(
             (latest.revision === undefined || current.revision === undefined || latest.revision >= current.revision)))) session = latest
           if (!session || state.retired || published.get(key) === JSON.stringify(store.sessionProvenance(computerId, sessionId))) return
           published.set(key, JSON.stringify(store.sessionProvenance(computerId, sessionId)))
-          manager!.emit('event', { type: 'session.upserted', session })
+          manager!.emit('event', { type: 'session.upserted', session, summary: true })
         }).catch((error: unknown) => app.log.error({ err: error }, 'Session origin could not be recorded or published'))
           .finally(() => {
             state.writes--

@@ -67,9 +67,9 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
       return runtime.app.inject({ method: 'POST', url: '/api/computers/studio/sessions', headers: { host: 'localhost', origin: 'http://localhost' }, payload: { cwd: '/fictional' } })
     },
     persisted: async () => JSON.parse(await readFile(file, 'utf8')),
-    upsert(value: ManagedSession) {
+    upsert(value: ManagedSession, summary?: true) {
       current.set(value.id, value)
-      manager.emit('event', { type: 'session.upserted', session: value })
+      manager.emit('event', { type: 'session.upserted', session: value, ...(summary ? { summary } : {}) })
     },
     replace() {
       current.delete('old')
@@ -96,6 +96,9 @@ describe('hub provenance publication', () => {
     await vi.waitFor(() => expect(f.messages.some((message) =>
       message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === origin,
     )).toBe(true))
+    if (order === 'before') expect(f.messages.find((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === origin,
+    )).toMatchObject({ summary: true })
   })
 
   it('publishes metadata-only discovery without waiting for another runtime revision', async () => {
@@ -105,6 +108,25 @@ describe('hub provenance publication', () => {
       message.type === 'session.upserted' && message.session.id === 'external' &&
       message.session.revision === 1 && message.session.provenance?.origin === 'discovered',
     )).toBe(true))
+    expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance)).toMatchObject({ summary: true })
+  })
+
+  it.each([1, 2])('marks a summary discovery republish metadata-only when the passive read has revision %s', async (revision) => {
+    const f = await fixture()
+    const full = {
+      ...session('external', revision),
+      messages: [{ id: 'held-message', role: 'assistant' as const, content: 'Keep this fictional transcript.', createdAt: session('external').updatedAt }],
+    }
+    f.readSession.mockResolvedValue(full)
+    f.upsert(session('external'), true)
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    const republished = f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance)
+    expect(republished).toMatchObject({
+      type: 'session.upserted', summary: true,
+      session: { revision, messages: revision === 1 ? [] : full.messages, provenance: { origin: 'discovered' } },
+    })
   })
 
   it('publishes the current discovered session after persistence and never starts a rebroadcast loop', async () => {
@@ -128,6 +150,7 @@ describe('hub provenance publication', () => {
       message.session.revision === 2 && message.session.title === 'Current fictional state' &&
       message.session.provenance?.origin === 'discovered',
     )).toBe(true))
+    expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance)).toMatchObject({ summary: true })
     f.upsert(f.current.get('external')!)
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(record).toHaveBeenCalledOnce()
@@ -173,7 +196,7 @@ describe('hub provenance publication', () => {
     expect(writes).toHaveBeenCalledOnce()
     expect(f.messages.filter((message) =>
       message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === 'user',
-    )).toHaveLength(1)
+    )).toEqual([expect.objectContaining({ summary: true })])
   })
 
   it('shares one schedule replacement write with the early schedule-suppression path', async () => {
@@ -185,6 +208,7 @@ describe('hub provenance publication', () => {
     await vi.waitFor(() => expect(f.messages.some((message) =>
       message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === 'schedule',
     )).toBe(true))
+    expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance?.origin === 'schedule')).toMatchObject({ summary: true })
     expect(writes).toHaveBeenCalledOnce()
   })
 
@@ -215,6 +239,7 @@ describe('hub provenance publication', () => {
     await vi.waitFor(() => expect(f.messages.some((message) =>
       message.type === 'session.upserted' && message.session.id === 'next' && !message.session.provenance,
     )).toBe(true))
+    expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.id === 'next')).toMatchObject({ summary: true })
     expect((await f.persisted())['studio:next']).toMatchObject({ origin: 'user' })
     expect((await f.persisted())['studio:next'].originEvidence).toBeUndefined()
   })

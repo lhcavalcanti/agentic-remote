@@ -247,9 +247,17 @@ function explain() {
     }
   }
   if (!signal) {
-    const index = entries.findLastIndex(({ item }) => item && (
-      Number(item.level) >= 50 || /^(error|fatal)$/i.test(item.level) || item.err != null || item.type === 'error'
-    ))
+    const index = entries.findLastIndex(({ item }) => {
+      if (!item) return false
+      const level = typeof item.level === 'string' ? item.level.trim().toLowerCase() : item.level
+      if ((typeof level === 'number' || (typeof level === 'string' && level !== '')) && Number.isFinite(Number(level))) {
+        return Number(level) >= 50
+      }
+      if (typeof level === 'string' && /^(trace|debug|info|warn|warning|error|fatal)$/.test(level)) {
+        return /^(error|fatal)$/.test(level)
+      }
+      return item.err != null || item.type === 'error'
+    })
     if (index >= 0) signal = { index, kind: 'error' }
   }
   if (!signal) {

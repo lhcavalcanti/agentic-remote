@@ -140,6 +140,37 @@ describe('read-only logs explanation CLI', () => {
     expect(explanation(await context.run()).failure?.kind).toBe('error')
   })
 
+  it.each([40, '40', 'warn', 'warning', ' WARN ', 30, 'info'])(
+    'honors explicit level %j over error-shaped warning fields', async (level) => {
+      const message = "agentic-remote.service: Failed with result 'exit-code'."
+      const context = await fixture([
+        journalLine({ level, msg: 'retrying after a handled error', err: { message: 'handled' }, type: 'error' }),
+        journalLine(message, 1),
+      ])
+      expect(explanation(await context.run()).failure).toMatchObject({ kind: 'unit', message })
+    },
+  )
+
+  it('ignores a warning after a genuine error and does not invent a failure for warnings alone', async () => {
+    const warning = journalLine({ level: 'warning', msg: 'retrying', err: { message: 'handled' } }, 1)
+    const context = await fixture([
+      journalLine({ level: 'error', msg: 'actual failure' }),
+      warning,
+    ])
+    expect(explanation(await context.run()).failure).toMatchObject({ kind: 'error', message: 'actual failure' })
+    await writeFile(context.journal, warning + '\n')
+    expect(explanation(await context.run()).failure).toBeNull()
+  })
+
+  it('keeps error-shaped records as a fallback for absent or unknown levels', async () => {
+    const context = await fixture([
+      journalLine({ level: 'custom', err: { message: 'failure with unknown level' } }),
+    ])
+    expect(explanation(await context.run()).failure).toMatchObject({
+      kind: 'error', message: 'failure with unknown level',
+    })
+  })
+
   it.each([
     ['reqId', 'req-1', 'same request', 'requestId'],
     ['computerId', 'node-1', 'same computer', 'computerId'],

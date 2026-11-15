@@ -183,7 +183,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     const read = async <T>(path: string, schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }): Promise<T> => {
       let payload: unknown
       try {
-        payload = await this.request(path, { signal }, HOST_TELEMETRY_REMOTE_TIMEOUT_MS)
+        payload = await this.request(path, { signal }, HOST_TELEMETRY_REMOTE_TIMEOUT_MS, false)
       } catch (error) {
         if (error instanceof RemoteNodeRequestError) throw error
         throw new RemoteNodeTransportError(this.computer.name, error)

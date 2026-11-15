@@ -35,6 +35,7 @@ export function RuntimeStatus({
       </span>
       <span aria-hidden="true" className="composer-runtime__detail">·</span>
       <span className="composer-runtime__mode">{runtime?.mode || 'interactive'}</span>
+      {busy && <span className="composer-runtime__hint">applies when idle</span>}
     </button>
   )
 }

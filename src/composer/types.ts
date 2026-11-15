@@ -41,6 +41,7 @@ export type ComposerProps = {
   editingQueuedPromptId?: string
   queuedEditUnconfirmed: boolean
   composer: string
+  expandedComposer: string
   uploadingFile: boolean
   transcribing: boolean
   deliveryUncertain: boolean

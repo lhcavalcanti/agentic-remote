@@ -202,6 +202,30 @@ describe('scheduler durable store', () => {
 })
 
 describe('hub schedule dispatcher', () => {
+  it('lets an archive queued before the launch transition stop a pending drain atomically', async () => {
+    let archive: Promise<unknown> | undefined
+    const state = await fixture({}, () => {
+      archive ??= state.store.setArchived(state.schedule.id, state.schedule.revision, true)
+      return true
+    })
+    await state.dispatcher.start()
+    const run = await state.dispatcher.runNow(state.schedule.id)
+    await archive
+    await settle(state.dispatcher)
+    expect(state.store.get(state.schedule.id).archived).toBe(true)
+    expect(state.launcher.launch).not.toHaveBeenCalled()
+    expect(state.store.getRun(run.id)).toMatchObject({ status: 'stopped' })
+  })
+
+  it('still permits manually accepted work on a disabled schedule', async () => {
+    const { dispatcher, launcher, store, schedule } = await fixture({ enabled: false })
+    await dispatcher.start()
+    const run = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    expect(store.getRun(run.id).status).toBe('running')
+    expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ['2026-03-08T09:00:00.000Z', '02:30', '2026-03-08T10:30:00.000Z'],
     ['2026-11-01T07:00:00.000Z', '01:30', '2026-11-01T08:30:00.000Z'],
@@ -312,13 +336,59 @@ describe('hub schedule dispatcher', () => {
     expect(restarted.getRun(run.id)).toMatchObject({ status: 'running', sessionId: 'recovered-session', rootPromptReceipt: 'recovered-root' })
   })
 
-  it('does not treat an offline reconciliation error as authoritative absence', async () => {
-    const { store, schedule, dispatcher, launcher } = await fixture()
+  it('keeps an unlaunched pending intent retryable when offline reconciliation fails', async () => {
+    const { store, schedule, dispatcher, launcher } = await fixture({}, () => false)
     const run = (await store.admit(schedule.id, INITIAL, 'schedule'))!
     launcher.reconcile.mockRejectedValue(new Error('offline'))
     await dispatcher.start()
     await settle(dispatcher)
-    expect(store.getRun(run.id).status).toBe('launching')
+    expect(store.getRun(run.id).status).toBe('pending')
+    expect(launcher.launch).not.toHaveBeenCalled()
+  })
+
+  it.each(['offline-unknown', 'offline-error', 'online-noop'] as const)(
+    'expires never-launched pending work after restart instead of leaking a slot (%s)', async (mode) => {
+      const { directory, store, schedule, dispatcher, launcher } = await fixture({}, () => false)
+      await dispatcher.start()
+      const run = await dispatcher.runNow(schedule.id)
+      expect(store.getRun(run.id)).toMatchObject({ status: 'pending', retryUntil: '2026-11-14T08:10:00.000Z' })
+      await dispatcher.stop()
+      const restarted = new SchedulerStore(directory)
+      const owner = mode === 'online-noop' ? new NoopScheduleLauncher() : launcher
+      if (mode === 'offline-error') launcher.reconcile.mockRejectedValue(new Error('Synthetic offline lookup'))
+      else launcher.reconcile.mockResolvedValue({ state: 'unknown' })
+      const recovered = new SchedulerDispatcher(restarted, owner, { targetOnline: () => mode === 'online-noop' })
+      dispatchers.push(recovered)
+      vi.setSystemTime(new Date(Date.parse(INITIAL) + 60_000))
+      await recovered.start()
+      await settle(recovered)
+      await vi.waitFor(() => expect(restarted.getRun(run.id))
+        .toMatchObject({ status: 'pending', retryUntil: '2026-11-14T08:10:00.000Z' }))
+      expect(restarted.allRuns().filter(holdsSlot)).toHaveLength(0)
+      vi.setSystemTime(new Date(Date.parse(INITIAL) + SCHEDULER_LATE_MS + 1))
+      await settle(recovered)
+      expect(restarted.getRun(run.id)).toMatchObject({ status: 'missed' })
+      expect(restarted.allRuns().filter(holdsSlot)).toHaveLength(0)
+      expect(launcher.launch).not.toHaveBeenCalled()
+    },
+  )
+
+  it('reserves a recovered pending launch with positive identity evidence even after the retry deadline', async () => {
+    const { directory, schedule, dispatcher, launcher } = await fixture({}, () => false)
+    await dispatcher.start()
+    const run = await dispatcher.runNow(schedule.id)
+    await dispatcher.stop()
+    launcher.states.set(run.launchId, { state: 'unknown', sessionId: 'accepted-session', rootPromptReceipt: 'accepted-root' })
+    vi.setSystemTime(new Date(Date.parse(INITIAL) + SCHEDULER_LATE_MS + 1))
+    const restarted = new SchedulerStore(directory)
+    const recovered = new SchedulerDispatcher(restarted, launcher, { targetOnline: () => false })
+    dispatchers.push(recovered)
+    await recovered.start()
+    await settle(recovered)
+    expect(restarted.getRun(run.id)).toMatchObject({
+      status: 'launching', sessionId: 'accepted-session', rootPromptReceipt: 'accepted-root',
+    })
+    expect(restarted.allRuns().filter(holdsSlot)).toHaveLength(1)
     expect(launcher.launch).not.toHaveBeenCalled()
   })
 
@@ -558,6 +628,23 @@ describe('hub schedule dispatcher', () => {
     launcher.states.set(run.launchId, { state: 'terminated', outcome: 'stopped' })
     await settle(dispatcher)
     expect(store.getRun(run.id).status).toBe('stopped')
+  })
+
+  it('releases a stopping slot on authoritative absence and allows archived schedule deletion', async () => {
+    const { dispatcher, store, launcher, schedule } = await fixture()
+    launcher.stop.mockResolvedValue({ outcome: 'unknown' })
+    await dispatcher.start()
+    const run = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    await dispatcher.stopRun(run.id)
+    expect(store.getRun(run.id).status).toBe('stopping')
+    launcher.states.set(run.launchId, { state: 'absent' })
+    await settle(dispatcher)
+    expect(store.getRun(run.id).status).toBe('stopped')
+    expect(store.allRuns().filter(holdsSlot)).toHaveLength(0)
+    const archived = await store.setArchived(schedule.id, schedule.revision, true)
+    await expect(store.delete(schedule.id, archived.revision)).resolves.toBeUndefined()
+    expect(store.allRuns()).toEqual([])
   })
 
   it('binds queued runs to their accepted definition instead of retargeting on edit', async () => {

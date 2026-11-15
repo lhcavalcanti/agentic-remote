@@ -20,6 +20,7 @@ describe('RuntimeStatus', () => {
     expect(button).toHaveTextContent('gpt-fictional·effort high·200k context·plan')
     expect(button.querySelector('[data-model-family]')).toHaveAttribute('data-model-family', 'openai')
     expect(button).toHaveAccessibleDescription('Open session setup')
+    expect(screen.queryByText('applies when idle')).not.toBeInTheDocument()
     fireEvent.click(button)
     expect(onOpen).toHaveBeenCalledOnce()
   })
@@ -27,6 +28,7 @@ describe('RuntimeStatus', () => {
   it.each(['running', 'waiting'] as const)('explains idle-only apply while %s without disabling setup', (status) => {
     render(<RuntimeStatus session={{ ...session, status }} compactTokens={String} onOpen={vi.fn()} />)
     expect(screen.getByRole('button')).toBeEnabled()
+    expect(screen.getByText('applies when idle')).toBeVisible()
     expect(screen.getByRole('button')).toHaveAccessibleDescription(/applies when idle/)
     expect(screen.getByRole('button')).toHaveAttribute('title', expect.stringContaining('applies when idle'))
   })

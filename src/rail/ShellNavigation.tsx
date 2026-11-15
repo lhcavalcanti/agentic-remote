@@ -29,7 +29,7 @@ export function ShellNavigation({ displayName, onNewSession, onSettings, onOracl
         <span className="shell-avatar" aria-hidden="true">{initials(name)}</span><span>{name}</span>
       </div>}
       {railEntries(features).map(({ id, label, icon: Icon, railEntry, open }) =>
-        <button key={id} type="button" className="shell-rail__entry" aria-label={label}
+        <button key={id} type="button" className="shell-rail__entry" aria-label={railEntry?.badge ? `${label}, ${railEntry.badge} unread` : label}
           title={label} onClick={open}>
           <Icon aria-hidden="true" size={20} /><span className="shell-rail__label">{label}</span>
           {!!railEntry?.badge && <span className="shell-badge" aria-label={`${railEntry.badge} unread`}>{railEntry.badge > 99 ? '99+' : railEntry.badge}</span>}

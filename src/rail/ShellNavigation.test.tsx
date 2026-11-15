@@ -53,6 +53,17 @@ it('saves a trimmed display-name edit and refuses invalid names', () => {
   expect(onChange).toHaveBeenCalledOnce()
 })
 
+it('announces unread counts on the implemented notification launcher', () => {
+  const preferences = { notificationPanel: true }
+  const hubFlags = { ...defaultHubFeatureFlags, notificationCenter: true }
+  const onOpen = vi.fn()
+  render(<PreviewFeaturesContext value={{
+    preferences, hubFlags, effective: effectivePreviewFeatures(preferences, hubFlags), set: vi.fn(),
+  }}><ShellNavigation onNewSession={vi.fn()} onSettings={vi.fn()} onOracle={vi.fn()} onOpen={onOpen} unreadCount={7} /></PreviewFeaturesContext>)
+  fireEvent.click(screen.getByRole('button', { name: 'Notifications, 7 unread' }))
+  expect(onOpen).toHaveBeenCalledWith('notifications')
+})
+
 it.each(['pending', 'failed', 'resolved'] as const)('does not save a presentation placeholder while the default is %s', async (state) => {
   let resolve!: (value: { defaultDisplayName: string }) => void
   let reject!: (reason: Error) => void

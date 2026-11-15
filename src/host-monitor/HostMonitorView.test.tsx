@@ -5,7 +5,7 @@ import { hostMetricNames, type HostSnapshot } from '../../shared/host-telemetry'
 import { request } from '../api'
 import { HostMonitorView } from './HostMonitorView'
 import { useHostMonitor } from './use-host-monitor'
-import { bytes, sparkPath } from './metrics'
+import { bytes, sparkPath, trend } from './metrics'
 
 vi.mock('../api', () => ({ request: vi.fn() }))
 class Socket {
@@ -21,8 +21,8 @@ const metrics = Object.fromEntries(hostMetricNames.map((metric) => [metric, null
 const snapshot = {
   info: { hostname: 'fictional-studio', os: 'Linux', kernel: 'fictional', cpuModel: 'Fictional CPU',
     logicalCpus: 8, totalMemoryBytes: 32e9, uptimeSeconds: 100, isWsl: true, wslDistro: 'Fictional' },
-  latest: { ...metrics, at: '2026-11-14T18:00:00Z', cpuPercent: 18 },
-  live: [{ ...metrics, at: '2026-11-14T18:00:00Z', cpuPercent: 18 }],
+  latest: { ...metrics, at: '2026-11-14T18:00:00Z', cpuPercent: 18, load1: 1.25, load5: 2.5, load15: 3.75 },
+  live: [{ ...metrics, at: '2026-11-14T18:00:00Z', cpuPercent: 18, load1: 1.25, load5: 2.5, load15: 3.75 }],
   disk: { mount: '/fictional', totalBytes: 100e9, freeBytes: 50e9 },
 } as HostSnapshot
 const computer = { id: 'studio', name: 'Studio', online: true, isLocal: true }
@@ -40,13 +40,83 @@ beforeEach(() => {
     return structuredClone(snapshot)
   })
 })
-afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers() })
 
 it('preserves unavailable samples as gaps and formats small nonzero values', () => {
-  expect(sparkPath([1, null, 2])).toMatch(/^M.* M/)
-  expect(sparkPath([null])).toBe('')
+  expect(sparkPath([{ at: 0, value: 1 }, { at: 1000, value: null }, { at: 2000, value: 2 }])).toMatch(/^M.* M/)
+  expect(sparkPath([{ at: 0, value: null }])).toBe('')
   expect(bytes(null)).toBe('Unavailable')
   expect(bytes(0.001)).toBe('0.01 B')
+})
+
+it('positions points by elapsed time and breaks missing seconds and minutes', () => {
+  const live = [{ at: 0, value: 1 }, { at: 1000, value: 2 }, { at: 60_000, value: 3 }]
+  const path = sparkPath(live)
+  expect(path).toContain('M2.0,')
+  expect(path).toContain('L3.9,')
+  expect(path).toContain('M118.0,')
+  expect(sparkPath([{ at: 0, value: 1 }, { at: 2000, value: 2 }]).match(/M/g)).toHaveLength(2)
+  const history = sparkPath([{ at: 0, value: 1 }, { at: 60_000, value: 2 }, { at: 180_000, value: 3 }], undefined, 86_400_000)
+  expect(history.match(/M/g)).toHaveLength(2)
+  expect(history.match(/L/g)).toHaveLength(1)
+  expect(trend(snapshot, [], '60s', ['load1'])[0]).toEqual({ at: Date.parse(snapshot.live[0].at), value: 1.25 })
+})
+
+it('renders current and trended 1, 5 and 15 minute load', async () => {
+  render(<HostMonitorView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  await screen.findByText('1.25')
+  expect(screen.getByText('2.50')).toBeTruthy()
+  expect(screen.getByText('3.75')).toBeTruthy()
+  for (const minutes of [1, 5, 15]) expect(screen.getByRole('img', { name: `Load · ${minutes} min trend` }).querySelector('path')?.getAttribute('d')).toMatch(/^M/)
+})
+
+it('retries failed initial snapshots with backoff and cancels retries when closed', async () => {
+  vi.useFakeTimers()
+  vi.mocked(request).mockRejectedValueOnce(new Error('503 unavailable')).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(snapshot)
+  const { result, unmount } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  expect(result.current.error).toContain('503')
+  await act(async () => { await vi.advanceTimersByTimeAsync(999) })
+  expect(request).toHaveBeenCalledTimes(1)
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(request).toHaveBeenCalledTimes(2)
+  await act(async () => { await vi.advanceTimersByTimeAsync(1999) })
+  expect(request).toHaveBeenCalledTimes(2)
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(request).toHaveBeenCalledTimes(3)
+  expect(result.current.error).toBeUndefined()
+  expect(Socket.instances).toHaveLength(1)
+  act(() => Socket.instances[0].onclose?.())
+  unmount()
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+  expect(request).toHaveBeenCalledTimes(3)
+})
+
+it('preserves update-required after an invalid frame closes and ignores later frames', async () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  act(() => {
+    Socket.instances[0].onmessage?.({ data: '{"type":"unsupported"}' })
+    Socket.instances[0].onclose?.()
+    Socket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'host.snapshot', snapshot }) })
+  })
+  expect(result.current.error).toContain('Update this computer')
+  expect(Socket.instances[0].close).toHaveBeenCalledOnce()
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(1)
+  expect(result.current.error).toContain('Update this computer')
+})
+
+it('does not retry an incompatible initial snapshot', async () => {
+  vi.useFakeTimers()
+  vi.mocked(request).mockResolvedValue({ futureVersion: true })
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  expect(result.current.error).toContain('Update this computer')
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(1)
+  expect(Socket.instances).toHaveLength(0)
 })
 
 it('freezes only the presentation while the stream remains subscribed', async () => {

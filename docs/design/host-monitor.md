@@ -62,11 +62,13 @@ Resource observations enter `NotificationCenterService.host` and the canonical n
 
 ## Client preview
 
-The rail (or existing drawer footer with the rail preview off) opens a computer picker with hostname and hub/node role. WSL is explicitly “WSL VM, not the Windows host”. CPU, memory, network, disk I/O and disk capacity use current values and small SVG trends, with missing readings left as gaps. The live window is 60 seconds; the 24-hour toggle reads the existing minute aggregates and refreshes once per minute.
+The rail (or existing drawer footer with the rail preview off) opens a computer picker with hostname and hub/node role, only when this view's preview and hub flag are both enabled. WSL is explicitly “WSL VM, not the Windows host”. CPU, memory, network, disk I/O, 1/5/15-minute load, and disk capacity use current values and small SVG trends. The live window is 60 seconds; the 24-hour toggle reads the existing minute aggregates and refreshes once per minute. Charts position samples by timestamp across the selected time window, breaking paths at missing readings or gaps over 1.5 seconds live and 90 seconds in minute history.
 
 The telemetry contract does not retain historical disk capacity. The client therefore collects a 60-second disk-capacity trend only while open, and explicitly labels the missing 24-hour capacity history rather than inventing values. Retained CPU/memory/network/I/O history is unchanged.
 
 Processes requests run sequentially at most every five seconds only while that tab and document are visible. All, Agentic Remote, and Agent sessions filters retain shared-runtime labels; only proven session ownership enables an Open session link. No arguments or process-control actions are shown. Pause freezes presentation, not collection or subscription. Closing the view, switching computers, going offline, or hiding the document releases the stream and timers; reopening refetches authoritative data. Compatibility, disabled-computer and offline failures retain their actionable messages.
+
+An open monitor retries failed initial snapshots and lost streams with bounded exponential backoff from 1 to 30 seconds; hiding or closing it cancels pending work. Invalid snapshots/frames and explicit version-conflict responses remain in the actionable update-required state without automatic retries. Reopening the view allows a fresh compatibility check.
 
 ## Remaining integration
 

@@ -25,7 +25,20 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
     let disposed = false
     let socket: WebSocket | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
+    let incompatible = false
+    let failures = 0
     const controller = new AbortController()
+    function reconnect() {
+      if (disposed || incompatible) return
+      clearTimeout(retry)
+      retry = setTimeout(() => void connect(), Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5)))
+    }
+    function requireUpdate() {
+      incompatible = true
+      clearTimeout(retry)
+      setError('This computer sent invalid host telemetry. Update this computer.')
+      socket?.close()
+    }
     function accept(value: HostSnapshot) {
       setSnapshot(value)
       if (value.latest && value.disk) {
@@ -37,30 +50,35 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
     }
     async function connect() {
       try {
-        const initial = HostSnapshotSchema.parse(await request(base, { signal: controller.signal, cache: 'no-store' }))
+        const response = await request(base, { signal: controller.signal, cache: 'no-store' })
         if (disposed) return
-        accept(initial)
+        const initial = HostSnapshotSchema.safeParse(response)
+        if (!initial.success) { requireUpdate(); return }
+        accept(initial.data)
         setError(undefined)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         const current = new WebSocket(`${protocol}//${window.location.host}${base}/live`)
         socket = current
         current.onmessage = (event) => {
-          if (disposed || socket !== current) return
+          if (disposed || incompatible || socket !== current) return
           try {
             const message = HostTelemetryMessageSchema.parse(JSON.parse(String(event.data)))
             accept(message.snapshot)
+            failures = 0
             setError(undefined)
-          } catch { setError('This computer sent invalid host telemetry. Update this computer.'); current.close() }
+          } catch { requireUpdate() }
         }
         current.onclose = () => {
-          if (disposed || socket !== current) return
+          if (disposed || incompatible || socket !== current) return
           setError('Live connection lost. Reconnecting…')
-          retry = setTimeout(() => void connect(), 2000)
+          reconnect()
         }
         current.onerror = () => current.close()
       } catch (caught) {
         if (disposed) return
         setError(caught instanceof Error ? caught.message : 'Host monitor is unavailable')
+        if (caught && typeof caught === 'object' && 'statusCode' in caught && caught.statusCode === 409) incompatible = true
+        else reconnect()
       }
     }
     void connect()

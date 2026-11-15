@@ -207,6 +207,7 @@ vi.mock('./dreamer-api', async (importOriginal) => ({
 }))
 
 vi.mock('./api', async (importOriginal) => ({
+  request: vi.fn(async () => ({ defaultDisplayName: 'Sample User' })),
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   checkHubSignIn: vi.fn(async () => undefined),
   fetchHubFeatureFlags: vi.fn(async () => defaultHubFeatureFlags),
@@ -18320,6 +18321,65 @@ describe('App', () => {
     expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
   })
 
+  it.each(['removed', 'offline'] as const)('keeps a newer %s computer state during a connection check', async (change) => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finish!: (computers: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify(change === 'removed'
+          ? { type: 'computer.removed', computerId: secondComputer.id }
+          : { type: 'computer.updated', computer: { ...secondComputer, online: false } }),
+      } as MessageEvent)
+    })
+    await act(async () => { finish([computer, secondComputer]) })
+    if (change === 'removed') {
+      expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+      expect(within(dialog).getByRole('status')).not.toHaveTextContent(secondComputer.name)
+    } else {
+      expect(within(dialog).getByText(/Offline · Node/)).toBeVisible()
+      expect(within(dialog).getByRole('status')).toHaveTextContent(`${secondComputer.name}: Offline`)
+    }
+  })
+
+  it('reconciles computers missing from a connection-check snapshot', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValueOnce([computer, secondComputer]).mockResolvedValue([computer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+  })
+
+  it('ignores a connection check overtaken by a newer computer snapshot', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finish!: (computers: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    act(() => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument())
+    await act(async () => { finish([computer, secondComputer]) })
+    expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+  })
+
   it('converges after cancelling even when no event arrives', async () => {
     const running = {
       ...session,
@@ -24046,6 +24106,51 @@ describe('App', () => {
     expect(
       await screen.findByLabelText('Change the keys for Open or close knowledge'),
     ).toHaveTextContent('Alt + K')
+  })
+
+  it('makes every visible settings field label searchable in its category', async () => {
+    seedHubSettings({
+      previewFeatures: { settingsNavigation: true, desktopRail: true, schedulerView: true },
+      newSessionRuntimes: {
+        copilot: { model: 'fixture-model', reasoningEffort: 'high', contextTier: 'default', mode: '' },
+        claude: { model: 'provider-model', reasoningEffort: 'high', contextTier: 'default', mode: '' },
+      },
+    })
+    vi.mocked(fetchHubFeatureFlags).mockResolvedValue({ ...defaultHubFeatureFlags, scheduler: true })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { model: 'fixture-model', reasoningEffort: 'high', sessionBackend: 'sdk', sessionClosePolicy: 'ask' },
+    })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    await within(dialog).findByRole('combobox', { name: 'GitHub Copilot default model' })
+    const categories = [...dialog.querySelectorAll('.settings-navigation__categories button span')]
+      .map((node) => node.firstChild!.textContent!)
+    const search = within(dialog).getByRole('searchbox')
+    for (const category of categories) {
+      fireEvent.change(search, { target: { value: '' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(`^${category}`) }))
+      if (category === 'Oracle') await within(dialog).findByLabelText('Dreamer timezone')
+      const content = dialog.querySelector('.settings-navigation__content')!
+      const labels = new Set([...content.querySelectorAll('h4, legend, label, [aria-label]')].flatMap((node) => {
+        const clone = node.cloneNode(true) as HTMLElement
+        clone.querySelectorAll('input, select, small, button, kbd').forEach((child) => child.remove())
+        return [node.matches('h4, legend, label') ? clone.textContent?.trim() : undefined,
+          node.getAttribute('aria-label')].filter((label): label is string => Boolean(label))
+      }))
+      for (const label of labels) {
+        fireEvent.change(search, { target: { value: label } })
+        const button = within(dialog).queryByRole('button', { name: new RegExp(`^${category}`) })
+        expect(button, `${category}: ${label}`).not.toBeNull()
+        fireEvent.click(button!)
+        const visibleMatches = [...content.querySelectorAll('h4, legend, label, [aria-label]')].filter((node) =>
+          !node.closest('[hidden]') && (`${node.textContent} ${node.getAttribute('aria-label')}`).includes(label))
+        expect(visibleMatches.length, `${category}: ${label} must show its field`).toBeGreaterThan(0)
+      }
+    }
   })
 
   it('drops stored shortcut keys that the editor would have refused', async () => {

@@ -42,6 +42,7 @@ export const uiSceneNames = [
   'app-settings',
   'preview-features',
   'settings-navigation',
+  'settings-search',
   'settings-remote-machines',
   'settings-health',
   'runtime-dialog',
@@ -152,7 +153,7 @@ export function createUIScenes(
         }
         state.hubFlags = { ...state.hubFlags, hostMonitor: true, scheduler: true }
       }
-      if (name === 'settings-navigation' || name === 'settings-remote-machines') {
+      if (name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-search') {
         state.settings.values = {
           previewFeatures: { settingsNavigation: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
           displayName: 'Alex Morgan',
@@ -229,12 +230,16 @@ export function createUIScenes(
         const health = dialog.getByRole('region', { name: 'Health', exact: true })
         await expect(health).toContainText('fixture-release-2026-09-04')
         await health.scrollIntoViewIfNeeded()
-      } else if (name === 'settings-navigation' || name === 'settings-remote-machines') {
+      } else if (name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-search') {
         await openSessions(page)
-        await page.getByRole('button', { name: name === 'settings-navigation' ? 'App settings' : 'Manage computers', exact: true }).click()
+        await page.getByRole('button', { name: name === 'settings-remote-machines' ? 'Manage computers' : 'App settings', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
         await expect(dialog.getByRole('textbox', { name: 'Search settings' }).or(dialog.getByRole('searchbox', { name: 'Search settings' }))).toBeVisible()
-        if (name === 'settings-remote-machines') {
+        if (name === 'settings-search') {
+          await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Settings navigation')
+          await dialog.getByRole('button', { name: /^Interface/ }).click()
+          await expect(dialog.getByRole('checkbox', { name: 'Settings navigation', exact: true })).toBeVisible()
+        } else if (name === 'settings-remote-machines') {
           await expect(dialog.getByRole('button', { name: 'Check connection', exact: true })).toBeVisible()
         } else {
           const models = dialog.getByRole('combobox', { name: 'GitHub Copilot default model', exact: true })

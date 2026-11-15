@@ -2,13 +2,14 @@ import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Trash2, Wifi, WifiOff } from 'lucide-react'
 import type { ComputerSummary } from '../../shared/contracts'
-import { addComputer, listComputers, removeComputer } from '../api'
+import { addComputer, removeComputer } from '../api'
 import { DialogFrame } from '../components/DialogFrame'
 
 export type ComputersBodyProps = {
   computers: ComputerSummary[]
   onAdded: (computer: ComputerSummary) => void
   onRemoved: (computerId: string) => void
+  onCheckConnection?: () => Promise<ComputerSummary[]>
   enhanced?: boolean
   open?: boolean
   onClose?: () => void
@@ -25,6 +26,7 @@ export function ComputersBody({
   computers,
   onAdded,
   onRemoved,
+  onCheckConnection,
   enhanced = false,
   open = true,
   onClose,
@@ -39,11 +41,11 @@ export function ComputersBody({
   if (!open) return null
 
   async function check() {
+    if (!onCheckConnection) return
     setChecking(true)
     setError(undefined)
     try {
-      const latest = await listComputers()
-      for (const computer of latest) onAdded(computer)
+      const latest = await onCheckConnection()
       setConnection(latest.map((computer) => `${computer.name}: ${computer.online ? 'Online' : 'Offline'}`).join(' · '))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
@@ -111,7 +113,7 @@ export function ComputersBody({
         ))}
       </div>
       {enhanced ? <>
-        <button className="secondary-button" disabled={checking} onClick={() => void check()} type="button">{checking ? 'Checking…' : 'Check connection'}</button>
+        <button className="secondary-button" disabled={checking || !onCheckConnection} onClick={() => void check()} type="button">{checking ? 'Checking…' : 'Check connection'}</button>
         {connection ? <p role="status">{connection}</p> : null}
         <p className="dialog-message">Pair a computer below. Its name can be set when pairing.</p>
       </> : null}

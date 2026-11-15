@@ -232,6 +232,21 @@ describe('hub notification center', () => {
     expect(JSON.parse(await readFile(finalStore.statePath, 'utf8')).records).toHaveLength(1)
   })
 
+  it('persists an Oracle reply only after successful completion, never after Stop with partial output', async () => {
+    const { oracle, list } = await hub('on')
+    const user = { id: 'oracle-user', role: 'user' as const, content: 'Status?', createdAt: now }
+    const reply = { id: 'oracle-reply', role: 'assistant' as const, replyTo: user.id, content: 'Partial\n\n_(stopped)_', createdAt: now }
+    oracle.emit('event', { type: 'manager.message', message: reply })
+    expect(await list()).toEqual([])
+    oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'cancelled' } })
+    expect(await list()).toEqual([])
+    oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'running' } })
+    oracle.emit('event', { type: 'manager.message', message: { ...reply, id: 'retry-reply', content: 'Completed answer' } })
+    expect(await list()).toEqual([])
+    oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'done' } })
+    expect(await list()).toEqual([expect.objectContaining({ title: 'Oracle replied', body: 'Completed answer' })])
+  })
+
   it.each(['off', 'on'] as const)('preserves push delivery suppression with the hub flag %s', async (flag) => {
     const { runtime, sender, oracle, emit, list } = await hub(flag)
     await runtime.pushService!.subscribe({

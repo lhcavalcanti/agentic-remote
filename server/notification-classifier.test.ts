@@ -134,15 +134,38 @@ describe('canonical hub notification classifier', () => {
   })
 
   it.each([
-    [{ id: 'reply', role: 'assistant', content: 'Done', replyTo: 'user' }, 'info'],
     [{ id: 'user', role: 'user', content: 'Status?', state: 'done' }, 'info'],
     [{ id: 'user', role: 'user', content: 'Status?', state: 'failed', error: 'Offline' }, 'error'],
     [{ id: 'confirm', role: 'activity', content: 'Close?', confirmation: { kind: 'close-session', computerId: 'c', sessionId: 's', title: 'Review', state: 'pending' } }, 'warning'],
   ] as const)('classifies Oracle messages independently of presence: %j', (message, severity) => {
     const event: ManagerEvent = { type: 'manager.message', message: { ...message, createdAt: now } }
-    const result = classifyOracleNotification(event, now)
+    const result = classifyOracleNotification(event, now, new Map())
     expect(result).toHaveLength(1)
     expect(result[0]).toMatchObject({ kind: 'oracle.message', severity, url: '/?oracle=open' })
-    expect(classifyOracleNotification(event, '2026-11-14T09:00:00.000Z')[0]!.id).toBe(result[0]!.id)
+    expect(classifyOracleNotification(event, '2026-11-14T09:00:00.000Z', new Map())[0]!.id).toBe(result[0]!.id)
+  })
+
+  it('waits for a completed Oracle turn and discards cancelled partial replies', () => {
+    const replies = new Map<string, string>()
+    const reply: ManagerEvent = { type: 'manager.message', message: {
+      id: 'reply', role: 'assistant', replyTo: 'user', content: 'Partial\n\n_(stopped)_', createdAt: now,
+    } }
+    const user = { id: 'user', role: 'user' as const, content: 'Status?', createdAt: now }
+    expect(classifyOracleNotification(reply, now, replies)).toEqual([])
+    expect(classifyOracleNotification({ type: 'manager.message', message: { ...user, state: 'cancelled' } }, now, replies)).toEqual([])
+    expect(replies.size).toBe(0)
+    expect(classifyOracleNotification({ type: 'manager.message', message: { ...user, state: 'running' } }, now, replies)).toEqual([])
+    expect(classifyOracleNotification({ ...reply, message: { ...reply.message, content: 'Completed answer' } }, now, replies)).toEqual([])
+    expect(classifyOracleNotification({ type: 'manager.message', message: { ...user, state: 'done' } }, now, replies)[0])
+      .toMatchObject({ title: 'Oracle replied', body: 'Completed answer' })
+    expect(replies.size).toBe(0)
+  })
+
+  it('forgets buffered Oracle replies when a conversation resets', () => {
+    const replies = new Map([['user', 'Old answer']])
+    expect(classifyOracleNotification({ type: 'manager.reset', snapshot: {
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    } }, now, replies)).toEqual([])
+    expect(replies.size).toBe(0)
   })
 })

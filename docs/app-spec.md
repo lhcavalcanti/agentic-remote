@@ -10,7 +10,7 @@ stable as the app evolves.
 The words MUST, MUST NOT, SHOULD, and MAY describe required, prohibited,
 recommended, and optional behavior.
 
-Interface › Preview features › Composer refresh is off by default. When enabled, the composer MUST show one session-setup button below the message box with the model-family glyph, model, effort, context window, and mode. While busy it MUST describe changes as “applies when idle”; it MUST NOT apply runtime changes mid-turn. On phones the glyph and mode stay visible while the model truncates. The existing computer/provider/path/status/queue status line is unchanged.
+Interface › Preview features › Composer refresh is off by default. When enabled, the composer MUST show one session-setup button below the message box with the model-family glyph, model, effort, context window, and mode. While busy it MUST visibly describe changes as “applies when idle” without requiring hover; it MUST NOT apply runtime changes mid-turn. On phones the glyph and mode stay visible while the model and idle-only hint can truncate. The existing computer/provider/path/status/queue status line is unchanged.
 
 ## 1. Product goals
 

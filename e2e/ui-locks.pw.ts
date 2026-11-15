@@ -36,6 +36,37 @@ for (const viewport of uiViewports) {
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
 
+for (const width of [320, 360]) {
+  test.describe(`narrow composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test('shows the idle-only hint without hover while retaining the model glyph and mode', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const summary = page.getByTestId('composer-runtime')
+        await expect(summary.getByText('applies when idle', { exact: true })).toBeVisible()
+        await expect(summary.locator('[data-model-family]')).toBeVisible()
+        await expect(summary.locator('.composer-runtime__mode')).toHaveText('plan')
+        const layout = await summary.evaluate((element) => {
+          const button = element.getBoundingClientRect()
+          return {
+            height: button.height,
+            childrenFit: [...element.children].filter((child) => child.getBoundingClientRect().width > 0)
+              .every((child) => {
+                const rect = child.getBoundingClientRect()
+                return rect.left >= button.left && rect.right <= button.right
+              }),
+          }
+        })
+        expect(layout.height).toBeGreaterThanOrEqual(40)
+        expect(layout.childrenFit).toBe(true)
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
 // App.test.tsx covers reconciliation, receipt failures, serialized queue races,
 // clipboard variants and history ownership. These locks add real-browser event
 // and HTTP wiring rather than duplicating that component-level matrix.

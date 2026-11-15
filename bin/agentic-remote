@@ -525,7 +525,7 @@ function assetChecks() {
   if (value('AGENTIC_REMOTE_ORACLE_VOICE') !== 'on') {
     return add('voice.assets', 'skip', 'Oracle voice is off')
   }
-  if (value('AGENTIC_REMOTE_VOICE_COMPUTER')) {
+  if (value('AGENTIC_REMOTE_ROLE', 'hub') === 'hub' && value('AGENTIC_REMOTE_VOICE_COMPUTER')) {
     return add('voice.assets', 'skip', 'Oracle voice uses a remote computer; local assets are not required')
   }
   const assets = [
@@ -558,17 +558,27 @@ function originCheck() {
     const loopback = !entries.length || origins.some((origin) =>
       ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname))
     if (!loopback) return add('origins', 'fail', 'Allowed origins do not include loopback')
-    const tunnelOrigin = origins.some((origin) => origin.hostname.endsWith('.devtunnels.ms'))
+    const [tunnelId, ...tunnelRegion] = tunnel.toLowerCase().split('.')
+    const tunnelOrigin = origins.some((origin) => {
+      const labels = origin.hostname.split('.')
+      return origin.protocol === 'https:' && !origin.port &&
+        labels[0] === `${tunnelId}-${port}` && labels.slice(-2).join('.') === 'devtunnels.ms' &&
+        (tunnelRegion.length ? labels.slice(1, -2).join('.') === tunnelRegion.join('.') :
+          labels.length === 3 || labels.length === 4)
+    })
     add('origins', tunnel && !tunnelOrigin ? 'warn' : 'ok', tunnel && !tunnelOrigin
-      ? 'Allowed origins include loopback but no devtunnels.ms origin for the configured tunnel'
-      : `Allowed origins parse and include loopback${entries.length ? '' : ' (server defaults)'}`)
+      ? 'Allowed origins include loopback but not the selected tunnel HTTPS origin and port'
+      : `Allowed origins parse and include loopback${tunnel ? ' and the selected tunnel origin' :
+        entries.length ? '' : ' (server defaults)'}`)
   } catch { add('origins', 'fail', 'Invalid AGENTIC_REMOTE_ALLOWED_ORIGINS entry; expected http(s)://host[:port]') }
 }
 
 function tunnelChecks() {
   if (!tunnel || !executable('devtunnel')) {
     for (const check of ['tunnel.auth', 'tunnel.acl', 'tunnel.port-acl']) {
-      add(check, 'skip', !tunnel ? 'No tunnel ID configured (use --tunnel ID)' : 'devtunnel is not on PATH')
+      add(check, tunnel ? 'fail' : 'skip', !tunnel
+        ? 'No tunnel ID configured (use --tunnel ID)'
+        : 'devtunnel is not on PATH; cannot verify the selected tunnel (fail closed; ACLs unchanged)')
     }
     return
   }

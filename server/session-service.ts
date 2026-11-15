@@ -118,6 +118,8 @@ export interface SessionService {
     replaceTerminalDraft?: boolean,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
+  /** Durable authority, including deleted sessions and pruned receipt details. */
+  deliveryIdentity?(deliveryId: string): { sessionId?: string; historyComplete: boolean }
   reconcileLaunch?(launchId: string): Promise<LaunchReconciliation | undefined>
   cancelWithAck?(sessionId: string, timeoutMs?: number): Promise<TerminationAcknowledgement>
   /** Answers a side question from the conversation without prompting it. */

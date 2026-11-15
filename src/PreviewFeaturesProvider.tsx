@@ -6,6 +6,7 @@ import {
   isPreviewAvailable,
 } from '../shared/feature-flags'
 import { fetchHubFeatureFlags } from './api'
+import { authoritativeRefresh, waitUntilAuthoritativeRefresh } from './OracleDreamer'
 import type { SettingsProfileClient } from './settings-profile'
 import { PreviewFeaturesContext, type PreviewFeatureState } from './preview-features'
 
@@ -26,7 +27,7 @@ export function PreviewFeaturesProvider({
       controller?.abort()
       const request = new AbortController()
       controller = request
-      void fetchHubFeatureFlags(request.signal).then(
+      return fetchHubFeatureFlags(request.signal).then(
         (flags) => {
           if (active && !request.signal.aborted) setHubFlags(flags)
         },
@@ -36,14 +37,19 @@ export function PreviewFeaturesProvider({
         },
       )
     }
-    refresh()
+    const refreshAuthoritative = (event: Event) => {
+      waitUntilAuthoritativeRefresh(event, refresh())
+    }
+    void refresh()
     window.addEventListener('online', refresh)
     window.addEventListener('focus', refresh)
+    window.addEventListener(authoritativeRefresh, refreshAuthoritative)
     return () => {
       active = false
       controller?.abort()
       window.removeEventListener('online', refresh)
       window.removeEventListener('focus', refresh)
+      window.removeEventListener(authoritativeRefresh, refreshAuthoritative)
     }
   }, [])
   const value = useMemo<PreviewFeatureState>(() => ({

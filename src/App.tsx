@@ -13916,6 +13916,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             editingQueuedPromptId={editingQueuedPromptId}
             queuedEditUnconfirmed={queuedEditUnconfirmed}
             composer={composer}
+            expandedComposer={terminalDraftExpandedContent}
             uploadingFile={uploadingFile}
             transcribing={transcribing}
             deliveryUncertain={Boolean(selectedKey && composerDrafts[selectedKey]?.deliveryUncertain)}

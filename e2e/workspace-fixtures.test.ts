@@ -210,7 +210,9 @@ describe('workspace fixture hub protocol', () => {
     const original = fixtureSchedules[0]
     const base = `/api/schedules/${original.id}`
     expect((await request(base)).body).toEqual({ schedule: original })
-    expect((await request('/api/schedules/runs?limit=1')).body).toMatchObject({ total: 1, nextOffset: null })
+    const globalRuns = await request('/api/schedules/runs?limit=1')
+    expect(globalRuns.status).toBe(200)
+    expect(globalRuns.body).toEqual({ runs: fixtureScheduleRuns, total: 1, nextOffset: null })
     expect((await request(`/api/schedules/runs/${fixtureScheduleRuns[0].id}`)).body).toEqual({ run: fixtureScheduleRuns[0] })
     expect((await request(`${base}/runs?status=succeeded`)).body).toMatchObject({ total: 1 })
     expect((await request(`${base}/enabled`, 'POST', { revision: 1, enabled: false })).body)
@@ -362,9 +364,26 @@ describe('workspace fixture hub protocol', () => {
 describe('workspace fixture composer routes', () => {
   const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 
+  it('executes an advertised command immediately unless queueing is explicit', async () => {
+    const { fixture, request, state } = await fixtureApi()
+    const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+    session.status = 'running'
+    const command = ['/help', ...Array.from({ length: 21 }, () => 'Synthetic detail')].join('\n')
+    const response = await request<{ session: ManagedSession }>(`${sessionPath}/commands`, 'POST', { command, enqueue: false })
+    expect(response.status).toBe(200)
+    expect(response.body.session.messages.at(-1)?.content).toBe(command)
+    expect(session.queuedPrompts ?? []).toHaveLength(0)
+    await request(`${sessionPath}/commands`, 'POST', { command: '/help queued', enqueue: true })
+    expect(session.queuedPrompts?.map((prompt) => prompt.content)).toEqual(['/help queued'])
+    fixture.assertHealthy()
+  })
+
   it.each([
     ['/messages', 'POST', { content: '' }],
     ['/messages', 'POST', { content: 'A note', enqueue: 'yes' }],
+    ['/commands', 'POST', { command: '/unknown' }],
+    ['/commands', 'POST', { command: '/help', enqueue: 'yes' }],
+    ['/commands', 'POST', { command: '/help', replaceTerminalDraft: 'yes' }],
     ['/queue', 'PUT', { order: ['first', 'first'] }],
     ['/queue/missing', 'PATCH', { content: 'A revision' }],
     ['/runtime', 'PATCH', { model: 'unknown', reasoningEffort: 'high', contextTier: 'default', mode: 'plan' }],

@@ -26,6 +26,7 @@ export class NotificationCenterService implements NotificationRecorder {
   private readonly admissions = new WeakMap<object, Promise<void>>()
   private readonly hostArrivals = new Map<string, { sample: string; at: number }>()
   private readonly hostObservations: NotificationCursors = {}
+  private readonly oracleReplies = new Map<string, string>()
 
   constructor(
     readonly store: NotificationStore,
@@ -63,7 +64,7 @@ export class NotificationCenterService implements NotificationRecorder {
 
   oracle(event: ManagerEvent): Promise<void> {
     const snapshot = structuredClone(event)
-    const admitted = this.enqueue(() => this.store.ingest(() => classifyOracleNotification(snapshot, this.now())
+    const admitted = this.enqueue(() => this.store.ingest(() => classifyOracleNotification(snapshot, this.now(), this.oracleReplies)
       .filter((record) => this.inApp(record))))
     this.admissions.set(event, admitted)
     return admitted

@@ -171,10 +171,20 @@ describe('read-only skill discovery and settings changes', () => {
     expect((await service.snapshot()).skills[0].enabled).toBe(false)
   })
 
-  it.each([
-    '{"disabledSkills":[/* keep entry explanation */]}',
-    '{"disabledSkills":[],"disabledSkills":[]}',
-  ])('refuses writes that would lose comments or retain ambiguous keys', async (raw) => {
+  it('toggles a skill in a commented array without losing entry explanations', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    await writeFile(file, '{"disabledSkills":[/* keep entry explanation */]}')
+    const before = await service.snapshot()
+    const disabled = await service.update({ name: 'sample', enabled: false, confirmed: true, revision: before.revision })
+    expect(disabled.skills[0].enabled).toBe(false)
+    const enabled = await service.update({ name: 'sample', enabled: true, confirmed: true, revision: disabled.revision })
+    expect(enabled.skills[0].enabled).toBe(true)
+    expect(await readFile(file, 'utf8')).toContain('/* keep entry explanation */')
+  })
+
+  it('refuses writes with ambiguous duplicate keys', async () => {
+    const raw = '{"disabledSkills":[],"disabledSkills":[]}'
     await skill(path.join(copilotHome, 'skills'), 'sample')
     const file = path.join(copilotHome, 'settings.json')
     await writeFile(file, raw)
@@ -211,7 +221,7 @@ describe('read-only skill discovery and settings changes', () => {
     const before = await service.snapshot()
     const after = await service.update({ name: 'sample', enabled: false, confirmed: true, revision: before.revision })
     expect(after.skills[0].enabled).toBe(false)
-    expect(JSON.parse(await readFile(path.join(copilotHome, 'settings.json'), 'utf8'))).toEqual({ ...original, disabledSkills: ['sample', 'uninstalled-skill'] })
+    expect(JSON.parse(await readFile(path.join(copilotHome, 'settings.json'), 'utf8'))).toEqual({ ...original, disabledSkills: ['uninstalled-skill', 'sample'] })
     expect((await stat(path.join(copilotHome, 'settings.json'))).mode & 0o777).toBe(0o600)
     expect((await readdir(copilotHome)).filter((name) => name.startsWith('.settings-'))).toEqual([])
   })

@@ -7,6 +7,7 @@ import { parseProcessStat } from './process-proc.js'
 const execFileAsync = promisify(execFile)
 const MAX_ANCESTRY_READS = 4096
 const ANCESTRY_YIELD_INTERVAL = 32
+const MAX_RETAINED_ROOTS = 4096
 
 export interface SessionPaneRoot {
   sessionId: string
@@ -36,15 +37,21 @@ export class SessionPaneRoots {
     if (ownerStartTime === undefined) return
     const previous = this.roots.get(sessionId)
     if (previous?.target === pane.target && previous.panePid === pane.rootPid &&
-        previous.ownerPid === ownerPid && previous.ownerStartTime === ownerStartTime) return
+        previous.ownerPid === ownerPid && previous.ownerStartTime === ownerStartTime) {
+      this.roots.delete(sessionId)
+      this.roots.set(sessionId, previous)
+      return
+    }
     try {
       const observed = parseProcessStat(await this.readStat(pane.rootPid))
       const owner = ownerPid === pane.rootPid ? observed : parseProcessStat(await this.readStat(ownerPid))
       if (observed?.pid !== pane.rootPid || owner?.pid !== ownerPid || owner.startTime !== ownerStartTime) return
+      this.roots.delete(sessionId)
       this.roots.set(sessionId, {
         sessionId, target: pane.target, panePid: pane.rootPid, paneStartTime: observed.startTime,
         ownerPid, ownerStartTime,
       })
+      while (this.roots.size > MAX_RETAINED_ROOTS) this.roots.delete(this.roots.keys().next().value!)
     } catch {
       // Telemetry must not change whether a terminal operation succeeds.
     }
@@ -56,11 +63,18 @@ export class SessionPaneRoots {
 
   async listSessionPaneRoots(): Promise<SessionPaneRoot[]> {
     if (!this.roots.size) return []
+    const observedRoots = [...this.roots.values()]
     try {
       const panes = new Map((await this.listPanes()).trim().split('\n').map((line) => {
         const [target, pid] = line.split('\t')
         return [target, Number(pid)]
       }))
+      const candidates = observedRoots.filter((root) => {
+        if (this.roots.get(root.sessionId) !== root) return false
+        if (panes.get(root.target) === root.panePid) return true
+        this.retire(root)
+        return false
+      })
       const roots: SessionPaneRoot[] = []
       let reads = 0
       const readStat = async (pid: number) => {
@@ -71,12 +85,15 @@ export class SessionPaneRoots {
           if (reads % ANCESTRY_YIELD_INTERVAL === 0) await this.yieldTraversal()
         }
       }
-      for (const root of this.roots.values()) {
+      for (const root of candidates) {
         if (reads >= MAX_ANCESTRY_READS) break
-        if (panes.get(root.target) !== root.panePid) continue
+        if (this.roots.get(root.sessionId) !== root) continue
         try {
           const owner = await readStat(root.ownerPid)
-          if (owner?.pid !== root.ownerPid || owner.startTime !== root.ownerStartTime) continue
+          if (owner?.pid !== root.ownerPid || owner.startTime !== root.ownerStartTime) {
+            this.retire(root)
+            continue
+          }
           let current = owner
           const visited = new Set<number>()
           while (current.pid !== root.panePid && !visited.has(current.pid) && reads < MAX_ANCESTRY_READS) {
@@ -85,16 +102,25 @@ export class SessionPaneRoots {
             if (!parent || parent.pid !== current.ppid || parent.startTime > current.startTime) break
             current = parent
           }
-          if (current.pid !== root.panePid || current.startTime !== root.paneStartTime) continue
+          if (current.pid !== root.panePid || current.startTime !== root.paneStartTime) {
+            if (reads < MAX_ANCESTRY_READS || current.pid === root.panePid) this.retire(root)
+            continue
+          }
+          if (this.roots.get(root.sessionId) !== root) continue
           const { sessionId, panePid, paneStartTime } = root
           roots.push({ sessionId, panePid, paneStartTime })
         } catch {
           // A surviving shell pane no longer belongs to a session whose owner exited.
+          this.retire(root)
         }
       }
       return roots
     } catch {
       return []
     }
+  }
+
+  private retire(root: BoundPaneRoot): void {
+    if (this.roots.get(root.sessionId) === root) this.roots.delete(root.sessionId)
   }
 }

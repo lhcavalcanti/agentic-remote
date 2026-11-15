@@ -84,5 +84,74 @@ describe('read-only terminal pane roots', () => {
     expect(readsAtYield.length).toBeGreaterThan(0)
     expect(readsAtYield[0]).toBeLessThanOrEqual(32)
     expect(readsAtYield.every((count, index) => count - (readsAtYield[index - 1] ?? 0) <= 32)).toBe(true)
+    roots.forget('session-0')
+    roots.forget('session-1')
+    expect(await roots.listSessionPaneRoots()).toEqual([{
+      sessionId: 'session-2', panePid: 10_002, paneStartTime: 10_002,
+    }])
+  })
+
+  it.each(['pane', 'exited', 'reused', 'detached'])('prunes a retired %s binding instead of retaining it for later scans', async (reason) => {
+    let retired = false
+    const readStat = vi.fn(async (pid: number) => {
+      if (retired && reason === 'exited' && pid === 43) throw Object.assign(new Error('gone'), { code: 'ENOENT' })
+      return processStatFixture({
+        pid,
+        ppid: pid === 43 && !(retired && reason === 'detached') ? 42 : 1,
+        startTime: pid === 42 ? 100 : retired && reason === 'reused' ? 300 : 200,
+      })
+    })
+    const listPanes = vi.fn(async () => retired && reason === 'pane' ? '' : '%1\t42\n')
+    const roots = new SessionPaneRoots(readStat, listPanes)
+    await roots.observe('session', { target: '%1', rootPid: 42 }, 43, 200)
+    expect(await roots.listSessionPaneRoots()).toHaveLength(1)
+    retired = true
+    expect(await roots.listSessionPaneRoots()).toEqual([])
+    retired = false
+    readStat.mockClear()
+    listPanes.mockClear()
+    expect(await roots.listSessionPaneRoots()).toEqual([])
+    expect(listPanes).not.toHaveBeenCalled()
+    expect(readStat).not.toHaveBeenCalled()
+  })
+
+  it('bounds retained observations while keeping recently observed session bindings', async () => {
+    const readStat = vi.fn(async (pid: number) => processStatFixture({ pid, startTime: pid }))
+    const panes = Array.from({ length: 4097 }, (_, index) => `%${index}\t${10_000 + index}`).join('\n')
+    const roots = new SessionPaneRoots(readStat, async () => panes, async () => undefined)
+    for (let index = 0; index < 4096; index += 1) {
+      await roots.observe(`session-${index}`, { target: `%${index}`, rootPid: 10_000 + index }, 10_000 + index, 10_000 + index)
+    }
+    await roots.observe('session-0', { target: '%0', rootPid: 10_000 }, 10_000, 10_000)
+    await roots.observe('session-4096', { target: '%4096', rootPid: 14_096 }, 14_096, 14_096)
+    readStat.mockClear()
+    const listed = await roots.listSessionPaneRoots()
+    expect(listed).toHaveLength(4096)
+    expect(listed.some((root) => root.sessionId === 'session-0')).toBe(true)
+    expect(listed.some((root) => root.sessionId === 'session-1')).toBe(false)
+    expect(listed.some((root) => root.sessionId === 'session-4096')).toBe(true)
+    expect(readStat.mock.calls.length).toBeLessThanOrEqual(4096)
+  })
+
+  it('does not return a binding retired while its ancestry read is in flight', async () => {
+    let block = false
+    let enter!: () => void
+    let finish!: () => void
+    const entered = new Promise<void>((resolve) => { enter = resolve })
+    const pending = new Promise<void>((resolve) => { finish = resolve })
+    const roots = new SessionPaneRoots(async (pid) => {
+      if (block) {
+        enter()
+        await pending
+      }
+      return processStatFixture({ pid, startTime: 100 })
+    }, async () => '%1\t42\n')
+    await roots.observe('session', { target: '%1', rootPid: 42 }, 42, 100)
+    block = true
+    const listing = roots.listSessionPaneRoots()
+    await entered
+    roots.forget('session')
+    finish()
+    expect(await listing).toEqual([])
   })
 })

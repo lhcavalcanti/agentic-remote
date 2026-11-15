@@ -64,6 +64,7 @@ export const ProcessRowSchema = z.object({
 export type ProcessRow = z.infer<typeof ProcessRowSchema>
 
 export const HostSnapshotSchema = z.object({
+  sampleAgeMs: nonnegative.optional(),
   info: HostInfoSchema.nullable(),
   latest: HostSampleSchema.nullable(),
   live: z.array(HostSampleSchema).max(HOST_TELEMETRY_MAX_LIVE_SAMPLES),

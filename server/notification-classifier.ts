@@ -157,8 +157,10 @@ export function classifyHostNotification(
   now: string,
 ): NotificationRecord[] {
   const nowMs = Date.parse(now)
-  const sampleAt = snapshot?.latest?.at
-  const sampleMs = sampleAt ? Date.parse(sampleAt) : NaN
+  const sampleMs = snapshot?.latest
+    ? snapshot.sampleAgeMs === undefined ? Date.parse(snapshot.latest.at) : nowMs - snapshot.sampleAgeMs
+    : NaN
+  const sampleAt = Number.isFinite(sampleMs) ? new Date(sampleMs).toISOString() : undefined
   const fresh = Number.isFinite(sampleMs) && sampleMs <= nowMs + 5000 && nowMs - sampleMs <= HOST_ALERT_MAX_SAMPLE_AGE_MS
   const used = snapshot?.latest?.memoryUsedBytes
   const total = snapshot?.info?.totalMemoryBytes

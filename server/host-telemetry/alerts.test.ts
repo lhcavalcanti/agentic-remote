@@ -38,6 +38,18 @@ function sustained(cursors: NotificationCursors, from = 0) {
 }
 
 describe('canonical resource alert episodes', () => {
+  it.each([-3_600_000, 3_600_000])('uses monotonic sample age despite node clock skew %s', (skew) => {
+    const cursors: NotificationCursors = {}
+    const records = []
+    for (let ms = 0; ms <= 120_000; ms += 15_000) {
+      records.push(...classifyHostNotification({ ...computer, isLocal: false },
+        { ...snapshot(start + ms + skew), sampleAgeMs: 1000 }, cursors, new Date(start + ms).toISOString()))
+    }
+    expect(records).toHaveLength(1)
+    expect(records[0].title).toContain('Memory pressure')
+    expect(classifyHostNotification(computer, { ...snapshot(start, 99, 1), sampleAgeMs: 31_000 },
+      {}, new Date(start).toISOString())).toEqual([])
+  })
   it('requires strictly over 90% memory for 2 minutes and latches until 85% recovery', () => {
     const cursors: NotificationCursors = {}
     expect(observe(cursors, 0, 90)).toEqual([])

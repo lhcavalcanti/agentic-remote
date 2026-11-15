@@ -23,6 +23,7 @@ export class NotificationCenterService implements NotificationRecorder {
   private work: Promise<unknown> = Promise.resolve()
   private readonly preferences: NotificationKindPreferences = {}
   private readonly admissions = new WeakMap<object, Promise<void>>()
+  private readonly hostArrivals = new Map<string, { sample: string; at: number }>()
 
   constructor(
     readonly store: NotificationStore,
@@ -68,6 +69,14 @@ export class NotificationCenterService implements NotificationRecorder {
 
   host(computer: ComputerSummary, snapshot: HostSnapshot | undefined): Promise<void> {
     const observation = structuredClone({ computer, snapshot })
+    if (!computer.isLocal && observation.snapshot?.latest && observation.snapshot.sampleAgeMs === undefined) {
+      const sample = observation.snapshot.latest.at
+      const at = (this.options.now ?? Date.now)()
+      const previous = this.hostArrivals.get(computer.id)
+      const arrival = previous?.sample === sample ? previous : { sample, at }
+      this.hostArrivals.set(computer.id, arrival)
+      observation.snapshot.sampleAgeMs = Math.max(0, at - arrival.at)
+    }
     return this.enqueue(() => this.store.ingest((cursors) =>
       classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now())
         .filter((record) => this.inApp(record))))

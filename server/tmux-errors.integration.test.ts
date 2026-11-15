@@ -101,7 +101,7 @@ it.skipIf(process.platform !== 'linux')(
         ),
       ).toContain(script)
       expect(await findActiveCopilotProcesses()).toEqual([
-        { pid: panePid, sessionId, source: 'argument' },
+        { pid: panePid, sessionId, source: 'argument', startTime: expect.any(Number) },
       ])
       const controller = new TmuxTerminalSessionController()
       expect(await controller.has(sessionId)).toBe(true)

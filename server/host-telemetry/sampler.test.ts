@@ -403,7 +403,7 @@ describe('HostTelemetrySampler', () => {
     sampler.start()
     await vi.advanceTimersByTimeAsync(0)
     expect(sampler.status().errorCount).toBe(1)
-    expect(sampler.status().lastError?.message).toContain('INVALID')
+    expect(sampler.status().lastError?.message).toBe('/proc/stat: INVALID; /proc/net/dev: INVALID; /proc/loadavg: INVALID')
     expect(sampler.snapshot().latest).toMatchObject({ cpuPercent: null, netRxBytesPerSec: null, load1: null })
   })
 

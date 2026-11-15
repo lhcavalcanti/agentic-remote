@@ -22,7 +22,7 @@ import {
   type CpuCounters,
   type DeviceCounters,
 } from './parsers.js'
-import { createLinuxHostTelemetryReader, type HostTelemetryReader, type HostTelemetryReading } from './reader.js'
+import { createLinuxHostTelemetryReader, hostTelemetryProcFiles, type HostTelemetryReader, type HostTelemetryReading } from './reader.js'
 
 export const HOST_TELEMETRY_ACTIVE_INTERVAL_MS = 1000
 export const HOST_TELEMETRY_IDLE_INTERVAL_MS = 15_000
@@ -240,7 +240,7 @@ export class HostTelemetrySampler {
       ['diskstats', disk !== undefined],
       ['loadavg', load !== undefined],
     ] as const) {
-      if (files[file] !== undefined && !valid) errors.push(`/proc/${file}: INVALID`)
+      if (files[file] !== undefined && !valid) errors.push(`${hostTelemetryProcFiles[file]}: INVALID`)
     }
     if (errors.length) this.recordError(errors.join('; ').slice(0, 1000))
     const networkAt = reading.capturedAt?.netDev ?? this.lastStartedAt

@@ -100,6 +100,42 @@ test.describe('browser interaction contracts', () => {
     fixture = undefined
   })
 
+  test('rail opens Oracle and offers only implemented views', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.getByRole('button', { name: 'Close Oracle', exact: true }).click()
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }) })
+    }, handle.state.settings.revision)
+    const navigation = page.getByRole('navigation', { name: 'App navigation' })
+    await expect(navigation.getByRole('button', { name: 'Notifications' })).toHaveCount(0)
+    await expect(navigation.getByRole('button', { name: 'Host monitor' })).toHaveCount(0)
+    await expect(navigation.getByRole('button', { name: 'Scheduler' })).toHaveCount(0)
+    await navigation.getByRole('button', { name: 'Open Oracle', exact: true }).click()
+    await expect(page.locator('#oracle-panel')).toBeVisible()
+  })
+
+  test('keeps rail navigation and docked Oracle within layout budgets', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }) })
+    }, handle.state.settings.revision)
+    await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
+    for (const width of [1083, 1050, 1024, 1023, 990, 961]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(page.locator('#oracle-panel')).not.toHaveClass(/manager-panel--docked/)
+      await expect.poll(() => page.getByRole('main').evaluate((main) => main.getBoundingClientRect().width)).toBeGreaterThanOrEqual(360)
+      expect(await page.locator('.shell-rail').evaluate((rail) => rail.getBoundingClientRect().width)).toBe(64)
+      await assertNoHorizontalOverflow(page)
+    }
+    expect(await page.evaluate(() => localStorage.getItem('agentic-remote:oracle-placement'))).toBe('docked')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
+    await expect.poll(() => page.locator('#oracle-panel').evaluate((panel) =>
+      panel.getBoundingClientRect().right - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
+  })
+
   test('sends, queues while busy, edits in place, reorders with the keyboard, and stops', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'conversation')
     const session = handle.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
@@ -488,6 +524,13 @@ test.describe('browser interaction contracts', () => {
   test('shows host history, conservative process links and offline computers', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'host-monitor')
     const monitor = page.getByRole('dialog', { name: 'Host monitor', exact: true })
+    for (const minutes of [1, 5, 15]) {
+      await expect(monitor.getByText(`Load · ${minutes} min`, { exact: true })).toBeVisible()
+      await expect(monitor.getByRole('img', { name: `Load · ${minutes} min trend`, exact: true })).toBeVisible()
+    }
+    for (const tab of await monitor.getByRole('tab').all()) {
+      expect(await tab.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(40)
+    }
     await monitor.getByRole('button', { name: '24 h · minute averages', exact: true }).click()
     await expect(monitor).toContainText('1440 minute aggregates')
     await monitor.getByRole('tab', { name: 'Processes', exact: true }).click()
@@ -543,28 +586,6 @@ test.describe('browser interaction contracts', () => {
     await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Changed on another device')
   })
 
-  test('includes the preview rail in Oracle docking space without changing the saved preference', async ({ page, baseURL }) => {
-    const handle = await open(page, baseURL, 'oracle-panel')
-    await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
-    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
-    await page.evaluate(async (revision) => {
-      const response = await fetch('/api/settings', {
-        method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }),
-      })
-      if (!response.ok) throw new Error('Synthetic preview update failed')
-    }, handle.state.settings.revision)
-    await expect(page.locator('.app-shell')).toHaveClass(/app-shell--rail/)
-    await page.setViewportSize({ width: 1024, height: 900 })
-    await expect(page.locator('#oracle-panel')).not.toHaveClass(/manager-panel--docked/)
-    expect(await page.getByRole('main').evaluate((main) => main.getBoundingClientRect().width)).toBeGreaterThanOrEqual(360)
-    expect(await page.evaluate(() => localStorage.getItem('agentic-remote:oracle-placement'))).toBe('docked')
-    await page.setViewportSize({ width: 1440, height: 900 })
-    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
-    await expect.poll(() => page.locator('#oracle-panel').evaluate((panel) =>
-      panel.getBoundingClientRect().right - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
-  })
-
   test('opens a scheduled notification in its scheduler run history when available', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'notification-panel')
     await page.evaluate(async () => {
@@ -607,5 +628,28 @@ test.describe('browser interaction contracts', () => {
     const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
     await expect(scheduler).toBeVisible()
     await expect(scheduler.locator('li[data-linked="true"]')).toContainText('missed')
+  })
+
+  test('announces unread counts, opens notifications and dismisses a single grouped item in one batch', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'notification-panel')
+    const panel = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await panel.getByRole('button', { name: 'Close', exact: true }).click()
+    const bell = page.getByRole('button', { name: 'Notifications, 5 unread', exact: true })
+    await expect(bell.locator('.shell-badge')).toHaveText('5')
+    await bell.click()
+    const batch = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/notifications/bulk')
+    await panel.getByRole('button', { name: 'Dismiss Workspace review complete', exact: true }).click()
+    expect((await batch).postDataJSON()).toEqual({ ids: ['2'.padStart(64, '0')], action: 'dismiss' })
+    await expect(panel.getByRole('button', { name: 'Workspace review needs you', exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Notifications, 4 unread', exact: true })).toBeVisible()
+  })
+
+  test('keeps scheduled notifications without a session available when Scheduler is unavailable', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'notification-panel')
+    const panel = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await panel.getByRole('button', { name: 'Daily workspace review · missed', exact: true }).click()
+    await expect(panel).toBeVisible()
+    await expect(page.getByText('This view is being prepared for the next preview.')).toHaveCount(0)
   })
 })

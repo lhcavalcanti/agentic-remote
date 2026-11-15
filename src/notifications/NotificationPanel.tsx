@@ -44,6 +44,8 @@ export function NotificationPanel({ notifications, enabled, onClose, onOpen }: {
             const scope = tab === 'Unread' ? '?unread=true' : tab === 'Failed' ? '?failed=true' : tab === 'Oracle' ? '?kind=oracle.message' : ''
             void mutate(visible.filter((record) => !record.readAt).map((record) => record.id), 'read', search.trim() ? undefined : scope)
           }}><CheckCheck size={16} aria-hidden="true" /> Mark all read in {search.trim() ? 'search' : tab}</button>
+        <button type="button" className="secondary-button" disabled={mutating || !visible.length}
+          onClick={() => void mutate(visible.map((record) => record.id), 'dismiss')}>Dismiss all in {search.trim() ? 'search' : tab}</button>
       </div>
       {notifications.error && <p role="alert" className="error-banner">{notifications.error}</p>}
       {notifications.loading && !notifications.records.length ? <p role="status">Loading notifications…</p> : null}
@@ -57,17 +59,38 @@ export function NotificationPanel({ notifications, enabled, onClose, onOpen }: {
             <div className="notification-row__body">
               {scheduleNotificationLabel(latest.kind) && <small className="notification-kind">{scheduleNotificationLabel(latest.kind)}</small>}
               <button type="button" className="notification-link" onClick={() => {
-                void mutate(records.map((record) => record.id), 'read')
+                void mutate([latest.id], 'read')
                 onOpen(latest)
               }}><strong>{latest.title}</strong></button>
               <p>{latest.body}</p>
               <small>{new Date(latest.createdAt).toLocaleString()} {records.length > 1 ? `· ${records.length} notifications` : ''}</small>
               <div className="notification-row__actions">
-                <button type="button" className="secondary-button" disabled={mutating || !unread}
-                  onClick={() => void mutate(records.map((record) => record.id), 'read')}>Mark read</button>
+                <button type="button" className="secondary-button" disabled={mutating || !!latest.readAt}
+                  onClick={() => void mutate([latest.id], 'read')}>Mark read</button>
                 <button type="button" className="icon-button" disabled={mutating} aria-label={`Dismiss ${latest.title}`}
-                  onClick={() => void mutate(records.map((record) => record.id), 'dismiss')}><Trash2 size={16} /></button>
+                  onClick={() => void mutate([latest.id], 'dismiss')}><Trash2 size={16} /></button>
               </div>
+              {records.length > 1 && <details className="notification-group">
+                <summary>Session notifications ({records.length})</summary>
+                <div className="notification-row__actions">
+                  <button type="button" className="secondary-button" disabled={mutating || !unread}
+                    onClick={() => void mutate(records.map((record) => record.id), 'read')}>Mark session read</button>
+                  <button type="button" className="secondary-button" disabled={mutating}
+                    onClick={() => void mutate(records.map((record) => record.id), 'dismiss')}>Dismiss session</button>
+                </div>
+                <ul>{records.filter((record) => record.id !== latest.id).map((record) => <li key={record.id}>
+                  <button type="button" className="notification-link" onClick={() => {
+                    void mutate([record.id], 'read'); onOpen(record)
+                  }}>{record.title}</button>
+                  <p>{record.body}</p>
+                  <div className="notification-row__actions">
+                    <button type="button" className="secondary-button" disabled={mutating || !!record.readAt}
+                      aria-label={`Mark ${record.title} read`} onClick={() => void mutate([record.id], 'read')}>Mark read</button>
+                    <button type="button" className="icon-button" disabled={mutating} aria-label={`Dismiss ${record.title}`}
+                      onClick={() => void mutate([record.id], 'dismiss')}><Trash2 size={16} /></button>
+                  </div>
+                </li>)}</ul>
+              </details>}
             </div>
           </li>
         })}

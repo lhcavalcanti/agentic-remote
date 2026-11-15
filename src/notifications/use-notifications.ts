@@ -33,10 +33,11 @@ export function useNotifications(enabled: boolean) {
     return () => { active.current = false; controller.current?.abort(); unsubscribe() }
   }, [enabled, refresh])
   async function mutate(ids: string[], action: 'read' | 'dismiss', scope?: string) {
+    if (!ids.length) return
     setMutating(true)
     try {
       if (scope !== undefined) await request(`/api/notifications/read-all${scope}`, { method: 'POST', body: '{}' })
-      else await Promise.all(ids.map((id) => request(`/api/notifications/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' })))
+      else await request('/api/notifications/bulk', { method: 'POST', body: JSON.stringify({ ids, action }) })
       await refresh()
     } catch (caught) { if (active.current) setError(caught instanceof Error ? caught.message : 'Could not update notifications') }
     finally { if (active.current) setMutating(false) }

@@ -76,13 +76,31 @@ describe('hub notification center', () => {
     emit({ type: 'session.upserted', session: { ...session(), status: 'waiting',
       pendingPermission: { requestId: 'p', title: 'Run?', options: [] } } })
     for (const [method, suffix] of [
-      ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'], ['POST', `/${'a'.repeat(64)}/read`], ['POST', `/${'a'.repeat(64)}/dismiss`],
+      ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'], ['POST', '/bulk'], ['POST', `/${'a'.repeat(64)}/read`], ['POST', `/${'a'.repeat(64)}/dismiss`],
     ] as const) {
       expect((await runtime.app.inject({ method, url: `/api/notifications${suffix}`, headers: trusted })).statusCode).toBe(404)
     }
     expect(runtime.notificationCenter).toBeUndefined()
     expect(phases).not.toContain('notifications.initialize')
     await expect(stat(path.join(dataDirectory, 'notifications'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('validates bulk bounds before mutating and admits a single batch', async () => {
+    const { runtime } = await hub('on')
+    const store = runtime.notificationCenter!.store
+    const mutate = vi.spyOn(store, 'mutateMany')
+    for (const payload of [
+      { ids: [], action: 'read' }, { ids: ['invalid'], action: 'read' },
+      { ids: ['a'.repeat(64)], action: 'delete' },
+      { ids: Array.from({ length: 1001 }, () => 'a'.repeat(64)), action: 'dismiss' },
+    ]) {
+      expect((await runtime.app.inject({ method: 'POST', url: '/api/notifications/bulk', headers: trusted, payload })).statusCode).toBe(400)
+    }
+    expect(mutate).not.toHaveBeenCalled()
+    const ids = ['a'.repeat(64), 'b'.repeat(64)]
+    expect((await runtime.app.inject({ method: 'POST', url: '/api/notifications/bulk',
+      headers: trusted, payload: { ids, action: 'dismiss' } })).statusCode).toBe(200)
+    expect(mutate).toHaveBeenCalledExactlyOnceWith(ids, 'dismiss')
   })
 
   it('lists, filters, acknowledges, dismisses, counts, and broadcasts only durable changes', async () => {

@@ -2005,9 +2005,16 @@ export class ClaudeAgentService
       (!this.startingQueries.has(sessionId) || this.startingQueries.get(sessionId) === registering)
     let registered = false
     let invocationStarted = false
+    let deliveryConfirmationRecorded = false
     const accept = () => {
       delivery?.accept()
       receipt?.resolve()
+      if (!deliveryConfirmationRecorded) {
+        deliveryConfirmationRecorded = true
+        void this.store.confirmPromptDelivery(sessionId, assistantId)
+          .then((session) => { if (session) this.publish(session) })
+          .catch(() => { deliveryConfirmationRecorded = false })
+      }
     }
     let aborted = false
     let rootOutcome: 'succeeded' | 'failed' | 'unknown' = 'unknown'

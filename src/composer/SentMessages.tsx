@@ -1,13 +1,16 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatMessage } from '../../shared/contracts'
+import type { PromptAcceptanceReceipt } from '../../shared/launch-identity'
 import { DialogFrame } from '../components/DialogFrame'
-import { filterSentMessages } from './composer-state'
+import { filterSentMessages, type SentHistoryContext } from './composer-state'
 
 export function SentMessages({
-  messages, onChoose, onCancel, onUse,
+  messages, receipts, sessionState, onChoose, onCancel, onUse,
 }: {
   messages: readonly ChatMessage[]
+  receipts?: readonly PromptAcceptanceReceipt[]
+  sessionState?: SentHistoryContext
   onChoose: (id: string) => void
   onCancel: () => void
   onUse: () => void
@@ -16,7 +19,10 @@ export function SentMessages({
   const [active, setActive] = useState(-1)
   const [chosen, setChosen] = useState<string>()
   const listId = useId()
-  const matches = useMemo(() => filterSentMessages(messages, query), [messages, query])
+  const matches = useMemo(
+    () => filterSentMessages(messages, query, receipts, sessionState),
+    [messages, query, receipts, sessionState],
+  )
   const activeId = active >= 0 && matches[active] ? `${listId}-${matches[active].id}` : undefined
   useEffect(() => {
     if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' })
@@ -29,7 +35,7 @@ export function SentMessages({
     ? key === 'ArrowDown' ? 0 : matches.length - 1
     : (index + (key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length
   return createPortal(
-    <div onKeyDown={(event) => {
+    <div style={{ display: 'contents' }} onKeyDown={(event) => {
       if (event.key === 'Escape') {
         event.preventDefault()
         event.stopPropagation()
@@ -100,6 +106,7 @@ export function SentMessages({
         </div>
       </DialogFrame>
     </div>,
-    document.body,
+    // Inherit visual-viewport geometry without entering the composer's containing block.
+    document.querySelector('.app-shell') ?? document.body,
   )
 }

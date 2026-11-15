@@ -15,6 +15,26 @@ const messages: ChatMessage[] = [
 ]
 
 describe('SentMessages', () => {
+  it('uses the session state to withhold only an active trailing legacy prompt', () => {
+    const callbacks = { onChoose: vi.fn(), onCancel: vi.fn(), onUse: vi.fn() }
+    const { rerender } = render(<SentMessages messages={messages} sessionState={{ status: 'running' }} {...callbacks} />)
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByRole('option')).toHaveTextContent('First full message')
+    rerender(<SentMessages messages={messages} sessionState={{ status: 'idle' }} {...callbacks} />)
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+  })
+  it('portals outside composer containers but inside the viewport-owning shell', () => {
+    const shell = document.createElement('div')
+    shell.className = 'app-shell'
+    document.body.append(shell)
+    render(<div className="composer-area">
+      <SentMessages messages={messages} onChoose={vi.fn()} onCancel={vi.fn()} onUse={vi.fn()} />
+    </div>, { container: shell })
+    const dialog = screen.getByRole('dialog', { name: 'Sent messages' })
+    expect(dialog.closest('.app-shell')).toBe(shell)
+    expect(dialog.closest('.composer-area')).toBeNull()
+  })
+
   it.each([
     ['ArrowUp', 'one'],
     ['ArrowDown', 'two'],

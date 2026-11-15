@@ -47,8 +47,8 @@ async function setupFixture() {
       'AGENTIC_REMOTE_ROLE=hub',
       'AGENTIC_REMOTE_NODE_NAME=fixture',
       'AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on',
-      'AGENTIC_REMOTE_FEATURE_HOST_MONITOR=false',
-      'AGENTIC_REMOTE_FEATURE_SCHEDULER=1',
+      'AGENTIC_REMOTE_FEATURE_HOST_MONITOR=off',
+      'AGENTIC_REMOTE_FEATURE_SCHEDULER=on',
       'AGENTIC_REMOTE_FEATURE_FUTURE_PREVIEW=off',
       'AGENTIC_REMOTE_ORACLE_VOICE=on',
       'AGENTIC_REMOTE_VOICE_COMPUTER=',
@@ -336,14 +336,14 @@ describe('reproducible promotion setup', () => {
     await fixture.run({}, command)
     const values = [
       'AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on',
-      'AGENTIC_REMOTE_FEATURE_HOST_MONITOR=false',
-      'AGENTIC_REMOTE_FEATURE_SCHEDULER=1',
+      'AGENTIC_REMOTE_FEATURE_HOST_MONITOR=off',
+      'AGENTIC_REMOTE_FEATURE_SCHEDULER=on',
       'AGENTIC_REMOTE_FEATURE_FUTURE_PREVIEW=off',
     ]
     for (const value of values) expect(await readFile(fixture.environment, 'utf8')).toContain(`${value}\n`)
     await fixture.run({
       AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER: 'off',
-      AGENTIC_REMOTE_FEATURE_ADDITIONAL: 'true',
+      AGENTIC_REMOTE_FEATURE_ADDITIONAL: 'on',
     }, command)
     // The next setup has only the saved environment, as on downstream promotion.
     await fixture.run({}, command)
@@ -351,7 +351,7 @@ describe('reproducible promotion setup', () => {
     for (const value of [
       ...values.slice(1),
       'AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=off',
-      'AGENTIC_REMOTE_FEATURE_ADDITIONAL=true',
+      'AGENTIC_REMOTE_FEATURE_ADDITIONAL=on',
     ]) expect(environment).toContain(`${value}\n`)
     expect((await stat(fixture.environment)).mode & 0o777).toBe(0o600)
   })

@@ -2113,7 +2113,7 @@ people sharing a hub share its profile. See
   reconnect.
 - The hub MUST validate every key and value against an allowlist, bound the
   profile to 32 KB, and guard it with the `/api/` Host and Origin policy.
-- Preview features MUST default off. A preview that depends on a hub feature flag MUST remain unavailable while that flag is off and show **Turned off on this hub**. Stored preferences MUST NOT enable hub behavior. Hub flags come only from the service environment, are read once at startup, and require a restart to change.
+- Preview features MUST default off. A preview that depends on a hub feature flag MUST remain unavailable while that flag is off and show **Turned off on this hub**. Stored preferences MUST NOT enable hub behavior. Hub flags come only from the service environment, are read once at startup, and require a restart to change. Their values MUST be only `on` or `off` (case-insensitive, ignoring surrounding whitespace); any other value MUST fail hub startup with the variable's name.
 - A device without a copy MUST offer its earlier browser-local settings once;
   the hub MUST keep only settings no device has chosen yet.
 

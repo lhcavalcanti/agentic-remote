@@ -628,8 +628,8 @@ export const navigableSettingsSections: readonly SettingsSection[] = [
       </>
     ),
   },
-  settingsSections[3],
   settingsSections[2],
+  settingsSections[3],
   settingsSections[4],
   settingsSections[5],
 ]

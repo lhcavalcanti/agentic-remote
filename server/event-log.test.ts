@@ -2,6 +2,8 @@ import { appendFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { filterSentMessages } from '../src/composer/composer-state.js'
+import { messagesFromHistory } from './agent-service.js'
 import {
   forgetSessionEvents,
   readSessionEvents,
@@ -22,7 +24,7 @@ afterEach(async () => {
 })
 
 describe('readSessionEvents', () => {
-  it('reads complete events while ignoring an in-progress final line', async () => {
+  it('reads complete tmux events as delivered history while ignoring an in-progress final line', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'event-log-test-'))
     directories.push(directory)
     vi.stubEnv('COPILOT_HOME', directory)
@@ -46,6 +48,9 @@ describe('readSessionEvents', () => {
 
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: 'user.message' })
+    const transcript = messagesFromHistory(events)
+    expect(transcript[0]).toMatchObject({ role: 'user', deliveryConfirmed: true })
+    expect(filterSentMessages(transcript, '', [], { status: 'running' })).toEqual(transcript)
     expect(await sessionEventLogVersion('session-1')).toMatch(/^\d+:\d+/)
   })
 

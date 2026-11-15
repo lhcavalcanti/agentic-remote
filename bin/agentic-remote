@@ -173,6 +173,14 @@ function redact(value) {
   ]))
   if (typeof value !== 'string') return value
   return value
+    .replace(/-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY)-----[\s\S]*?(?:-----END \1-----|$)/g, '[REDACTED]')
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/?#]+@/gi, '$1[REDACTED]@')
+    .replace(/([?&])([^=&\s"'<>#]+)=([^&#\s"'<>]*)/g, (match, separator, key) => {
+      let name = key
+      try { name = decodeURIComponent(key.replace(/\+/g, ' ')) } catch {}
+      return /token|authorization|password|passwd|secret|api[_-]?key|credential|cookie|signature|^(?:auth|code|sig)$/i.test(name)
+        ? `${separator}${key}=[REDACTED]` : match
+    })
     .replace(/(\b(?:proxy-)?authorization["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+)?[^\s,;"'}]+/gi, '$1[REDACTED]')
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
     .replace(/(\b[\w.-]*(?:token|password|passwd|secret|api[_-]?key|credential)[\w.-]*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&}]+)/gi, '$1[REDACTED]')
@@ -181,6 +189,8 @@ function redact(value) {
 }
 const clean = (value) => text(redact(value))
 const lineText = (value) => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim().slice(0, 2000)
+const rendered = (entry) => entry.privateKeyFragment ? '[REDACTED]' :
+  lineText(entry.item ? JSON.stringify(redact(entry.item)) : redact(entry.message))
 function timestamp(journal, item) {
   const micros = journal?.__REALTIME_TIMESTAMP || journal?._SOURCE_REALTIME_TIMESTAMP
   const value = micros ? Number(micros) / 1000 : item?.time ?? item?.timestamp
@@ -213,11 +223,19 @@ function explain() {
   })
   if (journal.error?.code === 'ENOBUFS') throw new JournalTooLarge()
   if (!success(journal) || /permission denied|insufficient permissions|not permitted/i.test(journal.stderr)) throw new Error()
+  let privateKey
   const entries = journal.stdout.split('\n').filter((line) => line.trim()).map((line) => {
     const envelope = parseRecord(line)
     const message = typeof envelope?.MESSAGE === 'string' ? envelope.MESSAGE : line
     const item = parseRecord(message)
-    return { item, message, time: timestamp(envelope, item), correlation: correlations(item) }
+    // Track split PEM blocks across the whole journal before limiting displayed context.
+    const continuedKey = !!privateKey
+    for (const marker of message.matchAll(/-----(BEGIN|END) ((?:[A-Z0-9]+ )*PRIVATE KEY)-----/g)) {
+      if (marker[1] === 'BEGIN') privateKey = marker[2]
+      else if (privateKey === marker[2]) privateKey = undefined
+    }
+    return { item, message, time: timestamp(envelope, item), correlation: correlations(item),
+      privateKeyFragment: continuedKey || !!privateKey }
   })
   const { lastFailure, unfinished } = startupSignals(entries.map((entry) => entry.item))
   let signal = lastFailure && { ...lastFailure, kind: 'startup' }
@@ -244,11 +262,11 @@ function explain() {
   const summary = entry.item?.msg ?? entry.item?.message ?? entry.item?.err?.message ?? entry.message
   const failure = {
     kind: signal.kind, time: entry.time,
-    message: clean(signal.phase
+    message: entry.privateKeyFragment ? '[REDACTED]' : clean(signal.phase
       ? `${signal.kind === 'startup' ? 'Failed' : 'Unfinished'} startup phase: ${signal.phase}${signal.kind === 'unfinished-startup' ? ' (begin without complete/fail; service not active)' : ''}`
       : typeof summary === 'string' ? summary : JSON.stringify(redact(summary))),
     ...(signal.phase ? { phase: clean(signal.phase) } : {}),
-    line: lineText(entry.item ? JSON.stringify(redact(entry.item)) : redact(entry.message)),
+    line: rendered(entry),
   }
   const preceding = entries.slice(0, signal.index)
   const key = ['sessionId', 'requestId', 'phase', 'computerId'].find((key) => entry.correlation[key])
@@ -259,10 +277,10 @@ function explain() {
   // A busy hub logs hundreds of requests per minute; keep the lines closest to the failure.
   const nearby = window.slice(-20)
   const output = (item, block) => ({
-    block, time: item.time, message: lineText(item.item ? JSON.stringify(redact(item.item)) : redact(item.message)),
+    block, time: item.time, message: rendered(item),
   })
   return {
-    failure, correlation: redact(entry.correlation), omittedWindowLines: window.length - nearby.length,
+    failure, correlation: entry.privateKeyFragment ? {} : redact(entry.correlation), omittedWindowLines: window.length - nearby.length,
     before: [...same.map((item) => output(item, label)), ...nearby.map((item) => output(item, 'time window'))],
     after: entries.slice(signal.index + 1, signal.index + 6).map((item) => output(item, 'after')),
   }

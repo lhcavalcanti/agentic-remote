@@ -238,6 +238,80 @@ describe('read-only logs explanation CLI', () => {
     expect(result.stdout).not.toContain('failure-secret')
   })
 
+  it('redacts URL userinfo and query credentials in every output surface', async () => {
+    const url = 'https://url-user:url-pass@fixture.invalid/path?%74oken=query-token&api_key=query-key&sig=query-signature&ok=visible'
+    const context = await fixture([
+      journalLine({ sessionId: url, details: [{ url }] }, -300),
+      journalLine(`Connecting to ${url}`, -1),
+      journalLine({ level: 50, sessionId: url, msg: `Request failed at ${url}`, details: { url } }),
+      journalLine(`Retry postgresql://db-user:db-pass@fixture.invalid/path?access_token=after-token`, 1),
+    ])
+    for (const args of [['--why'], ['--why', '--json']]) {
+      const result = await context.run(args)
+      expect(result.code).toBe(0)
+      for (const secret of ['url-user', 'url-pass', 'query-token', 'query-key', 'query-signature', 'db-user', 'db-pass', 'after-token']) {
+        expect(result.stdout).not.toContain(secret)
+      }
+      expect(result.stdout).toContain('fixture.invalid/path')
+      expect(result.stdout).toContain('ok=visible')
+      expect(result.stdout).toContain('[REDACTED]')
+    }
+  })
+
+  it.each(['PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'OPENSSH PRIVATE KEY', 'ENCRYPTED PRIVATE KEY'])(
+    'redacts multiline %s blocks in raw and structured messages', async (label) => {
+      const key = `-----BEGIN ${label}-----\nfictional-key-first-line\nfictional-key-second-line\n-----END ${label}-----`
+      const context = await fixture([
+        journalLine({ sessionId: 'session', details: [key] }, -300),
+        journalLine(`Before ${key}`, -1),
+        journalLine({ level: 50, sessionId: 'session', msg: `Failure ${key}`, details: { key } }),
+        journalLine(`After ${key}`, 1),
+      ])
+      for (const args of [['--why'], ['--why', '--json']]) {
+        const result = await context.run(args)
+        expect(result.code).toBe(0)
+        expect(result.stdout).not.toContain('fictional-key-')
+        expect(result.stdout).not.toContain(`BEGIN ${label}`)
+        expect(result.stdout).toContain('[REDACTED]')
+      }
+    },
+  )
+
+  it('redacts private key fragments across journal entries before selecting bounded context', async () => {
+    const context = await fixture([
+      journalLine('-----BEGIN PRIVATE KEY-----', -300),
+      journalLine('fictional-before-key-body', -1),
+      journalLine('-----END PRIVATE KEY-----', -1),
+      journalLine({ level: 50, msg: 'request failed' }),
+      journalLine('-----BEGIN RSA PRIVATE KEY-----', 1),
+      journalLine('fictional-after-key-body', 2),
+      journalLine('-----END RSA PRIVATE KEY-----', 3),
+      journalLine('safe context after the key', 4),
+    ])
+    for (const args of [['--why'], ['--why', '--json']]) {
+      const result = await context.run(args)
+      expect(result.code).toBe(0)
+      expect(result.stdout).not.toContain('fictional-before-key-body')
+      expect(result.stdout).not.toContain('fictional-after-key-body')
+      expect(result.stdout).toContain('request failed')
+      expect(result.stdout).toContain('safe context after the key')
+      expect(result.stdout).toContain('[REDACTED]')
+    }
+  })
+
+  it('redacts unterminated private keys through the end of the journal', async () => {
+    const context = await fixture([
+      journalLine({ level: 50, msg: '-----BEGIN PRIVATE KEY-----\nfictional-truncated-key' }),
+      journalLine('fictional-key-continuation', 1),
+    ])
+    for (const args of [['--why'], ['--why', '--json']]) {
+      const result = await context.run(args)
+      expect(result.code).toBe(0)
+      expect(result.stdout).not.toContain('fictional-')
+      expect(result.stdout).toContain('[REDACTED]')
+    }
+  })
+
   it('does not execute log text, read environment contents, or modify fixture inputs', async () => {
     const context = await fixture()
     const marker = path.join(context.root, 'must-not-exist')

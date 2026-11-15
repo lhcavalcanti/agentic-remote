@@ -36,6 +36,15 @@ export const isInFlight = (run: ScheduleRun) =>
   ['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status)
 export const holdsSlot = (run: ScheduleRun) => isInFlight(run) && run.status !== 'pending'
 
+function deferUnboundWorktree(run: ScheduleRun): void {
+  if (isInFlight(run) || run.sessionId || !run.worktree ||
+      run.worktree.state === 'removed' || run.worktree.state === 'deferred') return
+  run.worktree = {
+    ...run.worktree, state: 'deferred',
+    reason: 'No session was confirmed for this worktree; cleanup requires manual review',
+  }
+}
+
 /** One hub writer; the occurrence fence, intent, and launch identity commit together. */
 export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerChanged]; proposal: [event: ScheduleProposalsChanged] }> {
   readonly directory: string
@@ -87,6 +96,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       try {
         const next = stateSchema.parse(JSON.parse(raw))
         this.validateState(next)
+        next.runs.forEach(deferUnboundWorktree)
         this.state = next
       } catch {
         await rename(this.statePath, `${this.statePath}.corrupt-${randomUUID()}`)
@@ -459,6 +469,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       if (this.poisoned) throw new Error('Scheduler commit outcome is uncertain; restart to reload durable state')
       const next = structuredClone(this.state)
       const { result, scheduleId, runId, proposalId } = mutate(next)
+      next.runs.forEach(deferUnboundWorktree)
       if (JSON.stringify(next) !== JSON.stringify(this.state)) {
         const visible = JSON.stringify([next.schedules, next.runs]) !== JSON.stringify([this.state.schedules, this.state.runs])
         next.revision += 1

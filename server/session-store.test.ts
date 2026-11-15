@@ -44,10 +44,12 @@ describe('SessionStore', () => {
         updatedAt: new Date().toISOString(), messages: [],
       })
       await store.beginPrompt('delivery', 'Refused before provider start', 'refused', () => true)
+      expect(store.get('delivery')?.messages[0].deliveryState).toBe('pending')
       await store.cancelPromptAdmission('delivery', 'refused', () => true, {
         message: 'Not sent: provider startup failed',
       })
       expect(store.get('delivery')?.messages[0].deliveryConfirmed).toBeUndefined()
+      expect(store.get('delivery')?.messages[0].deliveryState).toBe('refused')
       await store.beginPrompt('delivery', 'Provider acknowledged', 'accepted', () => true)
       expect(await store.confirmPromptDelivery('delivery', 'accepted', {
         content: 'Different turn', createdAt: new Date().toISOString(),
@@ -55,6 +57,8 @@ describe('SessionStore', () => {
       await store.confirmPromptDelivery('delivery', 'accepted')
       expect(store.get('delivery')?.messages.filter((message) => message.role === 'user')
         .map((message) => message.deliveryConfirmed)).toEqual([undefined, true])
+      expect(store.get('delivery')?.messages.find((message) => message.content === 'Provider acknowledged')?.deliveryState)
+        .toBeUndefined()
       expect(await store.confirmPromptDelivery('delivery', 'accepted')).toBeUndefined()
       await store.close()
       const reopened = new SessionStore(directory)
@@ -76,6 +80,7 @@ describe('SessionStore', () => {
       const user = store.get('delivery')?.messages.find((message) => message.role === 'user')
       expect(user).toMatchObject({ content: 'Waiting for the provider' })
       expect(user?.deliveryConfirmed).toBeUndefined()
+      expect(user?.deliveryState).toBe('pending')
       await store.close()
     })
   })

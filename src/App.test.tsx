@@ -18909,14 +18909,11 @@ describe('App', () => {
     seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const sentSession = {
       ...session,
-      promptReceipts: [{
-        deliveryId: 'history-delivery', sessionId: session.id, promptId: 'history-prompt',
-        acceptedAt: '2026-11-14T12:00:00Z', state: 'delivered' as const, userMessageId: 'sent-message',
-      }],
       messages: [
         { id: 'sent-message', role: 'user' as const, content: 'Searchable full history text', createdAt: '2026-11-14T12:00:00Z' },
-        { id: 'refused-message', role: 'user' as const, content: 'History prompt refused before provider start', createdAt: '2026-11-14T12:01:00Z' },
-        { id: 'dispatching-message', role: 'user' as const, content: 'History prompt still dispatching', createdAt: '2026-11-14T12:02:00Z' },
+        { id: 'legacy-reply', role: 'assistant' as const, content: 'Here is the completed history review.', createdAt: '2026-11-14T12:00:01Z' },
+        { id: 'refused-message', role: 'user' as const, deliveryState: 'refused' as const, content: 'History prompt refused before provider start', createdAt: '2026-11-14T12:01:00Z' },
+        { id: 'dispatching-message', role: 'user' as const, deliveryState: 'pending' as const, content: 'History prompt still dispatching', createdAt: '2026-11-14T12:02:00Z' },
       ],
     }
     vi.mocked(listSessions).mockResolvedValue([sentSession])

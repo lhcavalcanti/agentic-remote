@@ -10,11 +10,19 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 const messages: ChatMessage[] = [
-  { id: 'one', role: 'user', deliveryConfirmed: true, content: 'First full message', createdAt: '2026-11-13T12:00:00Z' },
-  { id: 'two', role: 'user', deliveryConfirmed: true, content: 'Newest full message', createdAt: '2026-11-14T12:00:00Z' },
+  { id: 'one', role: 'user', content: 'First full message', createdAt: '2026-11-13T12:00:00Z' },
+  { id: 'two', role: 'user', content: 'Newest full message', createdAt: '2026-11-14T12:00:00Z' },
 ]
 
 describe('SentMessages', () => {
+  it('uses the session state to withhold only an active trailing legacy prompt', () => {
+    const callbacks = { onChoose: vi.fn(), onCancel: vi.fn(), onUse: vi.fn() }
+    const { rerender } = render(<SentMessages messages={messages} sessionState={{ status: 'running' }} {...callbacks} />)
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByRole('option')).toHaveTextContent('First full message')
+    rerender(<SentMessages messages={messages} sessionState={{ status: 'idle' }} {...callbacks} />)
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+  })
   it('portals outside composer containers but inside the viewport-owning shell', () => {
     const shell = document.createElement('div')
     shell.className = 'app-shell'

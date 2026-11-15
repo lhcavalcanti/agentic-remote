@@ -2431,7 +2431,7 @@ export class SessionStore {
         session.failedPrompt = { content: head.content, failedAt: createdAt, uncertain: true }
       }
       session.messages.push(
-        { id: userId, role: 'user', content, createdAt },
+        { id: userId, role: 'user', content, createdAt, deliveryState: 'pending' },
         { id: assistantId, role: 'assistant', content: '', createdAt, streaming: true },
       )
       session.transcriptEpoch = assistantId
@@ -2545,7 +2545,7 @@ export class SessionStore {
       }
       previous.streaming = false
       session.messages.push(
-        { id: userId, role: 'user', content, createdAt },
+        { id: userId, role: 'user', content, createdAt, deliveryState: 'pending' },
         {
           id: assistantId,
           role: 'assistant',
@@ -2598,9 +2598,10 @@ export class SessionStore {
     uncertainContent?: string,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      const assistant = session.messages.find(
-        (entry) => entry.id === assistantId,
-      )
+      const index = session.messages.findIndex((entry) => entry.id === assistantId)
+      const assistant = session.messages[index]
+      const user = session.messages[index - 1]
+      if (user?.role === 'user' && !user.deliveryConfirmed) user.deliveryState = 'uncertain'
       if (assistant?.role === 'assistant') {
         assistant.streaming = false
         assistant.content =
@@ -2667,6 +2668,7 @@ export class SessionStore {
       const assistant = session.messages[index]
       const user = session.messages[index - 1]
       if (!assistant || assistant.role !== 'assistant' || user?.role !== 'user') return
+      if (!user.deliveryConfirmed) user.deliveryState = failure?.uncertain ? 'uncertain' : 'refused'
       assistant.streaming = false
       assistant.content = failure?.message || 'Not sent: the session service stopped before provider dispatch.'
       if (canBecomeIdle()) {
@@ -2692,6 +2694,8 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const admission = session.sdkQueueAdmission!
+      const user = session.messages.find((entry) => entry.id === admission.userId)
+      if (user?.role === 'user' && !user.deliveryConfirmed) user.deliveryState = 'uncertain'
       if (session.failedPrompt?.failedAt === admission.startedAt) session.failedPrompt.uncertain = true
       const assistant = session.messages.find((entry) => entry.id === assistantId)
       if (assistant) {
@@ -3393,10 +3397,11 @@ export class SessionStore {
     return this.updateIf(sessionId, (session) => {
       const index = session.messages.findIndex((message) => message.id === assistantId && message.role === 'assistant')
       const user = session.messages[index - 1]
-      if (user?.role !== 'user' || user.deliveryConfirmed) return false
+      if (user?.role !== 'user' || (user.deliveryConfirmed && !user.deliveryState)) return false
       if (echo && (echo.content !== user.content || !Number.isFinite(Date.parse(echo.createdAt)) ||
         Date.parse(echo.createdAt) < Date.parse(user.createdAt))) return false
       user.deliveryConfirmed = true
+      delete user.deliveryState
       return true
     })
   }

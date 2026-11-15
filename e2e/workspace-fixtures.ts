@@ -216,7 +216,6 @@ export const fixtureSessions: ManagedSession[] = [
       {
         id: 'fixture-plan-user',
         role: 'user',
-        deliveryConfirmed: true,
         content:
           'Help me make this workspace easier to scan. Keep the conversation close while I read our field guide.',
         createdAt: '2026-09-04T16:15:00.000Z',
@@ -251,7 +250,6 @@ export const fixtureSessions: ManagedSession[] = [
       {
         id: 'fixture-recovery-user',
         role: 'user',
-        deliveryConfirmed: true,
         content: 'Review how a reader returns to work after reconnecting.',
         createdAt: '2026-09-04T16:13:00.000Z',
       },

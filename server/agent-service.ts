@@ -615,6 +615,7 @@ function activityGroupIdFor(
   return undefined
 }
 
+/** Provider-owned events, shared by tmux/discovery and SDK history hydration. */
 export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()

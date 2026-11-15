@@ -86,7 +86,7 @@ export function createUIScenes(baseUrl = 'http://127.0.0.1:4395'): UIScene[] {
         if (name === 'composer-status-busy') session.status = 'running'
         if (name === 'composer-sent-messages') {
           session.messages.push({
-            id: 'fixture-sent-review', role: 'user', deliveryConfirmed: true,
+            id: 'fixture-sent-review', role: 'user',
             content: 'Review the recovery checklist and document the remaining checks.',
             createdAt: FIXTURE_NOW,
           })

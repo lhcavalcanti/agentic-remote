@@ -3,13 +3,14 @@ import { createPortal } from 'react-dom'
 import type { ChatMessage } from '../../shared/contracts'
 import type { PromptAcceptanceReceipt } from '../../shared/launch-identity'
 import { DialogFrame } from '../components/DialogFrame'
-import { filterSentMessages } from './composer-state'
+import { filterSentMessages, type SentHistoryContext } from './composer-state'
 
 export function SentMessages({
-  messages, receipts, onChoose, onCancel, onUse,
+  messages, receipts, sessionState, onChoose, onCancel, onUse,
 }: {
   messages: readonly ChatMessage[]
   receipts?: readonly PromptAcceptanceReceipt[]
+  sessionState?: SentHistoryContext
   onChoose: (id: string) => void
   onCancel: () => void
   onUse: () => void
@@ -18,7 +19,10 @@ export function SentMessages({
   const [active, setActive] = useState(-1)
   const [chosen, setChosen] = useState<string>()
   const listId = useId()
-  const matches = useMemo(() => filterSentMessages(messages, query, receipts), [messages, query, receipts])
+  const matches = useMemo(
+    () => filterSentMessages(messages, query, receipts, sessionState),
+    [messages, query, receipts, sessionState],
+  )
   const activeId = active >= 0 && matches[active] ? `${listId}-${matches[active].id}` : undefined
   useEffect(() => {
     if (activeId) document.getElementById(activeId)?.scrollIntoView?.({ block: 'nearest' })

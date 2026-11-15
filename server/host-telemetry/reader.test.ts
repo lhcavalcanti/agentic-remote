@@ -71,4 +71,26 @@ describe('Linux host telemetry reader', () => {
     await expect(reader(controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
     expect(readText).toHaveBeenCalledTimes(calls)
   })
+
+  it('timestamps individual proc captures before slow disk-space I/O finishes', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(10_000)
+      const reader = createLinuxHostTelemetryReader({
+        dataDirectory: '/data', systemInfo: () => hostInfoFixture, monotonicNow: Date.now,
+        readText: async (path) => {
+          if (path === '/proc/net/dev') await new Promise((resolve) => setTimeout(resolve, 10))
+          if (path === '/proc/diskstats') await new Promise((resolve) => setTimeout(resolve, 20))
+          return ''
+        },
+        readSpace: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          return { bsize: 1, blocks: 10, bavail: 5 }
+        },
+      })
+      const pending = reader(new AbortController().signal)
+      await vi.advanceTimersByTimeAsync(100)
+      expect((await pending).capturedAt).toMatchObject({ netDev: 10_010, diskstats: 10_020 })
+    } finally { vi.useRealTimers() }
+  })
 })

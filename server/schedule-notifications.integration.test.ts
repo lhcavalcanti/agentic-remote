@@ -9,6 +9,11 @@ import { PushNotificationService } from './push-notification-service.js'
 import { ComputerManager } from './computer-manager.js'
 import { NotificationCenterService } from './notification-center-service.js'
 import * as managerMemoryRuntime from './manager-structured-memory-runtime.js'
+import { ManagerAgent } from './manager-agent.js'
+import { JournalRecorder } from './manager-journal.js'
+import { ManagerStore } from './manager-store.js'
+import { NodeIdentityStore } from './node-identity.js'
+import { recordScheduleProvenance } from './schedule-launcher.js'
 
 const headers = { host: 'localhost', origin: 'http://localhost' }
 let directory: string
@@ -26,14 +31,20 @@ beforeEach(async () => {
   sender.mockClear()
 })
 afterEach(async () => {
+  vi.useRealTimers()
   await runtime?.app.close()
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
   await rm(directory, { recursive: true, force: true })
 })
-async function hub() {
+async function hub(oracleEnabled = false) {
+  if (oracleEnabled) {
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER', 'on')
+    vi.stubEnv('AGENTIC_REMOTE_MANAGER_STRUCTURED_MEMORY', 'off')
+    vi.spyOn(ManagerAgent.prototype, 'start').mockResolvedValue()
+  }
   runtime = await buildApp({
-    dataDirectory: directory, logger: false, managerAgent: false,
+    dataDirectory: directory, logger: false, ...(!oracleEnabled ? { managerAgent: false as const } : {}),
     pushService: new PushNotificationService(directory, sender),
     transcriptionService: { initialize: async () => {}, stop: async () => {}, transcribe: vi.fn() },
   })
@@ -57,6 +68,56 @@ async function run(notify: 'never' | 'always') {
 }
 
 describe('hub schedule notification integration', () => {
+  it.each([true, false])('keeps fast clear-replacement alerts suppressed before journal flush with Oracle enabled=%s', async (oracleEnabled) => {
+    const identity = new NodeIdentityStore(directory)
+    await identity.initialize()
+    const registry = new ManagerStore(path.join(directory, 'manager'))
+    await registry.initialize()
+    const session: ManagedSession = {
+      id: 'scheduled-predecessor', computerId: identity.info.id, computerName: 'Fictional Studio',
+      title: 'Scheduled review', cwd: '/fictional/repo', status: 'idle', messages: [],
+      updatedAt: new Date().toISOString(),
+    }
+    await recordScheduleProvenance(registry, session, {
+      origin: 'schedule', scheduleId: 'retired-schedule', scheduleRunId: 'retired-run', task: 'Review the fictional guide.',
+    })
+    await hub(oracleEnabled)
+    expect(Boolean(runtime.managerAgent)).toBe(oracleEnabled)
+    expect(runtime.scheduler!.store.allRuns()).toEqual([])
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const flush = vi.spyOn(JournalRecorder.prototype, 'flush')
+    const host = runtime.manager!
+    const replacement: ManagedSession = {
+      ...session, id: 'fast-replacement', status: 'running',
+      messages: [{ id: 'follow-up-root', role: 'user', content: 'Review again', createdAt: session.updatedAt }],
+    }
+    host.emit('event', {
+      type: 'session.removed', computerId: session.computerId, sessionId: session.id, replacedBy: replacement.id,
+    })
+    host.emit('event', { type: 'session.upserted', session: replacement })
+    host.emit('event', { type: 'session.upserted', session: {
+      ...replacement, status: 'waiting', pendingPermission: { requestId: 'follow-up-permission', title: 'Allow?', options: [] },
+    } })
+    host.emit('event', { type: 'session.upserted', session: replacement })
+    host.emit('event', { type: 'session.upserted', session: { ...replacement, status: 'idle' } })
+    await runtime.notificationCenter!.flush()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(flush).not.toHaveBeenCalled()
+    expect(await runtime.notificationCenter!.store.list()).toEqual([])
+    expect(sender).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(flush).toHaveBeenCalledTimes(oracleEnabled ? 1 : 0)
+    await Promise.all(flush.mock.results.map((result) => result.value))
+    vi.useRealTimers()
+    vi.spyOn(host, 'readSession').mockResolvedValue({ ...replacement, status: 'idle' })
+    const detail = await runtime.app.inject({
+      url: `/api/computers/${session.computerId}/sessions/${replacement.id}?passive=1`, headers,
+    })
+    expect(detail.json().session.suppressOrdinaryNotifications).toBe(true)
+    expect(await runtime.notificationCenter!.store.list()).toEqual([])
+    expect(sender).not.toHaveBeenCalled()
+  })
+
   it('records startup session and offline events exactly once before Oracle initialization finishes', async () => {
     let manager!: ComputerManager
     const initializeManager = ComputerManager.prototype.initialize

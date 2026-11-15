@@ -220,3 +220,54 @@ it.each([404, 503])('retains the schedule list when selected history returns %s'
   fireEvent.click(screen.getByRole('button', { name: 'Show all schedules' }))
   await waitFor(() => expect(screen.queryByText(/This schedule no longer exists|Run history is unavailable/)).toBeNull())
 })
+
+it.each([false, true])('requires explicit reselection of an unpaired target (removed while editing: %s)', async (removedWhileEditing) => {
+  const onSave = vi.fn().mockResolvedValue(undefined)
+  const retired = { ...computer, id: 'retired-node', name: 'Retired node', isLocal: false }
+  const initial = { ...definition, target: { ...definition.target, computerId: retired.id } }
+  const props = { initial, pending: false, onSave, onCancel: vi.fn() }
+  const { rerender, container } = render(<ScheduleForm {...props} computers={removedWhileEditing ? [computer, retired] : [computer]} />)
+  if (removedWhileEditing) rerender(<ScheduleForm {...props} computers={[computer]} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Target' }))
+  const target = screen.getByRole('combobox', { name: 'Computer' })
+  expect(target).toHaveProperty('value', retired.id)
+  expect(screen.getByRole('option', { name: 'retired-node (not paired)' })).toHaveProperty('selected', true)
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  expect(screen.getByRole('button', { name: 'Save schedule' })).toHaveProperty('disabled', true)
+  await act(async () => { fireEvent.submit(container.querySelector('form')!) })
+  expect(onSave).not.toHaveBeenCalled()
+  expect(screen.getByRole('alert').textContent).toContain('Choose a paired computer')
+  fireEvent.change(screen.getByRole('combobox', { name: 'Computer' }), { target: { value: computer.id } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    target: expect.objectContaining({ computerId: computer.id }),
+  })))
+})
+
+it.each([true, false])('clears the linked run when opening another schedule history (run retained: %s)', async (retained) => {
+  const other = { ...schedule, id: 'other', name: 'Other review' }
+  const run: ScheduleRun = { id: 'linked-run', scheduleId: schedule.id, computerId: computer.id,
+    occurrenceAt: '2026-11-14T18:00:00Z', trigger: 'manual', status: 'succeeded', launchId: 'linked-launch' }
+  vi.mocked(request).mockImplementation(async (path) => {
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    if (path === '/api/schedules') return { schedules: [schedule, other] }
+    return { runs: path.includes('/review/runs') && retained ? [run] : [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled initialScheduleId={schedule.id} initialRunId={run.id}
+    onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  const initialHistory = await screen.findByRole('region', { name: 'Run history for Morning review' })
+  await waitFor(() => expect(within(initialHistory).queryByText('Loading run history…')).toBeNull())
+  if (retained) expect(initialHistory.querySelectorAll('li[data-linked="true"]')).toHaveLength(1)
+  else expect(within(initialHistory).getByText('The linked run is no longer in retained history.')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'History for Other review' }))
+  const otherHistory = await screen.findByRole('region', { name: 'Run history for Other review' })
+  await within(otherHistory).findByText('No runs yet.')
+  expect(screen.queryByText('The linked run is no longer in retained history.')).toBeNull()
+  expect(otherHistory.querySelectorAll('li[data-linked="true"]')).toHaveLength(0)
+  fireEvent.click(screen.getByRole('button', { name: 'History for Morning review' }))
+  const returnedHistory = await screen.findByRole('region', { name: 'Run history for Morning review' })
+  await waitFor(() => expect(within(returnedHistory).queryByText('Loading run history…')).toBeNull())
+  expect(returnedHistory.querySelectorAll('li[data-linked="true"]')).toHaveLength(0)
+  expect(screen.queryByText('The linked run is no longer in retained history.')).toBeNull()
+})

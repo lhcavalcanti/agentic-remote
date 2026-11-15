@@ -100,6 +100,30 @@ describe('HostTelemetrySampler', () => {
     })
   })
 
+  it('uses each proc capture timestamp for throughput despite variable completion latency', async () => {
+    let index = 0
+    const sampler = makeSampler(async () => {
+      const value = index++
+      const capturedAt = Date.now()
+      const reading = {
+        ...readingFixture({
+          netDev: `eth0: ${value * 1000} 0 0 0 0 0 0 0 ${value * 2000} 0 0 0 0 0 0 0`,
+          diskstats: `8 0 sda 0 0 ${value * 10} 0 0 0 ${value * 20} 0 0 0 0`,
+        }),
+        capturedAt: { netDev: capturedAt, diskstats: capturedAt + (value ? 100 : 0) },
+      }
+      await new Promise((resolve) => setTimeout(resolve, value ? 200 : 800))
+      return reading
+    })
+    sampler.setViewers(1)
+    sampler.start()
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(sampler.status().samples).toBe(2)
+    expect(sampler.snapshot().latest).toMatchObject({ netRxBytesPerSec: 1000, netTxBytesPerSec: 2000 })
+    expect(sampler.snapshot().latest?.diskReadBytesPerSec).toBeCloseTo(5120 / 1.1)
+    expect(sampler.snapshot().latest?.diskWriteBytesPerSec).toBeCloseTo(10_240 / 1.1)
+  })
+
   it('does not overlap slow reads, even when viewer cadence changes mid-read', async () => {
     const first = deferredReading()
     const second = deferredReading()
@@ -160,6 +184,36 @@ describe('HostTelemetrySampler', () => {
     await vi.advanceTimersByTimeAsync(900)
     expect(reader).toHaveBeenCalledTimes(2)
     expect(sampler.status()).toMatchObject({ samples: 1, errorCount: 1 })
+  })
+
+  it('holds the slot when aborted initial metadata still has a non-abortable disk read outstanding', async () => {
+    let finish!: (value: { bsize: number; blocks: number; bavail: number }) => void
+    const readSpace = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+      .mockResolvedValue({ bsize: 1, blocks: 10, bavail: 5 })
+    let firstMetadata = true
+    const reader = createLinuxHostTelemetryReader({
+      dataDirectory: '/data', readSpace, systemInfo: () => hostInfoFixture,
+      readText: async (path, signal) => {
+        if (path === '/proc/version' && firstMetadata) {
+          firstMetadata = false
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+          })
+        }
+        return ''
+      },
+    })
+    const sampler = makeSampler(reader, { sampleTimeoutMs: 100 })
+    sampler.setViewers(1)
+    sampler.start()
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(readSpace).toHaveBeenCalledTimes(1)
+    expect(sampler.status()).toMatchObject({ sampling: true, samples: 0, timeoutCount: 1 })
+    finish({ bsize: 1, blocks: 10, bavail: 5 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(readSpace).toHaveBeenCalledTimes(2)
+    expect(sampler.status()).toMatchObject({ sampling: false, samples: 1, timeoutCount: 1 })
   })
 
   it('contains synchronous/rejected reader errors and retries without throwing from its timer', async () => {
@@ -275,6 +329,26 @@ describe('HostTelemetrySampler', () => {
     expect(sampler.snapshot().latest?.at).toBe(new Date(wall).toISOString())
   })
 
+  it('drops future minute buckets after a backward clock jump instead of evicting current data', async () => {
+    let minute = 0
+    let wall = startAt
+    const sampler = makeSampler(async () => {
+      wall = startAt + minute++ * 60_000
+      return readingFixture()
+    }, { now: () => wall })
+    sampler.setViewers(1)
+    sampler.start()
+    await vi.advanceTimersByTimeAsync(1_440_000)
+    expect(sampler.history()).toHaveLength(1440)
+    minute = -1
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(sampler.history()).toEqual([expect.objectContaining({
+      at: new Date(startAt - 60_000).toISOString(), samples: 1,
+    })])
+    wall -= 60_000
+    expect(sampler.history()).toEqual([])
+  })
+
   it('produces partial samples for missing files and clears rate baselines across gaps', async () => {
     let index = 0
     const reader = vi.fn(async () => {
@@ -329,7 +403,7 @@ describe('HostTelemetrySampler', () => {
     sampler.start()
     await vi.advanceTimersByTimeAsync(0)
     expect(sampler.status().errorCount).toBe(1)
-    expect(sampler.status().lastError?.message).toContain('INVALID')
+    expect(sampler.status().lastError?.message).toBe('/proc/stat: INVALID; /proc/net/dev: INVALID; /proc/loadavg: INVALID')
     expect(sampler.snapshot().latest).toMatchObject({ cpuPercent: null, netRxBytesPerSec: null, load1: null })
   })
 

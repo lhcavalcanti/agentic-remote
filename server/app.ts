@@ -379,6 +379,7 @@ export async function buildApp(
   let dreamerUnavailable: string | undefined
   let managerStructuredMemory = new ManagerStructuredMemoryRuntime('off')
   let managerUnavailable: string | undefined
+  let forwardScheduleProvenance: ((event: HubEvent) => void) | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   let forwardToProactive: ((event: HubEvent) => void) | undefined
   let forwardHubToDreamer: ((event: HubEvent) => void) | undefined
@@ -413,12 +414,13 @@ export async function buildApp(
       managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
       await startupPhases.run('scheduler.provenance', () => managerStore!.initialize())
       managerStoreReady = true
-      forwardToJournal = (event) => {
+      // Suppression needs ancestry immediately; Oracle's journal batches independently.
+      forwardScheduleProvenance = (event) => {
         void recordScheduleReplacement(managerStore!, event).catch((error: unknown) => {
           app.log.warn({ err: error }, 'Schedule replacement provenance could not be saved')
         })
       }
-      manager.on('event', forwardToJournal)
+      manager.on('event', forwardScheduleProvenance)
       const scheduleStore = new SchedulerStore(dataDirectory, {
         warn: (message) => app.log.warn(message),
       })
@@ -509,7 +511,6 @@ export async function buildApp(
         )
       }
       if (recorder) {
-        if (forwardToJournal) manager.off('event', forwardToJournal)
         forwardToJournal = (event) => recorder.handle(event)
         manager.on('event', forwardToJournal)
       }
@@ -799,6 +800,7 @@ export async function buildApp(
     await scheduleNotifications?.stop()
     await scheduleJournal
     await cliCanary?.stop()
+    if (forwardScheduleProvenance) manager?.off('event', forwardScheduleProvenance)
     if (forwardToJournal) manager?.off('event', forwardToJournal)
     if (forwardToProactive) manager?.off('event', forwardToProactive)
     if (forwardHubToDreamer) manager?.off('event', forwardHubToDreamer)

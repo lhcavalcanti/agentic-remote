@@ -59,6 +59,7 @@ export const uiSceneNames = [
   'scheduler-form',
   'scheduler-name-conflict',
   'scheduler-stale-link',
+  'scheduler-unpaired-target',
 ] as const
 
 export type UISceneName = typeof uiSceneNames[number]
@@ -187,7 +188,11 @@ export function createUIScenes(
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: fixtureScheduleProposals,
         } : name.startsWith('scheduler') || name === 'notification-panel'
-          ? { schedules: fixtureSchedules, runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals } : undefined,
+          ? {
+            schedules: name === 'scheduler-unpaired-target' ? fixtureSchedules.map((schedule) =>
+              schedule.id === 'fixture-daily-review' ? { ...schedule, target: { ...schedule.target, computerId: 'fixture-retired' } } : schedule) : fixtureSchedules,
+            runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals,
+          } : undefined,
         manager: hostStatus?.manager ?? (['oracle-panel', 'oracle-schedule-approval'].includes(name) || name.startsWith('scheduler') ? {
           available: true,
           status: 'idle',
@@ -298,7 +303,12 @@ export function createUIScenes(
         const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
         await expect(scheduler).toContainText('Daily workspace review')
         await expect(scheduler.getByRole('button', { name: 'Review in Oracle', exact: true })).toBeEnabled()
-        if (name === 'scheduler-stale-link') {
+        if (name === 'scheduler-unpaired-target') {
+          await scheduler.getByRole('button', { name: 'Edit Daily workspace review', exact: true }).click()
+          await scheduler.getByRole('button', { name: 'Target', exact: true }).click()
+          await expect(scheduler.getByRole('combobox', { name: 'Computer', exact: true })).toHaveValue('fixture-retired')
+          await expect(scheduler.getByRole('status')).toContainText('This target computer is not paired.')
+        } else if (name === 'scheduler-stale-link') {
           const url = new URL(page.url())
           url.searchParams.set('schedule', 'fixture-deleted-review')
           url.searchParams.set('run', 'fictional-missing-run')

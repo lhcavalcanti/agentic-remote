@@ -4057,8 +4057,13 @@ button {
   right: 0;
   bottom: calc(100% + 10px);
   max-width: min(320px, calc(100vw - 32px));
-  max-height: min(420px, 60dvh);
+  max-height: min(420px, calc(var(--visual-viewport-height, 100svh) * 0.6));
   overflow: auto;
+}
+
+.app-shell--keyboard-open .composer-session-panel .session-actions__panel {
+  bottom: 0;
+  max-height: min(420px, calc(var(--visual-viewport-height, 100svh) - 100px));
 }
 
 .composer-session-panel .session-action {
@@ -4071,6 +4076,18 @@ button {
   }
   .composer-secondary-overflow {
     display: flex;
+  }
+}
+
+@container composer (max-width: 360px) {
+  .composer--refresh .composer-actions--refresh > .send-button:has(.send-button__label) {
+    width: 40px;
+    min-width: 40px;
+    flex: 0 0 40px;
+    padding: 0;
+  }
+  .composer-actions--refresh .send-button__label {
+    display: none;
   }
 }
 

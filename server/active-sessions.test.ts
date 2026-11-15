@@ -145,7 +145,7 @@ describe('active Copilot processes', () => {
       )
       expect(
         processes.filter((processInfo) => processInfo.sessionId === sessionId),
-      ).toEqual([{ pid, sessionId, source: 'argument' }])
+      ).toEqual([{ pid, sessionId, source: 'argument', startTime: expect.any(Number) }])
 
       expect(await isDirectCopilotSessionProcess(pid, sessionId)).toBe(true)
       expect(await isDirectCopilotSessionProcess(pid, 'aaaaaaaa-1234-1234-1234-123456789abc'))
@@ -220,7 +220,7 @@ describe('active Copilot processes', () => {
       (await findActiveCopilotProcesses()).filter(
         (processInfo) => processInfo.sessionId === sessionId,
       ),
-    ).toEqual([{ pid: childPid, sessionId, source: 'argument' }])
+    ).toEqual([{ pid: childPid, sessionId, source: 'argument', startTime: expect.any(Number) }])
 
     const wrapperPid = Number.parseInt((await execFileAsync(
       'tmux', ['display-message', '-p', '-t', tmuxSession, '#{pane_pid}'],
@@ -309,11 +309,12 @@ describe('active Copilot processes', () => {
       procStatReads.count = 0
       const found = await findActiveCopilotProcesses()
       expect(found.filter((processInfo) => processInfo.sessionId === sessionId))
-        .toEqual([{ pid: owner, sessionId, source: 'argument' }])
+        .toEqual([{ pid: owner, sessionId, source: 'argument', startTime: expect.any(Number) }])
       expect(found.some((processInfo) => processInfo.sessionId.startsWith('cdcdcdcd'))).toBe(false)
       // Ancestry comes from the process table read once; reads that grew with
       // candidates x panes x depth made each send wait on hundreds of them.
-      expect(procStatReads.count).toBe(0)
+      // One identity tick per returned owner, never one ancestry walk per pane.
+      expect(procStatReads.count).toBe(found.length)
     } finally {
       for (const child of outside) child.kill('SIGTERM')
     }
@@ -501,6 +502,7 @@ describe('active Copilot processes', () => {
         pid,
         sessionId: currentSessionId,
         source: 'lock',
+        startTime: expect.any(Number),
       },
     ])
   })
@@ -583,6 +585,7 @@ describe('active Copilot processes', () => {
         pid: secondPid,
         sessionId,
         source: 'lock',
+        startTime: expect.any(Number),
       },
     ])
   })

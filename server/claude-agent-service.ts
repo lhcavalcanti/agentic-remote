@@ -1548,9 +1548,6 @@ export class ClaudeAgentService
 
   async cancelWithAck(sessionId: string, timeoutMs = 10_000) {
     const acknowledgement = await awaitTermination(sessionId, timeoutMs, async () => {
-      await this.store.readAfterWrites(sessionId)
-      this.publish(await this.store.stopLaunchWork(sessionId))
-      this.drainRequested.delete(sessionId)
       this.active.get(sessionId)?.abortController.abort()
       this.queueReceiptStops.get(sessionId)?.()
       await this.admissions.wait(sessionId)
@@ -1560,7 +1557,11 @@ export class ClaudeAgentService
       if (active) await active.done
     // Iterator teardown proves foreground quiescence, not the fate of background
     // tasks. This adapter does not consume their membership/termination signals.
-    }, async () => false)
+    }, async () => false, async () => {
+      await this.store.readAfterWrites(sessionId)
+      this.publish(await this.store.stopLaunchWork(sessionId))
+      this.drainRequested.delete(sessionId)
+    })
     return { ...acknowledgement, reason: 'Claude cannot yet confirm background-task termination through this adapter.' }
   }
 

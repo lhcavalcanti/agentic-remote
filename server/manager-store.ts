@@ -1,7 +1,7 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { appendFile, chmod, lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import type { AgentProvider, SessionOrigin, SessionProvenance, SessionStatus } from '../shared/contracts.js'
+import type { AgentProvider, ManagedSession, SessionOrigin, SessionProvenance, SessionStatus } from '../shared/contracts.js'
 import type {
   ManagerClientDefaults,
   ManagerAttachment,
@@ -87,6 +87,7 @@ export interface RegistryEntry {
   cwd?: string
   provider?: AgentProvider
   origin: SessionOrigin
+  originEvidence?: 'launch' | 'discovery'
   scheduleId?: string
   scheduleRunId?: string
   /** What the session was started to do, from its first prompt. */
@@ -219,6 +220,46 @@ export class ManagerStore {
     this.journal = (await this.readLines<JournalEntry>('journal.jsonl'))
       .filter((entry) => Number.isInteger(entry?.seq))
     this.journalSeq = this.journal.reduce((highest, entry) => Math.max(highest, entry.seq), 0)
+  }
+
+  /** Origin metadata does not require opening Oracle's conversation or uploads. */
+  async initializeSessionRegistry(): Promise<void> {
+    await this.prepareRegistryDirectory()
+    this.sessions = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
+  }
+
+  recordUserSession(session: ManagedSession): Promise<void> {
+    return this.recordSessionOrigin(session, 'user')
+  }
+
+  recordDiscoveredSession(session: ManagedSession): Promise<void> {
+    return this.recordSessionOrigin(session, 'discovered')
+  }
+
+  private async prepareRegistryDirectory(): Promise<void> {
+    await mkdir(this.directory, { recursive: true, mode: 0o700 })
+    const metadata = await lstat(this.directory)
+    if (!metadata.isDirectory() || (process.getuid && metadata.uid !== process.getuid())) {
+      throw new Error('Session provenance requires an owner-only real directory')
+    }
+    await chmod(this.directory, 0o700)
+  }
+
+  private async recordSessionOrigin(session: ManagedSession, origin: 'user' | 'discovered'): Promise<void> {
+    const key = registryKey(session.computerId, session.id)
+    if (origin === 'discovered' && this.sessions[key]) return
+    await this.prepareRegistryDirectory()
+    await this.updateRegistry((registry) => {
+      const current = registry[key]
+      if ((origin === 'discovered' && current) || current?.origin === 'manager' || current?.origin === 'schedule') return
+      registry[key] = {
+        ...current, computerId: session.computerId, sessionId: session.id,
+        title: session.title, computerName: session.computerName, cwd: session.cwd, provider: session.provider,
+        origin, originEvidence: origin === 'user' ? 'launch' : 'discovery',
+        firstSeenAt: current?.firstSeenAt ?? this.now().toISOString(),
+        lastStatus: session.status, lastSeenAt: session.updatedAt,
+      }
+    })
   }
 
   state(): ManagerState {
@@ -363,6 +404,8 @@ export class ManagerStore {
   sessionProvenance(computerId: string, sessionId: string): SessionProvenance | undefined {
     const entry = this.sessions[registryKey(computerId, sessionId)]
     if (!entry || entry.computerId !== computerId || entry.sessionId !== sessionId) return undefined
+    // Older user tags came from discovery timing, not proof of an app launch.
+    if (entry.origin === 'user' && entry.originEvidence !== 'launch') return undefined
     return entry.origin === 'schedule'
       ? { origin: entry.origin, scheduleId: entry.scheduleId, scheduleRunId: entry.scheduleRunId }
       : { origin: entry.origin }

@@ -69,8 +69,7 @@ export class JournalRecorder {
   handle(event: HubEvent): void {
     if (this.stopped) return
     if (event.type === 'session.upserted') {
-      // Until a baseline exists, sessions arriving are the ones that already
-      // existed, which a first start announces all at once.
+      // Baseline timing controls journal noise, never the source of a launch.
       this.observe(event.session, !this.store.state().baselineAt)
     } else if (event.type === 'session.removed') {
       this.remove(event.computerId, event.sessionId, event.replacedBy)
@@ -125,6 +124,7 @@ export class JournalRecorder {
       const entry = registry[key]
       if (entry) {
         entry.origin = 'manager'
+        entry.originEvidence = 'launch'
         entry.task = task.length > TASK_LIMIT ? `${task.slice(0, TASK_LIMIT)}…` : task
       }
     })
@@ -186,7 +186,8 @@ export class JournalRecorder {
           computerName: session.computerName,
           cwd: session.cwd,
           provider: session.provider ?? 'copilot',
-          origin: existing?.origin ?? (baseline ? 'discovered' : 'user'),
+          origin: existing?.origin ?? 'discovered',
+          originEvidence: existing?.originEvidence ?? 'discovery',
           task: existing?.task ?? task,
           firstSeenAt: existing?.firstSeenAt ?? now,
           lastStatus: status,
@@ -253,6 +254,7 @@ export class JournalRecorder {
           ...registry[successorKey],
           sessionId: replacedBy,
           origin: entry.origin,
+          originEvidence: entry.originEvidence,
           task: entry.task,
           firstSeenAt: registry[successorKey]?.firstSeenAt ?? now,
         }

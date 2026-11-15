@@ -90,7 +90,7 @@ describe('JournalRecorder', () => {
       { kind: 'renamed', from: 'Session n', to: 'Login fix' },
     ])
     expect(store.registry()['hub:n']).toMatchObject({
-      origin: 'user',
+      origin: 'discovered',
       task: 'Fix the login bug',
       title: 'Login fix',
       lastStatus: 'idle',

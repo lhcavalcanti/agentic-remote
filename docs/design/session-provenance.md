@@ -6,9 +6,13 @@ This presentation is behind Interface › Preview features › Composer refresh,
 
 The hub projects `ManagedSession.provenance` from the exact computer/session entry in `ManagerStore`, using a bounded field-only lookup. REST session lists and mutation/read replies, WebSocket upserts, message patches, and resyncs carry the same projection. Node-supplied provenance is discarded; unknown records remain unknown. No title, model, provider, or tool-text heuristic attributes a session.
 
+Launch boundaries record source evidence explicitly: UI/API creation records `user` before returning its session; Oracle's launch recorder records `manager`; schedules record `schedule` with their run identity. Discovery records `discovered` both before and after the journal baseline. Baseline timing only suppresses journal noise and never determines origin. Replacement continuity carries the same evidence. Older `user` tags without explicit launch evidence remain unknown in presentation, while their stored ownership classification is preserved.
+
+With Oracle off, the hub loads only the session registry, not Oracle's conversation, memory, journal or uploads, and observes first discoveries without adding a polling loop. New records retain owner-only directory/file permissions. Optional attribution persistence failures are logged without reporting an already-created session as a failed creation.
+
 The user, Oracle, schedule, and discovered/external origins have separate icons and accessible descriptions in session rows and the conversation header. When the preview is off, the existing Oracle badge and manager-snapshot behavior remain unchanged.
 
-For schedules, recorded schedule/run IDs come from the registry; the current name comes from the scheduler store. A session may outlive a deleted schedule, in which case its run identity remains but no name is invented. Provenance is display-only and does not change policy, ownership, queue behavior, or registry records.
+For schedules, recorded schedule/run IDs come from the registry; the current name comes from the scheduler store. A session may outlive a deleted schedule, in which case its run identity remains but no name is invented. Projection is display-only; recording source evidence at creation does not grant Oracle ownership, change queue behavior, or make scheduled sessions Oracle-owned.
 
 Notification delivery metadata remains separate. A scheduled admission may already suppress ordinary notifications before a registry origin exists; `suppressOrdinaryNotifications` is never treated as proof of provenance. Both fields survive HTTP and socket projection without changing notification admission order or policy.
 

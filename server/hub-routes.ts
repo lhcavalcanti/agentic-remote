@@ -416,7 +416,7 @@ export async function registerHubRoutes(
   scheduler?: SchedulerStore,
   scheduleNotifications?: ScheduleNotificationService,
   isScheduledSession?: (session: ManagedSession) => boolean,
-  provenance?: Pick<ManagerStore, 'sessionProvenance'>,
+  provenance?: Pick<ManagerStore, 'sessionProvenance'> & Partial<Pick<ManagerStore, 'recordUserSession'>>,
 ): Promise<void> {
   const projection = sessionProvenanceProjection(provenance, scheduler)
   app.addHook('preSerialization', async (_request, _reply, payload) => projection.reply(payload))
@@ -835,8 +835,12 @@ export async function registerHubRoutes(
     '/api/computers/:computerId/sessions',
     async (request, reply) => {
       const input = createSessionSchema.parse(request.body)
+      const session = await manager.createSession(request.params.computerId, input)
+      try { await provenance?.recordUserSession?.(session) }
+      catch (error) { app.log.error({ err: error }, 'Session was created but its launch origin could not be saved') }
+      manager.emit('event', { type: 'session.upserted', session })
       return reply.code(201).send({
-        session: await manager.createSession(request.params.computerId, input),
+        session,
       })
     },
   )

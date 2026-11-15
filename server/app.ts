@@ -387,6 +387,8 @@ export async function buildApp(
   let managerStructuredMemory = new ManagerStructuredMemoryRuntime('off')
   let managerUnavailable: string | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
+  let forwardToSessionProvenance: ((event: HubEvent) => void) | undefined
+  const provenanceWrites = new Set<Promise<void>>()
   let forwardToProactive: ((event: HubEvent) => void) | undefined
   let forwardHubToDreamer: ((event: HubEvent) => void) | undefined
   let forwardManagerToDreamer: (() => void) | undefined
@@ -641,6 +643,30 @@ export async function buildApp(
         }).catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
       })
     }
+    if (!managerStoreReady) {
+      managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      try {
+        await startupPhases.run('sessions.provenance', () => managerStore!.initializeSessionRegistry())
+        managerStoreReady = true
+      } catch (error) {
+        app.log.error({ err: error }, 'Session origin metadata could not initialize')
+      }
+    }
+    if (managerStoreReady && managerStore) {
+      const store = managerStore
+      const pending = new Set<string>()
+      forwardToSessionProvenance = (event) => {
+        if (event.type !== 'session.upserted' || store.sessionOrigin(event.session.computerId, event.session.id)) return
+        const key = `${event.session.computerId}:${event.session.id}`
+        if (pending.has(key)) return
+        pending.add(key)
+        const work = store.recordDiscoveredSession(event.session)
+          .catch((error: unknown) => app.log.error({ err: error }, 'Session discovery origin could not be recorded'))
+          .finally(() => { pending.delete(key); provenanceWrites.delete(work) })
+        provenanceWrites.add(work)
+      }
+      manager.on('event', forwardToSessionProvenance)
+    }
     if (notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     await registerHubRoutes(
       app,
@@ -804,6 +830,8 @@ export async function buildApp(
     await scheduleJournal
     await cliCanary?.stop()
     if (forwardToJournal) manager?.off('event', forwardToJournal)
+    if (forwardToSessionProvenance) manager?.off('event', forwardToSessionProvenance)
+    await Promise.all(provenanceWrites)
     if (forwardToProactive) manager?.off('event', forwardToProactive)
     if (forwardHubToDreamer) manager?.off('event', forwardHubToDreamer)
     if (forwardManagerToDreamer) managerAgent?.off('event', forwardManagerToDreamer)

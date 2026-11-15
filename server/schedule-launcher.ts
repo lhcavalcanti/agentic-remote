@@ -38,7 +38,7 @@ export async function recordScheduleProvenance(
       computerName: session.computerName, cwd: session.cwd, provider: session.provider,
       title: session.title, firstSeenAt: registry[key]?.firstSeenAt ?? new Date().toISOString(),
       lastStatus: session.status, lastSeenAt: session.updatedAt,
-      origin: 'schedule', scheduleId: provenance.scheduleId, scheduleRunId: provenance.scheduleRunId,
+      origin: 'schedule', originEvidence: 'launch', scheduleId: provenance.scheduleId, scheduleRunId: provenance.scheduleRunId,
       task: provenance.task.slice(0, 400),
     }
   })

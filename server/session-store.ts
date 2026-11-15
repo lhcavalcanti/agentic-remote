@@ -113,7 +113,7 @@ interface SdkQueueAdmission {
 }
 
 export type TerminalQueueOutcome =
-  | { kind: 'accepted'; startedTurn: boolean; notice?: string }
+  | { kind: 'accepted'; startedTurn: boolean; notice?: string; handedAt?: string }
   | { kind: 'failed'; uncertain: boolean; queueState?: QueueState }
 
 /**
@@ -2165,7 +2165,7 @@ export class SessionStore {
     const session = this.state.sessions[owner.sessionId]
     return {
       launchId, sessionId: owner.sessionId,
-      ...(session ? { sessionStatus: session.status, stopping: session.launchStopping === true } : { deleted: true }),
+      ...(session ? { sessionStatus: cloneSession(session).status, stopping: session.launchStopping === true } : { deleted: true }),
       receipts: structuredClone(session?.promptReceipts || owner.receipts || []),
       ...(session?.launchTermination || owner.termination ? { termination: structuredClone(session?.launchTermination || owner.termination) } : {}),
     }
@@ -2184,6 +2184,11 @@ export class SessionStore {
     return this.change((state) => {
       const owner = Object.values(state.sessions).find((candidate) =>
         candidate.promptReceipts?.some((receipt) => receipt.deliveryId === deliveryId))
+      const deletedOwner = Object.values(state.launches || {}).find((candidate) =>
+        !state.sessions[candidate.sessionId] && candidate.receipts?.some((receipt) => receipt.deliveryId === deliveryId))
+      if (deletedOwner) {
+        throw Object.assign(new Error('Delivery identity belongs to a deleted session.'), { statusCode: 409, uncertainDelivery: false })
+      }
       if (owner) {
         if (owner.id !== sessionId) {
           throw Object.assign(new Error('Delivery identity belongs to another session.'), { statusCode: 409, uncertainDelivery: false })
@@ -2717,7 +2722,10 @@ export class SessionStore {
         : undefined
       if (outcome.kind === 'accepted') {
         const receipt = stored.promptReceipts?.find((entry) => entry.promptId === dispatch.prompt.id)
-        if (receipt) receipt.state = 'delivered'
+        if (receipt) {
+          receipt.state = 'delivered'
+          receipt.handedAt = outcome.handedAt
+        }
         stored.failedPrompt = undefined
         if (outcome.notice) {
           const createdAt = new Date().toISOString()
@@ -3132,6 +3140,17 @@ export class SessionStore {
         this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       }
       delete state.sessions[sessionId]
+      const tombstones = Object.entries(state.launches || {}).filter(([, owner]) =>
+        !state.sessions[owner.sessionId] && owner.receipts?.length)
+      const retained = new Set(tombstones.flatMap(([, owner]) => owner.receipts!)
+        .sort((left, right) => Date.parse(right.acceptedAt) - Date.parse(left.acceptedAt))
+        .slice(0, 1000).map((receipt) => receipt.deliveryId))
+      if (tombstones.length) {
+        state.launches = { ...state.launches }
+        for (const [launchId, owner] of tombstones) {
+          state.launches[launchId] = { ...owner, receipts: owner.receipts!.filter((receipt) => retained.has(receipt.deliveryId)) }
+        }
+      }
       return () => { this.observationOwners.delete(sessionId) }
     }, true)
     await this.removeUploadOwners(uploadOwnerIds)

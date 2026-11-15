@@ -25,7 +25,7 @@ export function ContextRing({ runtime, onOpen }: { runtime?: SessionRuntimeInfo;
             stroke="currentColor" strokeDasharray={`${percent} 100`} strokeWidth="2"
             transform="rotate(-90 12 12)"
           />
-        ) : null}
+        ) : <text className="composer-context-ring__unavailable" x="12" y="12">?</text>}
       </svg>
     </button>
   )

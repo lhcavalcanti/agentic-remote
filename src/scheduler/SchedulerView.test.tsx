@@ -228,17 +228,17 @@ it.each([false, true])('requires explicit reselection of an unpaired target (rem
   const props = { initial, pending: false, onSave, onCancel: vi.fn() }
   const { rerender, container } = render(<ScheduleForm {...props} computers={removedWhileEditing ? [computer, retired] : [computer]} />)
   if (removedWhileEditing) rerender(<ScheduleForm {...props} computers={[computer]} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Target', exact: true }))
-  const target = screen.getByRole('combobox', { name: 'Computer', exact: true })
+  fireEvent.click(screen.getByRole('button', { name: 'Target' }))
+  const target = screen.getByRole('combobox', { name: 'Computer' })
   expect(target).toHaveProperty('value', retired.id)
   expect(screen.getByRole('option', { name: 'retired-node (not paired)' })).toHaveProperty('selected', true)
-  fireEvent.click(screen.getByRole('button', { name: 'Policies', exact: true }))
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
   expect(screen.getByRole('button', { name: 'Save schedule' })).toHaveProperty('disabled', true)
   await act(async () => { fireEvent.submit(container.querySelector('form')!) })
   expect(onSave).not.toHaveBeenCalled()
   expect(screen.getByRole('alert').textContent).toContain('Choose a paired computer')
-  fireEvent.change(screen.getByRole('combobox', { name: 'Computer', exact: true }), { target: { value: computer.id } })
-  fireEvent.click(screen.getByRole('button', { name: 'Policies', exact: true }))
+  fireEvent.change(screen.getByRole('combobox', { name: 'Computer' }), { target: { value: computer.id } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
   fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
   await waitFor(() => expect(onSave).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
     target: expect.objectContaining({ computerId: computer.id }),

@@ -112,7 +112,17 @@ for (const width of [320, 360]) {
           expect(button.inside, button.label ?? '').toBe(true)
         }
         await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeInViewport({ ratio: 1 })
-        await page.getByRole('button', { name: 'Queue message', exact: true }).click()
+        const queue = page.getByRole('button', { name: 'Queue message', exact: true })
+        if (await queue.isVisible()) {
+          await queue.click()
+        } else {
+          await page.getByRole('button', { name: 'Send options', exact: true }).click()
+          const menu = page.getByRole('menu', { name: 'Message delivery' })
+          const rect = (await menu.boundingBox())!
+          expect(rect.x).toBeGreaterThanOrEqual(0)
+          expect(rect.x + rect.width).toBeLessThanOrEqual(width)
+          await menu.getByRole('menuitem', { name: /Queue —/ }).click()
+        }
         await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the narrow phone layout.')
         await page.getByRole('button', { name: 'Stop response', exact: true }).click()
         await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeHidden()
@@ -137,6 +147,28 @@ for (const width of [320, 360]) {
         const zero = page.getByRole('button', { name: 'Context: 0% used', exact: true })
         await expect(zero).toBeVisible()
         await expect(zero.getByText('?')).toHaveCount(0)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+    test('sends an expanded pasted slash command without offering to queue it', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const content = ['/review', ...Array.from({ length: 21 }, () => 'Synthetic review detail')].join('\n')
+        await message(page).evaluate((element, content) => {
+          const clipboardData = new DataTransfer()
+          clipboardData.setData('text/plain', content)
+          element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }))
+        }, content)
+        await expect(message(page)).toHaveValue('[Paste #1 - 22 lines]')
+        await expect(page.getByRole('button', { name: 'Send options', exact: true })).toHaveCount(0)
+        const sent = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/messages`)
+        await page.getByRole('button', { name: 'Send message', exact: true }).click()
+        const payload = (await sent).postDataJSON()
+        expect(payload.content).toBe(content)
+        expect(payload.enqueue).not.toBe(true)
+        await expect(page.getByRole('menu', { name: 'Message delivery' })).toHaveCount(0)
+        await assertNoHorizontalOverflow(page)
       } finally {
         fixture.assertHealthy()
       }
@@ -195,6 +227,29 @@ test.describe('browser interaction contracts', () => {
     fixture?.assertHealthy()
     await assertNoHorizontalOverflow(page)
     fixture = undefined
+  })
+
+  test('lets native Tab leave delivery choices and restores Escape to each opener', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'composer-delivery-menu')
+    const menu = page.getByRole('menu', { name: 'Message delivery' })
+    const options = page.getByRole('button', { name: 'Send options', exact: true })
+    await page.keyboard.press('Tab')
+    await expect(menu).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeFocused()
+    await options.click()
+    await page.keyboard.press('Shift+Tab')
+    await expect(menu).toBeHidden()
+    await expect(options).toBeFocused()
+    await options.press('Enter')
+    await page.keyboard.press('Escape')
+    await expect(menu).toBeHidden()
+    await expect(options).toBeFocused()
+    const send = page.getByRole('button', { name: 'Send message', exact: true })
+    await send.press('Alt+ArrowDown')
+    await page.keyboard.press('Escape')
+    await expect(menu).toBeHidden()
+    await expect(send).toBeFocused()
+    expect(handle.requests.some((request) => request.path === `${sessionPath}/messages`)).toBe(false)
   })
 
   test('sends, queues while busy, edits in place, reorders with the keyboard, and stops', async ({ page, baseURL }) => {

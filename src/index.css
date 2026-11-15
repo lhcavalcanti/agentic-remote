@@ -4223,6 +4223,9 @@ button {
 }
 
 @container composer (max-width: 360px) {
+  .composer-actions--refresh:has(> .composer-send-options) > .send-button--queue {
+    display: none;
+  }
   .composer--refresh .composer-actions--refresh > .send-button:has(.send-button__label) {
     width: 40px;
     min-width: 40px;

@@ -197,6 +197,36 @@ describe('durable launch identity', () => {
 })
 
 describe('termination acknowledgement', () => {
+  it.each(['copilot', 'claude'] as const)('commits the %s fence before starting the provider timeout and rejects failed fence writes', async (provider) => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), launchId: 'run' })
+    const service = provider === 'copilot'
+      ? new AgentService(store, {} as CopilotClientLike)
+      : new ClaudeAgentService(store, '/bin/true', {} as ClaudeSdk)
+    if (service instanceof AgentService) {
+      vi.spyOn(service, 'listBackgroundTasks').mockResolvedValue({ supported: false, tasks: [], runningCount: 0 })
+    }
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const stop = store.stopLaunchWork.bind(store)
+    vi.spyOn(store, 'stopLaunchWork').mockImplementationOnce(async (id) => {
+      await gate
+      return stop(id)
+    })
+    let resolved = false
+    const pending = service.cancelWithAck('session', 1).finally(() => { resolved = true })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const returnedBeforeFence = resolved
+    release()
+    await expect(pending).resolves.toMatchObject({ outcome: 'unknown' })
+    expect(returnedBeforeFence).toBe(false)
+    vi.mocked(store.stopLaunchWork).mockRejectedValueOnce(new Error('Synthetic fence write failed'))
+    await expect(service.cancelWithAck('session', 1)).rejects.toThrow('Synthetic fence write failed')
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    await expect(restarted.acceptIdentifiedPrompt('session', 'late', 'Never admit', true)).rejects.toMatchObject({ statusCode: 409 })
+  })
+
   it('does not use an idle event between acceptance and terminal handoff as termination proof', async () => {
     const { store, location } = await storeAt()
     await store.create({ ...session(), launchId: 'run' }, { backend: 'terminal', managedOpen: true })

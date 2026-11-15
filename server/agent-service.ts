@@ -7699,11 +7699,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async cancelWithAck(sessionId: string, timeoutMs = 10_000) {
     return awaitTermination(sessionId, timeoutMs, async () => {
-      await this.store.readAfterWrites(sessionId)
-      const fenced = await this.store.stopLaunchWork(sessionId)
-      this.sdkDrainRequested.delete(sessionId)
-      this.terminalDrainRequested.delete(sessionId)
-      this.publish(fenced)
       await this.cancel(sessionId)
       this.queuedPromptStops.get(sessionId)?.()
       await this.admissions.wait(sessionId)
@@ -7737,6 +7732,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         (providerStatus === 'idle' || providerStatus === 'error') && !foregroundTurnOpen(events))
       if (stopped) this.publish(await this.store.confirmLaunchTermination(sessionId))
       return stopped
+    }, async () => {
+      await this.store.readAfterWrites(sessionId)
+      const fenced = await this.store.stopLaunchWork(sessionId)
+      this.sdkDrainRequested.delete(sessionId)
+      this.terminalDrainRequested.delete(sessionId)
+      this.publish(fenced)
     })
   }
 

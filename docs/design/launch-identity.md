@@ -1,5 +1,7 @@
 # Durable launch identity
 
+Cancellation commits its admission fence before starting the bounded provider wait. Storage failures reject the request instead of returning an acknowledgement without a durable fence. Terminal termination evidence must postdate the confirmed provider handoff (`handedAt`), not just FIFO acceptance; missing handoff evidence stays unknown.
+
 Automation may opt into `launchId` on session creation and `deliveryId` on prompt delivery. Tokens are opaque, case-sensitive, 1–128 ASCII characters, starting with a letter or digit and otherwise containing letters, digits, `.`, `_`, `:`, or `-`. Existing browser and Oracle calls omit both fields and retain their existing behavior. This is a capability-gated transport contract, not an enabled scheduler or a new UI feature.
 
 The owning computer commits `launchId → sessionId` in the same owner-only session-store transaction that creates the session. Concurrent retries return the existing session. Conversation replacement carries that authority to the replacement; deletion retains a tombstone rather than allowing a second launch. Providers on one computer share creation arbitration; tokens on distinct computers are independent. Session-store startup phases load this metadata; no new background service or environment flag is introduced.

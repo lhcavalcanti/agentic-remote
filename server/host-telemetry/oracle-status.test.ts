@@ -42,6 +42,14 @@ function target(data = snapshot, rows = inventory): HostTelemetryTarget {
 }
 
 describe('Oracle host status', () => {
+  it.each([-3_600_000, 3_600_000])('reports receipt-relative sample ages with node clock skew %s', async (skew) => {
+    const result = await oracleHostStatus([computers[1]], async () => target({
+      ...snapshot, latest: { ...snapshot.latest!, at: new Date(now + skew).toISOString() }, sampleAgeMs: 1200,
+    }), () => now)
+    expect(result).toContain('sample age 1.2s')
+    expect(result).not.toContain('Stale sample')
+    expect(result).toContain('inventory received just now')
+  })
   it('summarizes local and remote targets without opening viewers or requesting history', async () => {
     const local = target()
     const remote = target({ ...snapshot, info: { ...hostInfoFixture, hostname: 'build-host' } })

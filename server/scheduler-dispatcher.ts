@@ -110,7 +110,15 @@ export class SchedulerDispatcher {
     return this.exclusive(async () => {
       if (proposalId) {
         const proposal = this.store.proposal(proposalId)
-        if (proposal.status === 'applied' && proposal.appliedRunId) return this.store.getRun(proposal.appliedRunId)
+        if (proposal.status === 'applied' && proposal.appliedRunId) {
+          const run = this.store.getRun(proposal.appliedRunId)
+          if (this.active && run.status === 'pending') {
+            await this.overlap(run)
+            await this.drain()
+            this.planWake()
+          }
+          return this.store.getRun(run.id)
+        }
       }
       if (!this.active) throw Object.assign(new Error('Scheduler is not started'), { statusCode: 503 })
       const schedule = this.store.get(scheduleId)

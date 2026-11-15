@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomInt, randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { constants } from 'node:fs'
 import { chmod, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises'
@@ -183,6 +183,13 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
         if (proposal.operation === 'run-now') {
           if (schedule.archived) throw failure('Archived schedules cannot run', 409)
           proposal.status = 'approved'
+          let occurrenceAt: string
+          do {
+            occurrenceAt = this.now().replace(/Z$/, `${randomInt(1, 1_000_000_000_000).toString().padStart(12, '0')}Z`)
+          } while (next.occurrences[occurrenceKey(schedule.id, occurrenceAt)])
+          const admitted = this.admitRun(next, schedule.id, occurrenceAt, 'manual', 'pending',
+            undefined, undefined, schedule.revision, proposal.id)
+          return { ...admitted, result: proposal }
         } else {
           if (proposal.operation === 'create') {
             next.schedules.push(schedule)
@@ -190,15 +197,15 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
           } else {
             const previous = this.requireSchedule(next, schedule.id)
             next.schedules[next.schedules.indexOf(previous)] = schedule
-            if (proposal.operation === 'enable' || (proposal.operation === 'update' &&
-                (proposal.payload.recurrence !== undefined || proposal.payload.timezone !== undefined || proposal.payload.enabled))) {
+            if ((!previous.enabled && schedule.enabled) || (proposal.operation === 'update' &&
+                (proposal.payload.recurrence !== undefined || proposal.payload.timezone !== undefined))) {
               next.cursors[schedule.id] = this.now()
             }
           }
           proposal.status = 'applied'
           proposal.appliedScheduleId = schedule.id
         }
-        return { result: proposal, proposalId: id, scheduleId: proposal.operation === 'run-now' ? undefined : schedule.id }
+        return { result: proposal, proposalId: id, scheduleId: schedule.id }
       } catch (error) {
         proposal.status = 'failed'
         proposal.error = (error as Error).message.slice(0, 2000)
@@ -231,7 +238,10 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     })
   }
 
-  expireProposals(): Promise<void> {
+  async expireProposals(): Promise<void> {
+    await this.work
+    if (!this.state.proposals.some((proposal) =>
+      proposal.status === 'pending' && Date.parse(proposal.expiresAt) <= Date.parse(this.now()))) return
     return this.commit((next) => {
       for (const proposal of next.proposals) {
         if (proposal.status === 'pending' && Date.parse(proposal.expiresAt) <= Date.parse(this.now())) proposal.status = 'expired'
@@ -369,7 +379,14 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     scheduleId: string, occurrenceAt: string, trigger: ScheduleRun['trigger'],
     status: ScheduleRunStatus = 'pending', cursor?: string, error?: string, expectedRevision?: number, proposalId?: string,
   ): Promise<ScheduleRun | undefined> {
-    return this.commit((next) => {
+    return this.commit((next) => this.admitRun(next, scheduleId, occurrenceAt, trigger, status,
+      cursor, error, expectedRevision, proposalId))
+  }
+
+  private admitRun(
+    next: State, scheduleId: string, occurrenceAt: string, trigger: ScheduleRun['trigger'],
+    status: ScheduleRunStatus, cursor?: string, error?: string, expectedRevision?: number, proposalId?: string,
+  ) {
       const schedule = this.requireSchedule(next, scheduleId, expectedRevision)
       const proposal = proposalId ? next.proposals.find((entry) => entry.id === proposalId) : undefined
       if (proposalId && (!proposal || proposal.operation !== 'run-now' || proposal.scheduleId !== scheduleId ||
@@ -406,7 +423,6 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
         proposal.appliedScheduleId = scheduleId
       }
       return { result: run, scheduleId, runId: run.id, proposalId }
-    })
   }
 
   advanceCursor(id: string, cursor: string): Promise<void> {

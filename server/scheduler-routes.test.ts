@@ -108,6 +108,14 @@ describe('scheduler hub API', () => {
     launch!.receipts[0].outcome = 'succeeded'
     await runtime.scheduler!.tick()
     expect(runtime.scheduler!.store.getRun(run.id).status).toBe('succeeded')
+    host.emit('event', { type: 'session.removed', computerId, sessionId: detail.id, replacedBy: 'replacement' })
+    const replacement = new ManagerStore(path.join(directory, 'manager'))
+    await vi.waitFor(async () => {
+      await replacement.initialize()
+      expect(replacement.registry()[`${computerId}:replacement`]).toMatchObject({
+        origin: 'schedule', scheduleId: schedule.id, scheduleRunId: run.id,
+      })
+    })
     expect(launcher.launch).not.toHaveBeenCalled()
   })
 

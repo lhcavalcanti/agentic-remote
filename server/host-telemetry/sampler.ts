@@ -142,6 +142,7 @@ export class HostTelemetrySampler {
   snapshot(): HostSnapshot {
     this.pruneLive(this.clock.monotonicNow())
     return {
+      ...(this.previous ? { sampleAgeMs: Math.max(0, this.clock.monotonicNow() - this.previous.at) } : {}),
       info: this.info ? { ...this.info } : null,
       latest: this.latest ? { ...this.latest } : null,
       live: this.live.map(({ sample }) => ({ ...sample })),

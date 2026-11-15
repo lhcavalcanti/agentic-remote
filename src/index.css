@@ -3970,6 +3970,15 @@ button {
   white-space: nowrap;
 }
 
+.composer-runtime__hint {
+  flex: 0 0 auto;
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer-runtime__detail,
 .composer-runtime__mode {
   flex: 0 0 auto;

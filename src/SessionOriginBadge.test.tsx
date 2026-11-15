@@ -36,6 +36,14 @@ describe('session origin badges', () => {
     expect(screen.queryByText('Oracle')).not.toBeInTheDocument()
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
+  it('removes the previous origin badge for unknown provenance without guessing from legacy ownership', () => {
+    const result = render(preview(<SessionOriginBadge provenance={{ origin: 'user' }} legacyManaged />))
+    expect(screen.getByRole('img', { name: 'Started by you' })).toBeVisible()
+    result.rerender(preview(<SessionOriginBadge provenance={undefined} legacyManaged />))
+    expect(result.container).toBeEmptyDOMElement()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.queryByText('Oracle')).not.toBeInTheDocument()
+  })
 })
 
 describe('schedule run provenance links', () => {

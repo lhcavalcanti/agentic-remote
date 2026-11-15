@@ -187,7 +187,7 @@ export class JournalRecorder {
           cwd: session.cwd,
           provider: session.provider ?? 'copilot',
           origin: existing?.origin ?? 'discovered',
-          originEvidence: existing?.originEvidence ?? 'discovery',
+          originEvidence: existing ? existing.originEvidence : 'discovery',
           task: existing?.task ?? task,
           firstSeenAt: existing?.firstSeenAt ?? now,
           lastStatus: status,

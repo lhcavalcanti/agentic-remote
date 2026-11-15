@@ -88,6 +88,46 @@ describe('hub session provenance projection', () => {
     } finally { await recorder.stop() }
   })
 
+  it.each(['user', 'discovered'] as const)('omits provenance for a legacy %s row without evidence', async (origin) => {
+    const store = await registry()
+    const entry = { computerId: 'studio', sessionId: 'one', title: session.title, origin, firstSeenAt: session.updatedAt }
+    await store.updateRegistry((entries) => { entries['studio:one'] = entry })
+    expect(store.sessionProvenance('studio', 'one')).toBeUndefined()
+    expect(sessionProvenanceProjection(store).project({ ...session, provenance: { origin: 'manager' } })).not.toHaveProperty('provenance')
+    expect(store.registry()['studio:one']).toEqual(entry)
+  })
+
+  it.each(['user', 'discovered'] as const)('does not backfill discovery evidence when a legacy %s row is seen again', async (origin) => {
+    const store = await registry()
+    await store.updateRegistry((entries) => {
+      entries['studio:one'] = { computerId: 'studio', sessionId: 'one', title: session.title, origin, firstSeenAt: session.updatedAt, removedAt: new Date().toISOString() }
+    })
+    await store.updateState((state) => { state.baselineAt = session.updatedAt })
+    const recorder = new JournalRecorder(store)
+    try {
+      recorder.handle({ type: 'session.upserted', session })
+      await recorder.flush()
+      expect(store.registry()['studio:one'].originEvidence).toBeUndefined()
+      expect(store.sessionOrigin('studio', 'one')).toBe(origin)
+      expect(sessionProvenanceProjection(store).project(session)).not.toHaveProperty('provenance')
+    } finally { await recorder.stop() }
+  })
+
+  it.each([
+    { origin: 'user' }, { origin: 'discovered' }, { origin: 'discovered', originEvidence: 'discovery' },
+  ] as const)('lets an explicit UI launch supersede a prior %j row', async (prior) => {
+    const store = await registry()
+    await store.updateRegistry((entries) => {
+      entries['studio:one'] = { computerId: 'studio', sessionId: 'one', title: session.title, firstSeenAt: session.updatedAt, ...prior }
+    })
+    await store.recordUserSession(session)
+    await store.recordDiscoveredSession(session)
+    const restarted = new ManagerStore(store.directory)
+    await restarted.initializeSessionRegistry()
+    expect(restarted.registry()['studio:one']).toMatchObject({ origin: 'user', originEvidence: 'launch' })
+    expect(sessionProvenanceProjection(restarted).project(session).provenance).toEqual({ origin: 'user' })
+  })
+
   it('keeps legacy Oracle origin unchanged on unrelated writes and maps only its UI provenance', async () => {
     const store = await registry()
     const entry = { computerId: 'studio', sessionId: 'one', title: 'Untitled', origin: 'user' as const, firstSeenAt: session.updatedAt }
@@ -95,7 +135,7 @@ describe('hub session provenance projection', () => {
       entries['studio:one'] = entry
     })
     expect(store.sessionOrigin('studio', 'one')).toBe('user')
-    expect(sessionProvenanceProjection(store).project(session).provenance).toEqual({ origin: 'discovered' })
+    expect(sessionProvenanceProjection(store).project(session)).not.toHaveProperty('provenance')
     await store.updateRegistry((entries) => {
       entries['studio:unrelated'] = { ...entry, sessionId: 'unrelated', title: 'Unrelated change' }
     })
@@ -112,6 +152,9 @@ describe('hub session provenance projection', () => {
     const entries = {
       'studio:one': entry,
       'studio:observed': { ...entry, sessionId: 'observed', originEvidence: 'discovery' },
+      'studio:legacy-found': { ...entry, sessionId: 'legacy-found', origin: 'discovered' },
+      'studio:found': { ...entry, sessionId: 'found', origin: 'discovered', originEvidence: 'discovery' },
+      'studio:mismatched': { ...entry, sessionId: 'mismatched', origin: 'discovered', originEvidence: 'launch' },
       'studio:launched': { ...entry, sessionId: 'launched', originEvidence: 'launch' },
       'studio:oracle': { ...entry, sessionId: 'oracle', origin: 'manager' },
       'studio:scheduled': { ...entry, sessionId: 'scheduled', origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run' },
@@ -126,8 +169,11 @@ describe('hub session provenance projection', () => {
     expect((await readFile(file)).equals(original)).toBe(true)
     expect(restarted.registry()['studio:one']).toEqual(entry)
     expect(restarted.sessionOrigin('studio', 'one')).toBe('user')
-    expect(sessionProvenanceProjection(restarted).project(session).provenance).toEqual({ origin: 'discovered' })
-    expect(restarted.sessionProvenance('studio', 'observed')).toEqual({ origin: 'discovered' })
+    expect(sessionProvenanceProjection(restarted).project(session)).not.toHaveProperty('provenance')
+    expect(restarted.sessionProvenance('studio', 'observed')).toBeUndefined()
+    expect(restarted.sessionProvenance('studio', 'legacy-found')).toBeUndefined()
+    expect(restarted.sessionProvenance('studio', 'mismatched')).toBeUndefined()
+    expect(restarted.sessionProvenance('studio', 'found')).toEqual({ origin: 'discovered' })
     expect(restarted.registry()['studio:observed']).toEqual(entries['studio:observed'])
     expect(rosterLine(session, restarted.registry()['studio:one'], new Date(session.updatedAt))).toContain('started by the user')
     expect(restarted.sessionProvenance('studio', 'launched')).toEqual({ origin: 'user' })
@@ -143,10 +189,12 @@ describe('hub session provenance projection', () => {
     expect((await readFile(file)).equals(original)).toBe(true)
   })
 
-  it.each(['before', 'after'])('preserves Oracle origin but projects a legacy replacement as discovered when observed %s removal', async (order) => {
+  it.each([
+    ['user', 'before'], ['user', 'after'], ['discovered', 'before'], ['discovered', 'after'],
+  ] as const)('preserves Oracle %s origin but leaves a legacy replacement unknown when observed %s removal', async (origin, order) => {
     const store = await registry()
     await store.updateRegistry((entries) => {
-      entries['studio:one'] = { computerId: 'studio', sessionId: 'one', title: session.title, origin: 'user', firstSeenAt: session.updatedAt }
+      entries['studio:one'] = { computerId: 'studio', sessionId: 'one', title: session.title, origin, firstSeenAt: session.updatedAt }
     })
     const recorder = new JournalRecorder(store)
     const successor = { ...session, id: 'legacy-successor' }
@@ -155,13 +203,13 @@ describe('hub session provenance projection', () => {
       recorder.handle({ type: 'session.removed', computerId: 'studio', sessionId: 'one', replacedBy: successor.id })
       if (order === 'after') recorder.handle({ type: 'session.upserted', session: successor })
       await recorder.flush()
-      expect(store.sessionOrigin('studio', successor.id)).toBe('user')
-      expect(sessionProvenanceProjection(store).project(successor).provenance).toEqual({ origin: 'discovered' })
+      expect(store.sessionOrigin('studio', successor.id)).toBe(origin)
+      expect(sessionProvenanceProjection(store).project(successor)).not.toHaveProperty('provenance')
       const restarted = new ManagerStore(store.directory)
       await restarted.initializeSessionRegistry()
-      expect(restarted.sessionProvenance('studio', successor.id)).toEqual({ origin: 'discovered' })
-      expect(restarted.sessionOrigin('studio', successor.id)).toBe('user')
-      expect(rosterLine(successor, restarted.registry()[`studio:${successor.id}`], new Date(session.updatedAt))).toContain('started by the user')
+      expect(restarted.sessionProvenance('studio', successor.id)).toBeUndefined()
+      expect(restarted.sessionOrigin('studio', successor.id)).toBe(origin)
+      if (origin === 'user') expect(rosterLine(successor, restarted.registry()[`studio:${successor.id}`], new Date(session.updatedAt))).toContain('started by the user')
     } finally { await recorder.stop() }
   })
 
@@ -191,6 +239,22 @@ describe('hub session provenance projection', () => {
       await recorder.flush()
       expect(store.sessionProvenance('studio', 'successor')).toEqual({ origin: 'user' })
       expect((await stat(store.directory)).mode & 0o777).toBe(0o700)
+    } finally { await recorder.stop() }
+  })
+
+  it('carries current discovery evidence through replacement and restart', async () => {
+    const store = await registry()
+    await store.recordDiscoveredSession(session)
+    const recorder = new JournalRecorder(store)
+    const successor = { ...session, id: 'discovered-successor' }
+    try {
+      recorder.handle({ type: 'session.removed', computerId: 'studio', sessionId: 'one', replacedBy: successor.id })
+      recorder.handle({ type: 'session.upserted', session: successor })
+      await recorder.flush()
+      const restarted = new ManagerStore(store.directory)
+      await restarted.initializeSessionRegistry()
+      expect(restarted.registry()[`studio:${successor.id}`]).toMatchObject({ origin: 'discovered', originEvidence: 'discovery' })
+      expect(sessionProvenanceProjection(restarted).project(successor).provenance).toEqual({ origin: 'discovered' })
     } finally { await recorder.stop() }
   })
 

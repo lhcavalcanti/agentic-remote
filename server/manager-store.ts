@@ -409,7 +409,8 @@ export class ManagerStore {
   sessionProvenance(computerId: string, sessionId: string): SessionProvenance | undefined {
     const entry = this.sessions[registryKey(computerId, sessionId)]
     if (!entry || entry.computerId !== computerId || entry.sessionId !== sessionId) return undefined
-    if (entry.origin === 'user' && entry.originEvidence !== 'launch') return { origin: 'discovered' }
+    if (entry.origin === 'user' && entry.originEvidence !== 'launch') return undefined
+    if (entry.origin === 'discovered' && entry.originEvidence !== 'discovery') return undefined
     return entry.origin === 'schedule'
       ? { origin: entry.origin, scheduleId: entry.scheduleId, scheduleRunId: entry.scheduleRunId }
       : { origin: entry.origin }

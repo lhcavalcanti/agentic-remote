@@ -6,7 +6,7 @@ export function initials(name: string): string {
 }
 
 export function useDisplayName(name: string | undefined, enabled: boolean): string {
-  const [fallback, setFallback] = useState('User')
+  const [fallback, setFallback] = useState('')
   useEffect(() => {
     if (!enabled) return
     let active = true

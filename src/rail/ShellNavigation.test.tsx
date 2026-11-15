@@ -1,18 +1,22 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { effectivePreviewFeatures, defaultHubFeatureFlags } from '../../shared/feature-flags'
 import { PreviewFeaturesContext } from '../preview-features'
 import { ShellNavigation } from './ShellNavigation'
 import { initials } from './display-name'
 import { DisplayNameSetting } from './DisplayNameSetting'
+import { request } from '../api'
 
-afterEach(cleanup)
+vi.mock('../api', () => ({ request: vi.fn() }))
+afterEach(() => { cleanup(); vi.resetAllMocks() })
+vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
 it('keeps the existing shell unchanged by default', () => {
   render(<ShellNavigation onNewSession={vi.fn()} onSettings={vi.fn()} onOracle={vi.fn()} />)
   expect(screen.queryByRole('navigation')).toBeNull()
 })
 it('gates entries with both previews and authoritative flags and orders actions', () => {
+  vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
   const onSettings = vi.fn()
   const onOracle = vi.fn()
   const preferences = { desktopRail: true, hostMonitorView: true, notificationPanel: true }
@@ -32,6 +36,7 @@ it('gates entries with both previews and authoritative flags and orders actions'
 })
 
 it('saves a trimmed display-name edit and refuses invalid names', () => {
+  vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
   const onChange = vi.fn()
   const preferences = { desktopRail: true }
   render(<PreviewFeaturesContext value={{
@@ -46,4 +51,30 @@ it('saves a trimmed display-name edit and refuses invalid names', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Save display name' }))
   expect(screen.getByRole('alert').textContent).toContain('1–60')
   expect(onChange).toHaveBeenCalledOnce()
+})
+
+it.each(['pending', 'failed', 'resolved'] as const)('does not save a presentation placeholder while the default is %s', async (state) => {
+  let resolve!: (value: { defaultDisplayName: string }) => void
+  let reject!: (reason: Error) => void
+  vi.mocked(request).mockReturnValue(new Promise((res, rej) => { resolve = res; reject = rej }))
+  const onChange = vi.fn()
+  const preferences = { desktopRail: true }
+  render(<PreviewFeaturesContext value={{
+    preferences, hubFlags: defaultHubFeatureFlags,
+    effective: effectivePreviewFeatures(preferences, defaultHubFeatureFlags), set: vi.fn(),
+  }}><DisplayNameSetting onChange={onChange} /></PreviewFeaturesContext>)
+  const save = screen.getByRole('button', { name: 'Save display name' })
+  expect(save).toHaveProperty('disabled', true)
+  fireEvent.click(save)
+  expect(onChange).not.toHaveBeenCalled()
+  if (state === 'failed') await act(async () => reject(new Error('offline')))
+  if (state === 'resolved') {
+    await act(async () => resolve({ defaultDisplayName: 'Git Name' }))
+    fireEvent.click(save)
+    expect(onChange).toHaveBeenCalledWith('Git Name')
+    return
+  }
+  fireEvent.change(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Explicit Name' } })
+  fireEvent.click(save)
+  expect(onChange).toHaveBeenCalledWith('Explicit Name')
 })

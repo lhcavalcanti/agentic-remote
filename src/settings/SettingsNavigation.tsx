@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { SettingsSection, SettingsSectionProps } from './sections'
+import { settingsSectionLabels } from './sections'
 
 export function SettingsNavigation({
   sections, sectionProps, initialSection,
@@ -14,7 +15,7 @@ export function SettingsNavigation({
   const [query, setQuery] = useState('')
   const search = query.trim().toLocaleLowerCase()
   const matches = sections.filter((section) =>
-    [section.title, ...(section.searchLabels ?? [])].some((label) => label.toLocaleLowerCase().includes(search)))
+    settingsSectionLabels(section, sectionProps).some((label) => label.toLocaleLowerCase().includes(search)))
   const current = matches.find((section) => section.id === selected) ?? matches[0]
   const content = useRef<HTMLDivElement>(null)
 
@@ -23,7 +24,7 @@ export function SettingsNavigation({
     if (!root || !current) return
     const categoryMatch = current.title.toLocaleLowerCase().includes(search)
     for (const card of root.querySelectorAll<HTMLElement>('.app-settings-section, .settings-computer-folders')) {
-      const labels = [...card.querySelectorAll('h4, label, legend, button, [aria-label]')]
+      const labels = [card, ...card.querySelectorAll('h4, label, legend, button, [aria-label]')]
         .map((label) => `${label.textContent ?? ''} ${label.getAttribute('aria-label') ?? ''}`).join(' ').toLocaleLowerCase()
       card.hidden = Boolean(search && !categoryMatch && !labels.includes(search))
     }

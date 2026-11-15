@@ -207,6 +207,7 @@ vi.mock('./dreamer-api', async (importOriginal) => ({
 }))
 
 vi.mock('./api', async (importOriginal) => ({
+  request: vi.fn(async () => ({ defaultDisplayName: 'Sample User' })),
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   checkHubSignIn: vi.fn(async () => undefined),
   fetchHubFeatureFlags: vi.fn(async () => defaultHubFeatureFlags),
@@ -24105,6 +24106,51 @@ describe('App', () => {
     expect(
       await screen.findByLabelText('Change the keys for Open or close knowledge'),
     ).toHaveTextContent('Alt + K')
+  })
+
+  it('makes every visible settings field label searchable in its category', async () => {
+    seedHubSettings({
+      previewFeatures: { settingsNavigation: true, desktopRail: true, schedulerView: true },
+      newSessionRuntimes: {
+        copilot: { model: 'fixture-model', reasoningEffort: 'high', contextTier: 'default', mode: '' },
+        claude: { model: 'provider-model', reasoningEffort: 'high', contextTier: 'default', mode: '' },
+      },
+    })
+    vi.mocked(fetchHubFeatureFlags).mockResolvedValue({ ...defaultHubFeatureFlags, scheduler: true })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { model: 'fixture-model', reasoningEffort: 'high', sessionBackend: 'sdk', sessionClosePolicy: 'ask' },
+    })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    await within(dialog).findByRole('combobox', { name: 'GitHub Copilot default model' })
+    const categories = [...dialog.querySelectorAll('.settings-navigation__categories button span')]
+      .map((node) => node.firstChild!.textContent!)
+    const search = within(dialog).getByRole('searchbox')
+    for (const category of categories) {
+      fireEvent.change(search, { target: { value: '' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(`^${category}`) }))
+      if (category === 'Oracle') await within(dialog).findByLabelText('Dreamer timezone')
+      const content = dialog.querySelector('.settings-navigation__content')!
+      const labels = new Set([...content.querySelectorAll('h4, legend, label, [aria-label]')].flatMap((node) => {
+        const clone = node.cloneNode(true) as HTMLElement
+        clone.querySelectorAll('input, select, small, button, kbd').forEach((child) => child.remove())
+        return [node.matches('h4, legend, label') ? clone.textContent?.trim() : undefined,
+          node.getAttribute('aria-label')].filter((label): label is string => Boolean(label))
+      }))
+      for (const label of labels) {
+        fireEvent.change(search, { target: { value: label } })
+        const button = within(dialog).queryByRole('button', { name: new RegExp(`^${category}`) })
+        expect(button, `${category}: ${label}`).not.toBeNull()
+        fireEvent.click(button!)
+        const visibleMatches = [...content.querySelectorAll('h4, legend, label, [aria-label]')].filter((node) =>
+          !node.closest('[hidden]') && (`${node.textContent} ${node.getAttribute('aria-label')}`).includes(label))
+        expect(visibleMatches.length, `${category}: ${label} must show its field`).toBeGreaterThan(0)
+      }
+    }
   })
 
   it('drops stored shortcut keys that the editor would have refused', async () => {

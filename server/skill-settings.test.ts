@@ -78,6 +78,41 @@ describe('read-only skill discovery and settings changes', () => {
     expect(JSON.parse(await readFile(path.join(copilotHome, 'settings.json'), 'utf8')).disabledSkills).toEqual(['unknown-skill'])
   })
 
+  it.each(['default', 'override', 'xdg'])('discovers the newest complete stable builtin cache using the %s root', async (kind) => {
+    const cache = kind === 'override' ? path.join(home, 'custom-cache')
+      : kind === 'xdg' ? path.join(home, 'xdg', 'copilot') : path.join(home, '.cache', 'copilot')
+    const packages = path.join(cache, 'pkg', `${process.platform}-${process.arch}`)
+    await skill(path.join(packages, '1.0.99', 'builtin'), 'old-builtin')
+    await skill(path.join(packages, '1.0.112', 'builtin'), 'current-builtin')
+    await skill(path.join(packages, '2.0.0-beta.1', 'builtin'), 'preview-builtin')
+    await mkdir(path.join(packages, '1.0.113'))
+    const env = kind === 'override' ? { COPILOT_CACHE_HOME: cache } : kind === 'xdg' ? { XDG_CACHE_HOME: path.join(home, 'xdg') } : {}
+    const discovery = new SkillSettingsService({ home, copilotHome, env, folders: () => [] })
+    expect((await discovery.snapshot()).skills.map((entry) => [entry.name, entry.source])).toEqual([['current-builtin', 'builtin']])
+  })
+
+  it('prefers the cached version selected by the executable over a newer download', async () => {
+    const packages = path.join(home, '.cache', 'copilot', 'pkg', `${process.platform}-${process.arch}`)
+    const running = path.join(packages, '1.0.109')
+    await skill(path.join(running, 'builtin'), 'running-builtin')
+    await skill(path.join(packages, '1.0.112', 'builtin'), 'newer-builtin')
+    await writeFile(path.join(running, 'copilot'), 'Fixture executable; never invoke.')
+    const discovery = new SkillSettingsService({ home, copilotHome, env: { PATH: running }, folders: () => [] })
+    expect((await discovery.snapshot()).skills.map((entry) => entry.name)).toEqual(['running-builtin'])
+  })
+
+  it('honors builtin exclusions and does not follow a cached builtin directory outside its version', async () => {
+    const packages = path.join(home, '.cache', 'copilot', 'pkg', `${process.platform}-${process.arch}`)
+    const safe = path.join(packages, '1.0.109', 'builtin')
+    await skill(safe, 'safe-builtin')
+    await skill(path.join(home, 'outside-cache'), 'not-a-builtin')
+    await mkdir(path.join(packages, '1.0.112'))
+    await symlink(path.join(home, 'outside-cache'), path.join(packages, '1.0.112', 'builtin'))
+    expect((await service.snapshot()).skills.map((entry) => entry.name)).toEqual(['safe-builtin'])
+    await writeFile(path.join(copilotHome, 'settings.json'), JSON.stringify({ ignoredSkillsLocations: [safe] }))
+    expect((await service.snapshot()).skills).toEqual([])
+  })
+
   it('honors ignored directories and their descendants, including canonical aliases', async () => {
     const ignored = await skill(path.join(copilotHome, 'skills'), 'excluded')
     await skill(path.join(copilotHome, 'skills'), 'visible')

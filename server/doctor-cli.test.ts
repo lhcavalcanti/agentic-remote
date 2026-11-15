@@ -116,7 +116,7 @@ async function fixture(options: { devtunnel?: boolean; optional?: boolean; healt
     HOST: '127.0.0.1',
     PORT: String(port),
     AGENTIC_REMOTE_DATA_DIR: path.join(root, 'data'),
-    AGENTIC_REMOTE_ALLOWED_ORIGINS: `http://localhost:${port},https://fixture-${port}.devtunnels.ms`,
+    AGENTIC_REMOTE_ALLOWED_ORIGINS: `http://localhost:${port},https://fixture-${port}.usw2.devtunnels.ms`,
     AGENTIC_REMOTE_DEVTUNNEL_ID: 'fixture.usw2',
     ...(options.optional === false ? {} : {
       CLAUDE_BIN: 'claude',
@@ -405,12 +405,41 @@ describe('read-only doctor CLI', () => {
     ['localhost:1234', 'fail'],
     ['https://fixture.devtunnels.ms', 'fail'],
     ['http://localhost:1234', 'warn'],
-    ['http://localhost:1234/path,https://fixture.devtunnels.ms/path', 'ok'],
+    ['http://localhost:1234/path,https://fixture.devtunnels.ms/path', 'warn'],
     ['', 'warn'],
   ])('uses the service origin parser rules for %s', async (origins, status) => {
     const context = await fixture()
     await context.configure({ AGENTIC_REMOTE_ALLOWED_ORIGINS: origins })
     expect(check(await context.run(), 'origins')?.status).toBe(status)
+  })
+
+  it.each([
+    ['https://other-PORT.usw2.devtunnels.ms', 'warn'],
+    ['https://fixture-other-PORT.usw2.devtunnels.ms', 'warn'],
+    ['https://fixture-PORT.euw1.devtunnels.ms', 'warn'],
+    ['https://fixture-999.usw2.devtunnels.ms', 'warn'],
+    ['http://fixture-PORT.usw2.devtunnels.ms', 'warn'],
+    ['https://fixture-PORT.usw2.devtunnels.ms:8443', 'warn'],
+    ['https://fixture-PORT.usw2.devtunnels.ms.bad.invalid', 'warn'],
+    ['https://fixture-PORT.usw2.devtunnels.ms/path', 'ok'],
+    ['https://FIXTURE-PORT.USW2.devtunnels.ms', 'ok'],
+  ])('checks the selected tunnel origin against %s', async (origin, status) => {
+    const context = await fixture()
+    await context.configure({
+      AGENTIC_REMOTE_ALLOWED_ORIGINS: `http://localhost:${context.port},${origin.replace('PORT', String(context.port))}`,
+    })
+    expect(check(await context.run(), 'origins')?.status).toBe(status)
+  })
+
+  it('uses the explicitly selected tunnel origin rather than the configured tunnel', async () => {
+    const context = await fixture()
+    await context.configure({
+      AGENTIC_REMOTE_ALLOWED_ORIGINS: `http://localhost:${context.port},https://override-${context.port}.usw2.devtunnels.ms`,
+    })
+    expect(check(await context.run(), 'origins')?.status).toBe('warn')
+    for (const id of ['override.usw2', 'override']) {
+      expect(check(await context.run(['--json', '--tunnel', id]), 'origins')?.status).toBe('ok')
+    }
   })
 
   it('never probes a non-loopback configured host', async () => {

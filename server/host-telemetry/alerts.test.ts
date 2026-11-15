@@ -315,6 +315,37 @@ describe('durable resource alerts and flag wiring', () => {
     expect((await stat(store.statePath, { bigint: true })).ino).toBe(alerted)
   })
 
+  it.each(['disk', 'memory'] as const)('retries a %s alert after a failed notification write', async (condition) => {
+    let at = start
+    const store = new NotificationStore(await directory(), { now: () => at })
+    await store.initialize()
+    const service = new NotificationCenterService(store, {
+      now: () => at, mutedSessions: () => [], readSession: vi.fn(),
+    })
+    if (condition === 'memory') {
+      for (let ms = 0; ms < 120_000; ms += 15_000) {
+        at = start + ms
+        await service.host(computer, snapshot(at))
+      }
+      at = start + 120_000
+    }
+    const reading = snapshot(at, condition === 'memory' ? 91 : 50, condition === 'disk' ? 4 : 50)
+    const persist = vi.spyOn(store as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+      .mockRejectedValueOnce(new Error('Notification write failed'))
+    try {
+      await expect(service.host(computer, reading)).rejects.toThrow('Notification write failed')
+      expect(await store.list()).toEqual([])
+      at += 15_000
+      await service.host(computer, reading)
+      expect(await store.list()).toEqual([expect.objectContaining({
+        kind: 'host.alert', title: expect.stringContaining(condition === 'disk' ? 'Low disk space' : 'Memory pressure'),
+      })])
+      await service.host(computer, reading)
+      expect(await store.list()).toHaveLength(1)
+      expect(persist).toHaveBeenCalledTimes(2)
+    } finally { persist.mockRestore() }
+  })
+
   it.each([
     ['off', 'off', 'hub', false],
     ['on', 'off', 'hub', false],

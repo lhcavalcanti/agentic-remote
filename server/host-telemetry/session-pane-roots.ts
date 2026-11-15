@@ -1,9 +1,12 @@
 import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { parseProcessStat } from './process-proc.js'
 
 const execFileAsync = promisify(execFile)
+const MAX_ANCESTRY_READS = 4096
+const ANCESTRY_YIELD_INTERVAL = 32
 
 export interface SessionPaneRoot {
   sessionId: string
@@ -26,6 +29,7 @@ export class SessionPaneRoots {
     private readonly listPanes = async () => (await execFileAsync('tmux', [
       'list-panes', '-a', '-F', '#{pane_id}\t#{pane_pid}',
     ], { timeout: 2_000, maxBuffer: 1024 * 1024 })).stdout,
+    private readonly yieldTraversal: () => Promise<void> = () => yieldToEventLoop(),
   ) {}
 
   async observe(sessionId: string, pane: { target: string; rootPid: number }, ownerPid: number, ownerStartTime: number | undefined): Promise<void> {
@@ -58,16 +62,26 @@ export class SessionPaneRoots {
         return [target, Number(pid)]
       }))
       const roots: SessionPaneRoot[] = []
+      let reads = 0
+      const readStat = async (pid: number) => {
+        reads += 1
+        try {
+          return parseProcessStat(await this.readStat(pid))
+        } finally {
+          if (reads % ANCESTRY_YIELD_INTERVAL === 0) await this.yieldTraversal()
+        }
+      }
       for (const root of this.roots.values()) {
+        if (reads >= MAX_ANCESTRY_READS) break
         if (panes.get(root.target) !== root.panePid) continue
         try {
-          const owner = parseProcessStat(await this.readStat(root.ownerPid))
+          const owner = await readStat(root.ownerPid)
           if (owner?.pid !== root.ownerPid || owner.startTime !== root.ownerStartTime) continue
           let current = owner
           const visited = new Set<number>()
-          while (current.pid !== root.panePid && !visited.has(current.pid) && visited.size < 4096) {
+          while (current.pid !== root.panePid && !visited.has(current.pid) && reads < MAX_ANCESTRY_READS) {
             visited.add(current.pid)
-            const parent = parseProcessStat(await this.readStat(current.ppid))
+            const parent = await readStat(current.ppid)
             if (!parent || parent.pid !== current.ppid || parent.startTime > current.startTime) break
             current = parent
           }

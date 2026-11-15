@@ -58,4 +58,31 @@ describe('read-only terminal pane roots', () => {
     await missingTmux.observe('session', { target: '%1', rootPid: 42 }, 42, 42)
     expect(await missingTmux.listSessionPaneRoots()).toEqual([])
   })
+
+  it('caps total ancestry reads across roots and yields during deep traversals', async () => {
+    const parents = new Map<number, number>()
+    for (let index = 0; index < 3; index += 1) {
+      const ownerPid = 100_000 + index * 10_000
+      for (let depth = 0; depth < 1600; depth += 1) {
+        parents.set(ownerPid - depth, depth === 1599 ? 10_000 + index : ownerPid - depth - 1)
+      }
+    }
+    const readStat = vi.fn(async (pid: number) => processStatFixture({
+      pid, ppid: parents.get(pid) ?? 1, startTime: pid,
+    }))
+    const readsAtYield: number[] = []
+    const roots = new SessionPaneRoots(readStat, async () => '%0\t10000\n%1\t10001\n%2\t10002\n',
+      async () => { readsAtYield.push(readStat.mock.calls.length) })
+    for (let index = 0; index < 3; index += 1) {
+      const ownerPid = 100_000 + index * 10_000
+      await roots.observe(`session-${index}`, { target: `%${index}`, rootPid: 10_000 + index }, ownerPid, ownerPid)
+    }
+    readStat.mockClear()
+    const listed = await roots.listSessionPaneRoots()
+    expect(readStat.mock.calls.length).toBeLessThanOrEqual(4096)
+    expect(listed.map((root) => root.sessionId)).toEqual(['session-0', 'session-1'])
+    expect(readsAtYield.length).toBeGreaterThan(0)
+    expect(readsAtYield[0]).toBeLessThanOrEqual(32)
+    expect(readsAtYield.every((count, index) => count - (readsAtYield[index - 1] ?? 0) <= 32)).toBe(true)
+  })
 })

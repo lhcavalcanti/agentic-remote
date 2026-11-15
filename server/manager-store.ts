@@ -200,7 +200,7 @@ export class ManagerStore {
     const { proactive: _retired, ...current } = (state ?? {}) as Partial<ManagerState> & { proactive?: unknown }
     this.current = { ...emptyState(), ...current }
     if (!Array.isArray(this.current.knownSdkSessionIds)) this.current.knownSdkSessionIds = []
-    this.sessions = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
+    await this.loadSessionRegistry()
 
     this.conversation = new Map()
     const conversationLines = await this.readLines<ManagerMessage>('conversation.jsonl')
@@ -225,7 +225,28 @@ export class ManagerStore {
   /** Origin metadata does not require opening Oracle's conversation or uploads. */
   async initializeSessionRegistry(): Promise<void> {
     await this.prepareRegistryDirectory()
-    this.sessions = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
+    await this.loadSessionRegistry()
+  }
+
+  private normalizeSessionOrigins(registry: ManagerRegistry): boolean {
+    let changed = false
+    for (const entry of Object.values(registry)) {
+      if (entry?.origin === 'user' && entry.originEvidence !== 'launch') {
+        entry.origin = 'discovered'
+        entry.originEvidence = 'discovery'
+        changed = true
+      }
+    }
+    return changed
+  }
+
+  private async loadSessionRegistry(): Promise<void> {
+    const registry = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
+    if (this.normalizeSessionOrigins(registry)) {
+      await this.prepareRegistryDirectory()
+      await this.writeJson('sessions.json', registry)
+    }
+    this.sessions = registry
   }
 
   recordUserSession(session: ManagedSession): Promise<void> {
@@ -414,6 +435,7 @@ export class ManagerStore {
   updateRegistry(change: (registry: ManagerRegistry) => void): Promise<void> {
     const next = structuredClone(this.sessions)
     change(next)
+    this.normalizeSessionOrigins(next)
     this.sessions = this.pruneTombstones(next)
     const snapshot = structuredClone(this.sessions)
     return this.serialized(() => this.writeJson('sessions.json', snapshot))

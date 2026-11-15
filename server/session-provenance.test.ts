@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { rm, stat, writeFile } from 'node:fs/promises'
+import { readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import Fastify from 'fastify'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +13,7 @@ import type { ComputerManager } from './computer-manager.js'
 import type { KnowledgeStore } from './knowledge-store.js'
 import { buildApp } from './app.js'
 import { EventEmitter } from 'node:events'
+import { recordScheduleProvenance } from './schedule-launcher.js'
 
 const directories: string[] = []
 afterEach(async () => {
@@ -64,24 +65,88 @@ describe('hub session provenance projection', () => {
     } finally { await app.close(); await recorder.stop() }
   })
 
-  it('records an external discovery as discovered even after the initial baseline', async () => {
+  it.each([false, true])('records an external discovery as discovered independently of baseline (%s)', async (baseline) => {
     const store = await registry()
     const recorder = new JournalRecorder(store)
     try {
-      await recorder.reconcile([], ['studio'])
+      if (baseline) await recorder.reconcile([], ['studio'])
       recorder.handle({ type: 'session.upserted', session })
       await recorder.flush()
       expect(sessionProvenanceProjection(store).project(session).provenance).toEqual({ origin: 'discovered' })
+      expect(store.registry()['studio:one']).toMatchObject({ origin: 'discovered', originEvidence: 'discovery' })
     } finally { await recorder.stop() }
   })
 
-  it('does not present a legacy timing-only user tag as launch evidence', async () => {
+  it('does not record a timing-only user tag as launch evidence on registry writes', async () => {
     const store = await registry()
     await store.updateRegistry((entries) => {
       entries['studio:one'] = { computerId: 'studio', sessionId: 'one', title: 'Untitled', origin: 'user', firstSeenAt: session.updatedAt }
     })
-    expect(sessionProvenanceProjection(store).project(session)).not.toHaveProperty('provenance')
-    expect(store.sessionOrigin('studio', 'one')).toBe('user')
+    expect(store.sessionOrigin('studio', 'one')).toBe('discovered')
+    expect(sessionProvenanceProjection(store).project(session).provenance).toEqual({ origin: 'discovered' })
+    expect(JSON.parse(await readFile(path.join(store.directory, 'sessions.json'), 'utf8'))['studio:one'].origin).toBe('discovered')
+  })
+
+  it.each([
+    ['full', false], ['full', true], ['metadata', false], ['metadata', true],
+  ] as const)('normalizes legacy discovery tags on %s startup regardless of baseline (%s)', async (mode, baseline) => {
+    const store = await registry()
+    const entry = { computerId: 'studio', sessionId: 'one', title: 'Untitled', origin: 'user', firstSeenAt: session.updatedAt, task: 'Preserve this legacy task' }
+    const entries = {
+      'studio:one': entry,
+      'studio:launched': { ...entry, sessionId: 'launched', originEvidence: 'launch' },
+      'studio:oracle': { ...entry, sessionId: 'oracle', origin: 'manager' },
+      'studio:scheduled': { ...entry, sessionId: 'scheduled', origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run' },
+    }
+    await writeFile(path.join(store.directory, 'sessions.json'), JSON.stringify(entries))
+    await writeFile(path.join(store.directory, 'state.json'), JSON.stringify(baseline ? { baselineAt: session.updatedAt } : {}))
+    const restarted = new ManagerStore(store.directory)
+    if (mode === 'full') await restarted.initialize()
+    else await restarted.initializeSessionRegistry()
+    expect(restarted.registry()['studio:one']).toEqual({ ...entry, origin: 'discovered', originEvidence: 'discovery' })
+    expect(restarted.sessionProvenance('studio', 'one')).toEqual({ origin: 'discovered' })
+    expect(restarted.sessionProvenance('studio', 'launched')).toEqual({ origin: 'user' })
+    expect(restarted.sessionOrigin('studio', 'oracle')).toBe('manager')
+    expect(restarted.sessionOrigin('studio', 'scheduled')).toBe('schedule')
+    const persisted = JSON.parse(await readFile(path.join(store.directory, 'sessions.json'), 'utf8'))
+    expect(persisted['studio:one']).toEqual({ ...entry, origin: 'discovered', originEvidence: 'discovery' })
+    expect(persisted['studio:oracle']).toEqual(entries['studio:oracle'])
+    expect(persisted['studio:scheduled']).toEqual(entries['studio:scheduled'])
+    const again = new ManagerStore(store.directory)
+    await again.initializeSessionRegistry()
+    expect(again.registry()).toEqual(restarted.registry())
+  })
+
+  it.each(['before', 'after'])('keeps an unproven legacy replacement discovered when observed %s removal', async (order) => {
+    const store = await registry()
+    await store.updateRegistry((entries) => {
+      entries['studio:one'] = { computerId: 'studio', sessionId: 'one', title: session.title, origin: 'user', firstSeenAt: session.updatedAt }
+    })
+    const recorder = new JournalRecorder(store)
+    const successor = { ...session, id: 'legacy-successor' }
+    try {
+      if (order === 'before') recorder.handle({ type: 'session.upserted', session: successor })
+      recorder.handle({ type: 'session.removed', computerId: 'studio', sessionId: 'one', replacedBy: successor.id })
+      if (order === 'after') recorder.handle({ type: 'session.upserted', session: successor })
+      await recorder.flush()
+      expect(store.sessionOrigin('studio', successor.id)).toBe('discovered')
+      const restarted = new ManagerStore(store.directory)
+      await restarted.initializeSessionRegistry()
+      expect(restarted.sessionProvenance('studio', successor.id)).toEqual({ origin: 'discovered' })
+    } finally { await recorder.stop() }
+  })
+
+  it('persists launch evidence from the actual Oracle and schedule recorders', async () => {
+    const store = await registry()
+    const recorder = new JournalRecorder(store)
+    try {
+      await recorder.markManaged(session, 'An explicitly launched task')
+      await recordScheduleProvenance(store, { ...session, id: 'scheduled' }, { origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Scheduled task' })
+      const restarted = new ManagerStore(store.directory)
+      await restarted.initializeSessionRegistry()
+      expect(restarted.registry()['studio:one']).toMatchObject({ origin: 'manager', originEvidence: 'launch' })
+      expect(restarted.registry()['studio:scheduled']).toMatchObject({ origin: 'schedule', originEvidence: 'launch', scheduleId: 'daily', scheduleRunId: 'run' })
+    } finally { await recorder.stop() }
   })
 
   it.each(['before', 'after'])('carries explicit user evidence when replacement discovery arrives %s removal', async (order) => {

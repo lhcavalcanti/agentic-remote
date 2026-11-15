@@ -15,6 +15,7 @@ export function sessionProvenanceProjection(
 ) {
   function project<T extends SessionIdentity>(session: T): T {
     const { provenance: _remote, ...identity } = session
+    // The registry records launches explicitly and normalizes legacy timing-only user tags.
     const recorded = store?.sessionProvenance(session.computerId, session.id)
     if (!recorded) return identity as T
     const provenance = { ...recorded }

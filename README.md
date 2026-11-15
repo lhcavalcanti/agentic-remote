@@ -547,7 +547,7 @@ agentic-remote logs
 curl http://192.168.1.10:4317/api/health
 ```
 
-Start with `doctor` even if startup fails. It shows the last failed startup phase, or an unfinished phase when the service is not active, from the last two hours (up to 2,000 journal lines). Optional Claude auth is checked only when `CLAUDE_BIN` is configured or its default `~/.local/bin/claude` installation exists; Whisper assets are checked when their paths are configured, and local voice assets only with `AGENTIC_REMOTE_ORACLE_VOICE=on`. A recovered startup failure is a warning. Health probes stay on loopback; a non-loopback `HOST` is explicitly skipped. Use `doctor --help` for options.
+Start with `doctor` even if startup fails. It shows the last failed startup phase, or an unfinished phase when the service is not active, from the last two hours (up to 2,000 journal lines). Optional Claude auth is checked only when `CLAUDE_BIN` is configured or its default `~/.local/bin/claude` installation exists; Whisper assets are checked when their paths are configured, and local voice assets only with `AGENTIC_REMOTE_ORACLE_VOICE=on`. A hub delegating voice through `AGENTIC_REMOTE_VOICE_COMPUTER` skips local voice assets; a node always needs its own assets when voice is on. A recovered startup failure is a warning. Health probes stay on loopback; a non-loopback `HOST` is explicitly skipped. Use `doctor --help` for options.
 
 The service runs provider startup, including session recovery, before it
 listens, so a stalled startup refuses connections; only recovery deferred by

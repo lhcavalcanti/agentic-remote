@@ -388,6 +388,18 @@ describe('read-only doctor CLI', () => {
     expect(check(remote, 'voice.assets')?.status).toBe('skip')
   })
 
+  it.each(['environment', 'shell'])('requires node-local voice assets despite a remote selection in the %s', async (source) => {
+    const context = await fixture()
+    await rm(path.join(context.root, 'data/models/voice.onnx'))
+    const settings = { AGENTIC_REMOTE_ROLE: 'node', AGENTIC_REMOTE_VOICE_COMPUTER: 'fixture-node' }
+    if (source === 'environment') await context.configure(settings)
+    const result = await context.run(['--json'], source === 'shell' ? settings : {})
+    expect(result.code).toBe(1)
+    expect(check(result, 'voice.assets')).toMatchObject({
+      status: 'fail', detail: expect.stringContaining('AGENTIC_REMOTE_VOICE_TTS_MODEL'),
+    })
+  })
+
   it.each([
     ['not-an-origin', 'fail'],
     ['localhost:1234', 'fail'],

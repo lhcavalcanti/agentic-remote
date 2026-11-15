@@ -312,7 +312,7 @@ function assetChecks() {
   if (value('AGENTIC_REMOTE_ORACLE_VOICE') !== 'on') {
     return add('voice.assets', 'skip', 'Oracle voice is off')
   }
-  if (value('AGENTIC_REMOTE_VOICE_COMPUTER')) {
+  if (value('AGENTIC_REMOTE_ROLE', 'hub') === 'hub' && value('AGENTIC_REMOTE_VOICE_COMPUTER')) {
     return add('voice.assets', 'skip', 'Oracle voice uses a remote computer; local assets are not required')
   }
   const assets = [

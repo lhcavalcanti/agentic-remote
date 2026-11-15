@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { parseCronExpression } from './schedule-cron.js'
+import { launchIdentitySchema } from './launch-identity.js'
 
 export const DEFAULT_SCHEDULE_TIMEZONE = 'America/Los_Angeles'
 export const SCHEDULE_PROMPT_MAX_LENGTH = 20_000
@@ -96,8 +97,8 @@ export const scheduleRunSchema = z.object({
   occurrenceAt: timestamp,
   trigger: z.enum(['schedule', 'manual', 'catch-up']),
   status: scheduleRunStatusSchema,
-  launchId: identifier,
-  rootPromptReceipt: identifier.optional(),
+  launchId: launchIdentitySchema,
+  rootPromptReceipt: launchIdentitySchema.optional(),
   sessionId: identifier.optional(),
   computerId: identifier,
   startedAt: timestamp.optional(),

@@ -156,6 +156,15 @@ describe('scheduleRunSchema', () => {
     computerId: 'computer-1',
   }
 
+  it.each(['launchId', 'rootPromptReceipt'])('uses launch API identity validation for %s without trimming tokens', (field) => {
+    for (const token of ['has space', ' padded ', 'a/b', 'x'.repeat(129), 'x'.repeat(200)]) {
+      expect(scheduleRunSchema.safeParse({ ...run, [field]: token }).success).toBe(false)
+    }
+    for (const token of ['run:root-1_ok.v2', 'x'.repeat(128)]) {
+      expect(scheduleRunSchema.parse({ ...run, [field]: token })[field as 'launchId' | 'rootPromptReceipt']).toBe(token)
+    }
+  })
+
   it('represents a persisted launch before acceptance and records an opaque accepted prompt receipt later', () => {
     expect(scheduleRunSchema.parse(run)).toEqual(run)
     const accepted = {

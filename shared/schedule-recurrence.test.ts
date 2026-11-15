@@ -102,6 +102,12 @@ describe('DST disambiguation', () => {
 })
 
 describe('calendar recurrence', () => {
+  it('expands whole-minute fractional hours using integer minute arithmetic', () => {
+    expect(next({ type: 'hourly', everyHours: 4.1 }, '2026-01-01T00:00:00Z', 3, 'UTC')).toEqual([
+      '2026-01-01T04:06:00.000Z', '2026-01-01T08:12:00.000Z', '2026-01-01T12:18:00.000Z',
+    ])
+  })
+
   it('uses a once timestamp as an absolute instant and excludes it after it has occurred', () => {
     const recurrence = { type: 'once', at: '2026-11-13T12:30:00-08:00' } as const
     expect(next(recurrence, '2026-11-13T20:00:00Z')).toEqual(['2026-11-13T20:30:00.000Z'])

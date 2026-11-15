@@ -119,6 +119,15 @@ describe('scheduleTimezoneSchema', () => {
 })
 
 describe('scheduleRecurrenceSchema', () => {
+  it('accepts fractional hours that represent whole minutes without accepting subminute intervals', () => {
+    for (const everyHours of [4.1, 8.2, 1 / 60]) {
+      expect(scheduleRecurrenceSchema.safeParse({ type: 'hourly', everyHours }).success).toBe(true)
+    }
+    for (const everyHours of [4.100001, 4.1 + 1 / 3600, Number.EPSILON]) {
+      expect(scheduleRecurrenceSchema.safeParse({ type: 'hourly', everyHours }).success).toBe(false)
+    }
+  })
+
   it('represents past one-off schedules without a clock-dependent schema', () => {
     expect(scheduleRecurrenceSchema.parse({ type: 'once', at: '2020-01-01T00:00:00Z' })).toEqual({
       type: 'once', at: '2020-01-01T00:00:00Z',

@@ -38,7 +38,11 @@ export const scheduleRecurrenceSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hourly'),
     everyHours: z.number().positive().max(24)
-      .refine((hours) => Number.isInteger(hours * 60), 'Hourly interval must be a whole number of minutes'),
+      .refine((hours) => {
+        const minutes = hours * 60
+        return Math.round(minutes) >= 1 &&
+          Math.abs(minutes - Math.round(minutes)) <= Number.EPSILON * Math.max(1, minutes) * 4
+      }, 'Hourly interval must be a whole number of minutes'),
     windowStart: time.optional(),
     windowEnd: windowEnd.optional(),
   }).strict(),

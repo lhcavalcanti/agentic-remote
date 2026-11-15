@@ -311,9 +311,10 @@ export class HostTelemetrySampler {
   }
 
   private pruneMinutes(at: number): void {
-    const oldestMinute = (Math.floor(at / MINUTE_MS) - HOST_TELEMETRY_MAX_MINUTES + 1) * MINUTE_MS
+    const currentMinute = Math.floor(at / MINUTE_MS) * MINUTE_MS
+    const oldestMinute = currentMinute - (HOST_TELEMETRY_MAX_MINUTES - 1) * MINUTE_MS
     for (const minute of this.minutes.keys()) {
-      if (minute < oldestMinute) this.minutes.delete(minute)
+      if (minute < oldestMinute || minute > currentMinute) this.minutes.delete(minute)
     }
     while (this.minutes.size > HOST_TELEMETRY_MAX_MINUTES) {
       this.minutes.delete(Math.min(...this.minutes.keys()))

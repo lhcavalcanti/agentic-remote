@@ -329,6 +329,26 @@ describe('HostTelemetrySampler', () => {
     expect(sampler.snapshot().latest?.at).toBe(new Date(wall).toISOString())
   })
 
+  it('drops future minute buckets after a backward clock jump instead of evicting current data', async () => {
+    let minute = 0
+    let wall = startAt
+    const sampler = makeSampler(async () => {
+      wall = startAt + minute++ * 60_000
+      return readingFixture()
+    }, { now: () => wall })
+    sampler.setViewers(1)
+    sampler.start()
+    await vi.advanceTimersByTimeAsync(1_440_000)
+    expect(sampler.history()).toHaveLength(1440)
+    minute = -1
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(sampler.history()).toEqual([expect.objectContaining({
+      at: new Date(startAt - 60_000).toISOString(), samples: 1,
+    })])
+    wall -= 60_000
+    expect(sampler.history()).toEqual([])
+  })
+
   it('produces partial samples for missing files and clears rate baselines across gaps', async () => {
     let index = 0
     const reader = vi.fn(async () => {

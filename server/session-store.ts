@@ -2165,7 +2165,7 @@ export class SessionStore {
     const session = this.state.sessions[owner.sessionId]
     return {
       launchId, sessionId: owner.sessionId,
-      ...(session ? { sessionStatus: session.status, stopping: session.launchStopping === true } : { deleted: true }),
+      ...(session ? { sessionStatus: cloneSession(session).status, stopping: session.launchStopping === true } : { deleted: true }),
       receipts: structuredClone(session?.promptReceipts || owner.receipts || []),
       ...(session?.launchTermination || owner.termination ? { termination: structuredClone(session?.launchTermination || owner.termination) } : {}),
     }

@@ -54,6 +54,23 @@ afterEach(async () => {
 })
 
 describe('durable launch identity', () => {
+  it('reconciles the public interrupted and recovery status rather than the stored idle projection', async () => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), status: 'running', launchId: 'run' }, { backend: 'sdk', managedOpen: true })
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    expect(restarted.get('session')?.status).toBe('error')
+    expect(restarted.reconcileLaunch('run')?.sessionStatus).toBe('error')
+    const recovery = await restarted.claimSdkRecovery('session')
+    await restarted.settleSdkRecovery('session', recovery.generation, { state: 'waiting-permission' })
+    await restarted.update('session', (stored) => {
+      stored.status = 'idle'
+      stored.pendingPermission = { requestId: 'trust', title: 'Synthetic trust request', options: [] }
+    })
+    expect(restarted.get('session')?.status).toBe('waiting')
+    expect(restarted.reconcileLaunch('run')?.sessionStatus).toBe('waiting')
+  })
+
   it('coalesces creation before returning and finds the session after a lost response and restart', async () => {
     const { store, location } = await storeAt()
     const creations = new LaunchCreations()

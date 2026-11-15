@@ -41,6 +41,7 @@ import {
 } from '../shared/settings-profile'
 import {
   checkHubSignIn,
+  fetchHubFeatureFlags,
   getManager,
   sendManagerMessage,
   activateSession,
@@ -73,7 +74,6 @@ import {
   saveSessionOrderLane,
   bootstrapSessionOrder,
   fetchSettingsProfile,
-  fetchHubFeatureFlags,
   saveSettingsChanges,
   importSettingsProfile,
   listClosedSessions,
@@ -3918,7 +3918,7 @@ describe('App', () => {
     expect(screen.queryByText('Data may be stale')).not.toBeInTheDocument()
   })
 
-  it('refreshes sessions, Oracle, and Dreamer on reconnect and visibility return', async () => {
+  it('refreshes sessions, Oracle, Dreamer, and hub flags on reconnect and visibility return', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.mocked(getManager).mockResolvedValue({
       available: true,
@@ -3936,21 +3936,25 @@ describe('App', () => {
     const listingBeforeReconnect = vi.mocked(listSessionListing).mock.calls.length
     const managerBeforeReconnect = vi.mocked(getManager).mock.calls.length
     const dreamerBeforeReconnect = vi.mocked(getDreamer).mock.calls.length
+    const flagsBeforeReconnect = vi.mocked(fetchHubFeatureFlags).mock.calls.length
     act(() => MockWebSocket.instances.at(-1)?.onopen?.())
     await waitFor(() => {
       expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeReconnect + 1)
       expect(getManager).toHaveBeenCalledTimes(managerBeforeReconnect + 1)
       expect(getDreamer).toHaveBeenCalledTimes(dreamerBeforeReconnect + 1)
+      expect(fetchHubFeatureFlags).toHaveBeenCalledTimes(flagsBeforeReconnect + 1)
     })
 
     const listingBeforeVisible = vi.mocked(listSessionListing).mock.calls.length
     const managerBeforeVisible = vi.mocked(getManager).mock.calls.length
     const dreamerBeforeVisible = vi.mocked(getDreamer).mock.calls.length
+    const flagsBeforeVisible = vi.mocked(fetchHubFeatureFlags).mock.calls.length
     fireEvent(document, new Event('visibilitychange'))
     await waitFor(() => {
       expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeVisible + 1)
       expect(getManager).toHaveBeenCalledTimes(managerBeforeVisible + 1)
       expect(getDreamer).toHaveBeenCalledTimes(dreamerBeforeVisible + 1)
+      expect(fetchHubFeatureFlags).toHaveBeenCalledTimes(flagsBeforeVisible + 1)
     })
     expect(sendMessage).not.toHaveBeenCalled()
     expect(sendManagerMessage).not.toHaveBeenCalled()

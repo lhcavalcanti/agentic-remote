@@ -25,7 +25,7 @@ export class NotificationCenterService implements NotificationRecorder {
   private readonly preferences: NotificationKindPreferences = {}
   private readonly admissions = new WeakMap<object, Promise<void>>()
   private readonly hostArrivals = new Map<string, { sample: string; at: number }>()
-  private readonly hostObservations: NotificationCursors = {}
+  private hostObservations: NotificationCursors = {}
   private readonly oracleReplies = new Map<string, string>()
 
   constructor(
@@ -80,9 +80,14 @@ export class NotificationCenterService implements NotificationRecorder {
       this.hostArrivals.set(computer.id, arrival)
       observation.snapshot.sampleAgeMs = Math.max(0, at - arrival.at)
     }
-    return this.enqueue(() => this.store.ingest((cursors) =>
-      classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now(), this.hostObservations)
-        .filter((record) => this.inApp(record))))
+    return this.enqueue(async () => {
+      // Episode state must not outrun a failed durable alert admission.
+      const observations = structuredClone(this.hostObservations)
+      await this.store.ingest((cursors) =>
+        classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now(), observations)
+          .filter((record) => this.inApp(record)))
+      this.hostObservations = observations
+    })
   }
 
   /** The native producer receives the original signal only after admission. */

@@ -1570,7 +1570,7 @@ export async function setupWorkspaceFixture(
           session.queuedPrompts = [...(session.queuedPrompts ?? []), { id, content: input.content, createdAt: FIXTURE_NOW }]
           session.queuedCount = session.queuedPrompts.length
         } else {
-          session.messages.push({ id, role: 'user', content: input.content, createdAt: FIXTURE_NOW })
+          session.messages.push({ id, role: 'user', deliveryConfirmed: true, content: input.content, createdAt: FIXTURE_NOW })
           session.status = 'running'
           session.activity = 'Working on the follow-up'
         }

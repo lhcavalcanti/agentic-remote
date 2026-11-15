@@ -630,6 +630,22 @@ test.describe('browser interaction contracts', () => {
     await expect(scheduler.locator('li[data-linked="true"]')).toContainText('missed')
   })
 
+  test('keeps schedule management available for a stale history link', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'scheduler-stale-link')
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await expect(scheduler.getByRole('status')).toContainText('This schedule no longer exists.')
+    await scheduler.getByRole('button', { name: 'Show all schedules', exact: true }).click()
+    await expect(scheduler.getByText('This schedule no longer exists.')).toHaveCount(0)
+    await expect(scheduler.getByRole('button', { name: 'Edit Daily workspace review', exact: true })).toBeVisible()
+  })
+
+  test('preserves duplicate-name reasons and the editable draft', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'scheduler-name-conflict')
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await expect(scheduler.getByRole('alert')).toContainText('A non-archived schedule already has this name')
+    await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Daily workspace review')
+  })
+
   test('announces unread counts, opens notifications and dismisses a single grouped item in one batch', async ({ page, baseURL }) => {
     await open(page, baseURL, 'notification-panel')
     const panel = page.getByRole('dialog', { name: 'Notifications', exact: true })

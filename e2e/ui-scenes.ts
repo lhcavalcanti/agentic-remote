@@ -52,6 +52,8 @@ export const uiSceneNames = [
   'host-processes',
   'scheduler',
   'scheduler-form',
+  'scheduler-name-conflict',
+  'scheduler-stale-link',
 ] as const
 
 export type UISceneName = typeof uiSceneNames[number]
@@ -138,7 +140,7 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true, hostMonitorView: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
-      if (name === 'scheduler' || name === 'scheduler-form') {
+      if (name.startsWith('scheduler')) {
         state.settings.values = { previewFeatures: { desktopRail: true, schedulerView: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
@@ -165,9 +167,9 @@ export function createUIScenes(
         hostMonitorWsl: name === 'host-monitor' || name === 'host-processes',
         scheduler: name === 'oracle-schedule-approval' ? {
           schedules: [], runs: [], proposals: fixtureScheduleProposals,
-        } : name === 'scheduler' || name === 'scheduler-form' || name === 'notification-panel'
+        } : name.startsWith('scheduler') || name === 'notification-panel'
           ? { schedules: fixtureSchedules, runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals } : undefined,
-        manager: hostStatus?.manager ?? (['oracle-panel', 'oracle-schedule-approval', 'scheduler', 'scheduler-form'].includes(name) ? {
+        manager: hostStatus?.manager ?? (['oracle-panel', 'oracle-schedule-approval'].includes(name) || name.startsWith('scheduler') ? {
           available: true,
           status: 'idle',
           queued: 0,
@@ -246,13 +248,29 @@ export function createUIScenes(
           await monitor.getByRole('tab', { name: 'Processes', exact: true }).click()
           await expect(monitor.getByRole('button', { name: 'Open session', exact: true }).first()).toBeVisible()
         }
-      } else if (name === 'scheduler' || name === 'scheduler-form') {
+      } else if (name.startsWith('scheduler')) {
         await openSessions(page)
         await page.getByRole('button', { name: 'Scheduler', exact: true }).click()
         const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
         await expect(scheduler).toContainText('Daily workspace review')
         await expect(scheduler.getByRole('button', { name: 'Review in Oracle', exact: true })).toBeEnabled()
-        if (name === 'scheduler-form') {
+        if (name === 'scheduler-stale-link') {
+          const url = new URL(page.url())
+          url.searchParams.set('schedule', 'fixture-deleted-review')
+          url.searchParams.set('run', 'fictional-missing-run')
+          await page.goto(url.href)
+          await expect(scheduler).toContainText('This schedule no longer exists.')
+          await expect(scheduler.getByRole('heading', { name: 'Daily workspace review', exact: true })).toBeVisible()
+        } else if (name === 'scheduler-name-conflict') {
+          await scheduler.getByRole('button', { name: 'Duplicate Daily workspace review', exact: true }).click()
+          await scheduler.getByRole('textbox', { name: 'Name', exact: true }).fill('Daily workspace review')
+          await scheduler.getByRole('button', { name: 'Policies', exact: true }).click()
+          await scheduler.getByRole('button', { name: 'Save schedule', exact: true }).click()
+          await expect(scheduler.getByRole('alert')).toContainText('A non-archived schedule already has this name')
+          await expect(scheduler.getByRole('alert')).not.toContainText('changed on the hub')
+          await scheduler.getByRole('button', { name: 'Details', exact: true }).click()
+          await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Daily workspace review')
+        } else if (name === 'scheduler-form') {
           await scheduler.getByRole('button', { name: 'Create schedule', exact: true }).click()
           await scheduler.getByRole('textbox', { name: 'Name', exact: true }).fill('Morning field guide check')
           await scheduler.getByRole('textbox', { name: 'Prompt', exact: true }).fill('Review the fictional field guide and list the next three checks. Ask before changing anything.')

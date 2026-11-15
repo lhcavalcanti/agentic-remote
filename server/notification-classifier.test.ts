@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
+import { OracleNotifier } from '../shared/notifications.js'
 import {
   classifyHubNotification,
   classifyOracleNotification,
@@ -167,5 +168,22 @@ describe('canonical hub notification classifier', () => {
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
     } }, now, replies)).toEqual([])
     expect(replies.size).toBe(0)
+  })
+
+  it('stores the same plain-text Oracle brief as push delivery', () => {
+    const replies = new Map<string, string>()
+    const push = new OracleNotifier()
+    const assistant: ManagerEvent = { type: 'manager.message', message: {
+      id: 'markdown-reply', role: 'assistant', replyTo: 'user',
+      content: '## **Ready**\nRead the [report](https://example.test/report) and `results`.', createdAt: now,
+    } }
+    const done: ManagerEvent = { type: 'manager.message', message: {
+      id: 'user', role: 'user', state: 'done', content: 'Status?', createdAt: now,
+    } }
+    classifyOracleNotification(assistant, now, replies)
+    push.next(assistant)
+    const record = classifyOracleNotification(done, now, replies)[0]!
+    expect(record.body).toBe('Ready Read the report and results.')
+    expect(record.body).toBe(push.next(done)!.body)
   })
 })

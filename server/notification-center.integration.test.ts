@@ -241,7 +241,7 @@ describe('hub notification center', () => {
     oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'cancelled' } })
     expect(await list()).toEqual([])
     oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'running' } })
-    oracle.emit('event', { type: 'manager.message', message: { ...reply, id: 'retry-reply', content: 'Completed answer' } })
+    oracle.emit('event', { type: 'manager.message', message: { ...reply, id: 'retry-reply', content: '## **Completed** [answer](https://example.test/report)' } })
     expect(await list()).toEqual([])
     oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'done' } })
     expect(await list()).toEqual([expect.objectContaining({ title: 'Oracle replied', body: 'Completed answer' })])

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { HubEvent, ManagedSession, SessionStatus } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
 import type { NotificationKind, NotificationRecord } from '../shared/notification-center.js'
-import { alertNotification, notificationBrief, ORACLE_NOTIFICATION_URL } from '../shared/notifications.js'
+import { alertNotification, notificationBrief, notificationPlainText, ORACLE_NOTIFICATION_URL } from '../shared/notifications.js'
 
 export interface NotificationCursor {
   status?: SessionStatus
@@ -166,7 +166,7 @@ export function classifyOracleNotification(event: ManagerEvent, now: string, rep
   } else if (message.role === 'user' && message.state === 'done') {
     suffix = 'done'
     title = 'Oracle replied'
-    body = reply || 'Open Oracle to see what it did.'
+    body = (reply && notificationBrief(notificationPlainText(reply))) || 'Open Oracle to see what it did.'
   } else if (message.role === 'user' && message.state === 'failed') {
     suffix = 'failed'
     title = 'Oracle couldn’t answer'

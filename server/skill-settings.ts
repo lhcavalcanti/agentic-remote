@@ -3,12 +3,13 @@ import { lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promi
 import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import path from 'node:path'
-import { skillNameSchema, type SkillSettingsSnapshot, type SkillToggle } from '../shared/skill-settings.js'
+import { skillFrontmatterNameSchema, type SkillSettingsSnapshot, type SkillToggle } from '../shared/skill-settings.js'
 import { isWithin, validateSessionDirectory } from './session-directory.js'
 import { parseSkillSettings, replaceDisabledSkills } from './skill-settings-jsonc.js'
 
 const MAX_FILE_BYTES = 1024 * 1024
 const MAX_SKILLS = 1000
+type SkillRoot = { location: string; source: SkillSettingsSnapshot['skills'][number]['source']; boundary?: string; plugin?: string; trusted?: boolean; single?: boolean }
 
 export class SkillSettingsError extends Error {
   constructor(message: string, readonly statusCode = 409) { super(message) }
@@ -36,13 +37,14 @@ function scalar(value: string): string {
   if (text.startsWith('"')) {
     try { const parsed: unknown = JSON.parse(text); return typeof parsed === 'string' ? parsed : '' } catch { return '' }
   }
-  if (text.startsWith("'") && text.endsWith("'")) return text.slice(1, -1).replaceAll("''", "'")
-  if (/^[!&*[{]/.test(text)) return ''
+  if (text.startsWith("'")) return /^'(?:[^']|'')*'$/.test(text) ? text.slice(1, -1).replaceAll("''", "'") : ''
+  if (/^[!&*[{]/.test(text) || /:\s|:$/.test(text) ||
+    /^(?:true|false|null|~|[-+]?(?:0[xob][\da-f]+|\d+(?:\.\d*)?(?:e[-+]?\d+)?|\.inf|\.nan))$/i.test(text)) return ''
   return text.replace(/\s+#.*$/, '').trim()
 }
 
 /** Deliberately parses only text frontmatter, never YAML tags or executable content. */
-export function skillFrontmatter(markdown: string): { name: string; description: string } | undefined {
+function frontmatterFields(markdown: string): Record<string, string> | undefined {
   const lines = markdown.replace(/^\uFEFF/, '').split(/\r?\n/)
   if (lines[0] !== '---') return undefined
   const end = lines.indexOf('---', 1)
@@ -58,8 +60,18 @@ export function skillFrontmatter(markdown: string): { name: string; description:
       fields[match[1]] = block.join(match[2][0] === '>' ? ' ' : '\n').trim()
     } else fields[match[1]] = scalar(match[2])
   }
-  if (!skillNameSchema.safeParse(fields.name).success) return undefined
-  return { name: fields.name, description: (fields.description ?? '').slice(0, 4096) }
+  return fields
+}
+
+function frontmatterReason(fields: Record<string, string> | undefined): string | undefined {
+  if (!fields) return 'SKILL.md frontmatter is missing or uses unsupported text syntax.'
+  if (!skillFrontmatterNameSchema.safeParse(fields.name).success) return 'SKILL.md frontmatter name must start with a letter or number, use only letters, numbers, hyphens, underscores, dots, colons or spaces, and be at most 64 characters.'
+  if (!fields.description || fields.description.length > 1024) return 'SKILL.md frontmatter description is required and must be at most 1024 characters.'
+}
+
+export function skillFrontmatter(markdown: string): { name: string; description: string } | undefined {
+  const fields = frontmatterFields(markdown)
+  return !frontmatterReason(fields) && fields ? { name: fields.name, description: fields.description } : undefined
 }
 
 function settingsObject(raw: string): Record<string, unknown> {
@@ -69,7 +81,7 @@ function settingsObject(raw: string): Record<string, unknown> {
     throw new SkillSettingsError(error instanceof Error ? error.message : 'CLI settings are not valid JSONC. Edit them manually.')
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SkillSettingsError('CLI settings must be a JSON object.')
-  for (const key of ['disabledSkills', 'skillDirectories']) {
+  for (const key of ['disabledSkills', 'skillDirectories', 'ignoredSkillsLocations']) {
     const entries = Reflect.get(value, key)
     if (entries !== undefined && (!Array.isArray(entries) || entries.length > 10_000 || entries.some((entry) => typeof entry !== 'string'))) {
       throw new SkillSettingsError(`CLI ${key} must be a list of strings.`)
@@ -85,6 +97,7 @@ export class SkillSettingsService {
   private readonly copilotHome: string
   private readonly validateFolder: (folder: string) => Promise<string>
   private readonly replace: typeof rename
+  private readonly env: NodeJS.ProcessEnv
   private writes: Promise<unknown> = Promise.resolve()
 
   constructor(private readonly options: {
@@ -93,9 +106,11 @@ export class SkillSettingsService {
     copilotHome?: string
     validateFolder?: (folder: string) => Promise<string>
     replace?: typeof rename
+    env?: NodeJS.ProcessEnv
   }) {
     this.home = options.home ?? homedir()
-    this.copilotHome = path.resolve(options.copilotHome ?? (process.env.COPILOT_HOME?.trim() || path.join(this.home, '.copilot')))
+    this.env = options.env ?? process.env
+    this.copilotHome = path.resolve(options.copilotHome ?? (this.env.COPILOT_HOME?.trim() || path.join(this.home, '.copilot')))
     this.validateFolder = options.validateFolder ?? validateSessionDirectory
     this.replace = options.replace ?? rename
   }
@@ -109,52 +124,171 @@ export class SkillSettingsService {
     let raw: string
     try { raw = await readBounded(this.file, true) } catch { throw new SkillSettingsError('CLI settings could not be read safely.') }
     const settings = settingsObject(raw)
-    const disabled = new Set((settings.disabledSkills ?? []) as string[])
-    const roots: Array<{ location: string; source: 'user' | 'configured' | 'repository'; boundary?: string }> = [
-      { location: path.join(this.home, '.copilot', 'skills'), source: 'user' },
+    const disabled = new Set(((settings.disabledSkills ?? []) as string[]).map((name) => name.toLowerCase()))
+    const repositoryDisabled = new Set<string>()
+    const roots: SkillRoot[] = [
+      { location: path.join(this.copilotHome, 'skills'), source: 'user' },
       { location: path.join(this.home, '.agents', 'skills'), source: 'user' },
     ]
-    if (this.copilotHome !== path.join(this.home, '.copilot')) roots.push({ location: path.join(this.copilotHome, 'skills'), source: 'user' })
     const warnings: string[] = []
-    for (const value of ((settings.skillDirectories ?? []) as string[]).slice(0, 100)) {
-      try { roots.push({ location: await this.validateFolder(this.expand(value)), source: 'configured' }) }
-      catch { warnings.push('A configured skill directory is unavailable or outside allowed roots.') }
-    }
+    const ignoredLocations = [...((settings.ignoredSkillsLocations ?? []) as string[])]
+    const configured = [
+      ...((settings.skillDirectories ?? []) as string[]),
+      ...(this.env.COPILOT_SKILLS_DIRS?.split(',').map((entry) => entry.trim()).filter(Boolean) ?? []),
+    ]
+    let trustedFolders: string[] = []
+    try {
+      const state = settingsObject(await readBounded(path.join(this.copilotHome, 'config.json'), true))
+      if (Array.isArray(state.trustedFolders)) trustedFolders = state.trustedFolders.filter((folder): folder is string => typeof folder === 'string').map((folder) => this.expand(folder))
+    } catch { warnings.push('CLI folder trust could not be read; repository skills cannot be managed.') }
+    const repositoryFolders = new Map<string, boolean>()
     for (const value of [...new Set(this.options.folders())].slice(0, 100)) {
       try {
-        const folder = await this.validateFolder(this.expand(value))
-        roots.push({ location: path.join(folder, '.github', 'skills'), source: 'repository', boundary: folder })
-        let ancestor = folder
+        let folder = await this.validateFolder(this.expand(value))
+        const trusted = trustedFolders.some((root) => isWithin(root, folder))
         for (let depth = 0; depth < 32; depth++) {
-          const git = await lstat(path.join(ancestor, '.git')).catch(() => undefined)
-          if (git?.isDirectory() || git?.isFile()) {
-            if (ancestor !== folder) roots.push({ location: path.join(ancestor, '.github', 'skills'), source: 'repository', boundary: ancestor })
-            break
-          }
-          const parent = path.dirname(ancestor)
-          if (parent === ancestor) break
-          try { ancestor = await this.validateFolder(parent) } catch { break }
+          repositoryFolders.set(folder, repositoryFolders.get(folder) === true || trusted)
+          const git = await lstat(path.join(folder, '.git')).catch(() => undefined)
+          if (git?.isDirectory() || git?.isFile()) break
+          const parent = path.dirname(folder)
+          if (parent === folder) break
+          try { folder = await this.validateFolder(parent) } catch { break }
         }
       } catch { warnings.push('A known repository folder is unavailable or outside allowed roots.') }
     }
+    for (const [folder, trusted] of repositoryFolders) {
+      for (const directory of ['.github', '.agents', '.claude']) roots.push({
+        location: path.join(folder, directory, 'skills'), source: 'repository', boundary: folder, trusted,
+      })
+      if (!trusted) continue
+      for (const file of ['settings.json', 'settings.local.json']) {
+        try {
+          const directory = await realpath(path.join(folder, '.github', 'copilot'))
+          if (!isWithin(folder, directory)) throw new Error('Repository settings escape')
+          const repositorySettings = settingsObject(await readBounded(path.join(directory, file), true))
+          for (const name of (repositorySettings.disabledSkills ?? []) as string[]) repositoryDisabled.add(name.toLowerCase())
+          ignoredLocations.push(...((repositorySettings.ignoredSkillsLocations ?? []) as string[]).map((value) => path.isAbsolute(value) || value.startsWith('~') ? value : path.resolve(folder, value)))
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new SkillSettingsError('Repository CLI settings could not be read safely. Edit them manually before changing skills.')
+        }
+      }
+    }
+    for (const value of configured.slice(0, 100)) {
+      if (!path.isAbsolute(value) && value !== '~' && !value.startsWith('~/')) {
+        warnings.push('A relative configured skill directory is ambiguous in a computer-wide view. Use an absolute path or ~/ in CLI settings.')
+        continue
+      }
+      try { roots.push({ location: await this.validateFolder(this.expand(value)), source: 'configured' }) }
+      catch { warnings.push('A configured skill directory is unavailable or outside allowed roots.') }
+    }
+    const installed = path.join(this.copilotHome, 'installed-plugins')
+    const installedBoundary = await realpath(installed).catch(() => installed)
+    let pluginDirectories = 0
+    const visitPlugins = async (directory: string, depth = 0): Promise<void> => {
+      if (depth > 3 || ++pluginDirectories > 1024) return
+      try {
+        const location = await realpath(directory)
+        if (!isWithin(installedBoundary, location)) return
+        const rootManifest = await readBounded(path.join(location, 'plugin.json'), true)
+        const rootSchema = rootManifest ? settingsObject(rootManifest).$schema : undefined
+        const agentPlugin = typeof rootSchema === 'string' && /^https:\/\/agent-plugins\.org\/schemas\/1\.[01]\.0\/plugin\.schema\.json$/.test(rootSchema)
+        if (typeof rootSchema === 'string' && rootSchema.startsWith('https://agent-plugins.org/') && !agentPlugin) {
+          warnings.push('An installed plugin uses an unsupported manifest schema and was skipped.')
+          return
+        }
+        for (const manifest of agentPlugin ? ['plugin.json'] : ['.plugin/plugin.json', 'plugin.json', '.github/plugin/plugin.json', '.claude-plugin/plugin.json']) {
+          const raw = await readBounded(path.join(location, manifest), true)
+          if (!raw) continue
+          const plugin = settingsObject(raw)
+          if (!skillFrontmatterNameSchema.safeParse(plugin.name).success) {
+            warnings.push('An installed plugin has an invalid name and was skipped.')
+            return
+          }
+          const name = plugin.name as string
+          const enabled = settings.enabledPlugins
+          if (enabled && typeof enabled === 'object' && Object.entries(enabled).some(([key, value]) => value === false && (key === name || key.startsWith(`${name}@`)))) return
+          const locations = agentPlugin || plugin.skills === undefined ? ['skills'] : typeof plugin.skills === 'string' ? [plugin.skills] : plugin.skills
+          if (!Array.isArray(locations) || locations.some((value) => typeof value !== 'string')) {
+            warnings.push('An installed plugin has unsupported skill directories and was skipped.')
+            return
+          }
+          for (const value of locations.slice(0, 100)) roots.push({ location: path.resolve(location, value as string), source: 'plugin', plugin: name, boundary: location })
+          if (!agentPlugin && plugin.skills === undefined && !(await lstat(path.join(location, 'skills')).catch(() => undefined))) {
+            roots.push({ location, source: 'plugin', plugin: name, boundary: location, single: true })
+          }
+          return
+        }
+        for (const entry of (await readdir(location, { withFileTypes: true })).slice(0, 1024)) {
+          if (entry.isDirectory() && !entry.name.startsWith('.')) await visitPlugins(path.join(location, entry.name), depth + 1)
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') warnings.push('An installed plugin could not be read safely.')
+      }
+    }
+    await visitPlugins(installed)
+    for (const directory of (this.env.PATH?.split(path.delimiter) ?? []).filter(Boolean).slice(0, 100)) {
+      const executable = await realpath(path.join(directory, process.platform === 'win32' ? 'copilot.exe' : 'copilot')).catch(() => undefined)
+      if (!executable) continue
+      const installation = path.dirname(executable)
+      const report = process.platform === 'linux' ? process.report.getReport() as { header?: { glibcVersionRuntime?: string } } : undefined
+      const platform = process.platform === 'linux' && !report?.header?.glibcVersionRuntime ? 'linuxmusl' : process.platform
+      for (const location of [
+        path.join(installation, 'builtin-skills'),
+        path.join(installation, 'node_modules', '@github', `copilot-${platform}-${process.arch}`, 'builtin-skills'),
+      ]) {
+        if (!(await lstat(location).catch(() => undefined))?.isDirectory()) continue
+        roots.push({ location, source: 'builtin' })
+        break
+      }
+      break
+    }
+    const ignored = new Set<string>()
+    for (const value of ignoredLocations.slice(0, 1000)) {
+      if (!path.isAbsolute(value) && value !== '~' && !value.startsWith('~/')) {
+        throw new SkillSettingsError('A relative ignoredSkillsLocations path is ambiguous in a computer-wide view. Edit it manually to an absolute path or ~/.')
+      }
+      const location = this.expand(value)
+      ignored.add(location)
+      ignored.add(await realpath(location).catch(() => location))
+    }
+    const excluded = (location: string) => [...ignored].some((root) => isWithin(root, location))
     const skills: SkillSettingsSnapshot['skills'] = []
     const seen = new Set<string>()
     const skillLocations = new Set<string>()
     let examined = 0
-    discovery: for (const root of roots) {
+    const discoverSkill = async (directory: string, root: SkillRoot) => {
+      if (excluded(directory) || skillLocations.has(directory) || skills.length >= MAX_SKILLS) return
+      try {
+        const fields = frontmatterFields(await readBounded(path.join(directory, 'SKILL.md')))
+        const invalid = frontmatterReason(fields)
+        const bare = (fields?.name || path.basename(directory)).slice(0, 64)
+        const name = root.plugin ? `${root.plugin}:${bare}` : bare
+        const fromRepository = repositoryDisabled.has(name.toLowerCase()) || repositoryDisabled.has(bare.toLowerCase())
+        const blanketDisabled = Boolean(root.plugin && disabled.has(bare.toLowerCase()))
+        const reason = invalid ?? (root.trusted === false ? 'The repository is not permanently trusted by Copilot CLI; trust it in the CLI before managing its skills.'
+          : fromRepository ? 'A trusted repository disables this skill. Edit its CLI settings manually to enable it.'
+          : blanketDisabled ? 'The bare skill name is disabled for every plugin. Enable that name in the CLI before managing this plugin-qualified skill.' : undefined)
+        skills.push({
+          name, description: (fields?.description ?? '').slice(0, 4096), location: directory, source: root.source,
+          enabled: !reason && !disabled.has(name.toLowerCase()), manageable: !reason, ...(reason ? { reason } : {}),
+        })
+        skillLocations.add(directory)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') warnings.push('A skill could not be read safely and was skipped.')
+      }
+    }
+    if (roots.length > 1024) warnings.push('Skill discovery reached the skill-directory limit.')
+    discovery: for (const root of roots.slice(0, 1024)) {
       try {
         const location = await realpath(root.location)
         if (root.boundary && !isWithin(root.boundary, location)) {
           warnings.push('A repository skill directory points outside its folder.')
           continue
         }
-        if (seen.has(location)) continue
+        if (seen.has(location) || excluded(location)) continue
         seen.add(location)
-        const direct = skillFrontmatter(await readBounded(path.join(location, 'SKILL.md'), true))
-        if (direct && skills.length < MAX_SKILLS && !skillLocations.has(location)) {
-          skills.push({ ...direct, location, source: root.source, enabled: !disabled.has(direct.name) })
-          skillLocations.add(location)
-        }
+        await discoverSkill(location, root)
+        if (root.single) continue
         const entries = (await readdir(location, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name)).slice(0, MAX_SKILLS)
         for (const entry of entries) {
           if (++examined > 4096) {
@@ -166,11 +300,7 @@ export class SkillSettingsService {
           try {
             const directory = await realpath(path.join(location, entry.name))
             if (!isWithin(location, directory)) continue
-            const parsed = skillFrontmatter(await readBounded(path.join(directory, 'SKILL.md')))
-            if (parsed && !skillLocations.has(directory)) {
-              skills.push({ ...parsed, location: directory, source: root.source, enabled: !disabled.has(parsed.name) })
-              skillLocations.add(directory)
-            }
+            await discoverSkill(directory, root)
           } catch { warnings.push('A skill could not be read safely and was skipped.') }
         }
       } catch (error) {
@@ -191,13 +321,15 @@ export class SkillSettingsService {
     if (input.confirmed !== true) throw new SkillSettingsError('Confirm the computer-wide CLI effect before changing skills.', 400)
     const current = await this.snapshot()
     if (current.revision !== input.revision) throw new SkillSettingsError('CLI settings changed. Refresh and confirm again.')
-    if (!current.skills.some((skill) => skill.name === input.name)) throw new SkillSettingsError('The skill is no longer available. Refresh and try again.')
+    const matches = current.skills.filter((skill) => skill.name.toLowerCase() === input.name.toLowerCase())
+    if (!matches.length) throw new SkillSettingsError('The skill is no longer available. Refresh and try again.')
+    const target = matches.find((skill) => skill.manageable !== false)
+    if (!target) throw new SkillSettingsError(matches[0].reason ?? 'This skill cannot be managed. Edit its CLI settings manually.')
     const raw = await readBounded(this.file, true)
     if (revision(raw) !== input.revision) throw new SkillSettingsError('CLI settings changed. Refresh and confirm again.')
     const settings = settingsObject(raw)
-    const disabled = new Set((settings.disabledSkills ?? []) as string[])
-    if (input.enabled) disabled.delete(input.name)
-    else disabled.add(input.name)
+    const disabled = new Set(((settings.disabledSkills ?? []) as string[]).filter((name) => name.toLowerCase() !== target.name.toLowerCase()))
+    if (!input.enabled) disabled.add(target.name)
     let serialized: string
     try { serialized = replaceDisabledSkills(raw, [...disabled].sort()) }
     catch (error) { throw new SkillSettingsError(error instanceof Error ? error.message : 'Edit disabledSkills manually.') }
@@ -210,10 +342,6 @@ export class SkillSettingsService {
       if (revision(await readBounded(this.file, true)) !== input.revision) throw new SkillSettingsError('CLI settings changed. Refresh and confirm again.')
       await this.replace(staged, this.file)
     } finally { await rm(staged, { force: true }) }
-    return {
-      ...current,
-      revision: revision(serialized),
-      skills: current.skills.map((skill) => skill.name === input.name ? { ...skill, enabled: input.enabled } : skill),
-    }
+    return this.snapshot()
   }
 }

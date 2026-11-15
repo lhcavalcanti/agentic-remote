@@ -1,9 +1,10 @@
 import { z } from 'zod'
 
-export const SKILL_SETTINGS_CAPABILITY = 1
-export const skillNameSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
+export const SKILL_SETTINGS_CAPABILITY = 2
+export const skillFrontmatterNameSchema = z.string().max(64).regex(/^[A-Za-z0-9][A-Za-z0-9._: -]*$/)
+export const skillNameSchema = z.string().max(129).regex(/^[A-Za-z0-9][A-Za-z0-9._: -]*$/)
 export const skillToggleSchema = z.object({
-  name: skillNameSchema,
+  name: z.string().min(1).max(129),
   enabled: z.boolean(),
   confirmed: z.literal(true),
   revision: z.string().regex(/^[a-f0-9]{64}$/),
@@ -14,9 +15,11 @@ export const skillSettingsSchema = z.object({
   skills: z.array(z.object({
     name: skillNameSchema,
     description: z.string().max(4096),
-    source: z.enum(['user', 'configured', 'repository']),
+    source: z.enum(['user', 'configured', 'repository', 'plugin', 'builtin']),
     location: z.string().max(4096),
     enabled: z.boolean(),
+    manageable: z.boolean().optional(),
+    reason: z.string().max(512).optional(),
   })).max(1000),
   warnings: z.array(z.string().max(256)).max(100),
 })

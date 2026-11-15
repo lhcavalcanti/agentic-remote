@@ -36,6 +36,7 @@ beforeEach(async () => {
     skillSettings: new SkillSettingsService({
       home: path.join(directory, 'synthetic-home'),
       copilotHome: path.join(directory, 'synthetic-home', '.copilot'),
+      env: {},
       folders: () => [],
     }),
     hostTelemetryFactory: (dataDirectory, context) => new HostTelemetryService(

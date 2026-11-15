@@ -48,6 +48,7 @@ export const uiSceneNames = [
   'settings-health',
   'settings-skills',
   'settings-skill-confirmation',
+  'settings-invalid-skill',
   'runtime-dialog',
   'new-session-dialog',
   'computers-dialog',
@@ -149,7 +150,7 @@ export function createUIScenes(
         state.settings.values = { previewFeatures: { desktopRail: true, schedulerView: true }, displayName: 'Alex Morgan' }
         state.settings.revision = 1
       }
-      if (name === 'settings-skills' || name === 'settings-skill-confirmation') {
+      if (name === 'settings-skills' || name === 'settings-skill-confirmation' || name === 'settings-invalid-skill') {
         state.settings.values = {
           previewFeatures: { settingsNavigation: true, skillToggles: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
           displayName: 'Alex Morgan',
@@ -232,13 +233,17 @@ export function createUIScenes(
         await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
-      } else if (name === 'settings-skills' || name === 'settings-skill-confirmation') {
+      } else if (name === 'settings-skills' || name === 'settings-skill-confirmation' || name === 'settings-invalid-skill') {
         await openSessions(page)
         await page.getByRole('button', { name: 'App settings', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
         await dialog.getByRole('button', { name: /^Skills Hub/ }).click()
         await expect(dialog.getByRole('button', { name: 'Disable review-notes', exact: true })).toBeVisible()
-        if (name === 'settings-skill-confirmation') {
+        if (name === 'settings-invalid-skill') {
+          await dialog.getByRole('searchbox', { name: 'Search skills' }).fill('invalid-checklist')
+          await expect(dialog.getByRole('button', { name: 'Enable invalid-checklist', exact: true })).toBeDisabled()
+          await expect(dialog.getByText('SKILL.md frontmatter description is required and must be at most 1024 characters.')).toBeVisible()
+        } else if (name === 'settings-skill-confirmation') {
           await dialog.getByRole('combobox', { name: 'Skills computer' }).selectOption('fixture-build')
           await dialog.getByRole('button', { name: 'Disable review-notes', exact: true }).click()
           await expect(dialog.getByRole('group', { name: 'Confirm skill change' })).toContainText('every session on Build node')

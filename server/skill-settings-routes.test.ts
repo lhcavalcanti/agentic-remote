@@ -23,7 +23,7 @@ async function fixture(label: string) {
   await mkdir(skill, { recursive: true })
   await writeFile(path.join(skill, 'SKILL.md'), '---\nname: sample\ndescription: A fictional review skill.\n---\nDo not execute.')
   await writeFile(path.join(copilotHome, 'settings.json'), '{"retained":true}')
-  const settings = new SkillSettingsService({ home, copilotHome, folders: () => [] })
+  const settings = new SkillSettingsService({ home, copilotHome, env: {}, folders: () => [] })
   return { directory, home, copilotHome, settings }
 }
 
@@ -64,12 +64,12 @@ describe('computer skill settings routes', () => {
     expect((await hub.app.inject({ url, method: 'PATCH', headers, payload })).statusCode).toBe(409)
   })
 
-  it('explicitly asks to update an older node without sending a skill read or write', async () => {
+  it.each([undefined, 1])('explicitly asks to update a node with capability %s without sending a skill read or write', async (version) => {
     const app = Fastify()
     applications.push(app)
     const requests: string[] = []
     app.addHook('onRequest', async (request) => { requests.push(request.url); expect(request.headers.authorization).toBe('Bearer fictional-token') })
-    app.get('/node-api/info', async () => ({ id: 'old', name: 'Older node', version: '1.0.0' }))
+    app.get('/node-api/info', async () => ({ id: 'old', name: 'Older node', version: '1.0.0', ...(version ? { skillSettings: { version } } : {}) }))
     const url = await app.listen({ host: '127.0.0.1', port: 0 })
     const client = new RemoteNodeClient({ id: 'old', name: 'Older node', baseUrl: url, token: 'fictional-token' })
     try {

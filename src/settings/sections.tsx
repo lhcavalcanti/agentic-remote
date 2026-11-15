@@ -657,6 +657,6 @@ export const skillsSettingsSection: SettingsSection = {
   title: 'Skills',
   icon: BookOpen,
   scope: 'hub',
-  searchLabels: ['Computer', 'Search skills', 'Enable', 'Disable', 'Refresh skills'],
+  searchLabels: ['Computer', 'Skills computer', 'Search skills', 'Enable', 'Disable', 'Refresh skills'],
   render: ({ computers }) => <SkillsSettings computers={computers} />,
 }

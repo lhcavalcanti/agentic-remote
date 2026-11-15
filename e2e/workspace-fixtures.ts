@@ -730,6 +730,8 @@ export async function setupWorkspaceFixture(
         source: 'repository', location: '~/field-notes/.github/skills/release-check', enabled: true },
       { name: 'draft-summary', description: 'Prepare a short handoff from the fictional review notes.',
         source: 'configured', location: '~/shared-skills/draft-summary', enabled: false },
+      { name: 'invalid-checklist', description: '', source: 'repository', location: '~/field-notes/.agents/skills/invalid-checklist',
+        enabled: false, manageable: false, reason: 'SKILL.md frontmatter description is required and must be at most 1024 characters.' },
     ],
   }]))
   const notifications = structuredClone(options.notifications ?? [])
@@ -933,6 +935,8 @@ export async function setupWorkspaceFixture(
       if (!parsed.success) { await respond({ error: 'Confirm the computer-wide CLI effect.' }, 400); return }
       if (parsed.data.revision !== snapshot.revision) { await respond({ error: 'CLI settings changed. Refresh and confirm again.' }, 409); return }
       if (!snapshot.skills.some((entry) => entry.name === parsed.data.name)) { await respond({ error: 'Skill not found' }, 404); return }
+      const target = snapshot.skills.find((entry) => entry.name === parsed.data.name)!
+      if (target.manageable === false) { await respond({ error: target.reason ?? 'This skill cannot be managed.' }, 409); return }
       const next = {
         ...snapshot, revision: (BigInt(`0x${snapshot.revision}`) + 1n).toString(16).padStart(64, '0'),
         skills: snapshot.skills.map((skill) => skill.name === parsed.data.name ? { ...skill, enabled: parsed.data.enabled } : skill),

@@ -152,6 +152,14 @@ test('Health search leads to its preview toggle while off and its card after ena
   } finally { fixture.assertHealthy() }
 })
 
+test('invalid skills explain why they cannot change CLI configuration', async ({ page, baseURL }) => {
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-invalid-skill')!.setup(page)
+  try {
+    await expect(page.getByRole('button', { name: 'Enable invalid-checklist', exact: true })).toBeDisabled()
+    expect(fixture.requests.filter((request) => request.method === 'PATCH' && request.path.endsWith('/skills'))).toEqual([])
+  } finally { fixture.assertHealthy() }
+})
+
 // App.test.tsx covers reconciliation, receipt failures, serialized queue races,
 // clipboard variants and history ownership. These locks add real-browser event
 // and HTTP wiring rather than duplicating that component-level matrix.

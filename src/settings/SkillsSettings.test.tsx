@@ -17,6 +17,18 @@ const snapshot = {
   skills: [{ name: 'review', description: 'A review skill', source: 'user' as const, location: '~/.copilot/skills/review', enabled: true }],
 }
 describe('per-computer skill controls', () => {
+  it('shows why invalid or repository-disabled skills cannot be toggled', async () => {
+    vi.mocked(listComputerSkills).mockResolvedValue({
+      ...snapshot, skills: [{ ...snapshot.skills[0], manageable: false, enabled: false, reason: 'SKILL.md frontmatter description is required.' }],
+    })
+    render(<SkillsSettings computers={computers} />)
+    expect(await screen.findByText('SKILL.md frontmatter description is required.')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Enable review' }))
+    expect(screen.getByRole('button', { name: 'Enable review' })).toBeDisabled()
+    expect(screen.queryByRole('group', { name: 'Confirm skill change' })).not.toBeInTheDocument()
+    expect(toggleComputerSkill).not.toHaveBeenCalled()
+  })
+
   it('does not write until the global CLI effect is confirmed and supports cancelling', async () => {
     vi.mocked(listComputerSkills).mockResolvedValue(snapshot)
     vi.mocked(toggleComputerSkill).mockResolvedValue({ ...snapshot, skills: [{ ...snapshot.skills[0], enabled: false }] })

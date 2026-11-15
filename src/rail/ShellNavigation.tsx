@@ -3,18 +3,19 @@ import { usePreviewFeatures } from '../preview-features'
 import { initials, useDisplayName } from './display-name'
 import './rail.css'
 
-export function ShellNavigation({ displayName, onNewSession, onSettings, onOracle }: {
+export function ShellNavigation({ displayName, onNewSession, onSettings, onOracle, oracleAvailable = false }: {
   displayName?: string
   onNewSession(): void
   onSettings(): void
   onOracle(): void
+  oracleAvailable?: boolean
 }) {
   const { effective } = usePreviewFeatures()
   const name = useDisplayName(displayName, effective.desktopRail) || 'User'
   if (!effective.desktopRail) return null
   return <nav className="shell-rail" aria-label="App navigation">
     <div className="shell-rail__top">
-      <button type="button" aria-label="Open Oracle" title="Open Oracle" className="icon-button" onClick={onOracle}><Sparkles aria-hidden="true" size={24} /></button>
+      {oracleAvailable && <button type="button" aria-label="Open Oracle" title="Open Oracle" className="icon-button" onClick={onOracle}><Sparkles aria-hidden="true" size={24} /></button>}
       <button aria-label="New session" title="New session" onClick={onNewSession} className="icon-button"><Plus size={22} /></button>
     </div>
     <div className="shell-rail__footer">

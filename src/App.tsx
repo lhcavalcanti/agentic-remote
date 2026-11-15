@@ -13051,6 +13051,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
         <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession}
+          oracleAvailable={oracleIndicator.available}
           onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
           onOracle={() => { setSidebarOpen(false); setOracleFocusRequest((request) => request + 1); setOracleOpen(true) }} />
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>

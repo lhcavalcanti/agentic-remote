@@ -23,7 +23,7 @@ it('gates entries with both previews and authoritative flags and orders actions'
   render(<PreviewFeaturesContext value={{
     preferences, hubFlags: defaultHubFeatureFlags,
     effective: effectivePreviewFeatures(preferences, defaultHubFeatureFlags), set: vi.fn(),
-  }}><ShellNavigation displayName="Alex Morgan" onNewSession={vi.fn()} onSettings={onSettings} onOracle={onOracle} /></PreviewFeaturesContext>)
+  }}><ShellNavigation displayName="Alex Morgan" onNewSession={vi.fn()} onSettings={onSettings} onOracle={onOracle} oracleAvailable /></PreviewFeaturesContext>)
   expect(screen.getByText('AM')).toBeTruthy()
   expect(screen.getByText('Alex Morgan')).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Host monitor' })).toBeNull()
@@ -33,6 +33,26 @@ it('gates entries with both previews and authoritative flags and orders actions'
   fireEvent.click(screen.getByRole('button', { name: 'Open Oracle' }))
   expect(onOracle).toHaveBeenCalledOnce()
   expect(initials('  Zoë   Lee ')).toBe('ZL')
+})
+
+it('offers Oracle only while its authoritative availability signal is true', () => {
+  vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
+  const preferences = { desktopRail: true }
+  const context = {
+    preferences, hubFlags: defaultHubFeatureFlags,
+    effective: effectivePreviewFeatures(preferences, defaultHubFeatureFlags), set: vi.fn(),
+  }
+  const onOracle = vi.fn()
+  const navigation = (available: boolean) => <PreviewFeaturesContext value={context}>
+    <ShellNavigation displayName="Alex Morgan" onNewSession={vi.fn()} onSettings={vi.fn()} onOracle={onOracle} oracleAvailable={available} />
+  </PreviewFeaturesContext>
+  const { rerender } = render(navigation(false))
+  expect(screen.queryByRole('button', { name: 'Open Oracle' })).toBeNull()
+  rerender(navigation(true))
+  fireEvent.click(screen.getByRole('button', { name: 'Open Oracle' }))
+  expect(onOracle).toHaveBeenCalledOnce()
+  rerender(navigation(false))
+  expect(screen.queryByRole('button', { name: 'Open Oracle' })).toBeNull()
 })
 
 it('saves a trimmed display-name edit and refuses invalid names', () => {

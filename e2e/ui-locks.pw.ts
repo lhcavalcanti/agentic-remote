@@ -41,6 +41,19 @@ test('native shell receives one canonical scheduled outcome without enabling sch
   } finally { fixture.assertHealthy() }
 })
 
+test('schedule approval expires while the card remains open', async ({ page, baseURL }) => {
+  await page.clock.install({ time: new Date(FIXTURE_NOW) })
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'oracle-schedule-approval')!.setup(page)
+  try {
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled()
+    await page.clock.setSystemTime(new Date(Date.parse(FIXTURE_NOW) + 86_400_000))
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeDisabled()
+    await expect(page.getByRole('region', { name: 'Schedule approvals' }).getByRole('status')).toContainText('proposal expired')
+    expect(fixture.requests.filter((request) => request.path.endsWith('/approve'))).toEqual([])
+  } finally { fixture.assertHealthy() }
+})
+
 for (const action of ['Approve', 'Reject'] as const) {
   test(`schedule proposal ${action.toLowerCase()} sends the exact id`, async ({ page, baseURL }) => {
     const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'oracle-schedule-approval')!.setup(page)
@@ -160,6 +173,182 @@ test('invalid skills explain why they cannot change CLI configuration', async ({
   } finally { fixture.assertHealthy() }
 })
 
+for (const width of [320, 360, 600, 601, 820, 960, 961, 1440]) {
+  test.describe(`sent history layout ${width}px`, () => {
+    test.use({ viewport: { width, height: 900 }, isMobile: width <= 600, hasTouch: width <= 960 })
+    test('uses a coherent sheet or popover without opening the touch keyboard', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-sent-messages')!.setup(page)
+      try {
+        const dialog = page.getByRole('dialog', { name: 'Sent messages', exact: true })
+        const rect = (await dialog.boundingBox())!
+        const search = dialog.getByRole('combobox', { name: 'Search sent messages' })
+        if (width <= 960) {
+          expect(rect.x).toBe(0)
+          expect(rect.width).toBe(width)
+          expect(rect.y + rect.height).toBeCloseTo(900, 0)
+          await expect(search).not.toBeFocused()
+          await expect(dialog).toBeFocused()
+        } else {
+          expect(rect.width).toBeLessThanOrEqual(560)
+          expect(rect.y + rect.height).toBeLessThan(800)
+          await expect(search).toBeFocused()
+        }
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
+for (const width of [320, 360]) {
+  test.describe(`narrow composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test('shows the idle-only hint without hover while retaining the model glyph and mode', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const summary = page.getByTestId('composer-runtime')
+        await expect(summary.getByText('applies when idle', { exact: true })).toBeVisible()
+        await expect(summary.locator('[data-model-family]')).toBeVisible()
+        await expect(summary.locator('.composer-runtime__mode')).toHaveText('plan')
+        const layout = await summary.evaluate((element) => {
+          const button = element.getBoundingClientRect()
+          return {
+            height: button.height,
+            childrenFit: [...element.children].filter((child) => child.getBoundingClientRect().width > 0)
+              .every((child) => {
+                const rect = child.getBoundingClientRect()
+                return rect.left >= button.left && rect.right <= button.right
+              }),
+          }
+        })
+        expect(layout.height).toBeGreaterThanOrEqual(40)
+        expect(layout.childrenFit).toBe(true)
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+    test('keeps every busy action at least 40px wide and inside the composer', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        await message(page).fill('Check the narrow phone layout.')
+        const row = page.locator('.composer-actions--refresh')
+        const bounds = await row.evaluate((element) => {
+          const row = element.getBoundingClientRect()
+          return [...element.querySelectorAll('button')].filter((button) => button.getClientRects().length > 0)
+            .map((button) => {
+              const rect = button.getBoundingClientRect()
+              return { label: button.getAttribute('aria-label'), width: rect.width, height: rect.height,
+                inside: rect.left >= row.left && rect.right <= row.right }
+            })
+        })
+        for (const button of bounds) {
+          expect(button.width, button.label ?? '').toBeGreaterThanOrEqual(40)
+          expect(button.height, button.label ?? '').toBeGreaterThanOrEqual(40)
+          expect(button.inside, button.label ?? '').toBe(true)
+        }
+        await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeInViewport({ ratio: 1 })
+        const queue = page.getByRole('button', { name: 'Queue message', exact: true })
+        if (await queue.isVisible()) {
+          await queue.click()
+        } else {
+          await page.getByRole('button', { name: 'Send options', exact: true }).click()
+          const menu = page.getByRole('menu', { name: 'Message delivery' })
+          const rect = (await menu.boundingBox())!
+          expect(rect.x).toBeGreaterThanOrEqual(0)
+          expect(rect.x + rect.width).toBeLessThanOrEqual(width)
+          await menu.getByRole('menuitem', { name: /Queue —/ }).click()
+        }
+        await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the narrow phone layout.')
+        await page.getByRole('button', { name: 'Stop response', exact: true }).click()
+        await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeHidden()
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+    test('distinguishes unavailable context from zero without hovering', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-button-row')!.setup(page)
+      try {
+        const session = fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+        session.runtime = { ...session.runtime, contextTokens: undefined }
+        session.revision = (session.revision ?? 0) + 1
+        fixture.emit({ type: 'session.upserted', session })
+        await page.getByRole('button', { name: 'Session panel', exact: true }).click()
+        const unavailable = page.getByRole('button', { name: 'Context: usage unavailable', exact: true })
+        await expect(unavailable.getByText('?')).toBeVisible()
+        session.runtime = { ...session.runtime, contextTokens: 0, contextTokenLimit: 100 }
+        session.revision = (session.revision ?? 0) + 1
+        fixture.emit({ type: 'session.upserted', session })
+        const zero = page.getByRole('button', { name: 'Context: 0% used', exact: true })
+        await expect(zero).toBeVisible()
+        await expect(zero.getByText('?')).toHaveCount(0)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+    test('sends an expanded pasted slash command without offering to queue it', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const content = ['/help', ...Array.from({ length: 21 }, () => 'Synthetic review detail')].join('\n')
+        await message(page).evaluate((element, content) => {
+          const clipboardData = new DataTransfer()
+          clipboardData.setData('text/plain', content)
+          element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }))
+        }, content)
+        await expect(message(page)).toHaveValue('[Paste #1 - 22 lines]')
+        await expect(page.getByRole('button', { name: 'Send options', exact: true })).toHaveCount(0)
+        const sent = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/commands`)
+        await page.getByRole('button', { name: 'Send message', exact: true }).click()
+        const payload = (await sent).postDataJSON()
+        expect(payload.command).toBe(content)
+        expect(payload.enqueue).not.toBe(true)
+        expect(fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.queuedPrompts ?? []).toHaveLength(0)
+        await expect(page.getByRole('menu', { name: 'Message delivery' })).toHaveCount(0)
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+    test('keeps the session panel and its last action inside a keyboard-sized visual viewport', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        await message(page).fill(Array.from({ length: 10 }, (_, index) => `Unsent line ${index}`).join('\n'))
+        await message(page).focus()
+        await page.evaluate(() => {
+          const viewport = new EventTarget()
+          Object.defineProperties(viewport, { height: { value: 400 }, offsetTop: { value: 0 } })
+          Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+          window.dispatchEvent(new Event('resize'))
+        })
+        await expect(page.locator('.app-shell')).toHaveClass(/app-shell--keyboard-open/)
+        await expect(page.locator('.app-shell')).toHaveCSS('--visual-viewport-height', '400px')
+        await page.getByRole('button', { name: 'Session panel', exact: true }).click()
+        const panel = page.getByRole('group', { name: 'Session panel', exact: true })
+        const layout = await panel.evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          return {
+            top: rect.top, bottom: rect.bottom, maxHeight: getComputedStyle(element).maxHeight,
+            anchor: (element as HTMLElement).offsetParent?.className,
+            keyboardOpen: Boolean(element.closest('.app-shell--keyboard-open')),
+            inset: getComputedStyle(element).bottom,
+          }
+        })
+        expect(layout.top, JSON.stringify(layout)).toBeGreaterThanOrEqual(0)
+        expect(layout.bottom, JSON.stringify(layout)).toBeLessThanOrEqual(400)
+        const lastAction = panel.getByRole('button').last()
+        await lastAction.scrollIntoViewIfNeeded()
+        await expect(lastAction).toBeInViewport({ ratio: 1 })
+        await expect(lastAction).toBeEnabled()
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
 // App.test.tsx covers reconciliation, receipt failures, serialized queue races,
 // clipboard variants and history ownership. These locks add real-browser event
 // and HTTP wiring rather than duplicating that component-level matrix.
@@ -176,6 +365,65 @@ test.describe('browser interaction contracts', () => {
     fixture?.assertHealthy()
     await assertNoHorizontalOverflow(page)
     fixture = undefined
+  })
+
+  test('rail opens Oracle and offers only implemented views', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.getByRole('button', { name: 'Close Oracle', exact: true }).click()
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }) })
+    }, handle.state.settings.revision)
+    const navigation = page.getByRole('navigation', { name: 'App navigation' })
+    await expect(navigation.getByRole('button', { name: 'Notifications' })).toHaveCount(0)
+    await expect(navigation.getByRole('button', { name: 'Host monitor' })).toHaveCount(0)
+    await expect(navigation.getByRole('button', { name: 'Scheduler' })).toHaveCount(0)
+    await navigation.getByRole('button', { name: 'Open Oracle', exact: true }).click()
+    await expect(page.locator('#oracle-panel')).toBeVisible()
+  })
+
+  test('keeps rail navigation and docked Oracle within layout budgets', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'oracle-panel')
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }) })
+    }, handle.state.settings.revision)
+    await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
+    for (const width of [1083, 1050, 1024, 1023, 990, 961]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect(page.locator('#oracle-panel')).not.toHaveClass(/manager-panel--docked/)
+      await expect.poll(() => page.getByRole('main').evaluate((main) => main.getBoundingClientRect().width)).toBeGreaterThanOrEqual(360)
+      expect(await page.locator('.shell-rail').evaluate((rail) => rail.getBoundingClientRect().width)).toBe(64)
+      await assertNoHorizontalOverflow(page)
+    }
+    expect(await page.evaluate(() => localStorage.getItem('agentic-remote:oracle-placement'))).toBe('docked')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
+    await expect.poll(() => page.locator('#oracle-panel').evaluate((panel) =>
+      panel.getBoundingClientRect().right - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
+  })
+
+  test('lets native Tab leave delivery choices and restores Escape to each opener', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'composer-delivery-menu')
+    const menu = page.getByRole('menu', { name: 'Message delivery' })
+    const options = page.getByRole('button', { name: 'Send options', exact: true })
+    await page.keyboard.press('Tab')
+    await expect(menu).toBeHidden()
+    await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeFocused()
+    await options.click()
+    await page.keyboard.press('Shift+Tab')
+    await expect(menu).toBeHidden()
+    await expect(options).toBeFocused()
+    await options.press('Enter')
+    await page.keyboard.press('Escape')
+    await expect(menu).toBeHidden()
+    await expect(options).toBeFocused()
+    const send = page.getByRole('button', { name: 'Send message', exact: true })
+    await send.press('Alt+ArrowDown')
+    await page.keyboard.press('Escape')
+    await expect(menu).toBeHidden()
+    await expect(send).toBeFocused()
+    expect(handle.requests.some((request) => request.path === `${sessionPath}/messages`)).toBe(false)
   })
 
   test('sends, queues while busy, edits in place, reorders with the keyboard, and stops', async ({ page, baseURL }) => {
@@ -566,6 +814,13 @@ test.describe('browser interaction contracts', () => {
   test('shows host history, conservative process links and offline computers', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'host-monitor')
     const monitor = page.getByRole('dialog', { name: 'Host monitor', exact: true })
+    for (const minutes of [1, 5, 15]) {
+      await expect(monitor.getByText(`Load · ${minutes} min`, { exact: true })).toBeVisible()
+      await expect(monitor.getByRole('img', { name: `Load · ${minutes} min trend`, exact: true })).toBeVisible()
+    }
+    for (const tab of await monitor.getByRole('tab').all()) {
+      expect(await tab.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(40)
+    }
     await monitor.getByRole('button', { name: '24 h · minute averages', exact: true }).click()
     await expect(monitor).toContainText('1440 minute aggregates')
     await monitor.getByRole('tab', { name: 'Processes', exact: true }).click()
@@ -621,28 +876,6 @@ test.describe('browser interaction contracts', () => {
     await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Changed on another device')
   })
 
-  test('includes the preview rail in Oracle docking space without changing the saved preference', async ({ page, baseURL }) => {
-    const handle = await open(page, baseURL, 'oracle-panel')
-    await page.getByRole('button', { name: 'Dock Oracle', exact: true }).click()
-    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
-    await page.evaluate(async (revision) => {
-      const response = await fetch('/api/settings', {
-        method: 'PATCH', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ changes: { previewFeatures: { value: { desktopRail: true }, baseRevision: revision } } }),
-      })
-      if (!response.ok) throw new Error('Synthetic preview update failed')
-    }, handle.state.settings.revision)
-    await expect(page.locator('.app-shell')).toHaveClass(/app-shell--rail/)
-    await page.setViewportSize({ width: 1024, height: 900 })
-    await expect(page.locator('#oracle-panel')).not.toHaveClass(/manager-panel--docked/)
-    expect(await page.getByRole('main').evaluate((main) => main.getBoundingClientRect().width)).toBeGreaterThanOrEqual(360)
-    expect(await page.evaluate(() => localStorage.getItem('agentic-remote:oracle-placement'))).toBe('docked')
-    await page.setViewportSize({ width: 1440, height: 900 })
-    await expect(page.locator('#oracle-panel')).toHaveClass(/manager-panel--docked/)
-    await expect.poll(() => page.locator('#oracle-panel').evaluate((panel) =>
-      panel.getBoundingClientRect().right - document.documentElement.clientWidth)).toBeLessThanOrEqual(1)
-  })
-
   test('opens a scheduled notification in its scheduler run history when available', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'notification-panel')
     await page.evaluate(async () => {
@@ -685,5 +918,44 @@ test.describe('browser interaction contracts', () => {
     const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
     await expect(scheduler).toBeVisible()
     await expect(scheduler.locator('li[data-linked="true"]')).toContainText('missed')
+  })
+
+  test('keeps schedule management available for a stale history link', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'scheduler-stale-link')
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await expect(scheduler.getByRole('status')).toContainText('This schedule no longer exists.')
+    await scheduler.getByRole('button', { name: 'Show all schedules', exact: true }).click()
+    await expect(scheduler.getByText('This schedule no longer exists.')).toHaveCount(0)
+    await expect(scheduler.getByRole('button', { name: 'Edit Daily workspace review', exact: true })).toBeVisible()
+  })
+
+  test('preserves duplicate-name reasons and the editable draft', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'scheduler-name-conflict')
+    const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+    await expect(scheduler.getByRole('alert')).toContainText('A non-archived schedule already has this name')
+    await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Daily workspace review')
+  })
+
+  test('announces unread counts, opens notifications and dismisses a single grouped item in one batch', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'notification-panel')
+    const panel = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await panel.getByRole('button', { name: 'Close', exact: true }).click()
+    const bell = page.getByRole('button', { name: 'Notifications, 5 unread', exact: true })
+    await expect(bell.locator('.shell-badge')).toHaveText('5')
+    await bell.click()
+    const batch = page.waitForRequest((request) => new URL(request.url()).pathname === '/api/notifications/bulk')
+    await panel.getByRole('button', { name: 'Dismiss Workspace review complete', exact: true }).click()
+    expect((await batch).postDataJSON()).toEqual({ ids: ['2'.padStart(64, '0')], action: 'dismiss' })
+    await expect(panel.getByRole('button', { name: 'Workspace review needs you', exact: true })).toBeVisible()
+    await panel.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Notifications, 4 unread', exact: true })).toBeVisible()
+  })
+
+  test('keeps scheduled notifications without a session available when Scheduler is unavailable', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'notification-panel')
+    const panel = page.getByRole('dialog', { name: 'Notifications', exact: true })
+    await panel.getByRole('button', { name: 'Daily workspace review · missed', exact: true }).click()
+    await expect(panel).toBeVisible()
+    await expect(page.getByText('This view is being prepared for the next preview.')).toHaveCount(0)
   })
 })

@@ -17,6 +17,7 @@ import { ScheduleLaunchRefusedError, SchedulerDispatcher } from './scheduler-dis
 import { holdsSlot, SchedulerStore } from './scheduler-store.js'
 import type { SessionService } from './session-service.js'
 import type { ScheduleWorktreeService } from './schedule-worktrees.js'
+import { RemoteNodeTransportError } from './remote-node-errors.js'
 
 const directories: string[] = []
 const dispatchers: SchedulerDispatcher[] = []
@@ -69,6 +70,11 @@ async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' 
   const host: ScheduleLauncherHost = {
     listComputers: () => [{ id: schedule.target.computerId, name: 'Fictional studio', isLocal: true, online: true, providers }],
     validateSessionDirectory: vi.fn(async (_computer, folder) => folder),
+    providerRuntimeOptions: vi.fn(async () => ({
+      provider: 'claude', models: [{
+        id: 'fictional-model', name: 'Fictional model', reasoningEfforts: ['high'], contextTiers: ['default', 'long_context'],
+      }],
+    })) as ScheduleLauncherHost['providerRuntimeOptions'],
     createSession: vi.fn(async (computerId) => {
       detail = session({ computerId, launchId: run.launchId })
       launch = { launchId: run.launchId, sessionId: detail.id, sessionStatus: 'idle', receipts: [] }
@@ -165,6 +171,101 @@ describe('schedule runner', () => {
     expect(f.store.getRun(f.run.id).worktree?.state).toBe('ready')
   })
 
+  it('keeps a never-attempted offline intent absent across restart until the retry window expires', async () => {
+    const f = await fixture()
+    vi.mocked(f.host.reconcileLaunch!).mockRejectedValue(new RemoteNodeTransportError('Worker', new Error('Disconnected')))
+    expect(await f.runner.reconcile(f.run)).toEqual({ state: 'absent' })
+    await f.store.changeRun(f.run.id, { retryUntil: at })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner, {
+      targetOnline: () => false, now: () => Date.parse(at) + 1,
+    })
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    expect(f.store.getRun(f.run.id).status).toBe('missed')
+    expect(f.host.createSession).not.toHaveBeenCalled()
+  })
+
+  it.each(['model', 'effort'])('fails invalid %s definitively before creation', async (field) => {
+    const f = await fixture({ target: {
+      computerId: 'hub', folder: '/fictional/repo', provider: 'claude',
+      model: field === 'model' ? 'missing' : 'fictional-model', effort: 'max',
+    } })
+    await expect(f.runner.launch(f.run, f.schedule)).rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
+    expect(f.host.createSession).not.toHaveBeenCalled()
+  })
+
+  it('retries transport loss in folder validation rather than refusing the occurrence', async () => {
+    const f = await fixture()
+    vi.mocked(f.host.validateSessionDirectory).mockRejectedValue(new RemoteNodeTransportError('Worker', new Error('Disconnected')))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('pending'))
+    expect(f.host.createSession).not.toHaveBeenCalled()
+  })
+
+  it.each([new TypeError('fetch failed'), Object.assign(new Error('Timed out'), { name: 'TimeoutError' })])(
+    'retries raw remote preparation errors without a transport wrapper: %s', async (error) => {
+      const f = await fixture()
+      const [computer] = f.host.listComputers()
+      f.host.listComputers = () => [{ ...computer, isLocal: false }]
+      vi.mocked(f.host.validateSessionDirectory).mockRejectedValue(error)
+      await expect(f.runner.launch(f.run, f.schedule)).rejects.toThrow('became unavailable')
+      vi.mocked(f.host.validateSessionDirectory).mockRejectedValue(Object.assign(new Error('Disallowed folder'), { statusCode: 400 }))
+      await expect(f.runner.launch(f.run, f.schedule)).rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
+      expect(f.host.createSession).not.toHaveBeenCalled()
+    },
+  )
+
+  it('settles an owner runtime-validation refusal without reserving an uncertain launch slot', async () => {
+    const f = await fixture()
+    vi.mocked(f.host.createSession).mockRejectedValue(Object.assign(new Error('Selected model is not available'), {
+      name: 'RuntimeConfigurationError', statusCode: 400,
+    }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+  })
+
+  it('preserves Claude default-model creation with an explicit effort', async () => {
+    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider: 'claude', effort: 'high' } })
+    await f.runner.launch(f.run, f.schedule)
+    expect(f.host.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({ provider: 'claude', reasoningEffort: 'high' }))
+  })
+
+  it('persists allocation intent before the RPC and reconciles a lost response into deferred ownership', async () => {
+    const f = await fixture({ workspace: 'worktree' })
+    const allocate = vi.mocked(f.host.allocateScheduleWorktree).getMockImplementation()!
+    vi.mocked(f.host.allocateScheduleWorktree).mockImplementation(async (...args) => {
+      expect(f.store.getRun(f.run.id).worktreeIntent).toMatchObject({ launchId: f.run.launchId, folder: f.schedule.target.folder })
+      const owned = await allocate(...args)
+      vi.mocked(f.host.readScheduleWorktree).mockResolvedValue(owned)
+      throw new RemoteNodeTransportError('Worker', new Error('Response lost'))
+    })
+    await expect(f.runner.launch(f.run, f.schedule)).rejects.toThrow('became unavailable')
+    const reopened = new SchedulerStore(f.directory)
+    await reopened.initialize()
+    expect(reopened.getRun(f.run.id)).toMatchObject({
+      worktreeIntent: { launchId: f.run.launchId }, worktree: { state: 'deferred' },
+    })
+    expect(f.host.createSession).not.toHaveBeenCalled()
+  })
+
+  it('does not delete an open completed session worktree when a follow-up starts during reconciliation', async () => {
+    const f = await fixture({ workspace: 'worktree' })
+    await f.runner.launch(f.run, f.schedule)
+    f.receipt.outcome = 'succeeded'
+    vi.mocked(f.host.listBackgroundTasks).mockImplementation(async () => {
+      f.setDetail({ status: 'running', updatedAt: new Date(Date.parse(at) + 60_000).toISOString() })
+      return { supported: true, runningCount: 0, tasks: [] }
+    })
+    expect(await f.runner.reconcile(f.store.getRun(f.run.id))).toMatchObject({
+      state: 'terminated', outcome: 'succeeded', worktree: { state: 'deferred', reason: expect.stringContaining('remains open') },
+    })
+    expect(f.host.cleanupScheduleWorktree).not.toHaveBeenCalled()
+  })
   it.each(['succeeded', 'failed', 'stopped'] as const)('maps provider root %s only after provider-owned work is quiet', async (outcome) => {
     const f = await fixture()
     await f.runner.launch(f.run, f.schedule)
@@ -286,7 +387,8 @@ describe('schedule runner', () => {
     f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', deleted: true, receipts: [] })
     expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'unknown' })
     vi.mocked(f.host.reconcileLaunch!).mockRejectedValue(new Error('Offline'))
-    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'unknown', error: expect.stringContaining('slot remains reserved') })
+    expect(await f.runner.reconcile({ ...f.run, status: 'launching', startedAt: at }))
+      .toMatchObject({ state: 'unknown', error: expect.stringContaining('slot remains reserved') })
     expect(f.host.createSession).not.toHaveBeenCalled()
   })
 
@@ -383,7 +485,7 @@ describe('schedule runner', () => {
       ...f.store.getRun(f.run.id).worktree!, state: 'deferred', reason: 'Unpushed commits remain',
     })
     expect(await f.runner.reconcile(f.store.getRun(f.run.id))).toMatchObject({
-      state: 'terminated', outcome: 'succeeded', worktree: { state: 'deferred', reason: 'Unpushed commits remain' },
+      state: 'terminated', outcome: 'succeeded', worktree: { state: 'deferred', reason: expect.stringContaining('remains open') },
     })
   })
 

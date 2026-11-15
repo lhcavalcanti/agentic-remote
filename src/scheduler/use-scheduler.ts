@@ -6,7 +6,7 @@ import { subscribeFeatureEvents } from '../features/events'
 import { scheduleError } from './format'
 
 export function useScheduler(enabled: boolean, historyId?: string) {
-  const [data, setData] = useState<{ schedules: Schedule[]; recent: ScheduleRun[]; history: ScheduleRun[]; historyId?: string; proposals: ScheduleProposal[]; proposalError?: string }>({ schedules: [], recent: [], history: [], proposals: [] })
+  const [data, setData] = useState<{ schedules: Schedule[]; recent: ScheduleRun[]; history: ScheduleRun[]; historyId?: string; historyError?: string; proposals: ScheduleProposal[]; proposalError?: string }>({ schedules: [], recent: [], history: [], proposals: [] })
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(true)
   const controller = useRef<AbortController | undefined>(undefined)
@@ -32,11 +32,17 @@ export function useScheduler(enabled: boolean, historyId?: string) {
       const [list, recent, history, proposalState] = await Promise.all([
         request<{ schedules: Schedule[] }>('/api/schedules', init),
         request<{ runs: ScheduleRun[] }>('/api/schedules/runs?limit=200', init),
-        requestedHistory ? request<{ runs: ScheduleRun[] }>(`/api/schedules/${encodeURIComponent(requestedHistory)}/runs?limit=200`, init) : Promise.resolve({ runs: [] }),
+        requestedHistory ? request<{ runs: ScheduleRun[] }>(`/api/schedules/${encodeURIComponent(requestedHistory)}/runs?limit=200`, init)
+          .then((response) => ({ ...response, historyError: undefined as string | undefined }))
+          .catch((caught: unknown) => ({
+            runs: [] as ScheduleRun[],
+            historyError: caught && typeof caught === 'object' && 'statusCode' in caught && caught.statusCode === 404
+              ? 'This schedule no longer exists.' : `Run history is unavailable: ${scheduleError(caught)}`,
+          })) : Promise.resolve({ runs: [], historyError: undefined }),
         proposals,
       ])
       if (!pending.signal.aborted) {
-        setData({ schedules: list.schedules, recent: recent.runs, history: history.runs, historyId: requestedHistory, ...proposalState })
+        setData({ schedules: list.schedules, recent: recent.runs, history: history.runs, historyError: history.historyError, historyId: requestedHistory, ...proposalState })
         setError(undefined)
       }
     } catch (caught) { if (!pending.signal.aborted) setError(scheduleError(caught)) }
@@ -53,5 +59,5 @@ export function useScheduler(enabled: boolean, historyId?: string) {
     window.addEventListener('focus', refresh)
     return () => { active.current = false; controller.current?.abort(); unsubscribe(); window.removeEventListener('focus', refresh) }
   }, [enabled, historyId, refresh])
-  return { ...data, history: data.historyId === historyId ? data.history : [], historyLoaded: data.historyId === historyId, error, loading, refresh }
+  return { ...data, history: data.historyId === historyId ? data.history : [], historyError: data.historyId === historyId ? data.historyError : undefined, historyLoaded: data.historyId === historyId, error, loading, refresh }
 }

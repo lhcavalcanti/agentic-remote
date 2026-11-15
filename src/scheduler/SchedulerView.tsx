@@ -104,7 +104,8 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
             setForm(undefined)
           }} />
       </> : <>
-        {initialScheduleId && historyId === initialScheduleId && !scheduler.loading && !historySchedule &&
+        {scheduler.historyError && <p role="status">{scheduler.historyError} <button className="secondary-button" onClick={() => setHistoryId(undefined)}>Show all schedules</button></p>}
+        {initialScheduleId && historyId === initialScheduleId && !scheduler.loading && !historySchedule && !scheduler.historyError &&
           <p role="status">The linked schedule is no longer available. <button className="secondary-button" onClick={() => setHistoryId(undefined)}>Show all schedules</button></p>}
         <label className="schedule-check"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Show archived schedules</label>
         {scheduler.loading && <p role="status">Loading schedules…</p>}
@@ -139,8 +140,8 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
           <h3>Run history · {historySchedule.name}</h3>
           <p className="schedule-caption">Up to 200 retained runs. Launching and stopping are not terminal outcomes.</p>
           {!scheduler.historyLoaded && <p role="status">Loading run history…</p>}
-          {scheduler.historyLoaded && !scheduler.history.length && <p>No runs yet.</p>}
-          {initialRunId && scheduler.historyLoaded && !scheduler.history.some((run) => run.id === initialRunId) &&
+          {scheduler.historyLoaded && !scheduler.historyError && !scheduler.history.length && <p>No runs yet.</p>}
+          {initialRunId && scheduler.historyLoaded && !scheduler.historyError && !scheduler.history.some((run) => run.id === initialRunId) &&
             <p role="status">The linked run is no longer in retained history.</p>}
           <ul>{scheduler.history.map((run) => <li key={run.id} data-linked={run.id === initialRunId} ref={run.id === initialRunId ? linkedRun : undefined}>
             <div><RunStatus run={run} /><small>{scheduleTime(run.occurrenceAt, historySchedule.timezone)} · {historySchedule.timezone} · {run.trigger} · {runDuration(run, now)}</small>

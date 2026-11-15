@@ -81,15 +81,11 @@ export function parseFeatureFlag(
   if (value === undefined) return defaultValue
   switch (value.trim().toLowerCase()) {
     case 'on':
-    case 'true':
-    case '1':
       return true
     case 'off':
-    case 'false':
-    case '0':
       return false
     default:
-      throw new Error(`Invalid ${variable}: expected on|off, true|false, or 1|0`)
+      throw new Error(`Invalid ${variable}: expected on|off`)
   }
 }
 

@@ -28,7 +28,10 @@ export function editableSchedule(schedule: Schedule) {
 
 export function scheduleError(caught: unknown): string {
   if (caught && typeof caught === 'object' && 'statusCode' in caught && caught.statusCode === 409) {
-    return 'Conflict: this schedule changed on the hub or the action is no longer valid. Your draft is preserved. Reload the latest version before retrying.'
+    const reason = 'message' in caught && typeof caught.message === 'string' && caught.message.trim()
+      ? caught.message : 'The hub rejected this action'
+    const revisionConflict = /^(?:schedule )?revision conflict[.!]?$/i.test(reason)
+    return `Conflict: ${reason}. Your draft is preserved.${revisionConflict ? ' Reload the latest version before retrying.' : ''}`
   }
   return caught instanceof Error ? caught.message : 'Scheduler is unavailable'
 }

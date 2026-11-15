@@ -32,6 +32,21 @@ afterEach(async () => {
 })
 
 describe('NotificationStore', () => {
+  it('updates bounded batches with one durable write and preserves unrelated records', async () => {
+    const { directory, store } = await setup()
+    await store.ingest(() => [record(1), record(2), record(3)])
+    const persist = vi.spyOn(store as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+    await store.mutateMany([record(1).id, record(2).id, record(1).id], 'read')
+    expect(persist).toHaveBeenCalledOnce()
+    expect((await store.list()).filter((entry) => entry.readAt)).toHaveLength(2)
+    persist.mockClear()
+    await store.mutateMany([record(1).id, record(2).id], 'dismiss')
+    expect(persist).toHaveBeenCalledOnce()
+    const restarted = new NotificationStore(directory, { now: () => now })
+    await restarted.initialize()
+    expect((await restarted.list()).map((entry) => entry.id)).toEqual([record(3).id])
+    expect(() => store.mutateMany(Array.from({ length: 1001 }, () => record(3).id), 'read')).toThrow('limit')
+  })
   it('atomically stores owner-only data and tightens existing directory/file permissions', async () => {
     const { directory, store } = await setup()
     await store.ingest(() => [record(1)])

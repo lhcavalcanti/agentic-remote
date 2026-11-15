@@ -11,6 +11,7 @@ import {
   type SettingsProfileValues,
 } from '../shared/settings-profile'
 import { fetchHubFeatureFlags } from './api'
+import { dispatchAuthoritativeRefresh } from './OracleDreamer'
 import { PreviewFeaturesSettings } from './PreviewFeaturesSettings'
 import { PreviewFeaturesProvider } from './PreviewFeaturesProvider'
 import { usePreviewFeature } from './preview-features'
@@ -132,5 +133,26 @@ describe('Preview features settings', () => {
     await act(async () => { window.dispatchEvent(new Event('online')) })
     await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Notification panel' })).toBeEnabled())
     expect(screen.getByLabelText('Effective previews')).toHaveTextContent('"notifications":true')
+  })
+
+  it('refreshes hub authority on reconnect without discarding the stored opt-in', async () => {
+    const enabled = { notificationCenter: true, hostMonitor: false, scheduler: false }
+    vi.mocked(fetchHubFeatureFlags).mockResolvedValueOnce(enabled)
+    const server = hub({ previewFeatures: { notificationPanel: true } })
+    settings(await server.client())
+    const notifications = screen.getByRole('checkbox', { name: 'Notification panel' })
+    await waitFor(() => expect(notifications).toBeEnabled())
+    expect(screen.getByLabelText('Effective previews')).toHaveTextContent('"notifications":true')
+
+    await act(async () => { await dispatchAuthoritativeRefresh() })
+    expect(notifications).toBeDisabled()
+    expect(screen.getByLabelText('Effective previews')).toHaveTextContent('"notifications":false')
+    expect(server.snapshot().values.previewFeatures?.notificationPanel).toBe(true)
+
+    vi.mocked(fetchHubFeatureFlags).mockResolvedValueOnce(enabled)
+    await act(async () => { await dispatchAuthoritativeRefresh() })
+    expect(notifications).toBeEnabled()
+    expect(screen.getByLabelText('Effective previews')).toHaveTextContent('"notifications":true')
+    expect(server.transport.update).not.toHaveBeenCalled()
   })
 })

@@ -704,16 +704,43 @@ export function createManagerTools(
       return JSON.stringify({ proposalId: proposal.id, status: proposal.status, summary, approvalRequired: true })
     }
     const scheduleIdentity = { scheduleId: z.string().min(1).max(200), revision: z.number().int().positive() }
+    const boundedPage = (key: 'schedules' | 'runs', rows: object[], total: number, offset: number) => {
+      const selected: object[] = []
+      for (const row of rows) {
+        if (JSON.stringify([...selected, row]).length > 12_000) break
+        selected.push(row)
+      }
+      return JSON.stringify({
+        [key]: selected, total, nextOffset: offset + selected.length < total ? offset + selected.length : null,
+        notice: `${total - selected.length} records not shown. Summaries only; use get_schedule for exact schedule prompts and targets.`,
+      })
+    }
     return [
-      define('list_schedules', 'Read schedules; Oracle-created schedules are not Oracle-owned sessions.',
-        z.object({ archived: z.boolean().optional() }).strict(),
-        async ({ archived }) => JSON.stringify(scheduleStore().list(archived))),
+      define('list_schedules', 'Read bounded schedule summaries; use get_schedule for exact details. Oracle-created schedules are not Oracle-owned sessions.',
+        z.object({ archived: z.boolean().optional(), offset: z.number().int().min(0).max(1_000_000).default(0) }).strict(),
+        async ({ archived, offset }) => {
+          const schedules = scheduleStore().list(archived)
+          return boundedPage('schedules', schedules.slice(offset, offset + 20).map((schedule) => ({
+            id: schedule.id, name: schedule.name.slice(0, 120), revision: schedule.revision,
+            enabled: schedule.enabled, archived: schedule.archived, createdBy: schedule.createdBy,
+            computerId: schedule.target.computerId, provider: schedule.target.provider,
+            recurrence: schedule.recurrence, timezone: schedule.timezone,
+          })), schedules.length, offset)
+        }),
       define('get_schedule', 'Read one schedule without running or changing it.',
         z.object({ scheduleId: scheduleIdentity.scheduleId }).strict(),
         async ({ scheduleId }) => JSON.stringify(scheduleStore().get(scheduleId))),
       define('list_schedule_runs', 'Read a bounded page of runs, optionally for one schedule.',
         scheduleRunListSchema.extend({ scheduleId: scheduleIdentity.scheduleId.optional() }),
-        async ({ scheduleId, ...page }) => JSON.stringify(scheduleStore().listRuns(page, scheduleId))),
+        async ({ scheduleId, ...page }) => {
+          const result = scheduleStore().listRuns({ ...page, limit: Math.min(page.limit, 20) }, scheduleId)
+          return boundedPage('runs', result.runs.map((run) => ({
+            id: run.id, scheduleId: run.scheduleId, status: run.status, trigger: run.trigger,
+            occurrenceAt: run.occurrenceAt, sessionId: run.sessionId, computerId: run.computerId,
+            startedAt: run.startedAt, endedAt: run.endedAt,
+            summary: run.summary?.slice(0, 280), error: run.error?.slice(0, 280),
+          })), result.total, page.offset)
+        }),
       define('create_schedule', 'Propose a new schedule. Nothing applies until the user approves the exact proposal.',
         scheduleCreateSchema,
         async (payload) => propose({ operation: 'create', payload }), { actsOnSessions: true }),

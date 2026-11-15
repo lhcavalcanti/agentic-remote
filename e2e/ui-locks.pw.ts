@@ -322,6 +322,12 @@ test.describe('browser interaction contracts', () => {
     fixture = undefined
   })
 
+  test('rail omits Oracle when the manager is unavailable', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'desktop-rail')
+    await expect(page.getByRole('navigation', { name: 'App navigation' }).getByRole('button', { name: 'Open Oracle' })).toHaveCount(0)
+    await expect(page.locator('#oracle-panel')).toHaveCount(0)
+  })
+
   test('rail opens Oracle and offers only implemented views', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'oracle-panel')
     await page.getByRole('button', { name: 'Close Oracle', exact: true }).click()

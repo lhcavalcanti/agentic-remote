@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { parseCronExpression } from './schedule-cron.js'
-import { promptAcceptanceReceiptSchema } from './launch-identity.js'
+import { launchIdentitySchema, promptAcceptanceReceiptSchema } from './launch-identity.js'
 import { scheduleWorktreeInputSchema, scheduleWorktreeRecordSchema } from './schedule-worktrees.js'
 
 export const DEFAULT_SCHEDULE_TIMEZONE = 'America/Los_Angeles'
@@ -39,7 +39,11 @@ export const scheduleRecurrenceSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hourly'),
     everyHours: z.number().positive().max(24)
-      .refine((hours) => Number.isInteger(hours * 60), 'Hourly interval must be a whole number of minutes'),
+      .refine((hours) => {
+        const minutes = hours * 60
+        return Math.round(minutes) >= 1 &&
+          Math.abs(minutes - Math.round(minutes)) <= Number.EPSILON * Math.max(1, minutes) * 4
+      }, 'Hourly interval must be a whole number of minutes'),
     windowStart: time.optional(),
     windowEnd: windowEnd.optional(),
   }).strict(),
@@ -99,8 +103,8 @@ export const scheduleRunSchema = z.object({
   occurrenceAt: timestamp,
   trigger: z.enum(['schedule', 'manual', 'catch-up']),
   status: scheduleRunStatusSchema,
-  launchId: identifier,
-  rootPromptReceipt: identifier.optional(),
+  launchId: launchIdentitySchema,
+  rootPromptReceipt: launchIdentitySchema.optional(),
   rootPromptAcceptance: promptAcceptanceReceiptSchema.optional(),
   worktree: scheduleWorktreeRecordSchema.optional(),
   worktreeIntent: scheduleWorktreeInputSchema.optional(),

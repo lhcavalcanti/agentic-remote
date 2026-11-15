@@ -16,6 +16,7 @@ import {
 } from './composer-state'
 import type { CollapsedPaste, ComposerDraft, ComposerDrafts } from './composer-state'
 import type { AgentProviderCapability, ChatMessage } from '../../shared/contracts'
+import type { PromptAcceptanceReceipt } from '../../shared/launch-identity'
 
 const key = 'computer-1:original'
 const replacementKey = 'computer-1:replacement'
@@ -46,7 +47,59 @@ describe('steering capability decisions', () => {
 
 describe('sent message filtering', () => {
   const turn = (id: string, content: string, overrides: Partial<ChatMessage> = {}): ChatMessage => ({
-    id, content, role: 'user', createdAt: `2026-11-${id.padStart(2, '0')}T12:00:00Z`, ...overrides,
+    id, content, role: 'user', deliveryConfirmed: true,
+    createdAt: `2026-11-${id.padStart(2, '0')}T12:00:00Z`, ...overrides,
+  })
+  it.each(['idle', 'running', 'error'] as const)('keeps a legacy turn with a provider reply while %s', (status) => {
+    const user = turn('1', 'A pre-upgrade prompt', { deliveryConfirmed: undefined })
+    const reply = turn('2', 'The provider answered this turn.', { role: 'assistant', deliveryConfirmed: undefined })
+    expect(filterSentMessages([user, reply], '', [], { status })).toEqual([user])
+  })
+  it.each(['running', 'waiting'] as const)('excludes only the trailing legacy turn still %s', (status) => {
+    const delivered = turn('1', 'Old prompt', { deliveryConfirmed: undefined })
+    const reply = turn('2', 'Old answer', { role: 'assistant', deliveryConfirmed: undefined })
+    const active = turn('3', 'Still waiting', { deliveryConfirmed: undefined })
+    expect(filterSentMessages([delivered, reply, active], '', [], { status })).toEqual([delivered])
+    expect(filterSentMessages([active], '', [], { status: 'idle' })).toEqual([active])
+  })
+  it('excludes an unanswered trailing legacy refusal on an errored session', () => {
+    expect(filterSentMessages([
+      turn('1', 'Provider never started', { deliveryConfirmed: undefined }),
+    ], '', [], { status: 'error' })).toEqual([])
+  })
+  it('never mistakes explicitly retained echoes for sent history', () => {
+    expect(filterSentMessages([
+      turn('1', 'Refused', { deliveryConfirmed: undefined, deliveryState: 'refused' }),
+      turn('2', 'Dispatching', { deliveryConfirmed: undefined, deliveryState: 'pending' }),
+      turn('3', 'Unknown handoff', { deliveryConfirmed: undefined, deliveryState: 'uncertain' }),
+      turn('4', 'Confirmed by SDK'),
+    ], '', [], { status: 'running' }).map((message) => message.id)).toEqual(['4'])
+  })
+  it('does not treat a streaming assistant placeholder as a legacy reply', () => {
+    expect(filterSentMessages([
+      turn('1', 'Not acknowledged', { deliveryConfirmed: undefined }),
+      turn('2', '', { role: 'assistant', deliveryConfirmed: undefined, streaming: true }),
+    ])).toEqual([])
+  })
+  it('excludes a retained provider-start refusal even without pending or streaming flags', () => {
+    const refused = turn('1', 'Never handed to the provider', { deliveryConfirmed: undefined })
+    expect(filterSentMessages([
+      refused,
+      turn('2', 'Not sent: provider startup failed', { role: 'assistant', deliveryConfirmed: undefined }),
+      turn('3', 'Confirmed by provider'),
+    ]).map((message) => message.id)).toEqual(['3'])
+  })
+  it('requires provider handoff rather than durable queue admission', () => {
+    const message = turn('1', 'Queued dispatch still starting', { deliveryConfirmed: undefined })
+    const receipt: PromptAcceptanceReceipt = {
+      deliveryId: 'delivery-1', sessionId: 'session-1', promptId: 'queued-1',
+      acceptedAt: message.createdAt, state: 'accepted', userMessageId: message.id,
+    }
+    expect(filterSentMessages([message], '', [receipt])).toEqual([])
+    expect(filterSentMessages([message], '', [{ ...receipt, state: 'queued' }])).toEqual([])
+    expect(filterSentMessages([message], '', [{ ...receipt, state: 'rejected' }])).toEqual([])
+    expect(filterSentMessages([message], '', [{ ...receipt, handedAt: message.createdAt }])).toEqual([message])
+    expect(filterSentMessages([message], '', [{ ...receipt, state: 'delivered' }])).toEqual([message])
   })
   it('searches full text case-insensitively and sorts newest first without mutating input', () => {
     const messages = [turn('1', 'A long message\nwith hidden TAIL'), turn('3', 'tail again'), turn('2', 'unrelated')]

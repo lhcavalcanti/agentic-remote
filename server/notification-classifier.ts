@@ -3,7 +3,7 @@ import type { ComputerSummary, HubEvent, ManagedSession, SessionStatus } from '.
 import type { HostSnapshot } from '../shared/host-telemetry.js'
 import type { ManagerEvent } from '../shared/manager.js'
 import type { NotificationKind, NotificationRecord } from '../shared/notification-center.js'
-import { alertNotification, notificationBrief, ORACLE_NOTIFICATION_URL } from '../shared/notifications.js'
+import { alertNotification, notificationBrief, notificationPlainText, ORACLE_NOTIFICATION_URL } from '../shared/notifications.js'
 import type { Schedule, ScheduleRun } from '../shared/schedules.js'
 
 export interface NotificationCursor {
@@ -138,7 +138,7 @@ export function classifyHubNotification(
     const computer = event.computer
     const key = JSON.stringify(['computer', computer.id, computer.lifecycleGeneration])
     const before = cursors[key]
-    const offline = before?.online === true && !computer.online
+    const offline = !baseline && before?.online === true && !computer.online
     const episode = (before?.episode ?? 0) + (offline ? 1 : 0)
     cursors[key] = { online: computer.online, episode, touchedAt: now }
     if (offline) return [record('computer.offline', [computer.id, computer.lifecycleGeneration, String(episode)], {
@@ -160,10 +160,13 @@ export function classifyHostNotification(
   snapshot: HostSnapshot | undefined,
   cursors: NotificationCursors,
   now: string,
+  observations: NotificationCursors = cursors,
 ): NotificationRecord[] {
   const nowMs = Date.parse(now)
-  const sampleAt = snapshot?.latest?.at
-  const sampleMs = sampleAt ? Date.parse(sampleAt) : NaN
+  const sampleMs = snapshot?.latest
+    ? snapshot.sampleAgeMs === undefined ? Date.parse(snapshot.latest.at) : nowMs - snapshot.sampleAgeMs
+    : NaN
+  const sampleAt = Number.isFinite(sampleMs) ? new Date(sampleMs).toISOString() : undefined
   const fresh = Number.isFinite(sampleMs) && sampleMs <= nowMs + 5000 && nowMs - sampleMs <= HOST_ALERT_MAX_SAMPLE_AGE_MS
   const used = snapshot?.latest?.memoryUsedBytes
   const total = snapshot?.info?.totalMemoryBytes
@@ -178,13 +181,23 @@ export function classifyHostNotification(
   const records: NotificationRecord[] = []
   for (const condition of conditions) {
     const key = JSON.stringify(['host-condition', computer.id, condition.name])
-    const before = cursors[key]?.hostAlert
+    const before = observations[key]?.hostAlert ?? cursors[key]?.hostAlert
     const state = { active: false, notified: false, ...before }
+    // A restart cannot prove uninterrupted pressure during the unobserved gap.
+    if (observations !== cursors && !observations[key] && !state.active) delete state.since
+    const save = () => {
+      observations[key] = { hostAlert: state, touchedAt: now }
+      const { sampleAt: _sampleAt, ...episode } = state
+      const { sampleAt: _beforeSampleAt, ...previousEpisode } = cursors[key]?.hostAlert ?? { active: false, notified: false }
+      if (JSON.stringify(episode) !== JSON.stringify(previousEpisode)) {
+        cursors[key] = { hostAlert: { ...state }, touchedAt: now }
+      }
+    }
     if (!fresh || condition.value === null || !Number.isFinite(condition.value)) {
       // Missing readings cannot prove two minutes of uninterrupted pressure.
       if (state.since && !state.active) {
         delete state.since
-        cursors[key] = { hostAlert: state, touchedAt: now }
+        save()
       }
       continue
     }
@@ -222,7 +235,7 @@ export function classifyHostNotification(
       state.notified = true
       state.lastNotifiedAt = now
     }
-    cursors[key] = { hostAlert: state, touchedAt: now }
+    save()
   }
   return records
 }
@@ -240,16 +253,30 @@ export function classifyScheduleNotification(schedule: Schedule, run: ScheduleRu
   return [record(kind, [schedule.id, run.id, outcome], {
     computerId: run.computerId, ...(run.sessionId ? { sessionId: run.sessionId } : {}),
     title: `${notificationBrief(schedule.name)} · ${label}`,
-    body: notificationBrief(run.error || run.summary || (outcome === 'needs-input' ? 'Open the scheduled session to continue.' : `Scheduled run ${label}.`)),
-    severity, createdAt: run.endedAt ?? run.startedAt ?? run.createdAt ?? now,
+    body: notificationBrief(outcome === 'needs-input' ? 'Open the scheduled session to continue.'
+      : (outcome === 'succeeded' ? run.summary : run.error || run.summary) || `Scheduled run ${label}.`),
+    severity, createdAt: outcome === 'needs-input' ? now : run.endedAt ?? now,
     url: `/?${params}`, coalesceKey: JSON.stringify(['schedule', schedule.id]),
   })]
 }
 
 /** Oracle's work inbox is not consumed or acknowledged by notification reads. */
-export function classifyOracleNotification(event: ManagerEvent, now: string): NotificationRecord[] {
+export function classifyOracleNotification(event: ManagerEvent, now: string, replies: Map<string, string>): NotificationRecord[] {
+  if (event.type === 'manager.reset') replies.clear()
   if (event.type !== 'manager.message') return []
   const message = event.message
+  if (message.role === 'assistant') {
+    // Stop also stores a partial assistant reply. Only the user's terminal
+    // outcome proves that this text belongs to a successfully completed turn.
+    if (message.replyTo && message.content.trim()) {
+      replies.delete(message.replyTo)
+      replies.set(message.replyTo, message.content)
+      if (replies.size > 50) replies.delete(replies.keys().next().value!)
+    }
+    return []
+  }
+  const reply = message.role === 'user' ? replies.get(message.id) : undefined
+  if (message.role === 'user') replies.delete(message.id)
   let suffix: string
   let title: string
   let body: string
@@ -259,21 +286,17 @@ export function classifyOracleNotification(event: ManagerEvent, now: string): No
     title = 'Oracle needs your OK'
     body = message.content
     severity = 'warning'
-  } else if (message.role === 'assistant' && message.content.trim()) {
-    suffix = 'done'
-    title = 'Oracle replied'
-    body = message.content
   } else if (message.role === 'user' && message.state === 'done') {
     suffix = 'done'
     title = 'Oracle replied'
-    body = 'Open Oracle to see what it did.'
+    body = (reply && notificationBrief(notificationPlainText(reply))) || 'Open Oracle to see what it did.'
   } else if (message.role === 'user' && message.state === 'failed') {
     suffix = 'failed'
     title = 'Oracle couldn’t answer'
     body = message.error || 'Your message is kept; press Retry.'
     severity = 'error'
   } else return []
-  return [record('oracle.message', [message.role === 'assistant' ? message.replyTo ?? message.id : message.id, suffix], {
+  return [record('oracle.message', [message.id, suffix], {
     severity,
     title,
     body: notificationBrief(body),

@@ -193,3 +193,30 @@ it('keeps schedule management available on hubs without the optional proposal AP
   expect(screen.queryByRole('region', { name: 'Pending Oracle proposals' })).toBeNull()
   expect(screen.queryByRole('alert')).toBeNull()
 })
+
+it.each([
+  'A non-archived schedule already has this name',
+  'Archived schedules cannot run',
+  'At most 20 active Oracle-created schedules are allowed',
+])('preserves the actual non-revision conflict reason: %s', (reason) => {
+  const message = scheduleError(new SubmissionError(reason, 409))
+  expect(message).toContain(reason)
+  expect(message).not.toContain('Reload')
+  expect(message).not.toContain('changed on the hub')
+})
+
+it.each([404, 503])('retains the schedule list when selected history returns %s', async (status) => {
+  vi.mocked(request).mockImplementation(async (path) => {
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    if (path === '/api/schedules') return { schedules: [schedule] }
+    if (path.includes('/deleted/runs')) throw new SubmissionError(status === 404 ? 'Schedule not found' : 'Temporarily unavailable', status)
+    return { runs: [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled initialScheduleId="deleted" onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  expect(await screen.findByRole('button', { name: 'Edit Morning review' })).toBeTruthy()
+  expect(await screen.findByText(status === 404 ? /This schedule no longer exists/ : /Run history is unavailable/)).toBeTruthy()
+  expect(screen.queryByText('No schedules yet. Create a saved prompt to get started.')).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Show all schedules' }))
+  await waitFor(() => expect(screen.queryByText(/This schedule no longer exists|Run history is unavailable/)).toBeNull())
+})

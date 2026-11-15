@@ -530,6 +530,7 @@ export const fixtureEndpoints = [
   'GET /api/notifications',
   'GET /api/notifications/unread-count',
   'POST /api/notifications/read-all',
+  'POST /api/notifications/bulk',
   'POST /api/notifications/:id/read',
   'POST /api/notifications/:id/dismiss',
   'GET /api/schedules',
@@ -923,6 +924,7 @@ export async function setupWorkspaceFixture(
         await respond({ proposal })
         return
       }
+      // The single-segment GET matcher includes the reserved global /api/schedules/runs route.
       const known = (path === '/api/schedules' && ['GET', 'POST'].includes(method)) ||
         (/^\/api\/schedules\/[^/]+$/.test(path) && ['GET', 'PATCH', 'DELETE'].includes(method)) ||
         (/^\/api\/schedules\/[^/]+\/(?:enabled|archived|run)$/.test(path) && method === 'POST') ||
@@ -1026,7 +1028,7 @@ export async function setupWorkspaceFixture(
       await reject(route, `Unmocked schedule request: ${method} ${path}`); return
     }
     if ((method === 'GET' && ['/api/notifications', '/api/notifications/unread-count'].includes(path)) ||
-        (method === 'POST' && (path === '/api/notifications/read-all' || /^\/api\/notifications\/[a-f0-9]{64}\/(?:read|dismiss)$/.test(path)))) {
+        (method === 'POST' && (['/api/notifications/read-all', '/api/notifications/bulk'].includes(path) || /^\/api\/notifications\/[a-f0-9]{64}\/(?:read|dismiss)$/.test(path)))) {
       if (options.notifications === undefined) {
         await respond({ error: 'Notification center is disabled' }, 404)
         return
@@ -1044,7 +1046,18 @@ export async function setupWorkspaceFixture(
           : { notifications: filtered() })
         return
       }
-      if (path.endsWith('/read-all')) {
+      if (path.endsWith('/bulk')) {
+        const batch = route.request().postDataJSON() as { ids: string[]; action: 'read' | 'dismiss' }
+        if (!Array.isArray(batch.ids) || !batch.ids.length || batch.ids.length > 1000 ||
+            batch.ids.some((id) => !/^[a-f0-9]{64}$/.test(id)) || !['read', 'dismiss'].includes(batch.action)) {
+          await respond({ error: 'Invalid notification batch' }, 400)
+          return
+        }
+        notifications.filter((record) => batch.ids.includes(record.id)).forEach((record) => {
+          if (batch.action === 'read') record.readAt ??= FIXTURE_NOW
+          else record.dismissedAt ??= FIXTURE_NOW
+        })
+      } else if (path.endsWith('/read-all')) {
         filtered().forEach((record) => { record.readAt ??= FIXTURE_NOW })
       } else {
         const record = notifications.find((record) => record.id === path.split('/')[3])
@@ -1504,6 +1517,27 @@ export async function setupWorkspaceFixture(
         session.revision = (session.revision ?? 0) + 1
         session.updatedAt = FIXTURE_NOW
         emit({ type: 'session.upserted', session })
+      }
+      if (method === 'POST' && action === '/commands') {
+        const input = request.postDataJSON() as { command?: unknown; enqueue?: unknown; replaceTerminalDraft?: unknown }
+        if (typeof input.command !== 'string' || !/^\/help(?:\s|$)/.test(input.command.trim()) ||
+          input.command.trim().length > 10_000 ||
+          (input.enqueue !== undefined && typeof input.enqueue !== 'boolean') ||
+          (input.replaceTerminalDraft !== undefined && typeof input.replaceTerminalDraft !== 'boolean')) {
+          await reject(route, 'Unexpected fixture command')
+          return
+        }
+        const content = input.command.trim()
+        const id = `fixture-command-${session.revision}`
+        if (input.enqueue) {
+          session.queuedPrompts = [...(session.queuedPrompts ?? []), { id, content, createdAt: FIXTURE_NOW }]
+          session.queuedCount = session.queuedPrompts.length
+        } else {
+          session.messages.push({ id, role: 'user', content, createdAt: FIXTURE_NOW })
+        }
+        commitSession()
+        await respond({ session })
+        return
       }
       if (method === 'POST' && action === '/messages') {
         const input = request.postDataJSON() as { content?: unknown; enqueue?: unknown; deliveryId?: unknown }

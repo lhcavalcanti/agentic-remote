@@ -4,6 +4,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import type { DiscoveredSession } from './session-store.js'
 import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
+import { parseProcessStat } from './host-telemetry/process-proc.js'
 
 const execFileAsync = promisify(execFile)
 const sessionPattern =
@@ -374,9 +375,21 @@ async function openSessionIds(pid: number): Promise<Set<string>> {
 }
 
 export async function findActiveCopilotProcesses(): Promise<
-  Array<{ pid: number; sessionId: string; source: 'argument' | 'lock' }>
+  Array<{ pid: number; sessionId: string; source: 'argument' | 'lock'; startTime?: number }>
 > {
-  return findActiveProcesses()
+  return Promise.all((await findActiveProcesses()).map(async (processInfo) => {
+    try {
+      // Capture before the fresh session check so telemetry can reject a PID
+      // reused while this identity proof waits in the terminal owner's cache.
+      const observed = parseProcessStat(await readFile(`/proc/${processInfo.pid}/stat`, 'utf8'))
+      if (observed?.pid === processInfo.pid && await processStillMatches(processInfo, processInfo.sessionId)) {
+        return { ...processInfo, startTime: observed.startTime }
+      }
+    } catch {
+      // Failure to obtain telemetry proof must not change terminal discovery.
+    }
+    return processInfo
+  }))
 }
 
 /** Fresh identity proof for a leaf CLI; wrappers and lock-only owners need discovery. */

@@ -17,6 +17,11 @@
 .notification-kind { display: block; margin-bottom: 5px; }
 .notification-row__actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
 .notification-empty { padding: 28px 0; color: var(--muted); }
+.notification-group summary { display: flex; align-items: center; min-height: 40px; cursor: pointer; font-size: 13px; }
+.notification-group ul { padding: 0; list-style: none; }
+.notification-group li { border-top: 1px solid var(--border); padding: 10px 0; }
+.notification-link { min-height: 40px; }
+.notification-tabs button { min-height: 40px; }
 @media (min-width: 1024px) { .dialog-backdrop:has(.notification-panel) { justify-content: flex-start; align-items: flex-end; padding-left: 76px; } }
 @media (max-width: 600px) {
   .dialog-backdrop:has(.notification-panel) { align-items: flex-end; padding: 0; }

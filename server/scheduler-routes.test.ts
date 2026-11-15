@@ -108,21 +108,29 @@ describe('scheduler hub API', () => {
     launch!.receipts[0].outcome = 'succeeded'
     await runtime.scheduler!.tick()
     expect(runtime.scheduler!.store.getRun(run.id).status).toBe('succeeded')
+    host.emit('event', { type: 'session.removed', computerId, sessionId: detail.id, replacedBy: 'replacement' })
+    const replacement = new ManagerStore(path.join(directory, 'manager'))
+    await vi.waitFor(async () => {
+      await replacement.initialize()
+      expect(replacement.registry()[`${computerId}:replacement`]).toMatchObject({
+        origin: 'schedule', scheduleId: schedule.id, scheduleRunId: run.id,
+      })
+    })
     expect(launcher.launch).not.toHaveBeenCalled()
   })
 
-  it('settles and journals a failed approved Run now without admitting a run', async () => {
+  it('settles and journals a Run now revision refusal before admitting a run', async () => {
     const server = await app()
     const schedule = await runtime.scheduler!.store.create(input() as never)
     const proposal = await runtime.scheduler!.store.propose({ operation: 'run-now', scheduleId: schedule.id, baseRevision: 1, payload: {} })
-    vi.spyOn(runtime.scheduler!, 'runNow').mockRejectedValueOnce(Object.assign(new Error('Schedule revision conflict'), { statusCode: 409 }))
+    await runtime.scheduler!.store.update(schedule.id, { revision: 1, prompt: 'User-edited guide review' })
     const response = await server.inject({ method: 'POST', url: `/api/schedules/proposals/${proposal.id}/approve`, headers })
     expect(response.statusCode).toBe(409)
     expect(runtime.scheduler!.store.proposal(proposal.id)).toMatchObject({ status: 'failed', error: 'Schedule revision conflict' })
     expect(runtime.scheduler!.store.allRuns()).toEqual([])
     await vi.waitFor(async () => {
       const entries = (await readFile(path.join(directory, 'manager', 'journal.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line))
-      expect(entries.filter((entry) => entry.proposalId === proposal.id).map((entry) => entry.proposalStatus)).toEqual(['pending', 'approved', 'failed'])
+      expect(entries.filter((entry) => entry.proposalId === proposal.id).map((entry) => entry.proposalStatus)).toEqual(['pending', 'failed'])
     })
   })
   it('lists and resolves proposals without accepting payload substitutions and enforces hostile origins', async () => {

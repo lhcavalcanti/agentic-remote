@@ -22,7 +22,7 @@ import {
   type CpuCounters,
   type DeviceCounters,
 } from './parsers.js'
-import { createLinuxHostTelemetryReader, type HostTelemetryReader, type HostTelemetryReading } from './reader.js'
+import { createLinuxHostTelemetryReader, hostTelemetryProcFiles, type HostTelemetryReader, type HostTelemetryReading } from './reader.js'
 
 export const HOST_TELEMETRY_ACTIVE_INTERVAL_MS = 1000
 export const HOST_TELEMETRY_IDLE_INTERVAL_MS = 15_000
@@ -84,7 +84,7 @@ export class HostTelemetrySampler {
   private timer?: ReturnType<typeof setTimeout>
   private attempt?: SamplingAttempt
   private lastStartedAt = 0
-  private previous?: { at: number; cpu?: CpuCounters; network?: DeviceCounters; disk?: DeviceCounters }
+  private previous?: { sampledAt: number; networkAt: number; diskAt: number; cpu?: CpuCounters; network?: DeviceCounters; disk?: DeviceCounters }
   private info: HostInfo | null = null
   private latest: HostSample | null = null
   private disk: DiskSpace | null = null
@@ -97,7 +97,6 @@ export class HostTelemetrySampler {
   private readonly listeners = new Set<(snapshot: HostSnapshot) => void>()
 
   constructor(options: HostTelemetrySamplerOptions) {
-    this.reader = options.reader ?? createLinuxHostTelemetryReader({ dataDirectory: options.dataDirectory })
     this.clock = {
       now: () => Date.now(),
       monotonicNow: () => performance.now(),
@@ -105,6 +104,10 @@ export class HostTelemetrySampler {
       clearTimeout: (timer) => clearTimeout(timer),
       ...options.clock,
     }
+    this.reader = options.reader ?? createLinuxHostTelemetryReader({
+      dataDirectory: options.dataDirectory,
+      monotonicNow: this.clock.monotonicNow,
+    })
     this.sampleTimeoutMs = options.sampleTimeoutMs ?? HOST_TELEMETRY_SAMPLE_TIMEOUT_MS
     if (!Number.isFinite(this.sampleTimeoutMs) || this.sampleTimeoutMs <= 0) {
       throw new RangeError('sampleTimeoutMs must be positive and finite')
@@ -142,6 +145,7 @@ export class HostTelemetrySampler {
   snapshot(): HostSnapshot {
     this.pruneLive(this.clock.monotonicNow())
     return {
+      ...(this.previous ? { sampleAgeMs: Math.max(0, this.clock.monotonicNow() - this.previous.sampledAt) } : {}),
       info: this.info ? { ...this.info } : null,
       latest: this.latest ? { ...this.latest } : null,
       live: this.live.map(({ sample }) => ({ ...sample })),
@@ -243,12 +247,15 @@ export class HostTelemetrySampler {
       ['diskstats', disk !== undefined],
       ['loadavg', load !== undefined],
     ] as const) {
-      if (files[file] !== undefined && !valid) errors.push(`/proc/${file}: INVALID`)
+      if (files[file] !== undefined && !valid) errors.push(`${hostTelemetryProcFiles[file]}: INVALID`)
     }
     if (errors.length) this.recordError(errors.join('; ').slice(0, 1000))
-    const elapsed = this.previous ? monotonicAt - this.previous.at : 0
-    const networkRate = deviceRates(this.previous?.network, network, elapsed)
-    const diskRate = deviceRates(this.previous?.disk, disk, elapsed, 512n)
+    const networkAt = reading.capturedAt?.netDev ?? this.lastStartedAt
+    const diskAt = reading.capturedAt?.diskstats ?? this.lastStartedAt
+    const networkElapsed = this.previous ? networkAt - this.previous.networkAt : 0
+    const diskElapsed = this.previous ? diskAt - this.previous.diskAt : 0
+    const networkRate = deviceRates(this.previous?.network, network, networkElapsed)
+    const diskRate = deviceRates(this.previous?.disk, disk, diskElapsed, 512n)
     const sample: HostSample = {
       at: new Date(at).toISOString(),
       cpuPercent: cpuUtilization(this.previous?.cpu, cpu),
@@ -263,7 +270,7 @@ export class HostTelemetrySampler {
       load5: load?.load5 ?? null,
       load15: load?.load15 ?? null,
     }
-    this.previous = { at: monotonicAt, cpu, network, disk }
+    this.previous = { sampledAt: monotonicAt, networkAt, diskAt, cpu, network, disk }
     this.info = {
       ...reading.info,
       totalMemoryBytes: memory.totalMemoryBytes ?? reading.info.totalMemoryBytes,
@@ -315,9 +322,10 @@ export class HostTelemetrySampler {
   }
 
   private pruneMinutes(at: number): void {
-    const oldestMinute = (Math.floor(at / MINUTE_MS) - HOST_TELEMETRY_MAX_MINUTES + 1) * MINUTE_MS
+    const currentMinute = Math.floor(at / MINUTE_MS) * MINUTE_MS
+    const oldestMinute = currentMinute - (HOST_TELEMETRY_MAX_MINUTES - 1) * MINUTE_MS
     for (const minute of this.minutes.keys()) {
-      if (minute < oldestMinute) this.minutes.delete(minute)
+      if (minute < oldestMinute || minute > currentMinute) this.minutes.delete(minute)
     }
     while (this.minutes.size > HOST_TELEMETRY_MAX_MINUTES) {
       this.minutes.delete(Math.min(...this.minutes.keys()))

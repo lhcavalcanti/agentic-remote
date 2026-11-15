@@ -93,7 +93,7 @@ describe('canonical API origin enforcement', () => {
   })
   it.each(prefixes)('guards notification reads and every mutation through %s', async (prefix) => {
     for (const [method, suffix] of [
-      ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'],
+      ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'], ['POST', '/bulk'],
       ['POST', `/${'a'.repeat(64)}/read`], ['POST', `/${'a'.repeat(64)}/dismiss`],
     ] as const) {
       for (const headers of untrusted) {

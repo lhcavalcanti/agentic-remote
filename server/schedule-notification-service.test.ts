@@ -89,6 +89,21 @@ async function run(policy: Schedule['notify'] = 'always') {
 }
 
 describe('canonical schedule notifications across channels', () => {
+  it.each(['succeeded', 'needs-input'] as const)('does not report stale launch errors on recovered %s outcomes', async (outcome) => {
+    const { run: admitted } = await run()
+    await schedules.changeRun(admitted.id, {
+      status: outcome, error: 'Transient owner disconnect', summary: 'The review completed successfully.',
+      startedAt: new Date(now - 6 * 60 * 60_000).toISOString(),
+      ...(outcome === 'succeeded' ? { endedAt: new Date(now).toISOString() } : {}),
+    })
+    await settled()
+    const [record] = await records.list()
+    expect(record.body).not.toContain('disconnect')
+    expect(record.body).toBe(outcome === 'succeeded' ? 'The review completed successfully.' : 'Open the scheduled session to continue.')
+    expect(record.createdAt).toBe(new Date(now).toISOString())
+    expect(JSON.parse(sender.mock.calls[0][1] as string).body).not.toContain('disconnect')
+  })
+
   for (const policy of ['always', 'attention', 'never'] as const) {
     it.each(['succeeded', 'failed', 'needs-input', 'missed', 'interrupted'] as const)(
       `${policy} resolves %s identically for in-app, push and native`, async (outcome) => {

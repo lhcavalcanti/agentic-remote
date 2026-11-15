@@ -35,7 +35,8 @@ function owner(row: ProcessRow, computer: ComputerSummary): string {
 
 function summary(computer: ComputerSummary, snapshot: HostSnapshot, now: number): string[] {
   const { info, latest, disk } = snapshot
-  const age = latest ? Math.max(0, (now - Date.parse(latest.at)) / 1000) : undefined
+  const age = latest ? snapshot.sampleAgeMs !== undefined ? snapshot.sampleAgeMs / 1000
+    : computer.isLocal ? Math.max(0, (now - Date.parse(latest.at)) / 1000) : 0 : undefined
   return [
     `## ${text(info?.hostname ?? computer.name)} · ${computer.isLocal ? 'hub' : 'node'} (${text(computer.id)})`,
     ...(info?.isWsl ? [`WSL VM, not the Windows host${info.wslDistro ? ` · ${text(info.wslDistro)}` : ''}`] : []),
@@ -48,7 +49,9 @@ function summary(computer: ComputerSummary, snapshot: HostSnapshot, now: number)
 
 function processes(computer: ComputerSummary, inventory: HostProcesses, now: number): string[] {
   return [
-    `Top 5 processes by CPU (one core = 100%; inventory age ${number(Math.max(0, (now - Date.parse(inventory.scannedAt)) / 1000), 's')}):`,
+    `Top 5 processes by CPU (one core = 100%; ${computer.isLocal
+      ? `inventory age ${number(Math.max(0, (now - Date.parse(inventory.scannedAt)) / 1000), 's')}`
+      : 'inventory received just now'}):`,
     'CPU uses scan deltas; the first scan has no baseline and reports 0%.',
     ...inventory.rows.slice().sort((left, right) => right.cpuPercent - left.cpuPercent || left.pid - right.pid)
       .slice(0, 5).map((row) => `- ${text(row.executable)} · PID ${row.pid} · ${number(row.cpuPercent, '%')} CPU · ${bytes(row.rssBytes)} RSS · ${owner(row, computer)}`),

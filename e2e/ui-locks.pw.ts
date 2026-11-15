@@ -91,6 +91,39 @@ for (const viewport of uiViewports) {
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
 
+for (const width of [320, 360, 390]) {
+  test.describe(`sent history keyboard ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test('keeps the sheet and its actions within the shell visual viewport', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-sent-messages')!.setup(page)
+      try {
+        const dialog = page.getByRole('dialog', { name: 'Sent messages', exact: true })
+        await dialog.getByRole('combobox', { name: 'Search sent messages' }).focus()
+        await page.evaluate(() => {
+          const viewport = new EventTarget()
+          Object.defineProperties(viewport, { height: { value: 400 }, offsetTop: { value: 36 } })
+          Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+          window.dispatchEvent(new Event('resize'))
+        })
+        await expect(page.locator('.app-shell')).toHaveCSS('--visual-viewport-height', '400px')
+        await expect(dialog).toHaveCSS('--visual-viewport-height', '400px')
+        const rect = (await dialog.boundingBox())!
+        expect(rect.y).toBeGreaterThanOrEqual(36)
+        expect(rect.y + rect.height).toBeLessThanOrEqual(436)
+        expect(await dialog.evaluate((element) => Boolean(element.closest('.composer-area')))).toBe(false)
+        for (const name of ['Close', 'Cancel', 'Use message']) {
+          const action = (await dialog.getByRole('button', { name, exact: true }).boundingBox())!
+          expect(action.y).toBeGreaterThanOrEqual(36)
+          expect(action.y + action.height).toBeLessThanOrEqual(436)
+        }
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
 for (const width of [320, 360, 600, 601, 820, 960, 961, 1440]) {
   test.describe(`sent history layout ${width}px`, () => {
     test.use({ viewport: { width, height: 900 }, isMobile: width <= 600, hasTouch: width <= 960 })

@@ -204,6 +204,37 @@ describe('schedule runner', () => {
     expect(f.host.createSession).not.toHaveBeenCalled()
   })
 
+  it.each([new TypeError('fetch failed'), Object.assign(new Error('Timed out'), { name: 'TimeoutError' })])(
+    'retries raw remote preparation errors without a transport wrapper: %s', async (error) => {
+      const f = await fixture()
+      const [computer] = f.host.listComputers()
+      f.host.listComputers = () => [{ ...computer, isLocal: false }]
+      vi.mocked(f.host.validateSessionDirectory).mockRejectedValue(error)
+      await expect(f.runner.launch(f.run, f.schedule)).rejects.toThrow('became unavailable')
+      vi.mocked(f.host.validateSessionDirectory).mockRejectedValue(Object.assign(new Error('Disallowed folder'), { statusCode: 400 }))
+      await expect(f.runner.launch(f.run, f.schedule)).rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
+      expect(f.host.createSession).not.toHaveBeenCalled()
+    },
+  )
+
+  it('settles an owner runtime-validation refusal without reserving an uncertain launch slot', async () => {
+    const f = await fixture()
+    vi.mocked(f.host.createSession).mockRejectedValue(Object.assign(new Error('Selected model is not available'), {
+      name: 'RuntimeConfigurationError', statusCode: 400,
+    }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+  })
+
+  it('preserves Claude default-model creation with an explicit effort', async () => {
+    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider: 'claude', effort: 'high' } })
+    await f.runner.launch(f.run, f.schedule)
+    expect(f.host.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({ provider: 'claude', reasoningEffort: 'high' }))
+  })
+
   it('persists allocation intent before the RPC and reconciles a lost response into deferred ownership', async () => {
     const f = await fixture({ workspace: 'worktree' })
     const allocate = vi.mocked(f.host.allocateScheduleWorktree).getMockImplementation()!

@@ -107,7 +107,9 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     let folder: string
     try {
       const { model, effort, context } = schedule.target
-      if (!model && (effort || context)) throw new Error('A model is required when setting effort or context')
+      if (schedule.target.provider === 'copilot' && !model && (effort || context)) {
+        throw new Error('A model is required when setting effort or context')
+      }
       if (model) {
         const options = await this.host.providerRuntimeOptions(run.computerId, schedule.target.provider)
         const selected = options.models.find((entry) => entry.id === model)
@@ -132,8 +134,9 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
           ...owned, state: 'deferred', reason: 'Workspace preparation did not complete; retained for retry or manual review',
         } })
       }
-      if (error instanceof RemoteNodeTransportError ||
-          (error && typeof error === 'object' && 'statusCode' in error && Number(error.statusCode) >= 500)) {
+      const status = error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : undefined
+      if (error instanceof RemoteNodeTransportError || (status !== undefined && status >= 500) ||
+          (!computer.isLocal && !(status !== undefined && status >= 400 && status < 500))) {
         throw new ScheduleTargetUnavailableError('Target computer became unavailable while preparing the schedule workspace')
       }
       throw new ScheduleLaunchRefusedError(error instanceof Error ? error.message : 'The schedule workspace could not be prepared')

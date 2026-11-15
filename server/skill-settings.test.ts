@@ -27,6 +27,36 @@ beforeEach(async () => {
 afterEach(async () => { await rm(home, { recursive: true, force: true }) })
 
 describe('read-only skill discovery and settings changes', () => {
+  it.each([
+    '{\n  // retain this explanation\n  "theme": "https://example.test/a//b",\n  "disabledSkills": [], // retain this too\n}\n',
+    '{"nested":{"disabledSkills":["untouched"],},"disabledSkills":[],}',
+    '{/* keep */"theme":"dark",}',
+    '{}',
+  ])('reads JSONC and changes only the disabledSkills value: %s', async (raw) => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    await writeFile(file, raw)
+    const snapshot = await service.snapshot()
+    await service.update({ name: 'sample', enabled: false, confirmed: true, revision: snapshot.revision })
+    const written = await readFile(file, 'utf8')
+    if (raw.includes('"disabledSkills":[]')) expect(written).toBe(raw.replace(/"disabledSkills":\[\](?=[,}])/, '"disabledSkills":["sample"]'))
+    else if (raw.includes('"disabledSkills": []')) expect(written).toBe(raw.replace('"disabledSkills": []', '"disabledSkills": ["sample"]'))
+    else expect(written).toContain(raw.slice(0, -1))
+    expect((await service.snapshot()).skills[0].enabled).toBe(false)
+  })
+
+  it.each([
+    '{"disabledSkills":[/* keep entry explanation */]}',
+    '{"disabledSkills":[],"disabledSkills":[]}',
+  ])('refuses writes that would lose comments or retain ambiguous keys', async (raw) => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    await writeFile(file, raw)
+    const snapshot = await service.snapshot()
+    await expect(service.update({ name: 'sample', enabled: false, confirmed: true, revision: snapshot.revision })).rejects.toThrow(/manually/)
+    expect(await readFile(file, 'utf8')).toBe(raw)
+  })
+
   it('parses quoted and block text frontmatter without executing body, tags or expressions', () => {
     expect(skillFrontmatter('---\nname: sample\ndescription: >-\n  First line\n  second line\n---\n$(touch bad)')).toEqual({ name: 'sample', description: 'First line second line' })
     expect(skillFrontmatter("---\nname: 'sample'\ndescription: 'It''s safe'\n---")).toEqual({ name: 'sample', description: "It's safe" })

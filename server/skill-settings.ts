@@ -5,6 +5,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { skillNameSchema, type SkillSettingsSnapshot, type SkillToggle } from '../shared/skill-settings.js'
 import { isWithin, validateSessionDirectory } from './session-directory.js'
+import { parseSkillSettings, replaceDisabledSkills } from './skill-settings-jsonc.js'
 
 const MAX_FILE_BYTES = 1024 * 1024
 const MAX_SKILLS = 1000
@@ -64,7 +65,9 @@ export function skillFrontmatter(markdown: string): { name: string; description:
 function settingsObject(raw: string): Record<string, unknown> {
   if (!raw) return {}
   let value: unknown
-  try { value = JSON.parse(raw) } catch { throw new SkillSettingsError('CLI settings are not valid JSON. Repair them before changing skills.') }
+  try { value = parseSkillSettings(raw) } catch (error) {
+    throw new SkillSettingsError(error instanceof Error ? error.message : 'CLI settings are not valid JSONC. Edit them manually.')
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SkillSettingsError('CLI settings must be a JSON object.')
   for (const key of ['disabledSkills', 'skillDirectories']) {
     const entries = Reflect.get(value, key)
@@ -195,8 +198,9 @@ export class SkillSettingsService {
     const disabled = new Set((settings.disabledSkills ?? []) as string[])
     if (input.enabled) disabled.delete(input.name)
     else disabled.add(input.name)
-    const next = { ...settings, disabledSkills: [...disabled].sort() }
-    const serialized = `${JSON.stringify(next, null, 2)}\n`
+    let serialized: string
+    try { serialized = replaceDisabledSkills(raw, [...disabled].sort()) }
+    catch (error) { throw new SkillSettingsError(error instanceof Error ? error.message : 'Edit disabledSkills manually.') }
     await mkdir(this.copilotHome, { recursive: true, mode: 0o700 })
     const staged = path.join(this.copilotHome, `.settings-${randomUUID()}.json`)
     try {

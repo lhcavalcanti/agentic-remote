@@ -174,6 +174,47 @@ describe('schedule runner', () => {
     expect(f.store.getRun(f.run.id).worktree?.state).toBe('ready')
   })
 
+  it.each(['refused', 'retry-expired'] as const)('records deferred worktree cleanup before finalizing a sessionless %s run', async (outcome) => {
+    const f = await fixture({ workspace: 'worktree' })
+    let now = Date.now()
+    const finalized: Array<{ status: string; cleanup: string | undefined }> = []
+    f.store.on('changed', (event) => {
+      if (event.runId !== f.run.id) return
+      const current = f.store.getRun(f.run.id)
+      if (['failed', 'missed'].includes(current.status)) {
+        finalized.push({ status: current.status, cleanup: current.worktree?.state })
+      }
+    })
+    vi.mocked(f.host.createSession).mockRejectedValue(Object.assign(new Error(
+      outcome === 'refused' ? 'Selected model is not available' : 'Runtime models are temporarily unavailable',
+    ), { name: 'RuntimeConfigurationError', statusCode: outcome === 'refused' ? 400 : 503, uncertainDelivery: false }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner, { now: () => now })
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => {
+      expect(f.host.allocateScheduleWorktree).toHaveBeenCalledOnce()
+      expect(f.host.createSession).toHaveBeenCalledOnce()
+      expect(f.store.getRun(f.run.id).status).toBe(outcome === 'refused' ? 'failed' : 'pending')
+    })
+    if (outcome === 'retry-expired') {
+      const pending = f.store.getRun(f.run.id)
+      expect(pending.worktree?.state).toBe('ready')
+      now = Date.parse(pending.retryUntil!) + 1
+      await dispatcher.tick()
+    }
+    const status = outcome === 'refused' ? 'failed' : 'missed'
+    expect(finalized).toEqual([{ status, cleanup: 'deferred' }])
+    expect(f.store.getRun(f.run.id)).toMatchObject({
+      status, worktree: { state: 'deferred', reason: expect.stringContaining('manual') },
+    })
+    expect(f.store.getRun(f.run.id).sessionId).toBeUndefined()
+    const reopened = new SchedulerStore(f.directory)
+    await reopened.initialize()
+    expect(reopened.getRun(f.run.id).worktree).toMatchObject({ state: 'deferred', reason: expect.stringContaining('manual') })
+    expect(f.host.cleanupScheduleWorktree).not.toHaveBeenCalled()
+    expect(f.host.createSession).toHaveBeenCalledOnce()
+  })
+
   it('keeps a never-attempted offline intent absent across restart until the retry window expires', async () => {
     const f = await fixture()
     vi.mocked(f.host.reconcileLaunch!).mockRejectedValue(new RemoteNodeTransportError('Worker', new Error('Disconnected')))

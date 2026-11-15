@@ -136,6 +136,8 @@ Operations are serialized on the owner. Before `git worktree add --detach`, an o
 
 The hub persists `worktreeIntent` before allocation, so a lost response remains discoverable by launch ID even while the owner is offline. Retrying allocation is idempotent and does not create another checkout.
 
+If a run becomes terminal without a confirmed session after allocation, the same durable transaction marks its retained worktree `deferred` for manual cleanup. This covers creation refusals, retry expiry, cancellation and archive; startup also repairs older terminal allocation records. No uncertain or potentially active checkout is removed merely because session creation did not return.
+
 An open completed session may immediately accept user follow-up work. Its worktree is therefore retained with a durable `deferred` reason; a quiet snapshot alone never authorizes removal. Only acknowledged termination that fences future sends permits automatic cleanup, which checks `git status --porcelain --untracked-files=all --ignored --ignore-submodules=none` and `git rev-list --max-count=1 HEAD --not --remotes`. Modified, untracked, ignored, unpushed, unverifiable, or locked work is retained with a durable `deferred` reason. Missing remote refs are not evidence of a push. Removal uses ordinary `git worktree remove`, never `--force`, and never deletes ownership records. The run carries the cleanup result; an unavailable owner is also recorded as deferred when its ownership record is known. Deferred cleanup requires manual review; no independent cleanup timer is started.
 
 ### Compatibility and rollback

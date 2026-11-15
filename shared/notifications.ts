@@ -101,7 +101,7 @@ export function alertNotification(computerId: string | undefined, message: strin
 }
 
 /** Markdown read aloud as text: links keep their words, emphasis its letters. */
-function plainText(markdown: string): string {
+export function notificationPlainText(markdown: string): string {
   return markdown
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')
@@ -166,7 +166,7 @@ export class OracleNotifier {
     if (message.state !== 'done') return undefined
     const reply = this.replies.get(message.id)
     this.replies.delete(message.id)
-    const brief = reply ? notificationBrief(plainText(reply)) : ''
+    const brief = reply ? notificationBrief(notificationPlainText(reply)) : ''
     return this.once(`${message.id}:done`, {
       title: 'Oracle replied',
       body: brief || 'Open Oracle to see what it did.',

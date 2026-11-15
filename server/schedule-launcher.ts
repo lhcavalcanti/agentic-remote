@@ -1,4 +1,4 @@
-import type { ManagedSession } from '../shared/contracts.js'
+import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import { chmod, lstat } from 'node:fs/promises'
 import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
 import type { Schedule, ScheduleRun } from '../shared/schedules.js'
@@ -10,6 +10,7 @@ import {
 } from './scheduler-dispatcher.js'
 import { isInFlight, type SchedulerStore } from './scheduler-store.js'
 import { SessionLauncher, type SessionLauncherHost } from './session-launcher.js'
+import { RemoteNodeTransportError } from './remote-node-errors.js'
 
 export interface ScheduleProvenance {
   origin: 'schedule'
@@ -18,7 +19,7 @@ export interface ScheduleProvenance {
   task: string
 }
 export type ScheduleLauncherHost = SessionLauncherHost & Pick<ComputerManager,
-  'listComputers' | 'validateSessionDirectory' | 'listBackgroundTasks'
+  'listComputers' | 'validateSessionDirectory' | 'listBackgroundTasks' | 'providerRuntimeOptions'
   | 'allocateScheduleWorktree' | 'readScheduleWorktree' | 'cleanupScheduleWorktree'>
 type LaunchPrimitives = Pick<SessionLauncher<ScheduleProvenance>,
   'createSession' | 'deliverPrompt' | 'observeSession' | 'reconcileLaunch' | 'cancelWithAck'>
@@ -41,6 +42,25 @@ export async function recordScheduleProvenance(
       origin: 'schedule', scheduleId: provenance.scheduleId, scheduleRunId: provenance.scheduleRunId,
       task: provenance.task.slice(0, 400),
     }
+  })
+}
+
+export function recordScheduleReplacement(store: ManagerStore, event: HubEvent): Promise<void> {
+  if (event.type !== 'session.removed' || !event.replacedBy) return Promise.resolve()
+  const previous = store.registry()[registryKey(event.computerId, event.sessionId)]
+  if (previous?.origin !== 'schedule') return Promise.resolve()
+  const successorId = event.replacedBy
+  const now = new Date().toISOString()
+  return store.updateRegistry((registry) => {
+    registry[registryKey(event.computerId, event.sessionId)] = { ...previous, removedAt: now, replacedBy: successorId }
+    const key = registryKey(event.computerId, successorId)
+    registry[key] = {
+      ...previous, ...registry[key], sessionId: successorId, origin: 'schedule',
+      scheduleId: previous.scheduleId, scheduleRunId: previous.scheduleRunId, task: previous.task,
+      firstSeenAt: registry[key]?.firstSeenAt ?? now,
+    }
+    delete registry[key].removedAt
+    delete registry[key].replacedBy
   })
 }
 
@@ -86,17 +106,39 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     if (!capability.available) throw new ScheduleLaunchRefusedError(capability.unavailableReason ?? 'The scheduled provider is unavailable')
     let folder: string
     try {
+      const { model, effort, context } = schedule.target
+      if (schedule.target.provider === 'copilot' && !model && (effort || context)) {
+        throw new Error('A model is required when setting effort or context')
+      }
+      if (model) {
+        const options = await this.host.providerRuntimeOptions(run.computerId, schedule.target.provider)
+        const selected = options.models.find((entry) => entry.id === model)
+        if (!selected) throw new Error('Selected model is not available')
+        if (effort && !selected.reasoningEfforts.includes(effort)) throw new Error('Selected reasoning effort is not supported by this model')
+        if (context && !selected.contextTiers.includes(context)) throw new Error('Selected context tier is not supported by this model')
+      }
       folder = await this.host.validateSessionDirectory(run.computerId, schedule.target.folder)
       if (schedule.workspace === 'worktree') {
-        const worktree = await this.host.allocateScheduleWorktree(run.computerId, {
+        const intent = {
           launchId: run.launchId, folder, root: schedule.target.worktreeRoot,
-        })
+        }
+        await this.store.changeRun(run.id, { worktreeIntent: intent })
+        const worktree = await this.host.allocateScheduleWorktree(run.computerId, intent)
         await this.store.changeRun(run.id, { worktree })
         folder = worktree.path
       }
     } catch (error) {
-      // Session creation has not been attempted. Any allocated worktree has
-      // its own durable owner record; it cannot represent live provider work.
+      if (this.store.getRun(run.id).worktreeIntent) {
+        const owned = await this.host.readScheduleWorktree(run.computerId, run.launchId).catch(() => undefined)
+        if (owned) await this.store.changeRun(run.id, { worktree: {
+          ...owned, state: 'deferred', reason: 'Workspace preparation did not complete; retained for retry or manual review',
+        } })
+      }
+      const status = error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : undefined
+      if (error instanceof RemoteNodeTransportError || (status !== undefined && status >= 500) ||
+          (!computer.isLocal && !(status !== undefined && status >= 400 && status < 500))) {
+        throw new ScheduleTargetUnavailableError('Target computer became unavailable while preparing the schedule workspace')
+      }
       throw new ScheduleLaunchRefusedError(error instanceof Error ? error.message : 'The schedule workspace could not be prepared')
     }
     const launch = await this.sessions.createSession({
@@ -107,6 +149,11 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
       permissionPolicy: schedule.target.permissionPolicy ?? 'ask',
       folderTrust: schedule.target.folderTrust ?? 'ask',
       title: scheduleSessionTitle(schedule, run.occurrenceAt), provenance: provenance(run, schedule),
+    }).catch((error: unknown) => {
+      if (error instanceof Error && error.name === 'RuntimeConfigurationError') {
+        throw new ScheduleLaunchRefusedError(error.message)
+      }
+      throw error
     })
     await this.store.changeRun(run.id, { sessionId: launch.session.id })
     const current = this.store.getRun(run.id)
@@ -136,6 +183,10 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     let launch: LaunchReconciliation | undefined
     try { launch = await this.sessions.reconcileLaunch(run.computerId, run.launchId) }
     catch (error) {
+      const current = this.store.getRun(run.id)
+      if (run.status === 'pending' && !run.startedAt && !current.startedAt && !current.sessionId && !current.rootPromptReceipt) {
+        return { state: 'absent' }
+      }
       return { state: 'unknown', error: error instanceof Error && error.message.startsWith('Update this computer')
         ? error.message : 'Owning computer could not reconcile this launch; its slot remains reserved' }
     }
@@ -184,7 +235,9 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
         !session.recoverySeedState && !session.queueState && !session.restartRecovery && !session.recovery) {
       const tasks = await this.host.listBackgroundTasks(run.computerId, launch.sessionId)
       if (tasks.supported && tasks.runningCount === 0 && !tasks.tasks.some((task) => ['running', 'queued'].includes(task.status))) {
-        return this.terminal(run, { ...result, state: 'terminated', outcome })
+        // The open session can accept a user follow-up immediately after this
+        // snapshot. Only an acknowledged stop fences future sends safely.
+        return this.terminal(run, { ...result, state: 'terminated', outcome }, false)
       }
     }
     return { ...result, state: 'running' }
@@ -194,7 +247,7 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     return Boolean((session.pendingPermission && !session.pendingPermission.stale) || session.pendingUserInput)
   }
 
-  private async terminal(run: ScheduleRun, result: ScheduleReconciliation): Promise<ScheduleReconciliation> {
+  private async terminal(run: ScheduleRun, result: ScheduleReconciliation, fenced = true): Promise<ScheduleReconciliation> {
     if (this.store.scheduleForRun(run.id).workspace !== 'worktree') return result
     let owned = this.store.getRun(run.id).worktree
     if (!owned) {
@@ -207,6 +260,12 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
         ...owned, state: 'deferred' as const, reason: 'Owning computer did not confirm cleanup; manual review required',
       } } : { error: 'Worktree cleanup is deferred because ownership or removal could not be verified' }),
     })
+    if (!fenced) return {
+      ...result,
+      ...(owned ? { worktree: {
+        ...owned, state: 'deferred' as const, reason: 'The session remains open for follow-up work; cleanup requires manual review',
+      } } : { error: 'The session remains open; worktree cleanup requires manual review' }),
+    }
     try {
       const worktree = await this.host.cleanupScheduleWorktree(run.computerId, run.launchId)
       return worktree ? { ...result, worktree } : deferred()

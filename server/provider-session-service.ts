@@ -197,6 +197,20 @@ export class ProviderSessionService
     return await this.copilot.reconcileLaunch?.(launchId) ?? await this.claude.reconcileLaunch?.(launchId)
   }
 
+  deliveryIdentity(deliveryId: string): { sessionId?: string; historyComplete: boolean } {
+    launchIdentitySchema.parse(deliveryId)
+    if (!this.copilot.deliveryIdentity || !this.claude.deliveryIdentity) throw updateComputerForLaunchIdentity()
+    const identities = [this.copilot.deliveryIdentity(deliveryId), this.claude.deliveryIdentity(deliveryId)]
+    const owners = new Set(identities.flatMap((identity) => identity.sessionId ? [identity.sessionId] : []))
+    if (owners.size > 1) {
+      throw Object.assign(new Error('Delivery identity has conflicting provider owners.'), { statusCode: 409, uncertainDelivery: false })
+    }
+    return {
+      ...(owners.size ? { sessionId: [...owners][0] } : {}),
+      historyComplete: identities.every((identity) => identity.historyComplete),
+    }
+  }
+
   cancelWithAck(sessionId: string, timeoutMs?: number) {
     const service = this.serviceFor(sessionId)
     if (!service.cancelWithAck) throw updateComputerForLaunchIdentity()
@@ -341,14 +355,20 @@ export class ProviderSessionService
     if (deliveryId === undefined) return send()
     launchIdentitySchema.parse(deliveryId)
     const pending = this.pendingDeliveries.get(deliveryId)
-    const existing = this.listHistory().find((session) =>
-      session.promptReceipts?.some((receipt) => receipt.deliveryId === deliveryId))
-    if ((pending && pending.sessionId !== sessionId) || (existing && existing.id !== sessionId)) {
+    let identity: ReturnType<ProviderSessionService['deliveryIdentity']>
+    try { identity = this.deliveryIdentity(deliveryId) }
+    catch (error) { return Promise.reject(error) }
+    if ((pending && pending.sessionId !== sessionId) || (identity.sessionId !== undefined && identity.sessionId !== sessionId)) {
       return Promise.reject(Object.assign(new Error('Delivery identity belongs to another session.'), {
         statusCode: 409, uncertainDelivery: false,
       }))
     }
     if (pending) return pending.promise
+    if (identity.sessionId === undefined && !identity.historyComplete) {
+      return Promise.reject(Object.assign(new Error('Delivery identity history is incomplete; new identified prompts are disabled.'), {
+        statusCode: 409, uncertainDelivery: false,
+      }))
+    }
     const promise = send().finally(() => this.pendingDeliveries.delete(deliveryId))
     this.pendingDeliveries.set(deliveryId, { sessionId, promise })
     return promise

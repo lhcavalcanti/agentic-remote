@@ -31,13 +31,13 @@ if (values.help) {
 }
 if (!values['output-dir']) throw new Error('Required: --output-dir <directory>')
 const externalUrl = values['base-url'] ? fixtureBaseUrl(values['base-url']).origin : undefined
-const outputDir = await captureOutputDirectory(values['output-dir'])
 for (const name of values.scene ?? []) {
   if (!uiSceneNames.some((scene) => scene === name)) throw new Error(`Unknown scene: ${name}`)
 }
 for (const name of values.viewport ?? []) {
   if (!uiViewports.some((viewport) => viewport.name === name)) throw new Error(`Unknown viewport: ${name}`)
 }
+const outputDir = await captureOutputDirectory(values['output-dir'])
 await mkdir(outputDir, { recursive: true })
 const frontend = externalUrl ? undefined : await startFixtureFrontend(values['no-build'])
 try {

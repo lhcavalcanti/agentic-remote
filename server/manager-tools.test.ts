@@ -210,11 +210,31 @@ describe('manager tools', () => {
     const schedule = await store.create(scheduleInput())
     source = kind
     answerOnly = true
-    expect(JSON.parse(await call('list_schedules', {}) as string)).toHaveLength(1)
+    expect(JSON.parse(await call('list_schedules', {}) as string).schedules).toHaveLength(1)
     expect(JSON.parse(await call('get_schedule', { scheduleId: schedule.id }) as string).id).toBe(schedule.id)
     expect(JSON.parse(await call('list_schedule_runs', { scheduleId: schedule.id, limit: 1 }) as string).runs).toEqual([])
     expect(await call('list_schedule_runs', { limit: 201 })).toMatchObject({ resultType: 'failure' })
     expect(store.proposals()).toEqual([])
+  })
+
+  it('bounds schedule and run list output while preserving exact single-schedule details', async () => {
+    const store = await enableSchedulerTools()
+    const schedule = await store.create({ ...scheduleInput(), prompt: 'P'.repeat(20_000) })
+    vi.spyOn(store, 'list').mockReturnValue(Array.from({ length: 100 }, (_, index) => ({ ...schedule, id: `schedule-${index}` })))
+    const listed = await call('list_schedules', {}) as string
+    expect(listed.length).toBeLessThan(13_000)
+    expect(listed).not.toContain('P'.repeat(100))
+    expect(JSON.parse(listed)).toMatchObject({ total: 100, nextOffset: 20, notice: expect.stringContaining('80 records not shown') })
+    expect(JSON.parse(await call('get_schedule', { scheduleId: schedule.id }) as string).prompt).toBe(schedule.prompt)
+    const run = (await store.admit(schedule.id, '2026-11-14T18:00:00Z', 'manual'))!
+    vi.spyOn(store, 'listRuns').mockReturnValue({
+      runs: Array.from({ length: 20 }, () => ({ ...run, summary: 'S'.repeat(20_000), error: 'E'.repeat(20_000) })),
+      total: 200, nextOffset: 20,
+    })
+    const runs = await call('list_schedule_runs', { limit: 200 }) as string
+    expect(runs.length).toBeLessThan(13_000)
+    expect(runs).not.toContain('S'.repeat(281))
+    expect(JSON.parse(runs).notice).toContain('records not shown')
   })
 
   it('offers only management tools, none of which prompt for permission', () => {

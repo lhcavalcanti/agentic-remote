@@ -24,6 +24,7 @@ export function ComposerActions({
   transcribing,
   uploadingFile,
   composer,
+  expandedComposer,
   sending,
   queueActionId,
   queuedEditUnconfirmed,
@@ -44,7 +45,7 @@ export function ComposerActions({
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
-  'cancelling' | 'transcribing' | 'uploadingFile' | 'composer' | 'sending' | 'queueActionId' |
+  'cancelling' | 'transcribing' | 'uploadingFile' | 'composer' | 'expandedComposer' | 'sending' | 'queueActionId' |
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
   'recordingDuration' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
@@ -54,7 +55,7 @@ export function ComposerActions({
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyChosen, setHistoryChosen] = useState(false)
   const busyChoices = refresh && selected.status === 'running' &&
-    !readonlyResourceCommand && !editingQueuedPromptId && !composer.trim().startsWith('/')
+    !readonlyResourceCommand && !editingQueuedPromptId && !expandedComposer.trim().startsWith('/')
   const sendDisabled = !composer.trim() || sending || transcribing || uploadingFile ||
     (!readonlyResourceCommand && (
       Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||

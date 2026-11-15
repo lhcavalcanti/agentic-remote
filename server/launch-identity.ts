@@ -29,16 +29,18 @@ export class LaunchCreations {
   }
 }
 
-/** The whole operation is bounded, including abort RPCs and provider probes. */
+/** Provider waits are bounded; the admission fence must commit first or reject. */
 export async function awaitTermination(
   sessionId: string,
   timeoutMs: number,
   stop: () => Promise<void>,
   settled: () => Promise<boolean>,
+  fence?: () => Promise<void>,
 ): Promise<TerminationAcknowledgement> {
   if (!Number.isInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 30_000) {
     throw Object.assign(new Error('timeoutMs must be between 0 and 30000.'), { statusCode: 400 })
   }
+  await fence?.()
   const deadline = Date.now() + timeoutMs
   let expired = false
   let timer: ReturnType<typeof setTimeout> | undefined

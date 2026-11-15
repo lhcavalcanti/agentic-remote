@@ -110,7 +110,15 @@ export class SchedulerDispatcher {
     return this.exclusive(async () => {
       if (proposalId) {
         const proposal = this.store.proposal(proposalId)
-        if (proposal.status === 'applied' && proposal.appliedRunId) return this.store.getRun(proposal.appliedRunId)
+        if (proposal.status === 'applied' && proposal.appliedRunId) {
+          const run = this.store.getRun(proposal.appliedRunId)
+          if (this.active && run.status === 'pending') {
+            await this.overlap(run)
+            await this.drain()
+            this.planWake()
+          }
+          return this.store.getRun(run.id)
+        }
       }
       if (!this.active) throw Object.assign(new Error('Scheduler is not started'), { statusCode: 503 })
       const schedule = this.store.get(scheduleId)
@@ -234,9 +242,8 @@ export class SchedulerDispatcher {
       if (this.store.allRuns().filter(holdsSlot).length >= SCHEDULER_CONCURRENCY ||
           this.store.allRuns().some((other) => other.id !== run.id &&
             other.scheduleId === run.scheduleId && holdsSlot(other))) continue
-      const launching = await this.store.changeRun(run.id, {
-        status: 'launching', startedAt: this.at(), error: undefined, retryUntil: undefined,
-      })
+      const launching = await this.store.beginLaunch(run.id, this.at())
+      if (launching.status !== 'launching') continue
       // The write above is the uncertainty boundary. Never call launch twice
       // after it, except for an explicit definitive, side-effect-free refusal.
       const operation = Promise.resolve().then(() => this.launcher.launch(launching, schedule))
@@ -289,12 +296,17 @@ export class SchedulerDispatcher {
     }
     if (result.state === 'terminated') {
       await this.store.changeRun(run.id, { ...details, status: result.outcome ?? 'interrupted', endedAt: this.at() })
-    } else if (run.status === 'stopping') {
-      await this.store.changeRun(run.id, details)
     } else if (result.state === 'absent') {
       if (run.status !== 'pending' && !this.launches.has(run.id)) {
-        await this.finish(run, 'interrupted', 'Owning computer confirms this launch is absent')
+        await this.finish(run, run.status === 'stopping' ? 'stopped' : 'interrupted', 'Owning computer confirms this launch is absent')
       }
+    } else if (run.status === 'stopping') {
+      await this.store.changeRun(run.id, details)
+    } else if (run.status === 'pending' && result.state === 'unknown' &&
+        !run.sessionId && !run.rootPromptReceipt && !result.sessionId && !result.rootPromptReceipt) {
+      // Unknown/no-op is not launch evidence. Never-launched intent stays pending
+      // and retryable; drain enforces retryUntil and releases it as missed.
+      await this.store.changeRun(run.id, details)
     } else {
       await this.store.changeRun(run.id, {
         ...details,

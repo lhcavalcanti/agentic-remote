@@ -1547,6 +1547,10 @@ export class ClaudeAgentService
     return this.store.reconcileLaunch(launchId)
   }
 
+  deliveryIdentity(deliveryId: string) {
+    return this.store.deliveryIdentity(deliveryId)
+  }
+
   async cancelWithAck(sessionId: string, timeoutMs = 10_000) {
     const acknowledgement = await awaitTermination(sessionId, timeoutMs, async () => {
       this.active.get(sessionId)?.abortController.abort()

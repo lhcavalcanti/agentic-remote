@@ -111,8 +111,14 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
       if (schedule.target.provider === 'copilot' && !model && (effort || context)) {
         throw new Error('A model is required when setting effort or context')
       }
-      if (model) {
+      if (model || context === 'long_context') {
         const options = await this.host.providerRuntimeOptions(run.computerId, schedule.target.provider)
+        if (!model) {
+          if (!options.models.some((entry) => entry.contextTiers.includes('long_context'))) {
+            throw new Error('Long context is not supported by this provider on this computer')
+          }
+          throw new Error('Select an explicit model to validate long-context support on this computer')
+        }
         const selected = options.models.find((entry) => entry.id === model)
         if (!selected) throw new Error('Selected model is not available')
         if (effort && !selected.reasoningEfforts.includes(effort)) throw new Error('Selected reasoning effort is not supported by this model')

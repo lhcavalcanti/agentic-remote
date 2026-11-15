@@ -434,6 +434,49 @@ test.describe('browser interaction contracts', () => {
     fixture = undefined
   })
 
+  for (const viewport of [uiViewports[0], uiViewports[2]]) {
+    test.describe(`feature-only navigation ${viewport.name}`, () => {
+      test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+      for (const [preview, scene, label] of [
+        ['notificationPanel', 'notification-panel', 'Notifications'],
+        ['hostMonitorView', 'host-monitor', 'Host monitor'],
+        ['schedulerView', 'scheduler', 'Scheduler'],
+      ] as const) {
+        test(`keeps only ${label} and Settings reachable without desktop rail`, async ({ page, baseURL }) => {
+          await open(page, baseURL, scene)
+          await page.evaluate(async (preview) => {
+            const { settings } = await fetch('/api/settings').then((response) => response.json())
+            const response = await fetch('/api/settings', {
+              method: 'PATCH', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ changes: { previewFeatures: {
+                value: { [preview]: true }, baseRevision: settings.revision,
+              } } }),
+            })
+            if (!response.ok) throw new Error('Synthetic preview update failed')
+          }, preview)
+          await expect(page.locator('.app-shell')).not.toHaveClass(/app-shell--rail/)
+          const dialog = page.getByRole('dialog', { name: label, exact: true })
+          await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+          const navigation = page.getByRole('navigation', { name: 'App navigation', exact: true })
+          const entry = navigation.getByRole('button', { name: new RegExp(`^${label}(?:,|$)`) })
+          await expect(entry).toBeVisible()
+          await expect(page.getByRole('button', { name: 'App settings', exact: true })).toHaveCount(1)
+          await entry.click()
+          await expect(dialog).toBeVisible()
+          await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+          await page.getByRole('button', { name: 'App settings', exact: true }).click()
+          await expect(page.getByRole('dialog', { name: 'App settings', exact: true })).toBeVisible()
+        })
+      }
+    })
+  }
+
+  test('rail omits Oracle when the manager is unavailable', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'desktop-rail')
+    await expect(page.getByRole('navigation', { name: 'App navigation' }).getByRole('button', { name: 'Open Oracle' })).toHaveCount(0)
+    await expect(page.locator('#oracle-panel')).toHaveCount(0)
+  })
+
   test('rail opens Oracle and offers only implemented views', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'oracle-panel')
     await page.getByRole('button', { name: 'Close Oracle', exact: true }).click()

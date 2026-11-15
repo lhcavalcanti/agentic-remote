@@ -98,6 +98,20 @@ it('keeps Host monitor reachable when it is the only enabled preview', () => {
   expect(screen.queryByRole('button', { name: 'Scheduler' })).toBeNull()
 })
 
+it('keeps Scheduler reachable when it is the only enabled preview', () => {
+  const preferences = { schedulerView: true }
+  const hubFlags = { ...defaultHubFeatureFlags, scheduler: true }
+  const onOpen = vi.fn()
+  render(<PreviewFeaturesContext value={{
+    preferences, hubFlags, effective: effectivePreviewFeatures(preferences, hubFlags), set: vi.fn(),
+  }}><ShellNavigation displayName="Alex Morgan" onNewSession={vi.fn()} onSettings={vi.fn()} onOracle={vi.fn()} onOpen={onOpen} /></PreviewFeaturesContext>)
+  expect(screen.getByRole('navigation', { name: 'App navigation' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Scheduler' }))
+  expect(onOpen).toHaveBeenCalledWith('scheduler')
+  expect(screen.queryByRole('button', { name: 'Notifications' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Host monitor' })).toBeNull()
+})
+
 it('saves a trimmed display-name edit and refuses invalid names', () => {
   vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
   const onChange = vi.fn()

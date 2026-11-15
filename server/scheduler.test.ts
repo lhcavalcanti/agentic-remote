@@ -630,6 +630,23 @@ describe('hub schedule dispatcher', () => {
     expect(store.getRun(run.id).status).toBe('stopped')
   })
 
+  it('releases a stopping slot on authoritative absence and allows archived schedule deletion', async () => {
+    const { dispatcher, store, launcher, schedule } = await fixture()
+    launcher.stop.mockResolvedValue({ outcome: 'unknown' })
+    await dispatcher.start()
+    const run = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    await dispatcher.stopRun(run.id)
+    expect(store.getRun(run.id).status).toBe('stopping')
+    launcher.states.set(run.launchId, { state: 'absent' })
+    await settle(dispatcher)
+    expect(store.getRun(run.id).status).toBe('stopped')
+    expect(store.allRuns().filter(holdsSlot)).toHaveLength(0)
+    const archived = await store.setArchived(schedule.id, schedule.revision, true)
+    await expect(store.delete(schedule.id, archived.revision)).resolves.toBeUndefined()
+    expect(store.allRuns()).toEqual([])
+  })
+
   it('binds queued runs to their accepted definition instead of retargeting on edit', async () => {
     const { dispatcher, store, launcher, schedule } = await fixture({ overlap: 'queue' })
     await dispatcher.start()

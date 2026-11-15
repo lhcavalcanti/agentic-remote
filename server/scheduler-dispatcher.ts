@@ -273,12 +273,12 @@ export class SchedulerDispatcher {
     }
     if (result.state === 'terminated') {
       await this.store.changeRun(run.id, { ...details, status: result.outcome ?? 'interrupted', endedAt: this.at() })
-    } else if (run.status === 'stopping') {
-      await this.store.changeRun(run.id, details)
     } else if (result.state === 'absent') {
       if (run.status !== 'pending' && !this.launches.has(run.id)) {
-        await this.finish(run, 'interrupted', 'Owning computer confirms this launch is absent')
+        await this.finish(run, run.status === 'stopping' ? 'stopped' : 'interrupted', 'Owning computer confirms this launch is absent')
       }
+    } else if (run.status === 'stopping') {
+      await this.store.changeRun(run.id, details)
     } else if (run.status === 'pending' && result.state === 'unknown' &&
         !run.sessionId && !run.rootPromptReceipt && !result.sessionId && !result.rootPromptReceipt) {
       // Unknown/no-op is not launch evidence. Never-launched intent stays pending

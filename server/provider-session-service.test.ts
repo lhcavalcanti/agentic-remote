@@ -11,6 +11,10 @@ function provider(id: AgentProvider, supported = true) {
   }
   return Object.assign(new EventEmitter(), {
     getSession: (sessionId: string) => sessionId === session.id ? session : undefined,
+    deliveryIdentity: (deliveryId: string) => ({
+      sessionId: session.promptReceipts?.some((receipt) => receipt.deliveryId === deliveryId) ? session.id : undefined,
+      historyComplete: true,
+    }),
     providers: () => [{
       id, name: id, available: true, terminalBacked: false,
       ...(supported ? { supportsQueuedPromptDispatch: true } : {}),
@@ -33,6 +37,32 @@ function provider(id: AgentProvider, supported = true) {
 }
 
 describe('provider queued dispatch aggregation', () => {
+  it('does not use a live-history scan when a provider lacks durable delivery lookup', async () => {
+    const copilot = provider('copilot')
+    const claude = provider('claude')
+    const owner = Object.assign(copilot, { sendMessage: vi.fn() })
+    const legacy = Object.assign(claude, { deliveryIdentity: undefined })
+    const aggregate = new ProviderSessionService(owner as unknown as SessionService, legacy as unknown as SessionService)
+    await expect(aggregate.sendMessage('copilot-session', 'Root', true, undefined, false, 'delivery'))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    expect(owner.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('blocks new identities across providers with incomplete history while preserving known receipt retries', async () => {
+    const copilot = Object.assign(provider('copilot'), { sendMessage: vi.fn(async () => provider('copilot').getSession('copilot-session')!) })
+    const claude = provider('claude')
+    vi.spyOn(claude, 'deliveryIdentity').mockReturnValue({ sessionId: undefined, historyComplete: false })
+    const aggregate = new ProviderSessionService(copilot as unknown as SessionService, claude as unknown as SessionService)
+    await expect(aggregate.sendMessage('copilot-session', 'Unknown root', true, undefined, false, 'delivery'))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    expect(copilot.sendMessage).not.toHaveBeenCalled()
+    copilot.getSession('copilot-session')!.promptReceipts = [{
+      deliveryId: 'known', sessionId: 'copilot-session', promptId: 'prompt', acceptedAt: '2026-11-14T06:00:00Z', state: 'queued',
+    }]
+    await aggregate.sendMessage('copilot-session', 'Known retry', true, undefined, false, 'known')
+    expect(copilot.sendMessage).toHaveBeenCalledOnce()
+  })
+
   it('refuses a delivery token concurrently reused by a different provider session', async () => {
     const copilot = provider('copilot')
     const claude = provider('claude')

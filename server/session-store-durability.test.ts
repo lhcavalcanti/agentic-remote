@@ -106,9 +106,12 @@ describe('Durable launch identity transactions', () => {
     await expect(store.acceptIdentifiedPrompt('session', 'delivery', 'Exactly once', true)).rejects.toThrow('Receipt transaction refused')
     expect(store.get('session')).toEqual(before)
     expect(JSON.parse(await contents()).sessions.session.promptReceipts).toBeUndefined()
+    expect(store.deliveryIdentity('delivery').sessionId).toBeUndefined()
+    expect(JSON.parse(await contents()).deliveryOwners).not.toHaveProperty('delivery')
     const accepted = await store.acceptIdentifiedPrompt('session', 'delivery', 'Exactly once', true)
     expect(accepted.promptReceipts).toEqual([expect.objectContaining({ deliveryId: 'delivery', state: 'queued' })])
     expect(accepted.queuedPrompts?.filter((prompt) => prompt.content === 'Exactly once')).toHaveLength(1)
+    expect(JSON.parse(await contents()).deliveryOwners).toMatchObject({ delivery: 'session' })
   })
 
   it('never publishes a launch mapping separately from its created session', async () => {

@@ -7697,6 +7697,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.store.reconcileLaunch(launchId)
   }
 
+  deliveryIdentity(deliveryId: string) {
+    return this.store.deliveryIdentity(deliveryId)
+  }
+
   async cancelWithAck(sessionId: string, timeoutMs = 10_000) {
     return awaitTermination(sessionId, timeoutMs, async () => {
       await this.cancel(sessionId)

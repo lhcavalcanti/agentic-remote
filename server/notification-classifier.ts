@@ -253,8 +253,9 @@ export function classifyScheduleNotification(schedule: Schedule, run: ScheduleRu
   return [record(kind, [schedule.id, run.id, outcome], {
     computerId: run.computerId, ...(run.sessionId ? { sessionId: run.sessionId } : {}),
     title: `${notificationBrief(schedule.name)} · ${label}`,
-    body: notificationBrief(run.error || run.summary || (outcome === 'needs-input' ? 'Open the scheduled session to continue.' : `Scheduled run ${label}.`)),
-    severity, createdAt: run.endedAt ?? run.startedAt ?? run.createdAt ?? now,
+    body: notificationBrief(outcome === 'needs-input' ? 'Open the scheduled session to continue.'
+      : (outcome === 'succeeded' ? run.summary : run.error || run.summary) || `Scheduled run ${label}.`),
+    severity, createdAt: outcome === 'needs-input' ? now : run.endedAt ?? now,
     url: `/?${params}`, coalesceKey: JSON.stringify(['schedule', schedule.id]),
   })]
 }

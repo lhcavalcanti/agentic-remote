@@ -161,6 +161,8 @@ With Interface › Preview features › Scheduler enabled and the authoritative 
 
 The canonical classifier resolves `notify` from the immutable definition accepted for the run, not today's edited schedule. A run outcome produces one stable identity from schedule ID, run ID and outcome. Needs-input is an attention outcome; a stopped run uses the interrupted kind. Pending, launching, running and stopping are not outcomes.
 
+Needs-input alerts are dated at the attention transition, not the original launch. Recovered success uses its current summary, and needs-input uses an action prompt; neither displays stale transient launch errors.
+
 | Accepted policy | Succeeded | Failed | Needs input | Missed | Interrupted |
 | --- | --- | --- | --- | --- | --- |
 | `always` | Notify | Notify | Notify | Notify | Notify |
@@ -169,6 +171,6 @@ The canonical classifier resolves `notify` from the immutable definition accepte
 
 `ScheduleNotificationService` admits the canonical record before external delivery and broadcasts `schedule.run.notification` with the resolved notification. The notification-center flag controls in-app storage, not scheduler push/native behavior. Both channels consume the same canonical outcome and stable tag. Scheduler state retains up to 100,000 durable identity fences (inside its existing 64 MiB ceiling); reaching that bound fails closed rather than reopening an old outcome. Restart, repeated status updates and node resync cannot announce an outcome again, and notification-store tombstones preserve read/dismissed state. Delivery is at most once: a crash after the external-delivery fence or a push transport failure is not automatically retried.
 
-Ordinary session action/completion paths are suppressed for every schedule policy, including `never`. Before session binding, the resolver matches the owner-persisted launch ID plus computer against admitted runs; after binding it also uses session ID and the registry's schedule provenance (including replacements). It never treats a generic automation launch ID as Oracle ownership. Scheduler storage initializes before push snapshot seeding to close the restart/pending-permission gap.
+Ordinary session action/completion paths are suppressed for every schedule policy, including `never`. Before session binding, the resolver matches the owner-persisted launch ID plus computer against admitted runs; after binding it also uses session ID and the registry's schedule provenance (including replacements). It never treats a generic automation launch ID as Oracle ownership. Scheduler storage and replacement provenance initialize before the single notification/push listener attaches, ahead of Oracle and Dreamer startup. Replacement ancestry remains authoritative with Oracle off, even after schedule deletion or run-history eviction.
 
 The hub annotates HTTP and socket session projections with `suppressOrdinaryNotifications` for native clients; this is hub-derived delivery metadata, not owner-side provenance. Session state and transcript events still flow unchanged otherwise, including patch/resync metadata. Push retains notification scope and session mute; native additionally suppresses the active visible session and duplicate identities. In-app records survive mute/scope suppression. No notification service exists without the scheduler hub flag.

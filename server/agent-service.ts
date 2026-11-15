@@ -474,6 +474,9 @@ function sessionInUseConflictMessage(pane: string): string {
 }
 
 class RuntimeConfigurationError extends Error {
+  // Configuration guards fail before launch or runtime mutation, including 503s.
+  readonly uncertainDelivery = false
+
   constructor(
     message: string,
     readonly statusCode: number,
@@ -7696,6 +7699,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async reconcileLaunch(launchId: string) {
     return this.store.reconcileLaunch(launchId)
+  }
+
+  deliveryIdentity(deliveryId: string) {
+    return this.store.deliveryIdentity(deliveryId)
   }
 
   async cancelWithAck(sessionId: string, timeoutMs = 10_000) {

@@ -50,7 +50,8 @@ export function proposalSchedule(proposal: ScheduleProposal, base?: Schedule): P
   }
 }
 export function proposalTiming(schedule: ProposalSchedule, operation: ScheduleProposal['operation'], now: Date): string {
-  const recurrence = `${recurrenceLabel(schedule.recurrence, schedule.timezone)} ${zoneName(schedule.timezone, now)}`
+  const recurrence = recurrenceLabel(schedule.recurrence, schedule.timezone) +
+    (schedule.recurrence.type === 'once' ? '' : ` ${zoneName(schedule.timezone, now)}`)
   if (operation === 'run-now') return `Once after approval ${zoneName(schedule.timezone, now)} · next now`
   if (operation === 'archive') return `${recurrence} · no automatic run after archiving`
   if (!schedule.enabled) return `${recurrence} · paused; no automatic run`

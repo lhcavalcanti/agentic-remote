@@ -227,7 +227,10 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     })
   }
 
-  expireProposals(): Promise<void> {
+  async expireProposals(): Promise<void> {
+    await this.work
+    if (!this.state.proposals.some((proposal) =>
+      proposal.status === 'pending' && Date.parse(proposal.expiresAt) <= Date.parse(this.now()))) return
     return this.commit((next) => {
       for (const proposal of next.proposals) {
         if (proposal.status === 'pending' && Date.parse(proposal.expiresAt) <= Date.parse(this.now())) proposal.status = 'expired'

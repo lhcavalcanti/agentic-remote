@@ -155,4 +155,12 @@ describe('durable schedule proposals', () => {
     expect(store.cursor(schedule.id)).toBe(new Date(now).toISOString())
   })
 
+  it('does not clone state when an expiry sweep has nothing to expire', async () => {
+    await store.propose({ operation: 'create', payload: input() })
+    const clone = vi.spyOn(globalThis, 'structuredClone')
+    try {
+      await store.expireProposals()
+      expect(clone).not.toHaveBeenCalled()
+    } finally { clone.mockRestore() }
+  })
 })

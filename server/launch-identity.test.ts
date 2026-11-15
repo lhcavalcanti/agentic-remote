@@ -142,6 +142,30 @@ describe('durable launch identity', () => {
     expect(restarted.reconcileLaunch('toString')).toBeUndefined()
   })
 
+  it('reserves deleted launch delivery tokens across restart and bounds their tombstone receipts', async () => {
+    const { store, location } = await storeAt()
+    await store.create({ ...session(), launchId: 'run' })
+    await store.acceptIdentifiedPrompt('session', 'delivery', 'Never repeat', true)
+    await store.remove('session')
+    await store.close()
+    const restarted = (await storeAt(location)).store
+    await restarted.create({ ...session('other'), launchId: 'other-run' })
+    await expect(restarted.acceptIdentifiedPrompt('other', 'delivery', 'Wrong owner', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+    await restarted.update('other', (stored) => {
+      stored.promptReceipts = Array.from({ length: 1000 }, (_, index) => ({
+        deliveryId: `bounded:${index}`, sessionId: 'other', promptId: `prompt:${index}`, state: 'rejected',
+        acceptedAt: new Date(Date.now() + index + 1000).toISOString(),
+      }))
+    })
+    await restarted.remove('other')
+    expect(restarted.reconcileLaunch('run')).toMatchObject({ deleted: true, receipts: [] })
+    expect(restarted.reconcileLaunch('other-run')?.receipts).toHaveLength(1000)
+    await restarted.create(session('third'))
+    await expect(restarted.acceptIdentifiedPrompt('third', 'bounded:999', 'Wrong owner', true))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
+  })
+
   it('carries launch authority through a conversation replacement and preserves its tombstone receipts', async () => {
     const { store, location } = await storeAt()
     await store.create({ ...session(), launchId: 'run' })

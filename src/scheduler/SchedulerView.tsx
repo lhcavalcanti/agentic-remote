@@ -27,7 +27,10 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
   initialScheduleId?: string
   initialRunId?: string
 }) {
-  const [historyId, setHistoryId] = useState(initialScheduleId)
+  const [historySelection, setHistorySelection] = useState<{ scheduleId?: string; runId?: string }>({
+    scheduleId: initialScheduleId, runId: initialScheduleId ? initialRunId : undefined,
+  })
+  const { scheduleId: historyId, runId: linkedRunId } = historySelection
   const scheduler = useScheduler(enabled, historyId)
   const [form, setForm] = useState<{ initial?: ScheduleDefinition; editing?: Schedule }>()
   const [pending, setPending] = useState(false)
@@ -37,10 +40,10 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
   const linkedRun = useRef<HTMLLIElement>(null)
   const followedLink = useRef(false)
   useEffect(() => {
-    if (!initialRunId || !scheduler.historyLoaded || followedLink.current || !linkedRun.current) return
+    if (!linkedRunId || !scheduler.historyLoaded || followedLink.current || !linkedRun.current) return
     linkedRun.current.scrollIntoView?.({ block: 'nearest' })
     followedLink.current = true
-  }, [initialRunId, scheduler.historyLoaded, scheduler.history])
+  }, [linkedRunId, scheduler.historyLoaded, scheduler.history])
   useEffect(() => {
     if (!enabled) return
     const timer = setInterval(() => setNow(new Date()), 30_000)
@@ -104,9 +107,9 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
             setForm(undefined)
           }} />
       </> : <>
-        {scheduler.historyError && <p role="status">{scheduler.historyError} <button className="secondary-button" onClick={() => setHistoryId(undefined)}>Show all schedules</button></p>}
+        {scheduler.historyError && <p role="status">{scheduler.historyError} <button className="secondary-button" onClick={() => setHistorySelection({})}>Show all schedules</button></p>}
         {initialScheduleId && historyId === initialScheduleId && !scheduler.loading && !historySchedule && !scheduler.historyError &&
-          <p role="status">The linked schedule is no longer available. <button className="secondary-button" onClick={() => setHistoryId(undefined)}>Show all schedules</button></p>}
+          <p role="status">The linked schedule is no longer available. <button className="secondary-button" onClick={() => setHistorySelection({})}>Show all schedules</button></p>}
         <label className="schedule-check"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Show archived schedules</label>
         {scheduler.loading && <p role="status">Loading schedules…</p>}
         {!list.length && !scheduler.loading && <p className="scheduler-empty">{showArchived ? 'No archived schedules.' : 'No schedules yet. Create a saved prompt to get started.'}</p>}
@@ -131,7 +134,7 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
                   setForm({ initial: { ...editableSchedule(schedule), name: `${schedule.name.slice(0, 193)} (copy)`, enabled: false } })
                 }} aria-label={`Duplicate ${schedule.name}`}>Duplicate</button>
                 <button type="button" className="secondary-button" disabled={pending} onClick={() => act(`${path}/archived`, { revision: schedule.revision, archived: !schedule.archived })} aria-label={`${schedule.archived ? 'Restore' : 'Archive'} ${schedule.name}`}>{schedule.archived ? 'Restore paused' : 'Archive'}</button>
-                <button type="button" className="secondary-button" disabled={pending} aria-label={`History for ${schedule.name}`} aria-pressed={historyId === schedule.id} onClick={() => setHistoryId(historyId === schedule.id ? undefined : schedule.id)}><History size={15} />History</button>
+                <button type="button" className="secondary-button" disabled={pending} aria-label={`History for ${schedule.name}`} aria-pressed={historyId === schedule.id} onClick={() => setHistorySelection({ scheduleId: historyId === schedule.id ? undefined : schedule.id })}><History size={15} />History</button>
               </div>
             </div>
           </li>
@@ -141,9 +144,9 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
           <p className="schedule-caption">Up to 200 retained runs. Launching and stopping are not terminal outcomes.</p>
           {!scheduler.historyLoaded && <p role="status">Loading run history…</p>}
           {scheduler.historyLoaded && !scheduler.historyError && !scheduler.history.length && <p>No runs yet.</p>}
-          {initialRunId && scheduler.historyLoaded && !scheduler.historyError && !scheduler.history.some((run) => run.id === initialRunId) &&
+          {linkedRunId && scheduler.historyLoaded && !scheduler.historyError && !scheduler.history.some((run) => run.id === linkedRunId) &&
             <p role="status">The linked run is no longer in retained history.</p>}
-          <ul>{scheduler.history.map((run) => <li key={run.id} data-linked={run.id === initialRunId} ref={run.id === initialRunId ? linkedRun : undefined}>
+          <ul>{scheduler.history.map((run) => <li key={run.id} data-linked={run.id === linkedRunId} ref={run.id === linkedRunId ? linkedRun : undefined}>
             <div><RunStatus run={run} /><small>{scheduleTime(run.occurrenceAt, historySchedule.timezone)} · {historySchedule.timezone} · {run.trigger} · {runDuration(run, now)}</small>
               {(run.error || run.summary) && <p>{run.error ?? run.summary}</p>}</div>
             {run.sessionId && <button type="button" className="secondary-button" onClick={() => onOpenSession(run.computerId, run.sessionId!)}>Open session</button>}

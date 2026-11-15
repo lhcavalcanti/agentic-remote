@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary } from '../../shared/contracts.js'
@@ -264,7 +264,7 @@ describe('durable resource alerts and flag wiring', () => {
     ]))
   })
 
-  it('preserves pending memory duration across restart only while readings remain continuous', async () => {
+  it('restarts pending memory duration after an unobserved restart gap', async () => {
     const root = await directory()
     let at = start
     const make = async () => {
@@ -281,16 +281,38 @@ describe('durable resource alerts and flag wiring', () => {
     }
     await service.flush()
     service = await make()
-    for (let ms = 75_000; ms < 120_000; ms += 15_000) {
+    for (let ms = 75_000; ms < 195_000; ms += 15_000) {
       at = start + ms
       await service.host(computer, snapshot(at))
       expect(await service.store.list()).toEqual([])
     }
-    at = start + 120_000
+    at = start + 195_000
     await service.host(computer, snapshot(at))
     expect(await service.store.list()).toEqual([expect.objectContaining({
-      id: notificationIdentity('host.alert', 'studio', 'memory', new Date(start).toISOString()),
+      id: notificationIdentity('host.alert', 'studio', 'memory', new Date(start + 75_000).toISOString()),
     })])
+  })
+
+  it('does not rewrite notification storage for healthy samples or latched pressure', async () => {
+    let at = start
+    const store = new NotificationStore(await directory(), { now: () => at })
+    await store.initialize()
+    const service = new NotificationCenterService(store, {
+      now: () => at, mutedSessions: () => [], readSession: vi.fn(),
+    })
+    const original = (await stat(store.statePath, { bigint: true })).ino
+    for (let ms = 0; ms <= 120_000; ms += 15_000) {
+      at = start + ms
+      await service.host(computer, snapshot(at, 50, 50))
+    }
+    expect((await stat(store.statePath, { bigint: true })).ino).toBe(original)
+    await service.host(computer, snapshot(at += 15_000, 50, 4))
+    const alerted = (await stat(store.statePath, { bigint: true })).ino
+    expect(alerted).not.toBe(original)
+    for (let ms = 0; ms < 120_000; ms += 15_000) {
+      await service.host(computer, snapshot(at += 15_000, 50, 4))
+    }
+    expect((await stat(store.statePath, { bigint: true })).ino).toBe(alerted)
   })
 
   it.each([

@@ -10,6 +10,7 @@ import {
   classifyHubNotification,
   classifyHostNotification,
   classifyOracleNotification,
+  type NotificationCursors,
 } from './notification-classifier.js'
 import { NotificationStore } from './notification-store.js'
 
@@ -24,6 +25,7 @@ export class NotificationCenterService implements NotificationRecorder {
   private readonly preferences: NotificationKindPreferences = {}
   private readonly admissions = new WeakMap<object, Promise<void>>()
   private readonly hostArrivals = new Map<string, { sample: string; at: number }>()
+  private readonly hostObservations: NotificationCursors = {}
 
   constructor(
     readonly store: NotificationStore,
@@ -78,7 +80,7 @@ export class NotificationCenterService implements NotificationRecorder {
       observation.snapshot.sampleAgeMs = Math.max(0, at - arrival.at)
     }
     return this.enqueue(() => this.store.ingest((cursors) =>
-      classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now())
+      classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now(), this.hostObservations)
         .filter((record) => this.inApp(record))))
   }
 

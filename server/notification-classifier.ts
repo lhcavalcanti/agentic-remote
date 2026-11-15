@@ -155,6 +155,7 @@ export function classifyHostNotification(
   snapshot: HostSnapshot | undefined,
   cursors: NotificationCursors,
   now: string,
+  observations: NotificationCursors = cursors,
 ): NotificationRecord[] {
   const nowMs = Date.parse(now)
   const sampleMs = snapshot?.latest
@@ -175,13 +176,23 @@ export function classifyHostNotification(
   const records: NotificationRecord[] = []
   for (const condition of conditions) {
     const key = JSON.stringify(['host-condition', computer.id, condition.name])
-    const before = cursors[key]?.hostAlert
+    const before = observations[key]?.hostAlert ?? cursors[key]?.hostAlert
     const state = { active: false, notified: false, ...before }
+    // A restart cannot prove uninterrupted pressure during the unobserved gap.
+    if (observations !== cursors && !observations[key] && !state.active) delete state.since
+    const save = () => {
+      observations[key] = { hostAlert: state, touchedAt: now }
+      const { sampleAt: _sampleAt, ...episode } = state
+      const { sampleAt: _beforeSampleAt, ...previousEpisode } = cursors[key]?.hostAlert ?? { active: false, notified: false }
+      if (JSON.stringify(episode) !== JSON.stringify(previousEpisode)) {
+        cursors[key] = { hostAlert: { ...state }, touchedAt: now }
+      }
+    }
     if (!fresh || condition.value === null || !Number.isFinite(condition.value)) {
       // Missing readings cannot prove two minutes of uninterrupted pressure.
       if (state.since && !state.active) {
         delete state.since
-        cursors[key] = { hostAlert: state, touchedAt: now }
+        save()
       }
       continue
     }
@@ -219,7 +230,7 @@ export function classifyHostNotification(
       state.notified = true
       state.lastNotifiedAt = now
     }
-    cursors[key] = { hostAlert: state, touchedAt: now }
+    save()
   }
   return records
 }

@@ -242,6 +242,12 @@ export function createUIScenes(
         if (name === 'settings-invalid-skill') {
           await dialog.getByRole('searchbox', { name: 'Search skills' }).fill('invalid-checklist')
           await expect(dialog.getByRole('button', { name: 'Enable invalid-checklist', exact: true })).toBeDisabled()
+          const actionLines = await dialog.getByRole('button', { name: 'Enable invalid-checklist', exact: true }).evaluate((button) => {
+            const text = document.createRange()
+            text.selectNodeContents(button)
+            return text.getClientRects().length
+          })
+          expect(actionLines).toBe(1)
           await expect(dialog.getByText('SKILL.md frontmatter description is required and must be at most 1024 characters.')).toBeVisible()
         } else if (name === 'settings-skill-confirmation') {
           await dialog.getByRole('combobox', { name: 'Skills computer' }).selectOption('fixture-build')

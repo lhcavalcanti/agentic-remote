@@ -4928,6 +4928,7 @@ button {
   background: var(--panel-soft);
 }
 .skills-settings__list li > div { min-width: 0; }
+.skills-settings__list li > button { flex-shrink: 0; white-space: nowrap; }
 .skills-settings__list p { margin: 8px 0; font-size: 12px; }
 .skills-settings__list small { color: var(--muted-strong); font-size: 11px; overflow-wrap: anywhere; }
 .skills-settings__confirmation { padding: 16px; margin: 16px 0; border: 1px solid var(--border-strong); border-radius: 10px; }

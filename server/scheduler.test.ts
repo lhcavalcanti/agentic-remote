@@ -73,6 +73,28 @@ afterEach(async () => {
 })
 
 describe('scheduler durable store', () => {
+  it('defers legacy and archived sessionless worktree allocations before publishing terminal runs', async () => {
+    const { store, schedule, directory } = await fixture({ workspace: 'worktree', enabled: false })
+    const run = (await store.admit(schedule.id, INITIAL, 'manual'))!
+    await store.changeRun(run.id, { worktree: {
+      launchId: run.launchId, root: '/fictional/worktrees', repository: '/fictional/project',
+      path: '/fictional/worktrees/run-one', createdAt: INITIAL, state: 'ready',
+    } })
+    await store.setArchived(schedule.id, schedule.revision, true)
+    expect(await store.beginLaunch(run.id, INITIAL)).toMatchObject({
+      status: 'stopped', worktree: { state: 'deferred', reason: expect.stringContaining('manual') },
+    })
+    const legacy = JSON.parse(await readFile(store.statePath, 'utf8'))
+    legacy.runs[0].worktree.state = 'ready'
+    delete legacy.runs[0].worktree.reason
+    await writeFile(store.statePath, JSON.stringify(legacy))
+    const reopened = new SchedulerStore(directory)
+    await reopened.initialize()
+    expect(reopened.getRun(run.id)).toMatchObject({
+      status: 'stopped', worktree: { state: 'deferred', reason: expect.stringContaining('manual') },
+    })
+  })
+
   it('serializes revision checks and case-insensitive names, including unarchive conflicts', async () => {
     const { store, schedule } = await fixture({ overlap: 'queue', timezone: 'Europe/London', enabled: false })
     const results = await Promise.allSettled([

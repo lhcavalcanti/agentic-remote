@@ -41,6 +41,19 @@ test('native shell receives one canonical scheduled outcome without enabling sch
   } finally { fixture.assertHealthy() }
 })
 
+test('schedule approval expires while the card remains open', async ({ page, baseURL }) => {
+  await page.clock.install({ time: new Date(FIXTURE_NOW) })
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'oracle-schedule-approval')!.setup(page)
+  try {
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeEnabled()
+    await page.clock.setSystemTime(new Date(Date.parse(FIXTURE_NOW) + 86_400_000))
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeDisabled()
+    await expect(page.getByRole('region', { name: 'Schedule approvals' }).getByRole('status')).toContainText('proposal expired')
+    expect(fixture.requests.filter((request) => request.path.endsWith('/approve'))).toEqual([])
+  } finally { fixture.assertHealthy() }
+})
+
 for (const action of ['Approve', 'Reject'] as const) {
   test(`schedule proposal ${action.toLowerCase()} sends the exact id`, async ({ page, baseURL }) => {
     const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'oracle-schedule-approval')!.setup(page)

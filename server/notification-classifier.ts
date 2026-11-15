@@ -160,10 +160,13 @@ export function classifyHostNotification(
   snapshot: HostSnapshot | undefined,
   cursors: NotificationCursors,
   now: string,
+  observations: NotificationCursors = cursors,
 ): NotificationRecord[] {
   const nowMs = Date.parse(now)
-  const sampleAt = snapshot?.latest?.at
-  const sampleMs = sampleAt ? Date.parse(sampleAt) : NaN
+  const sampleMs = snapshot?.latest
+    ? snapshot.sampleAgeMs === undefined ? Date.parse(snapshot.latest.at) : nowMs - snapshot.sampleAgeMs
+    : NaN
+  const sampleAt = Number.isFinite(sampleMs) ? new Date(sampleMs).toISOString() : undefined
   const fresh = Number.isFinite(sampleMs) && sampleMs <= nowMs + 5000 && nowMs - sampleMs <= HOST_ALERT_MAX_SAMPLE_AGE_MS
   const used = snapshot?.latest?.memoryUsedBytes
   const total = snapshot?.info?.totalMemoryBytes
@@ -178,13 +181,23 @@ export function classifyHostNotification(
   const records: NotificationRecord[] = []
   for (const condition of conditions) {
     const key = JSON.stringify(['host-condition', computer.id, condition.name])
-    const before = cursors[key]?.hostAlert
+    const before = observations[key]?.hostAlert ?? cursors[key]?.hostAlert
     const state = { active: false, notified: false, ...before }
+    // A restart cannot prove uninterrupted pressure during the unobserved gap.
+    if (observations !== cursors && !observations[key] && !state.active) delete state.since
+    const save = () => {
+      observations[key] = { hostAlert: state, touchedAt: now }
+      const { sampleAt: _sampleAt, ...episode } = state
+      const { sampleAt: _beforeSampleAt, ...previousEpisode } = cursors[key]?.hostAlert ?? { active: false, notified: false }
+      if (JSON.stringify(episode) !== JSON.stringify(previousEpisode)) {
+        cursors[key] = { hostAlert: { ...state }, touchedAt: now }
+      }
+    }
     if (!fresh || condition.value === null || !Number.isFinite(condition.value)) {
       // Missing readings cannot prove two minutes of uninterrupted pressure.
       if (state.since && !state.active) {
         delete state.since
-        cursors[key] = { hostAlert: state, touchedAt: now }
+        save()
       }
       continue
     }
@@ -222,7 +235,7 @@ export function classifyHostNotification(
       state.notified = true
       state.lastNotifiedAt = now
     }
-    cursors[key] = { hostAlert: state, touchedAt: now }
+    save()
   }
   return records
 }

@@ -162,6 +162,36 @@ describe('HostTelemetrySampler', () => {
     expect(sampler.status()).toMatchObject({ samples: 1, errorCount: 1 })
   })
 
+  it('holds the slot when aborted initial metadata still has a non-abortable disk read outstanding', async () => {
+    let finish!: (value: { bsize: number; blocks: number; bavail: number }) => void
+    const readSpace = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+      .mockResolvedValue({ bsize: 1, blocks: 10, bavail: 5 })
+    let firstMetadata = true
+    const reader = createLinuxHostTelemetryReader({
+      dataDirectory: '/data', readSpace, systemInfo: () => hostInfoFixture,
+      readText: async (path, signal) => {
+        if (path === '/proc/version' && firstMetadata) {
+          firstMetadata = false
+          return new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+          })
+        }
+        return ''
+      },
+    })
+    const sampler = makeSampler(reader, { sampleTimeoutMs: 100 })
+    sampler.setViewers(1)
+    sampler.start()
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(readSpace).toHaveBeenCalledTimes(1)
+    expect(sampler.status()).toMatchObject({ sampling: true, samples: 0, timeoutCount: 1 })
+    finish({ bsize: 1, blocks: 10, bavail: 5 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(readSpace).toHaveBeenCalledTimes(2)
+    expect(sampler.status()).toMatchObject({ sampling: false, samples: 1, timeoutCount: 1 })
+  })
+
   it('contains synchronous/rejected reader errors and retries without throwing from its timer', async () => {
     const reader = vi.fn()
       .mockImplementationOnce(() => { throw new Error('private error text') })

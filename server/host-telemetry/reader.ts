@@ -101,12 +101,18 @@ export function createLinuxHostTelemetryReader(options: HostTelemetryReaderOptio
         return null
       }
     }
-    const [staticInfo, entries, disk] = await Promise.all([
+    const [metadataResult, entriesResult, diskResult] = await Promise.allSettled([
       readMetadata(),
       Promise.all(Object.entries(hostTelemetryProcFiles).map(async ([name, path]) => [name, await text(path)] as const)),
       readDisk(),
     ])
     signal.throwIfAborted()
+    if (metadataResult.status === 'rejected') throw metadataResult.reason
+    if (entriesResult.status === 'rejected') throw entriesResult.reason
+    if (diskResult.status === 'rejected') throw diskResult.reason
+    const staticInfo = metadataResult.value
+    const entries = entriesResult.value
+    const disk = diskResult.value
     return {
       info: { ...staticInfo.info, uptimeSeconds: (options.uptime ?? uptime)() },
       files: Object.fromEntries(entries.filter(([, value]) => value !== undefined)),

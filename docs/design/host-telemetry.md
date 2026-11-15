@@ -8,7 +8,7 @@ The thin Linux reader uses `fs/promises`, native OS metadata, and `statfs` (spac
 
 CPU utilization excludes duplicate guest counters and treats idle/I/O wait as non-busy. Network totals exclude `lo`. Disk totals include whole `sd*`, `vd*`, `xvd*`, `nvme<n>n<n>`, and `mmcblk<n>` devices, using 512-byte sectors. Partitions, loop/ram/zram devices, device-mapper, software RAID, and NVMe controller-path aliases are excluded to avoid counting stacked I/O twice. Devices added since the previous read establish a baseline; removed devices contribute nothing. Counter resets contribute no negative traffic, while near-boundary 32/64-bit rollover is handled per device. Rates use monotonic elapsed time, not the wall clock.
 
-The default per-sample timeout is 2 seconds. It aborts the reader, increments diagnostics, and discards late results. A reader that ignores abort retains the sampling slot until it settles: timeouts must never permit overlapping I/O. `stop()` clears timers, aborts an in-flight read, and prevents late publication. Inject a reader and clock to test without accessing a real host.
+The default per-sample timeout is 2 seconds. It aborts the reader, increments diagnostics, and discards late results. A reader that ignores abort retains the sampling slot until it settles: timeouts must never permit overlapping I/O. The Linux reader waits for every launched metadata, metric, and disk-space branch to settle even when one rejects on abort. `stop()` clears timers, aborts an in-flight read, and prevents late publication. Inject a reader and clock to test without accessing a real host.
 
 ## Integration boundary
 

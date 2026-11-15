@@ -15,11 +15,12 @@ export function ShellNavigation({ displayName, onNewSession, onSettings, onOracl
 }) {
   const { effective } = usePreviewFeatures()
   const name = useDisplayName(displayName, effective.desktopRail) || 'User'
-  if (!effective.desktopRail && !effective.notificationPanel) return null
   const features: ClientFeature[] = [
     ...(effective.notificationPanel ? [{ id: 'notifications', label: 'Notifications', icon: Bell, railEntry: { order: 20, badge: unreadCount }, open: () => onOpen?.('notifications') }] : []),
     ...(effective.desktopRail ? [{ id: 'settings', label: 'App settings', icon: Settings, railEntry: { order: 100 }, open: onSettings }] : []),
   ]
+  const entries = railEntries(features)
+  if (!entries.length) return null
   return <nav className="shell-rail" aria-label="App navigation">
     {effective.desktopRail && <div className="shell-rail__top">
       {oracleAvailable && <button type="button" aria-label="Open Oracle" title="Open Oracle" className="icon-button" onClick={onOracle}><Sparkles aria-hidden="true" size={24} /></button>}
@@ -29,7 +30,7 @@ export function ShellNavigation({ displayName, onNewSession, onSettings, onOracl
       {effective.desktopRail && <div className="shell-rail__identity" title={name}>
         <span className="shell-avatar" aria-hidden="true">{initials(name)}</span><span>{name}</span>
       </div>}
-      {railEntries(features).map(({ id, label, icon: Icon, railEntry, open }) =>
+      {entries.map(({ id, label, icon: Icon, railEntry, open }) =>
         <button key={id} type="button" className="shell-rail__entry" aria-label={railEntry?.badge ? `${label}, ${railEntry.badge} unread` : label}
           title={label} onClick={open}>
           <Icon aria-hidden="true" size={20} /><span className="shell-rail__label">{label}</span>

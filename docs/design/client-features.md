@@ -6,4 +6,6 @@ The client feature registry describes a label, lucide icon, optional ordered rai
 
 Oracle docking and width budgets include the 64 px rail. If the conversation cannot keep its 360 px minimum, Oracle temporarily overlays without changing the saved docking preference.
 
+Navigation visibility is derived from the actual implemented entry list, not a second list of feature flags. A single enabled feature therefore keeps its drawer/footer entry reachable without enabling the desktop rail. App settings remains available through the existing sidebar shortcut when the desktop rail is off. Compact positioning and hidden labels apply only to the actual desktop rail, not feature-only footer navigation.
+
 `displayName` is a validated, revision-checked hub profile setting, not an account. App › Display name is available with the rail preview. An unset name resolves on the hub to the single `git config --global --get user.name` value, then `$USER`, then “User”. Only the validated name is returned by the existing settings route (`?defaults=displayName`); no other Git configuration is read or exposed. Resetting the profile key restores that default. The default is cached for the route lifetime; edits sync through the existing settings events.

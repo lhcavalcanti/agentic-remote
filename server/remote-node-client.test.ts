@@ -41,6 +41,15 @@ afterEach(async () => {
 describe('host telemetry request safety', () => {
   const info = { id: 'paired-node', name: 'Fictional node', version: '1.0.0', hostTelemetry: { version: 1, enabled: true } }
 
+  it('classifies malformed capability JSON as invalid telemetry rather than a connection failure', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('{not-json', {
+      headers: { 'content-type': 'application/json' },
+    }))
+    await expect(client('http://fixture.invalid').hostTelemetryTarget()).rejects.toMatchObject({
+      statusCode: 502, message: 'This computer returned invalid host telemetry',
+    })
+  })
+
   it.each(['snapshot', 'history', 'processes'] as const)('keeps session connectivity online when a slow %s read times out', async (read) => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(info))
     const owner = client('http://fixture.invalid')

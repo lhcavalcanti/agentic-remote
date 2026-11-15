@@ -102,6 +102,12 @@ describe('DST disambiguation', () => {
 })
 
 describe('calendar recurrence', () => {
+  it('expands whole-minute fractional hours using integer minute arithmetic', () => {
+    expect(next({ type: 'hourly', everyHours: 4.1 }, '2026-01-01T00:00:00Z', 3, 'UTC')).toEqual([
+      '2026-01-01T04:06:00.000Z', '2026-01-01T08:12:00.000Z', '2026-01-01T12:18:00.000Z',
+    ])
+  })
+
   it('uses a once timestamp as an absolute instant and excludes it after it has occurred', () => {
     const recurrence = { type: 'once', at: '2026-11-13T12:30:00-08:00' } as const
     expect(next(recurrence, '2026-11-13T20:00:00Z')).toEqual(['2026-11-13T20:30:00.000Z'])
@@ -155,7 +161,8 @@ describe('five-field cron', () => {
     ['0 9 * * 7', '2026-11-01T09:00:00Z', ['2026-11-08T09:00:00.000Z']],
     ['0 9 13 * FRI', '2026-11-01T00:00:00Z', ['2026-11-06T09:00:00.000Z', '2026-11-13T09:00:00.000Z', '2026-11-20T09:00:00.000Z', '2026-11-27T09:00:00.000Z', '2026-12-04T09:00:00.000Z', '2026-12-11T09:00:00.000Z', '2026-12-13T09:00:00.000Z']],
     ['0 9 31 FEB MON', '2026-02-01T00:00:00Z', ['2026-02-02T09:00:00.000Z', '2026-02-09T09:00:00.000Z']],
-    ['0 9 */2 * MON', '2026-11-01T00:00:00Z', ['2026-11-09T09:00:00.000Z', '2026-11-23T09:00:00.000Z']],
+    ['0 9 */2 * MON', '2026-11-01T00:00:00Z', ['2026-11-01T09:00:00.000Z', '2026-11-02T09:00:00.000Z', '2026-11-03T09:00:00.000Z']],
+    ['0 9 2 * */2', '2026-11-01T00:00:00Z', ['2026-11-01T09:00:00.000Z', '2026-11-02T09:00:00.000Z', '2026-11-03T09:00:00.000Z']],
     ['0 9 1-31/2 * MON', '2026-11-01T00:00:00Z', ['2026-11-01T09:00:00.000Z', '2026-11-02T09:00:00.000Z', '2026-11-03T09:00:00.000Z']],
   ] as const)('expands %s', (expression, after, expected) => {
     expect(next({ type: 'cron', expression }, after, expected.length, 'UTC')).toEqual(expected)

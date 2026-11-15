@@ -271,3 +271,70 @@ it.each([true, false])('clears the linked run when opening another schedule hist
   expect(returnedHistory.querySelectorAll('li[data-linked="true"]')).toHaveLength(0)
   expect(screen.queryByText('The linked run is no longer in retained history.')).toBeNull()
 })
+
+it('keeps management usable when recent-run enrichment fails and clears the warning on recovery', async () => {
+  let recentUnavailable = true
+  vi.mocked(request).mockImplementation(async (path) => {
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    if (path === '/api/schedules') return { schedules: [schedule] }
+    if (path === '/api/schedules/runs?limit=200' && recentUnavailable) throw new SubmissionError('Temporary recent-run outage', 503)
+    return { runs: [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  expect(await screen.findByRole('button', { name: 'Run Morning review now' })).toBeTruthy()
+  expect(screen.getByRole('status').textContent).toContain('Recent runs are unavailable: Temporary recent-run outage')
+  expect(screen.getByText('Recent run unavailable')).toBeTruthy()
+  expect(screen.queryByText('No recent run')).toBeNull()
+  expect(screen.queryByRole('alert')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Run Morning review now' }))
+  await waitFor(() => expect(request).toHaveBeenCalledWith('/api/schedules/review/run', expect.objectContaining({ method: 'POST' })))
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Edit Morning review' })).toHaveProperty('disabled', false))
+  recentUnavailable = false
+  act(() => publishFeatureEvent({ type: 'schedules.changed', scheduleId: 'review', revision: 2 }))
+  await waitFor(() => expect(screen.queryByText(/Recent runs are unavailable/)).toBeNull())
+  expect(screen.getByText('No recent run')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Morning review' }))
+  expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Morning review')
+})
+
+it('keeps schedule-list failures at the top level', async () => {
+  vi.mocked(request).mockImplementation(async (path) => {
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    if (path === '/api/schedules') throw new SubmissionError('Schedule list unavailable', 503)
+    return { runs: [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  expect((await screen.findByRole('alert')).textContent).toContain('Schedule list unavailable')
+  expect(screen.queryByRole('button', { name: 'Edit Morning review' })).toBeNull()
+  expect(screen.queryByText(/Recent runs are unavailable/)).toBeNull()
+})
+
+it('ignores aborted recent-run enrichment after a newer refresh', async () => {
+  let rejectOldRecent!: (error: Error) => void
+  let firstSignal: AbortSignal | undefined
+  let recentRequests = 0
+  let listRequests = 0
+  const freshRun: ScheduleRun = { id: 'fresh-run', scheduleId: schedule.id, computerId: computer.id,
+    occurrenceAt: '2026-11-15T18:00:00Z', trigger: 'manual', status: 'succeeded', launchId: 'fresh-launch' }
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    if (path === '/api/schedules') return { schedules: [{ ...schedule, name: ++listRequests === 1 ? 'Old list' : 'Fresh list' }] }
+    if (path === '/api/schedules/runs?limit=200' && ++recentRequests === 1) {
+      firstSignal = init?.signal ?? undefined
+      return new Promise<{ runs: ScheduleRun[] }>((_resolve, reject) => { rejectOldRecent = reject })
+    }
+    return { runs: [freshRun] }
+  })
+  const { result } = renderHook(() => useScheduler(true))
+  await waitFor(() => expect(firstSignal).toBeDefined())
+  await act(async () => { await result.current.refresh() })
+  expect(firstSignal?.aborted).toBe(true)
+  expect(result.current.schedules[0]?.name).toBe('Fresh list')
+  expect(result.current.recent).toEqual([freshRun])
+  await act(async () => { rejectOldRecent(new DOMException('Aborted', 'AbortError')) })
+  expect(result.current.schedules[0]?.name).toBe('Fresh list')
+  expect(result.current.recent).toEqual([freshRun])
+  expect(result.current.error).toBeUndefined()
+  expect(result.current.recentError).toBeUndefined()
+  expect(result.current.loading).toBe(false)
+})

@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, MouseEvent, MutableRefObject, PointerEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
@@ -1036,10 +1036,12 @@ export function ManagerAssistant({
   const available = Boolean(snapshot?.available)
   const shownWidth = available && open ? panelWidth.width : undefined
   const widthRef = useRef(onWidthChange)
-  useEffect(() => {
+  useLayoutEffect(() => {
     widthRef.current = onWidthChange
   })
-  useEffect(() => {
+  // Before paint: the docked grid column reads this width, and a frame with the
+  // previous (floating) width would push the panel past the window's edge.
+  useLayoutEffect(() => {
     widthRef.current?.(shownWidth)
   }, [shownWidth])
   const status = snapshot?.status ?? 'offline'

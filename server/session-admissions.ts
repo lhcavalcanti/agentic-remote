@@ -25,12 +25,22 @@ export class SessionAdmissions {
   private readonly context = new AsyncLocalStorage<ReadonlyMap<string, Admission>>()
   private readonly exclusiveOwners = new Map<string, object>()
   private readonly transcriptAdmissions = new Map<string, number>()
+  private readonly stoppedLaunches = new Set<string>()
 
   constructor(private readonly isClosed: () => boolean) {}
 
   canEnter(sessionId: string): boolean {
-    return !this.isClosed() && (!this.exclusiveOwners.has(sessionId) ||
+    return !this.isClosed() && !this.stoppedLaunches.has(sessionId) && (!this.exclusiveOwners.has(sessionId) ||
       this.context.getStore()?.get(sessionId)?.active === true)
+  }
+
+  /** Immediate process-local fence, retained even if its durable write fails. */
+  blockLaunch(sessionId: string): void {
+    this.stoppedLaunches.add(sessionId)
+  }
+
+  launchBlocked(sessionId: string): boolean {
+    return this.stoppedLaunches.has(sessionId)
   }
 
   /** True while any admitted or exclusive operation still holds the session. */
@@ -60,6 +70,9 @@ export class SessionAdmissions {
   ): Promise<T> {
     if (this.isClosed()) {
       throw Object.assign(new Error('The session service is stopping'), { statusCode: 503 })
+    }
+    if (this.launchBlocked(sessionId)) {
+      throw Object.assign(new Error('The launch is stopping; no new work can start.'), { statusCode: 409, uncertainDelivery: false })
     }
     if (!this.canEnter(sessionId)) {
       throw Object.assign(new Error('The session is being cleared; try again once it settles'), { statusCode: 409 })
@@ -101,6 +114,9 @@ export class SessionAdmissions {
     if (this.isClosed()) {
       throw Object.assign(new Error('The session service is stopping'), { statusCode: 503 })
     }
+    if (this.launchBlocked(sessionId)) {
+      throw Object.assign(new Error('The launch is stopping; no new work can start.'), { statusCode: 409, uncertainDelivery: false })
+    }
     if (this.exclusiveOwners.has(sessionId) || this.context.getStore()?.get(sessionId)?.active) {
       throw Object.assign(new Error('The session already has an operation in progress'), { statusCode: 409 })
     }
@@ -112,9 +128,12 @@ export class SessionAdmissions {
       if (this.isClosed()) {
         throw Object.assign(new Error('The session service is stopping'), { statusCode: 503 })
       }
+      if (this.launchBlocked(sessionId)) {
+        throw Object.assign(new Error('The launch is stopping; no new work can start.'), { statusCode: 409, uncertainDelivery: false })
+      }
       return await operation({
         joinedActivity: joined.some((admission) => admission.committed),
-        isCurrent: () => !this.isClosed() && this.exclusiveOwners.get(sessionId) === owner,
+        isCurrent: () => !this.isClosed() && !this.launchBlocked(sessionId) && this.exclusiveOwners.get(sessionId) === owner,
       })
     } finally {
       if (this.exclusiveOwners.get(sessionId) === owner) this.exclusiveOwners.delete(sessionId)

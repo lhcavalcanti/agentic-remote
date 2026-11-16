@@ -186,4 +186,22 @@ describe('canonical hub notification classifier', () => {
     expect(record.body).toBe('Ready Read the report and results.')
     expect(record.body).toBe(push.next(done)!.body)
   })
+
+  it.each([
+    { suppressNotification: true },
+    { source: 'proactive' as const },
+    { automatic: { kind: 'proactive' as const, eventIds: ['event'] } },
+  ])('does not record proactive bookkeeping marked by %j', (marker) => {
+    for (const state of ['done', 'failed'] as const) {
+      const replies = new Map([['bookkeeping', 'Internal observation']])
+      expect(classifyOracleNotification({ type: 'manager.message', message: {
+        id: 'bookkeeping', role: 'user', content: 'Observe', createdAt: now, state, ...marker,
+      } }, now, replies)).toEqual([])
+      expect(replies.size).toBe(0)
+    }
+    expect(classifyOracleNotification({ type: 'manager.message', message: {
+      id: 'task', role: 'user', content: 'Authorized task', createdAt: now, state: 'done',
+      source: 'task', automatic: { kind: 'task', taskId: 'task' },
+    } }, now, new Map())[0]).toMatchObject({ title: 'Oracle replied' })
+  })
 })

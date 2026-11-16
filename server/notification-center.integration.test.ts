@@ -247,6 +247,30 @@ describe('hub notification center', () => {
     expect(await list()).toEqual([expect.objectContaining({ title: 'Oracle replied', body: 'Completed answer' })])
   })
 
+  it('keeps proactive bookkeeping out of unread records without changing ordinary Oracle push delivery', async () => {
+    const { oracle, runtime, sender, list } = await hub('on')
+    await runtime.pushService!.subscribe({
+      endpoint: 'https://push.example.test/device', expirationTime: null,
+      keys: { p256dh: 'public', auth: 'auth' },
+    })
+    for (const state of ['done', 'failed'] as const) {
+      const id = `proactive-${state}`
+      oracle.emit('event', { type: 'manager.message', message: {
+        id: `${id}-reply`, role: 'assistant', replyTo: id, content: 'Internal observation', createdAt: now,
+      } })
+      oracle.emit('event', { type: 'manager.message', message: {
+        id, role: 'user', content: 'Observe', createdAt: now, state, source: 'proactive', suppressNotification: true,
+      } })
+    }
+    expect(await list()).toEqual([])
+    expect(sender).not.toHaveBeenCalled()
+    oracle.emit('event', { type: 'manager.message', message: {
+      id: 'typed', role: 'user', content: 'Status?', createdAt: now, state: 'done',
+    } })
+    expect(await list()).toHaveLength(1)
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+  })
+
   it.each(['off', 'on'] as const)('preserves push delivery suppression with the hub flag %s', async (flag) => {
     const { runtime, sender, oracle, emit, list } = await hub(flag)
     await runtime.pushService!.subscribe({

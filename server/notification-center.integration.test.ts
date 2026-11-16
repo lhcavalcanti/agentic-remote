@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { mkdir, readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from 'node:timers'
 import type { PushSubscription, RequestOptions } from 'web-push'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
@@ -12,6 +13,7 @@ import type { ManagerAgent } from './manager-agent.js'
 import { NotificationCenterService } from './notification-center-service.js'
 import { NotificationStore } from './notification-store.js'
 import { PushNotificationService } from './push-notification-service.js'
+import type { NotificationCursors } from './notification-classifier.js'
 
 const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
 const directories: string[] = []
@@ -157,8 +159,8 @@ describe('hub notification center', () => {
       expect(state.records).toEqual([expect.objectContaining({ kind: 'session.completed' })])
       return { statusCode: 201, headers: {}, body: '' }
     })
-    emit({ type: 'session.upserted', session: { ...active, messages: [] }, summary: true })
-    emit({ type: 'session.upserted', session: { ...active, messages: [], status: 'idle' }, summary: true })
+    emit({ type: 'session.upserted', session: { ...active, messages: [] } })
+    emit({ type: 'session.upserted', session: { ...active, messages: [], status: 'idle' } })
     expect(await list()).toHaveLength(1)
     await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
     expect(passive).toHaveBeenCalledWith(active.computerId, active.id)
@@ -171,8 +173,8 @@ describe('hub notification center', () => {
       ...active, status: 'running', revision: 3,
       messages: [{ ...active.messages[0]!, id: 'later-root' }],
     })
-    emit({ type: 'session.upserted', session: { ...active, revision: 1, messages: [] }, summary: true })
-    emit({ type: 'session.upserted', session: { ...active, revision: 2, status: 'idle', messages: [] }, summary: true })
+    emit({ type: 'session.upserted', session: { ...active, revision: 1, messages: [] } })
+    emit({ type: 'session.upserted', session: { ...active, revision: 2, status: 'idle', messages: [] } })
     expect(await list()).toEqual([])
   })
 
@@ -271,6 +273,53 @@ describe('hub notification center', () => {
     await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
   })
 
+  it('publishes unrelated sessions and invalidations during a slow detail read and a large roster resync', async () => {
+    const { runtime, emit } = await hub('on')
+    await runtime.app.ready()
+    let finish!: (value: ManagedSession) => void
+    const passive = vi.spyOn(runtime.manager!, 'readSession').mockImplementation(() =>
+      new Promise((resolve) => { finish = resolve }))
+    const socket = await runtime.app.injectWS('/api/events', { headers: trusted })
+    const published: HubEvent[] = []
+    let delivered!: () => void
+    const delivery = new Promise<void>((resolve) => { delivered = resolve })
+    socket.on('message', (raw) => {
+      published.push(JSON.parse(String(raw)) as HubEvent)
+      if (published.some((event) => event.type === 'session.upserted' && event.session.id === 'unrelated') &&
+          published.some((event) => event.type === 'notifications.changed')) delivered()
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      emit({ type: 'session.upserted', session: { ...session('slow'), messages: [] } })
+      for (let index = 0; index < 50; index += 1) {
+        emit({ type: 'session.upserted', session: { ...session(`roster-${index}`), messages: [] }, summary: true })
+      }
+      emit({ type: 'session.upserted', session: { ...session('unrelated'), status: 'waiting',
+        pendingPermission: { requestId: 'unrelated-permission', title: 'Run?', options: [] } } })
+      // Keep the detail deadline frozen while real filesystem/socket work
+      // drains; success must not depend on timing out the unresolved read.
+      await new Promise<void>((resolve, reject) => {
+        const watchdog = setRealTimeout(() => reject(new Error('Unrelated socket publications stalled')), 5000)
+        void delivery.then(() => { clearRealTimeout(watchdog); resolve() })
+      })
+      expect(passive).toHaveBeenCalledExactlyOnceWith('computer', 'slow')
+      emit({ type: 'session.upserted', session: { ...session('slow'), status: 'idle' } })
+      emit({ type: 'computer.removed', computerId: 'computer' })
+      finish(session('slow'))
+      await runtime.notificationCenter!.flush()
+      await vi.waitFor(() => expect(published.some((event) => event.type === 'computer.removed')).toBe(true))
+      const slowStates = published.filter((event) => event.type === 'session.upserted' && event.session.id === 'slow')
+      expect(slowStates.map((event) => event.type === 'session.upserted' && event.session.status)).toEqual(['running', 'idle'])
+      expect(published.findIndex((event) => event.type === 'computer.removed'))
+        .toBeGreaterThan(published.findLastIndex((event) => event.type === 'session.upserted' && event.session.id === 'slow'))
+    } finally {
+      finish(session('slow'))
+      await runtime.notificationCenter!.flush()
+      socket.terminate()
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['off', 'on'] as const)('preserves push delivery suppression with the hub flag %s', async (flag) => {
     const { runtime, sender, oracle, emit, list } = await hub(flag)
     await runtime.pushService!.subscribe({
@@ -330,6 +379,98 @@ describe('hub notification center', () => {
       expect(records.find((record) => record.sessionId === 'muted')).toMatchObject({ muted: true })
       expect(records.filter((record) => record.kind === 'oracle.message')).toHaveLength(3)
       expect(records.find((record) => record.title === 'Oracle replied')).toBeDefined()
+    }
+  })
+})
+
+describe('notification detail scheduling', () => {
+  function center(readSession: (computerId: string, sessionId: string) => Promise<ManagedSession>) {
+    const cursors: NotificationCursors = {}
+    const records: NotificationRecord[] = []
+    const store = {
+      ingest: vi.fn(async (classify: Parameters<NotificationStore['ingest']>[0]) => { records.push(...classify(cursors)) }),
+      flush: async () => undefined,
+    }
+    return {
+      service: new NotificationCenterService(store as unknown as NotificationStore, {
+        mutedSessions: () => [], readSession,
+      }),
+      records,
+    }
+  }
+
+  it('skips roster detail reads and keeps unrelated admissions flowing before a slow read finishes', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: ManagedSession) => void
+    const read = vi.fn(() => new Promise<ManagedSession>((resolve) => { finish = resolve }))
+    const { service, records } = center(read)
+    try {
+      const slow = service.hub({ type: 'session.upserted', session: { ...session('slow'), messages: [] } })
+      const roster = Array.from({ length: 50 }, (_, index) => service.hub({
+        type: 'session.upserted', session: { ...session(`roster-${index}`), messages: [] }, summary: true,
+      }))
+      const published = vi.fn()
+      const alert = service.hub({ type: 'error', notify: true, message: 'Unrelated alert' }).then(published)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(published).toHaveBeenCalledOnce()
+      expect(records).toEqual([expect.objectContaining({ kind: 'host.alert' })])
+      expect(read).toHaveBeenCalledExactlyOnceWith('computer', 'slow')
+      finish(session('slow'))
+      await Promise.all([slow, alert, ...roster])
+    } finally {
+      finish?.(session('slow'))
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('coalesces reads per session and bounds their deadlines and actual concurrency even after timeout', async () => {
+    vi.useFakeTimers()
+    const finishes: Array<(value: ManagedSession) => void> = []
+    const read = vi.fn(() => new Promise<ManagedSession>((resolve) => { finishes.push(resolve) }))
+    const { service } = center(read)
+    try {
+      const admissions = Array.from({ length: 50 }, (_, index) => service.hub({
+        type: 'session.upserted', session: { ...session(`slow-${index}`), messages: [] },
+      }))
+      for (let index = 0; index < 20; index += 1) {
+        admissions.push(service.hub({ type: 'session.upserted', session: { ...session('slow-0'), messages: [] } }))
+      }
+      await vi.advanceTimersByTimeAsync(0)
+      expect(read).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1000)
+      await Promise.all(admissions)
+      const later = service.hub({ type: 'session.upserted', session: { ...session('later'), messages: [] } })
+      await vi.advanceTimersByTimeAsync(1000)
+      await later
+      expect(read).toHaveBeenCalledTimes(2)
+    } finally {
+      for (const finish of finishes) finish(session())
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a session completion behind its own earlier root read without blocking another session', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: ManagedSession) => void
+    const { service, records } = center(() => new Promise((resolve) => { finish = resolve }))
+    try {
+      const active = session('slow')
+      const running = service.hub({ type: 'session.upserted', session: { ...active, messages: [], revision: 1 } })
+      const completed = service.hub({ type: 'session.upserted', session: { ...active, status: 'idle', revision: 2 } })
+      const other = service.hub({ type: 'session.upserted', session: { ...session('other'), status: 'waiting',
+        pendingPermission: { requestId: 'p', title: 'Run?', options: [] } } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(records.map((record) => record.sessionId)).toEqual(['other'])
+      finish({ ...active, revision: 1 })
+      await Promise.all([running, completed, other])
+      expect(records.map((record) => record.sessionId)).toEqual(['other', 'slow'])
+      expect(records[1].kind).toBe('session.completed')
+    } finally {
+      finish?.(session('slow'))
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
     }
   })
 })

@@ -172,7 +172,9 @@ EOF
   diagnostic_node "$SERVICE_NAME" "$since" "$json" <<'NODE'
 const [serviceName, since, json] = process.argv.slice(2)
 function redact(value) {
-  if (Array.isArray(value)) return value.map(redact)
+  // Raw header lists (such as Node's rawHeaders) alternate names and values.
+  if (Array.isArray(value)) return value.map((item, index) => typeof value[index - 1] === 'string' &&
+    /^[\w-]*(?:cookie|authorization)$/i.test(value[index - 1]) ? '[REDACTED]' : redact(item))
   if (record(value)) return Object.fromEntries(Object.entries(value).map(([key, item]) => [
     key, /token|authorization|password|passwd|secret|api[_-]?key|cookie|credential/i.test(key) ? '[REDACTED]' : redact(item),
   ]))
@@ -187,8 +189,8 @@ function redact(value) {
         ? `${separator}${key}=[REDACTED]` : match
     })
     // Cookie and authorization values (several cookies, Digest, Negotiate, AWS4 signatures) contain
-    // spaces, commas, and quotes, so redact through the end of the line.
-    .replace(/((?:cookie|authorization)[\w.-]{0,32}["']?\s*[:=]\s*)[^\n]*/gi, '$1[REDACTED]')
+    // spaces, commas, and quotes, so redact through the end of the line, including a printed header list.
+    .replace(/((?:cookie|authorization)[\w.-]{0,32}(?:["']?\s*[:=]|["']\s*,\s*["']?)\s*)[^\n]*/gi, '$1[REDACTED]')
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
     .replace(/(\b[\w.-]*(?:token|password|passwd|secret|api[_-]?key|credential)[\w.-]*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&}]+)/gi, '$1[REDACTED]')
     .replace(/(--[\w-]*(?:token|password|secret|api-key)[\w-]*\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')

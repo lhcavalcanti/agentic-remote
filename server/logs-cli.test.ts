@@ -328,8 +328,11 @@ describe('read-only logs explanation CLI', () => {
 
   it('redacts whole Cookie, Set-Cookie, and Authorization header values in human and JSON output', async () => {
     const secrets = ['cookie-one', 'cookie-two', 'cookie-three', 'set-cookie-value', 'digest-user', 'digest-nonce',
-      'digest-response', 'negotiate-value', 'msg-cookie', 'aws-signature', 'json-cookie']
+      'digest-response', 'negotiate-value', 'msg-cookie', 'aws-signature', 'json-cookie', 'raw-cookie', 'raw-digest',
+      'inspected-cookie']
     const context = await fixture([
+      journalLine({ level: 30, rawHeaders: ['Set-Cookie', 'sid=raw-cookie; Path=/', 'Authorization', 'Digest raw-digest'] }, -6),
+      journalLine("response rawHeaders: [ 'Cookie', 'sid=inspected-cookie', 'Host', 'fixture.invalid' ]", -5),
       journalLine('Cookie: session=cookie-one; theme=cookie-two; csrf=cookie-three', -4),
       journalLine('Set-Cookie: sid=set-cookie-value; Path=/; Expires=Wed, 18 Nov 2026 07:28:00 GMT; HttpOnly; Secure', -3),
       journalLine('Authorization: Digest username="digest-user", realm="fixture", nonce="digest-nonce", response="digest-response"', -2),

@@ -71,10 +71,11 @@ export class NotificationCenterService implements NotificationRecorder {
   }
 
   host(computer: ComputerSummary, snapshot: HostSnapshot | undefined): Promise<void> {
+    const receivedAt = this.now()
     const observation = structuredClone({ computer, snapshot })
     if (!computer.isLocal && observation.snapshot?.latest && observation.snapshot.sampleAgeMs === undefined) {
       const sample = observation.snapshot.latest.at
-      const at = (this.options.now ?? Date.now)()
+      const at = Date.parse(receivedAt)
       const previous = this.hostArrivals.get(computer.id)
       const arrival = previous?.sample === sample ? previous : { sample, at }
       this.hostArrivals.set(computer.id, arrival)
@@ -84,7 +85,7 @@ export class NotificationCenterService implements NotificationRecorder {
       // Episode state must not outrun a failed durable alert admission.
       const observations = structuredClone(this.hostObservations)
       await this.store.ingest((cursors) =>
-        classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now(), observations)
+        classifyHostNotification(observation.computer, observation.snapshot, cursors, this.now(), observations, receivedAt)
           .filter((record) => this.inApp(record)))
       this.hostObservations = observations
     })

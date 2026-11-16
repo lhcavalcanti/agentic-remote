@@ -54,6 +54,8 @@ Only a hub with both `hostMonitor` and `notificationCenter` enabled constructs `
 
 Resource observations enter `NotificationCenterService.host` and the canonical notification classifier/store. They create warning-severity `host.alert` records only; they do not add a new push/native delivery path or change existing error-severity health alerts.
 
+Freshness is evaluated at classification time, adding elapsed hub queue time to the sample age captured when the hub received the snapshot. The receipt timestamp belongs to the hub, so paired-computer clock skew cannot make queued data look newer.
+
 - Memory must stay strictly above 90% for at least two minutes of fresh readings. A below-trigger reading resets a pending interval. An active episode recovers at or below 85%.
 - Disk free space on the data mount must be strictly below 5%; an active episode recovers at or above 7%.
 - Repeated samples and out-of-order samples cannot advance an episode. Samples older than 30 seconds or more than five seconds in the future are unusable. Missing readings or a gap over 45 seconds reset pending memory pressure.

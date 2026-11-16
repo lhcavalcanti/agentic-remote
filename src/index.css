@@ -1333,7 +1333,8 @@ button {
   position: relative;
 }
 
-/* Their boxes already space the icons apart. */
+/* Flush on purpose: the boxes already space the icons apart, and a gap here
+   would cost the order its whole label beside "Connection failed". */
 .session-list__actions {
   display: flex;
   flex: 0 0 auto;

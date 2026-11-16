@@ -938,7 +938,7 @@
     "src/features/prompts/PromptCards.tsx": "6d23f53748d6c60de9e4f47f0b6c36c1776586f69009ad3c53ec3680547fcafd",
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
     "src/hub-sign-in.ts": "bb68abb53da257f7c544d3824934d97768e110009412ea3d1a91d9202580d976",
-    "src/index.css": "78756f5fd4b683ec3d17cc5c2f4950b2a4a61427e340ecb7bbc2cd83167e0712",
+    "src/index.css": "0eb82f3bb76d8591332a8dfe6c6915fade464f2803b7ce17224be70f29648788",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -1119,24 +1119,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "a2b108b047011d4c857b8e660ab91ed782fd66c5cd89b98db1ff8397cb132b65",
+    "GRAPH_REPORT.md": "2ca20bac5d64e20e15357f5739236d7b17c3aa50eb05843e4fd626f368d35bc4",
     "communities.json": "42015bcdbc1b2e0a028963648cea3af6fe1e5cc0adcbe9e8621c849466ad1587",
-    "graph.html": "aa133e8cc0473a244dd76d3bb5e512cf32e443beebd6b896c6418659781aa830",
-    "graph.json": "e0dbd0103356ff092063ff83addd057f02240064392265db863f144bce56d68c"
+    "graph.html": "9d19e326c3e41a01a2ae41d6b3519a0859875a225fae850ebffbb490bd54be98",
+    "graph.json": "82b45087085cec649bfb60b70d70b683bf6ef0453183d027d083f8706831c20b"
   },
   "schema_version": 1,
-  "source_commit": "3eea07764cd1e76a5311269496bdb53d62028805",
-  "source_fingerprint": "9fea32dd4b0e08f022004652a859ce39f6b53e7e51e97eef970fd00c3a19e44b",
+  "source_commit": "43c3c6e85457b13c0f6256070212c9dabca8bab9",
+  "source_fingerprint": "8ce9d46d58f64b9f2d1c21993af2e88d80a00fa91e3bc02c739ac5d6f4e608f7",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "e2e/recently-closed.pw.ts",
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/SessionNavigation.test.tsx",
-    "src/SessionNavigation.tsx",
     "src/index.css"
   ]
 }

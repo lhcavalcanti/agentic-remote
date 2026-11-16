@@ -37,7 +37,7 @@ export function filterSentMessages(
   const unfinished = context.status === 'running' || context.status === 'waiting' || context.status === 'error' ||
     context.queuedDispatch || context.terminalQueueDispatchPending
   return messages
-    .filter((message) => message.role === 'user' &&
+    .filter((message) => message.role === 'user' && !message.appGenerated &&
       message.content.trim() &&
       !message.streaming && message.activityStatus !== 'pending' &&
       message.content.toLowerCase().includes(search))

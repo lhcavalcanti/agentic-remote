@@ -269,6 +269,8 @@ provider-specific inspection boundaries.
 
 ```bash
 agentic-remote status
+agentic-remote doctor
+agentic-remote doctor --tunnel TUNNEL_ID --json
 agentic-remote logs
 agentic-remote restart
 agentic-remote update
@@ -279,6 +281,8 @@ agentic-remote uninstall
 `setup` and `update` build an immutable release and restart the service.
 `rollback` activates the previous release. Application data is preserved under
 `~/.agentic-remote/`.
+
+`doctor` is read-only and works with the service down. It checks the installed service, local health, provider tools, configured transcription/voice assets, origins, and recent startup phases. `--tunnel ID` (or `AGENTIC_REMOTE_DEVTUNNEL_ID` in the shell or service environment file, preserved by setup/update) also checks Dev Tunnel login and both tunnel and port ACLs: empty or deny-only ACLs pass; any allow entry, unknown JSON, or missing `devtunnel` binary fails closed. Tunnel checks skip only when no tunnel is selected. The origin check warns unless the allowlist includes the selected tunnel's HTTPS hostname, configured port, and region (when included in its ID); another tunnel's origin does not satisfy it. It reports the login provider without requiring a particular one and never changes ACLs. `--json` emits `{check, status, detail}` records; exit status is 1 if any check fails, otherwise 0. No package manager is executed: the pinned pnpm version must already be locally resolvable through its installation metadata or Corepack cache.
 
 ### Feature flags
 
@@ -550,10 +554,17 @@ Agentic Remote is available under the [MIT License](LICENSE).
 ## Troubleshooting
 
 ```bash
+agentic-remote doctor --tunnel TUNNEL_ID
 agentic-remote status
+agentic-remote logs --why
+agentic-remote logs --why --since "1 hour ago" --json
 agentic-remote logs
 curl http://192.168.1.10:4317/api/health
 ```
+
+Start with `doctor` even if startup fails. It shows the last failed startup phase, or an unfinished phase when the service is not active, from the last two hours (up to 2,000 journal lines). Optional Claude auth is checked only when `CLAUDE_BIN` is configured or its default `~/.local/bin/claude` installation exists; Whisper assets are checked when their paths are configured, and local voice assets only with `AGENTIC_REMOTE_ORACLE_VOICE=on`. A hub delegating voice through `AGENTIC_REMOTE_VOICE_COMPUTER` skips local voice assets; a node always needs its own assets when voice is on. A recovered startup failure is a warning. Health probes stay on loopback; a non-loopback `HOST` is explicitly skipped. Use `doctor --help` for options.
+
+Use `logs --why` to explain the most recent startup failure, unfinished startup, structured error, or systemd failure. While the service is not active, an unfinished startup newer than the last startup failure is reported; otherwise the newest failure is, but a startup failure, then a structured error, logged in the two minutes before it takes precedence, so an error just before a crash explains it. Explicit numeric or recognized named levels take precedence over `err` or `type: "error"` fields, so a handled warning does not hide a unit failure. It reads the whole window (default six hours, up to 64 MB of journal output; narrow `--since` if it is larger) without needing a running service or reading environment files. It shows local timestamps, correlation keys, up to 20 preceding lines with the same session/request/phase/computer, the last 20 other lines in the preceding two minutes (with a count of omitted lines), and up to five following lines. Obvious credentials, whole cookie and authorization header values, URL userinfo and secret query parameters, and multiline PEM private keys are redacted in human and JSON output, including in coloured or byte-encoded journal messages; split or unterminated private-key records are suppressed before context is selected. Review output before sharing. `--since TIME` accepts journalctl times; `--json` emits `{failure, correlation, omittedWindowLines, before, after}` with ISO timestamps (`failure: null` when none). Exit status is 0 with or without a failure, 2 for usage errors, and 1 if the journal cannot be read. Plain `logs` still follows the journal.
 
 The service runs provider startup, including session recovery, before it
 listens, so a stalled startup refuses connections; only recovery deferred by

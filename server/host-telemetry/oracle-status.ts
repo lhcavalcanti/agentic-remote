@@ -36,13 +36,15 @@ function owner(row: ProcessRow, computer: ComputerSummary): string {
 function summary(computer: ComputerSummary, snapshot: HostSnapshot, now: number): string[] {
   const { info, latest, disk } = snapshot
   const age = latest ? snapshot.sampleAgeMs !== undefined ? snapshot.sampleAgeMs / 1000
-    : computer.isLocal ? Math.max(0, (now - Date.parse(latest.at)) / 1000) : 0 : undefined
+    : computer.isLocal ? Math.max(0, (now - Date.parse(latest.at)) / 1000) : undefined : undefined
+  const unknownAge = Boolean(latest && age === undefined)
   return [
     `## ${text(info?.hostname ?? computer.name)} · ${computer.isLocal ? 'hub' : 'node'} (${text(computer.id)})`,
     ...(info?.isWsl ? [`WSL VM, not the Windows host${info.wslDistro ? ` · ${text(info.wslDistro)}` : ''}`] : []),
     `CPU ${number(latest?.cpuPercent, '%')} · memory used ${bytes(latest?.memoryUsedBytes)}, available ${bytes(latest?.memoryAvailableBytes)}`,
     `Data mount ${disk ? text(disk.mount) : 'unavailable'} · disk free ${bytes(disk?.freeBytes)}${disk?.totalBytes ? ` (${number(disk.freeBytes / disk.totalBytes * 100, '%')})` : ''}`,
-    `Load 1/5/15m ${number(latest?.load1)}/${number(latest?.load5)}/${number(latest?.load15)} · sample age ${number(age, 's')}`,
+    `Load 1/5/15m ${number(latest?.load1)}/${number(latest?.load5)}/${number(latest?.load15)} · sample age ${unknownAge ? 'unknown' : number(age, 's')}`,
+    ...(unknownAge ? ['Sample freshness is unknown; current host health is unknown. Update this computer to report sample age.'] : []),
     ...(age !== undefined && age > 30 ? ['Stale sample; current host health is unknown.'] : []),
   ]
 }

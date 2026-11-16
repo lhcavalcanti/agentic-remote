@@ -1303,25 +1303,61 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 2px;
   margin: 0 0 5px;
 }
 
 .session-list__title {
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
 }
 
+.session-list__title > h2,
+.session-list__title > small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* As small as the Knowledge heading's Add, so the order keeps its whole label. */
+.session-list__refresh,
+.session-list__recently-closed,
 .session-list__new {
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   flex: 0 0 auto;
 }
 
-.session-list__refresh {
-  width: 32px;
-  height: 32px;
+.session-list__recently-closed {
+  position: relative;
+}
+
+/* Flush on purpose: the boxes already space the icons apart, and a gap here
+   would cost the order its whole label beside "Connection failed". */
+.session-list__actions {
+  display: flex;
   flex: 0 0 auto;
+  align-items: center;
+}
+
+/* On the icon's corner; the button's name says the count in words. */
+.session-list__recently-closed-count {
+  position: absolute;
+  top: calc(50% - 14px);
+  right: calc(50% - 15px);
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border: 1px solid var(--navigation);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 12px;
+  text-align: center;
 }
 
 .session-list__freshness {
@@ -1355,7 +1391,9 @@ button {
 
 .session-sort {
   position: relative;
-  min-width: 0;
+  /* Gives way before the title does, down to a usable width. */
+  flex: 0 1000 auto;
+  min-width: 64px;
   max-width: 54%;
 }
 
@@ -1363,12 +1401,13 @@ button {
   appearance: none;
   width: 100%;
   min-height: 36px;
-  padding: 0 25px 0 8px;
+  padding: 0 21px 0 6px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
   color: var(--muted-strong);
   font-size: 11px;
+  text-overflow: ellipsis;
   cursor: pointer;
 }
 
@@ -1390,7 +1429,7 @@ button {
 .session-sort > svg {
   position: absolute;
   top: 50%;
-  right: 7px;
+  right: 5px;
   color: var(--muted);
   transform: translateY(-50%);
   pointer-events: none;
@@ -1526,46 +1565,6 @@ button {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: var(--border-strong) transparent;
-}
-
-/* After the last computer, where older things live: a way back to what was
-   closed rather than another session. */
-.session-list__recently-closed {
-  display: flex;
-  width: calc(100% - 8px);
-  min-height: 40px;
-  margin: 14px 4px 0;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  color: var(--muted);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-small);
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.session-list__recently-closed:hover,
-.session-list__recently-closed:focus-visible {
-  color: var(--text);
-  border-style: solid;
-}
-
-.session-list__recently-closed-label {
-  flex: 1;
-}
-
-.session-list__recently-closed-count {
-  min-width: 20px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--panel-raised);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  text-align: center;
 }
 
 .session-list__error {
@@ -7401,6 +7400,13 @@ button {
     margin-left: auto;
   }
 
+  /* The order's padding and these wide buttons already part them. */
+  .session-list__heading {
+    gap: 0;
+  }
+
+  .session-list__refresh,
+  .session-list__recently-closed,
   .session-list__new,
   .mobile-knowledge-heading > .icon-button,
   .sidebar-knowledge__add {

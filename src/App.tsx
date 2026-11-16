@@ -13073,12 +13073,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const loaded = await listComputers()
     const forgotten = applyComputerSnapshot(loaded, startedAtSequence, generation)
     if (forgotten.size) {
-      const preserved = new Set(sessionsRef.current.filter((session) =>
-        forgotten.has(session.computerId) &&
-        (sessionEventSequenceRef.current.get(sessionKey(session)) || 0) > startedAtSequence,
-      ).map(sessionKey))
-      const keepSession = (session: ManagedSession) => !forgotten.has(session.computerId) || preserved.has(sessionKey(session))
-      const keepTasks = (key: string) => !forgotten.has(key.slice(0, key.indexOf(':'))) || preserved.has(key)
+      // Only a newer computer event can keep a computer; a newer session event does not re-pair its owner.
+      const keepSession = (session: ManagedSession) => !forgotten.has(session.computerId)
+      const keepTasks = (key: string) => !forgotten.has(key.slice(0, key.indexOf(':')))
       // Fence older responses even if the same computer is paired again before they finish.
       const removedAtSequence = nextSessionEventSequence()
       eventSequenceRef.current = removedAtSequence

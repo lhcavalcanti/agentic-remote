@@ -18402,6 +18402,42 @@ describe('App', () => {
     await act(async () => { finish({ supported: true, runningCount: 0, tasks: [] }) })
   })
 
+  it('drops side answers for a computer a connection check finds unpaired', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote: ComputerSummary = {
+      ...secondComputer,
+      providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+    const remoteSession = { ...session, id: 'remote-side-session', computerId: remote.id, computerName: remote.name, title: 'Remote side chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    vi.mocked(askSession).mockResolvedValue('Remote side answer.')
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Remote side chat')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+    fireEvent.change(screen.getByLabelText('Side question'), { target: { value: 'Still running?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+    expect(await screen.findByText('Remote side answer.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))
+    expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
+  })
+
   it.each(['computer', 'session', 're-added computer'] as const)('settles a newer %s update when a connection check omits its computer', async (changed) => {
     seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Live remote chat' }
@@ -19162,6 +19198,33 @@ describe('App', () => {
     await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
       'computer-1', 'session-1', expect.objectContaining({ content: pasted }),
     ))
+  })
+
+  it('omits an automatic recovery brief from sent-message search and ArrowUp recall', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const recovered = {
+      ...session,
+      messages: [
+        { id: 'before', role: 'user' as const, content: 'User prompt before recovery', createdAt: '2026-11-14T12:00:00Z' },
+        { id: 'brief', role: 'user' as const, content: 'Conversation recovery context', appGenerated: true,
+          deliveryConfirmed: true, createdAt: '2026-11-14T12:01:00Z' },
+        { id: 'after', role: 'user' as const, content: 'User prompt after recovery', createdAt: '2026-11-14T12:02:00Z' },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([recovered])
+    vi.mocked(getSession).mockResolvedValue(recovered)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    const picker = screen.getByRole('dialog', { name: 'Sent messages' })
+    expect(within(picker).getAllByRole('option')).toHaveLength(2)
+    expect(picker).not.toHaveTextContent('Conversation recovery context')
+    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('User prompt after recovery')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('User prompt before recovery')
+    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   it('supports command abbreviations and configures the web status line', async () => {

@@ -62,10 +62,18 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
   const updateTarget = <K extends keyof ScheduleTarget>(key: K, value: ScheduleTarget[K]) =>
     setDraft((current) => ({ ...current, target: { ...current.target, [key]: value } }))
   const selectedModel = models.find((model) => model.id === target.model)
+  const efforts = selectedModel?.reasoningEfforts ?? []
+  const contexts: RuntimeModelOption['contextTiers'] = selectedModel?.contextTiers ?? ['default']
   return <form noValidate className="schedule-form" onSubmit={async (event) => {
     event.preventDefault()
     setError(undefined)
     if (!targetPaired) { setStep('Target'); setError('Choose a paired computer before saving this schedule.'); return }
+    if ((target.model || target.effort || target.context) && !selectedModel) {
+      setStep('Target'); setError('Choose an explicit available model before saving effort or context settings.'); return
+    }
+    if (selectedModel && ((target.effort && !efforts.includes(target.effort)) || (target.context && !contexts.includes(target.context)))) {
+      setStep('Target'); setError('The selected model does not support the saved effort or context. Choose supported runtime options.'); return
+    }
     if (target.permissionPolicy === 'allow-all' && !confirmed) { setError('Confirm Allow-all permissions explicitly before saving.'); return }
     const parsed = scheduleCreateSchema.safeParse(draft)
     if (!parsed.success) {
@@ -116,6 +124,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
     <fieldset disabled={pending} hidden={step !== 'Target'}>
       <legend>Session target</legend>
       {!targetPaired && <p role="status" className="schedule-caption">This target computer is not paired. Choose a paired computer before saving.</p>}
+      {targetPaired && !target.model && <p className="schedule-caption">Select an explicit model to configure effort and context capacity.</p>}
       <div className="schedule-grid">
         <label className="field">Computer<select className="dialog-select" value={target.computerId} onChange={(event) => {
           update('target', { ...target, computerId: event.target.value, worktreeRoot: undefined, model: undefined, effort: undefined, context: undefined })
@@ -133,13 +142,13 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
           {target.model && !selectedModel && <option value={target.model}>{target.model} (not in current catalog)</option>}
           {models.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}
         </select></label>
-        <label className="field">Effort<select className="dialog-select" value={target.effort ?? ''} onChange={(event) => updateTarget('effort', event.target.value as ScheduleTarget['effort'] || undefined)}>
+        <label className="field">Effort<select className="dialog-select" disabled={!selectedModel} value={target.effort ?? ''} onChange={(event) => updateTarget('effort', event.target.value as ScheduleTarget['effort'] || undefined)}>
           <option value="">Default</option>
-          {target.effort && selectedModel && !selectedModel.reasoningEfforts.includes(target.effort) && <option value={target.effort}>{target.effort} (not in current catalog)</option>}
-          {(selectedModel?.reasoningEfforts ?? ['low', 'medium', 'high', 'xhigh', 'max']).map((effort) => <option key={effort} value={effort}>{effort}</option>)}</select></label>
-        <label className="field">Context<select className="dialog-select" value={target.context ?? 'default'} onChange={(event) => updateTarget('context', event.target.value as ScheduleTarget['context'])}>
-          {target.context && selectedModel && !selectedModel.contextTiers.includes(target.context) && <option value={target.context}>{target.context} (not in current catalog)</option>}
-          {(selectedModel?.contextTiers ?? ['default', 'long_context']).map((context) => <option key={context} value={context}>{context === 'default' ? 'Default' : 'Long context'}</option>)}</select></label>
+          {target.effort && !efforts.includes(target.effort) && <option value={target.effort}>{target.effort} (not in current catalog)</option>}
+          {efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}</select></label>
+        <label className="field">Context<select className="dialog-select" disabled={!selectedModel} value={target.context ?? 'default'} onChange={(event) => updateTarget('context', event.target.value as ScheduleTarget['context'])}>
+          {target.context && !contexts.includes(target.context) && <option value={target.context}>{target.context} (not in current catalog)</option>}
+          {contexts.map((context) => <option key={context} value={context}>{context === 'default' ? 'Default' : 'Long context'}</option>)}</select></label>
         <label className="field">Mode<select className="dialog-select" value={target.mode} onChange={(event) => updateTarget('mode', event.target.value as ScheduleTarget['mode'])}>
           <option value="autopilot">Autopilot</option><option value="interactive">Interactive</option><option value="plan">Plan</option></select></label>
       </div>

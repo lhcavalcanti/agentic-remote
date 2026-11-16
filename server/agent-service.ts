@@ -4972,6 +4972,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (replaceTerminalDraft || acknowledgedFailure) {
           throw Object.assign(queueConflict('Identified delivery cannot replace a draft or acknowledge another prompt.'), { uncertainDelivery: false })
         }
+        const receipt = this.store.get(sessionId)
+        if (this.admissions.launchBlocked(sessionId) &&
+            receipt?.promptReceipts?.some((entry) => entry.deliveryId === deliveryId)) return this.publicSession(receipt)
         return await this.admissions.run(sessionId, async () => {
           // A retry reads the durable receipt even after cancellation or retention.
           const existing = this.store.get(sessionId)
@@ -7742,6 +7745,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (stopped) this.publish(await this.store.confirmLaunchTermination(sessionId))
       return stopped
     }, async () => {
+      this.admissions.blockLaunch(sessionId)
       await this.store.readAfterWrites(sessionId)
       const fenced = await this.store.stopLaunchWork(sessionId)
       this.sdkDrainRequested.delete(sessionId)
@@ -11430,6 +11434,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     promptId: string,
     content: string,
   ): Promise<QueuedPromptDispatchResult> {
+    if (this.admissions.launchBlocked(sessionId)) throw queueConflict('The launch is stopping; no queued work can dispatch.')
     if (this.stopped || this.deletingSessions.has(sessionId)) {
       throw queueConflict('The session is no longer available.')
     }

@@ -118,7 +118,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
       {!targetPaired && <p role="status" className="schedule-caption">This target computer is not paired. Choose a paired computer before saving.</p>}
       <div className="schedule-grid">
         <label className="field">Computer<select className="dialog-select" value={target.computerId} onChange={(event) => {
-          update('target', { ...target, computerId: event.target.value, model: undefined, effort: undefined, context: undefined })
+          update('target', { ...target, computerId: event.target.value, worktreeRoot: undefined, model: undefined, effort: undefined, context: undefined })
         }}>
           {!targetPaired && <option value={target.computerId} disabled>{target.computerId ? `${target.computerId} (not paired)` : 'Choose a paired computer'}</option>}
           {computers.map((computer) => <option key={computer.id} value={computer.id}>{computer.name} · {computer.isLocal ? 'Hub' : 'Node'}{computer.online ? '' : ' · Offline'}</option>)}</select></label>

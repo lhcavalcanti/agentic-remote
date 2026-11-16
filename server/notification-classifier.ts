@@ -154,6 +154,8 @@ export function classifyOracleNotification(event: ManagerEvent, now: string, rep
   }
   const reply = message.role === 'user' ? replies.get(message.id) : undefined
   if (message.role === 'user') replies.delete(message.id)
+  if (message.role === 'user' && (message.suppressNotification || message.source === 'proactive' ||
+      message.automatic?.kind === 'proactive')) return []
   let suffix: string
   let title: string
   let body: string

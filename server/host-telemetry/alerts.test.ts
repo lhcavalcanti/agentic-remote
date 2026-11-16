@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ComputerSummary } from '../../shared/contracts.js'
+import type { ComputerSummary, ManagedSession } from '../../shared/contracts.js'
 import type { HostSnapshot } from '../../shared/host-telemetry.js'
 import { buildApp } from '../app.js'
 import {
@@ -225,6 +225,47 @@ describe('durable resource alerts and flag wiring', () => {
     directories.push(root)
     return root
   }
+
+  it.each([
+    ['local capture age plus queue delay', true, 20_000, 15_000, false],
+    ['clock-skewed remote capture age plus queue delay', false, 1_000, 30_000, false],
+    ['legacy remote hub-receipt age plus queue delay', false, undefined, 31_000, false],
+    ['exactly 30 seconds old at classification', false, 1_000, 29_000, true],
+  ] as const)('checks freshness after notification queueing: %s', async (_label, isLocal, age, delay, fresh) => {
+    let at = start
+    const store = new NotificationStore(await directory(), { now: () => at })
+    await store.initialize()
+    let release!: (session: ManagedSession) => void
+    const blockedRead = new Promise<ManagedSession>((resolve) => { release = resolve })
+    const readSession = vi.fn(() => blockedRead)
+    const service = new NotificationCenterService(store, {
+      now: () => at, mutedSessions: () => [], readSession,
+    })
+    const blocker: ManagedSession = {
+      id: 'queue-blocker', computerId: computer.id, computerName: computer.name, cwd: '/fictional/repo',
+      title: 'Queue blocker', status: 'running', isOpen: true, messages: [], updatedAt: new Date(start).toISOString(),
+    }
+    const blocking = service.hub({ type: 'session.upserted', session: blocker })
+    try {
+      await vi.waitFor(() => expect(readSession).toHaveBeenCalledOnce())
+      const observedComputer = { ...computer, isLocal }
+      const skew = isLocal ? 0 : 3_600_000
+      const queued = service.host(observedComputer, {
+        ...snapshot(at + skew, 50, 4), ...(age === undefined ? {} : { sampleAgeMs: age }),
+      })
+      at += delay
+      release(blocker)
+      await Promise.all([blocking, queued])
+      expect(await store.list()).toHaveLength(fresh ? 1 : 0)
+      await service.host(observedComputer, {
+        ...snapshot(at + skew, 50, 4), ...(age === undefined ? {} : { sampleAgeMs: 0 }),
+      })
+      expect(await store.list()).toEqual([expect.objectContaining({ kind: 'host.alert', title: 'Studio · Low disk space' })])
+    } finally {
+      release(blocker)
+      await service.flush()
+    }
+  })
 
   it('persists episode/cooldown across restart without resurrecting read or dismissed records', async () => {
     const root = await directory()

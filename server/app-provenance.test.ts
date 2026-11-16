@@ -62,6 +62,7 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
     },
     stop: () => undefined, readSession, listCachedSessions,
     listComputers: () => [{ id: 'studio', name: 'Studio', online: true, isLocal: true }],
+    captureComputerRegistration: () => () => true,
     createSession: async () => current.get('next')!,
   }) as unknown as ComputerManager
   manager.on('event', (event) => managerEvents.push(event))
@@ -86,6 +87,21 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
     async createUser() {
       return runtime.app.inject({ method: 'POST', url: '/api/computers/studio/sessions', headers: { host: 'localhost', origin: 'http://localhost' }, payload: { cwd: '/fictional' } })
     },
+    async replaceViaResponse(operation: 'clear' | 'recover', modern = false) {
+      manager[operation === 'clear' ? 'clearConversation' : 'recoverConversation'] = async () => {
+        current.delete('old')
+        manager.emit('event', {
+          type: 'session.removed', computerId: 'studio', sessionId: 'old',
+          ...(modern ? { replacedBy: 'next' } : {}),
+        })
+        return current.get('next')!
+      }
+      return runtime.app.inject({
+        method: 'POST', url: `/api/computers/studio/sessions/old/${operation}`,
+        headers: { host: 'localhost', origin: 'http://localhost' },
+        ...(operation === 'recover' ? { payload: { reason: 'provider-error' } } : {}),
+      })
+    },
     persisted: async () => JSON.parse(await readFile(file, 'utf8')),
     upsert(value: ManagedSession, summary?: true) {
       current.set(value.id, value)
@@ -99,6 +115,62 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
 }
 
 describe('hub provenance publication', () => {
+  it.each([
+    ['user', 'clear'], ['user', 'recover'], ['manager', 'clear'], ['manager', 'recover'],
+    ['schedule', 'clear'], ['schedule', 'recover'],
+  ] as const)('carries %s origin through legacy %s response-only lineage and republishes once', async (origin, operation) => {
+    const f = await fixture(origin)
+    f.upsert(session('next'))
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.id === 'next' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    const writes = vi.spyOn(f.store, 'updateRegistry')
+    const expected = { origin, ...(origin === 'schedule' ? { scheduleId: 'daily', scheduleRunId: 'run' } : {}) }
+    const response = await f.replaceViaResponse(operation)
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().session).toMatchObject({ id: 'next', provenance: expected })
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([
+      expect.objectContaining({ type: 'session.upserted', summary: true, session: expect.objectContaining({
+        id: 'next', provenance: expected,
+      }) }),
+    ]))
+    expect((await f.persisted())['studio:next']).toMatchObject({ ...expected, originEvidence: 'launch' })
+    expect(writes).toHaveBeenCalledOnce()
+    expect(f.managerEvents.find((event) => event.type === 'session.removed')).not.toHaveProperty('replacedBy')
+  })
+
+  it.each(['clear', 'recover'] as const)('deduplicates the modern %s event and response replacement carry', async (operation) => {
+    const f = await fixture('user')
+    f.upsert(session('next'))
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.id === 'next' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    const writes = vi.spyOn(f.store, 'updateRegistry')
+    const response = await f.replaceViaResponse(operation, true)
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().session.provenance).toEqual({ origin: 'user' })
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([
+      expect.objectContaining({ summary: true, session: expect.objectContaining({ id: 'next', provenance: { origin: 'user' } }) }),
+    ]))
+    expect(writes).toHaveBeenCalledOnce()
+  })
+
+  it('returns a legacy replacement ID and warns clients if response-only origin persistence fails', async () => {
+    const f = await fixture('user')
+    f.upsert(session('next'))
+    await vi.waitFor(async () => expect((await f.persisted())['studio:next']?.origin).toBe('discovered'))
+    const record = vi.spyOn(f.store, 'recordSessionReplacement').mockRejectedValue(new Error('Fictional registry failure'))
+    const response = await f.replaceViaResponse('clear')
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().session.id).toBe('next')
+    expect(record).toHaveBeenCalledWith('studio', 'old', 'next')
+    await vi.waitFor(() => expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'error', sessionId: 'next', message: expect.stringContaining('origin'),
+    })))
+  })
+
   it('reconciles an initial resync before attachment through discovery exactly once', async () => {
     const record = vi.spyOn(ManagerStore.prototype, 'recordDiscoveredSession')
     const f = await fixture(undefined, false, true, [session('early-external')])

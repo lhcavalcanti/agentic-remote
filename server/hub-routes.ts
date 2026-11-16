@@ -416,7 +416,7 @@ export async function registerHubRoutes(
   scheduler?: SchedulerStore,
   scheduleNotifications?: ScheduleNotificationService,
   isScheduledSession?: (session: ManagedSession) => boolean,
-  provenance?: Pick<ManagerStore, 'sessionProvenance'> & Partial<Pick<ManagerStore, 'recordUserSession'>>,
+  provenance?: Pick<ManagerStore, 'sessionProvenance'> & Partial<Pick<ManagerStore, 'recordUserSession' | 'recordSessionReplacement'>>,
 ): Promise<void> {
   const projection = sessionProvenanceProjection(provenance, scheduler)
   app.addHook('preSerialization', async (_request, _reply, payload) => projection.reply(payload))
@@ -936,6 +936,12 @@ export async function registerHubRoutes(
         }
       }
       await Promise.all([
+        carryMetadata(
+          () => session.id !== sessionId
+            ? provenance?.recordSessionReplacement?.(computerId, sessionId, session.id)
+            : undefined,
+          `${completed}, but its session origin could not be saved.`,
+        ),
         carryMetadata(
           () => carryKnowledge?.(sessionId, session),
           `${completed}, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.`,

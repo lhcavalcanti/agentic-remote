@@ -42,6 +42,24 @@ function target(data = snapshot, rows = inventory): HostTelemetryTarget {
 }
 
 describe('Oracle host status', () => {
+  it.each([-3_600_000, 0, 3_600_000])('reports legacy remote freshness as unknown without trusting clock skew %s', async (skew) => {
+    const result = await oracleHostStatus([computers[1]], async () => target({
+      ...snapshot, latest: { ...snapshot.latest!, at: new Date(now + skew).toISOString() },
+    }), () => now)
+    expect(result).toContain('sample age unknown')
+    expect(result).toContain('current host health is unknown')
+    expect(result).toContain('Update this computer')
+    expect(result).toContain('CPU 92%')
+    expect(result).not.toContain('sample age 0s')
+    expect(result).not.toContain('Stale sample')
+  })
+
+  it('keeps explicit zero sample age fresh on current remote nodes', async () => {
+    const result = await oracleHostStatus([computers[1]], async () => target({ ...snapshot, sampleAgeMs: 0 }), () => now)
+    expect(result).toContain('sample age 0s')
+    expect(result).not.toContain('current host health is unknown')
+  })
+
   it.each([-3_600_000, 3_600_000])('reports receipt-relative sample ages with node clock skew %s', async (skew) => {
     const result = await oracleHostStatus([computers[1]], async () => target({
       ...snapshot, latest: { ...snapshot.latest!, at: new Date(now + skew).toISOString() }, sampleAgeMs: 1200,

@@ -38,6 +38,24 @@ afterEach(async () => {
 })
 
 describe('launch identity response safety', () => {
+  it.each([409, 500, 503])('propagates node cancellation refusal %s and blocks subsequent prompt dispatch', async (statusCode) => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ error: 'Synthetic fence refusal' }, { status: statusCode }))
+    const owner = client('http://fixture.invalid')
+    await expect(owner.cancelWithAck('session', 100)).rejects.toMatchObject({ statusCode })
+    await expect(owner.sendMessage('session', { content: 'Must not dispatch', enqueue: true })).rejects.toMatchObject({ statusCode: 409 })
+    await expect(owner.dispatchQueuedPrompt('session', 'queued', 'Must not dispatch')).rejects.toMatchObject({ statusCode: 409 })
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('keeps dispatch blocked after a cancellation transport timeout', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new DOMException('Synthetic timeout', 'TimeoutError'))
+    const owner = client('http://fixture.invalid')
+    await expect(owner.cancelWithAck('session', 100)).resolves.toMatchObject({ outcome: 'unknown' })
+    await expect(owner.sendMessage('session', { content: 'Must stay blocked', enqueue: true })).rejects.toMatchObject({ statusCode: 409 })
+    await expect(owner.dispatchQueuedPrompt('session', 'queued', 'Must stay blocked')).rejects.toMatchObject({ statusCode: 409 })
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
   it('does not silently accept creation or delivery responses that omitted required identity evidence', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json({ session }))
     const owner = client('http://fixture.invalid')
@@ -71,9 +89,7 @@ describe('launch identity response safety', () => {
     { sessionId: 'other', outcome: 'stopped', checkedAt: '2026-11-14T06:00:00Z', scope: 'provider-owned' },
   ])('does not acknowledge termination on malformed or mismatched evidence (%j)', async (payload) => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(Response.json(payload))
-    await expect(client('http://fixture.invalid').cancelWithAck('session', 100)).resolves.toMatchObject({
-      sessionId: 'session', outcome: 'unknown',
-    })
+    await expect(client('http://fixture.invalid').cancelWithAck('session', 100)).rejects.toMatchObject({ statusCode: 502 })
   })
 
   it('keeps transport failure unknown instead of reporting the work stopped', async () => {

@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -24,6 +25,59 @@ describe('ManagerStore', () => {
     await store.initialize()
     return store
   }
+
+  it('notifies only committed projection changes, including schedule run changes, and never on load', async () => {
+    const store = await open()
+    const notifications: Array<{ keys: string[]; origin: string }> = []
+    const unsubscribe = store.onSessionProvenanceChanged((sessions) => {
+      notifications.push({
+        keys: sessions.map(({ computerId, sessionId }) => `${computerId}:${sessionId}`),
+        origin: JSON.parse(readFileSync(path.join(root, 'manager', 'sessions.json'), 'utf8'))['c:live'].origin,
+      })
+    })
+    await store.updateRegistry((registry) => {
+      registry['c:live'] = { computerId: 'c', sessionId: 'live', title: 'Legacy', origin: 'user', firstSeenAt: 'x' }
+    })
+    expect(notifications).toEqual([])
+    const writing = store.updateRegistry((registry) => { registry['c:live'].originEvidence = 'launch' })
+    expect(notifications).toEqual([])
+    await writing
+    await store.updateRegistry((registry) => { registry['c:live'].title = 'Title only' })
+    expect(notifications).toEqual([{ keys: ['c:live'], origin: 'user' }])
+    await store.updateRegistry((registry) => {
+      Object.assign(registry['c:live'], { origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'first' })
+    })
+    await store.updateRegistry((registry) => { registry['c:live'].scheduleRunId = 'second' })
+    expect(notifications).toHaveLength(3)
+    expect(notifications.slice(1)).toEqual([
+      { keys: ['c:live'], origin: 'schedule' }, { keys: ['c:live'], origin: 'schedule' },
+    ])
+    unsubscribe()
+    await store.updateRegistry((registry) => { registry['c:live'].origin = 'manager' })
+    const bytes = await readFile(path.join(root, 'manager', 'sessions.json'), 'utf8')
+    const reopened = new ManagerStore(path.join(root, 'manager'))
+    let notifiedOnLoad = false
+    reopened.onSessionProvenanceChanged(() => { notifiedOnLoad = true })
+    await reopened.initializeSessionRegistry()
+    expect(await readFile(path.join(root, 'manager', 'sessions.json'), 'utf8')).toBe(bytes)
+    expect(notifications).toHaveLength(3)
+    expect(notifiedOnLoad).toBe(false)
+  })
+
+  it('does not notify failed writes and compares recovery against the last committed projection', async () => {
+    const store = await open()
+    const changes: string[][] = []
+    store.onSessionProvenanceChanged((sessions) => { changes.push(sessions.map(({ sessionId }) => sessionId)) })
+    const file = path.join(root, 'manager', 'sessions.json')
+    await mkdir(file)
+    await expect(store.updateRegistry((registry) => {
+      registry['c:live'] = { computerId: 'c', sessionId: 'live', title: 'Task', origin: 'manager', firstSeenAt: 'x' }
+    })).rejects.toThrow()
+    expect(changes).toEqual([])
+    await rm(file, { recursive: true })
+    await store.updateRegistry((registry) => { registry['c:live'].title = 'Retry' })
+    expect(changes).toEqual([['live']])
+  })
 
   it('starts empty and persists state across reopen', async () => {
     const store = await open()

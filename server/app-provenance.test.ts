@@ -7,6 +7,8 @@ import type { HubEvent, ManagedSession, SessionOrigin } from '../shared/contract
 import { buildApp } from './app.js'
 import type { ComputerManager } from './computer-manager.js'
 import { ManagerStore } from './manager-store.js'
+import { JournalRecorder } from './manager-journal.js'
+import { recordScheduleProvenance } from './schedule-launcher.js'
 
 const directories: string[] = []
 const applications: Array<{ close(): Promise<unknown> }> = []
@@ -63,7 +65,16 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
     createSession: async () => current.get('next')!,
   }) as unknown as ComputerManager
   manager.on('event', (event) => managerEvents.push(event))
+  let runtimeStore!: ManagerStore
+  const initializers = (['initialize', 'initializeSessionRegistry'] as const).map((method) => {
+    const initialize = ManagerStore.prototype[method]
+    return vi.spyOn(ManagerStore.prototype, method).mockImplementation(function (this: ManagerStore) {
+      runtimeStore = this
+      return initialize.call(this)
+    })
+  })
   const runtime = await buildApp({ dataDirectory: directory, manager, managerAgent: false, logger: false, serveStatic: false })
+  for (const initialize of initializers) initialize.mockRestore()
   applications.push(runtime.app)
   await runtime.app.ready()
   const socket = await runtime.app.injectWS('/api/events', { headers: { host: 'localhost', origin: 'http://localhost' } })
@@ -71,7 +82,7 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
   const messages: HubEvent[] = []
   socket.on('message', (data) => messages.push(JSON.parse(data.toString())))
   return {
-    manager, current, messages, readSession, managerEvents, listCachedSessions,
+    manager, current, messages, readSession, managerEvents, listCachedSessions, store: runtimeStore,
     async createUser() {
       return runtime.app.inject({ method: 'POST', url: '/api/computers/studio/sessions', headers: { host: 'localhost', origin: 'http://localhost' }, payload: { cwd: '/fictional' } })
     },
@@ -100,7 +111,86 @@ describe('hub provenance publication', () => {
     f.upsert(session('early-external'))
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(record).toHaveBeenCalledOnce()
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it.each(['manager', 'schedule'] as const)('corrects discovery after a later %s launch write without another upsert', async (origin) => {
+    const record = vi.spyOn(ManagerStore.prototype, 'recordDiscoveredSession')
+    const f = await fixture()
+    const launched = session('late-launch')
+    f.upsert(launched)
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    if (origin === 'manager') {
+      const recorder = new JournalRecorder(f.store)
+      await recorder.markManaged(launched, 'Fictional launch whose prompt delivery fails')
+      await recorder.stop()
+    } else {
+      await recordScheduleProvenance(f.store, launched, {
+        origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional launch whose prompt delivery fails',
+      })
+    }
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([
+      expect.objectContaining({ type: 'session.upserted', summary: true, session: expect.objectContaining({
+        id: launched.id, provenance: expect.objectContaining({
+          origin, ...(origin === 'schedule' ? { scheduleId: 'daily', scheduleRunId: 'run' } : {}),
+        }),
+      }) }),
+    ]))
+    await f.store.updateRegistry((registry) => { registry['studio:late-launch'].title = 'Unrelated title update' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toHaveLength(1)
+    expect(f.readSession).toHaveBeenCalledTimes(2)
+    expect(record).toHaveBeenCalledOnce()
+  })
+
+  it.each(['removed', 'retired'] as const)('does not republish a later launch write for a %s session', async (state) => {
+    const f = await fixture()
+    const launched = session('late-launch')
+    f.upsert(launched)
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    if (state === 'removed') {
+      f.current.delete(launched.id)
+      f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: launched.id })
+    } else {
+      await f.store.updateRegistry((registry) => { registry['studio:late-launch'].removedAt = launched.updatedAt })
+    }
+    f.messages.length = 0
+    await recordScheduleProvenance(f.store, launched, {
+      origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional retired launch',
+    })
+    await f.store.flush()
+    await new Promise<void>((resolve) => setImmediate(resolve))
     expect(f.readSession).toHaveBeenCalledOnce()
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+  })
+
+  it('does not resurrect a session removed during a corrected provenance read', async () => {
+    const f = await fixture()
+    const launched = session('late-launch')
+    f.upsert(launched)
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    releases.push(release)
+    f.readSession.mockImplementationOnce(async () => { await gate; return launched })
+    await recordScheduleProvenance(f.store, launched, {
+      origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional launch',
+    })
+    await vi.waitFor(() => expect(f.readSession).toHaveBeenCalledTimes(2))
+    f.current.delete(launched.id)
+    f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: launched.id })
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'session.removed')).toBe(true))
+    f.messages.length = 0
+    release()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
   })
 
   it.each([

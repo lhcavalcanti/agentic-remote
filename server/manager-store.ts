@@ -101,6 +101,16 @@ export interface RegistryEntry {
 }
 
 export type ManagerRegistry = Record<string, RegistryEntry>
+type ProvenanceListener = (sessions: ReadonlyArray<Pick<RegistryEntry, 'computerId' | 'sessionId'>>) => void
+
+function projectProvenance(entry: RegistryEntry | undefined, computerId: string, sessionId: string): SessionProvenance | undefined {
+  if (!entry || entry.computerId !== computerId || entry.sessionId !== sessionId) return undefined
+  if (entry.origin === 'user' && entry.originEvidence !== 'launch') return undefined
+  if (entry.origin === 'discovered' && entry.originEvidence !== 'discovery') return undefined
+  return entry.origin === 'schedule'
+    ? { origin: entry.origin, scheduleId: entry.scheduleId, scheduleRunId: entry.scheduleRunId }
+    : { origin: entry.origin }
+}
 
 export function applySessionReplacement(
   registry: ManagerRegistry, computerId: string, sessionId: string, replacedBy: string, now: string,
@@ -207,6 +217,8 @@ export class ManagerStore {
   private journal: JournalEntry[] = []
   private journalSeq = 0
   private sessions: ManagerRegistry = {}
+  private committedSessions: ManagerRegistry = {}
+  private readonly provenanceListeners = new Set<ProvenanceListener>()
   private work: Promise<unknown> = Promise.resolve()
 
   constructor(readonly directory: string, options: ManagerStoreOptions = {}) {
@@ -258,6 +270,7 @@ export class ManagerStore {
 
   private async loadSessionRegistry(): Promise<void> {
     this.sessions = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
+    this.committedSessions = this.sessions
   }
 
   recordUserSession(session: ManagedSession): Promise<void> {
@@ -448,13 +461,17 @@ export class ManagerStore {
 
   /** UI/API projection only; Oracle policy continues to read the stored origin. */
   sessionProvenance(computerId: string, sessionId: string): SessionProvenance | undefined {
+    return projectProvenance(this.sessions[registryKey(computerId, sessionId)], computerId, sessionId)
+  }
+
+  isSessionRetired(computerId: string, sessionId: string): boolean {
     const entry = this.sessions[registryKey(computerId, sessionId)]
-    if (!entry || entry.computerId !== computerId || entry.sessionId !== sessionId) return undefined
-    if (entry.origin === 'user' && entry.originEvidence !== 'launch') return undefined
-    if (entry.origin === 'discovered' && entry.originEvidence !== 'discovery') return undefined
-    return entry.origin === 'schedule'
-      ? { origin: entry.origin, scheduleId: entry.scheduleId, scheduleRunId: entry.scheduleRunId }
-      : { origin: entry.origin }
+    return Boolean(entry?.removedAt || entry?.replacedBy)
+  }
+
+  onSessionProvenanceChanged(listener: ProvenanceListener): () => void {
+    this.provenanceListeners.add(listener)
+    return () => { this.provenanceListeners.delete(listener) }
   }
 
   updateRegistry(change: (registry: ManagerRegistry) => void): Promise<void> {
@@ -462,7 +479,21 @@ export class ManagerStore {
     change(next)
     this.sessions = this.pruneTombstones(next)
     const snapshot = structuredClone(this.sessions)
-    return this.serialized(() => this.writeJson('sessions.json', snapshot))
+    return this.serialized(async () => {
+      await this.writeJson('sessions.json', snapshot)
+      const changed = [...new Set([...Object.keys(this.committedSessions), ...Object.keys(snapshot)])].flatMap((key) => {
+        const { computerId, sessionId } = snapshot[key] ?? this.committedSessions[key]
+        return isDeepStrictEqual(
+          projectProvenance(this.committedSessions[key], computerId, sessionId),
+          projectProvenance(snapshot[key], computerId, sessionId),
+        ) ? [] : [{ computerId, sessionId }]
+      })
+      this.committedSessions = snapshot
+      if (changed.length) for (const listener of [...this.provenanceListeners]) {
+        try { listener(changed) }
+        catch (error) { console.warn('Session provenance listener failed:', error) }
+      }
+    })
   }
 
   /** Settles once every write issued so far is on disk. */

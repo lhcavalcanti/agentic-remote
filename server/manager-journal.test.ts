@@ -40,6 +40,21 @@ describe('JournalRecorder', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it('notifies changed origins from a batched registry write but not title-only journal changes', async () => {
+    const changes: string[][] = []
+    store.onSessionProvenanceChanged((sessions) => { changes.push(sessions.map(({ sessionId }) => sessionId)) })
+    recorder.handle({ type: 'session.upserted', session: session('a') })
+    recorder.handle({ type: 'session.upserted', session: session('b') })
+    await recorder.flush()
+    expect(changes).toEqual([['a', 'b']])
+    recorder.handle({ type: 'session.upserted', session: session('a', { title: 'Renamed' }) })
+    await recorder.flush()
+    expect(changes).toHaveLength(1)
+    await recorder.markManaged(session('a'), 'Fictional Oracle launch')
+    expect(changes).toEqual([['a', 'b'], ['a']])
+    expect(store.sessionProvenance('hub', 'a')).toEqual({ origin: 'manager' })
+  })
+
   it('journals proposals and outcomes durably without making scheduled sessions Oracle-owned', async () => {
     const schedules = new SchedulerStore(root)
     await schedules.initialize()

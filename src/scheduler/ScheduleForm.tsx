@@ -39,20 +39,25 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
   const [draft, setDraft] = useState(() => initial ?? newSchedule(computers.find((computer) => computer.isLocal)?.id ?? computers[0]?.id ?? ''))
   const [confirmed, setConfirmed] = useState(false)
   const [error, setError] = useState<string>()
-  const [models, setModels] = useState<RuntimeModelOption[]>([])
-  const [modelsError, setModelsError] = useState<string>()
+  const [runtimeCatalog, setRuntimeCatalog] = useState<{
+    computerId: string; provider: ScheduleTarget['provider']; models?: RuntimeModelOption[]; error?: string
+  }>()
   const [step, setStep] = useState<'Details' | 'Target' | 'Policies'>('Details')
   const [clock] = useState(() => new Date())
   const { recurrence, target } = draft
   const targetPaired = computers.some((computer) => computer.id === target.computerId)
+  const catalog = runtimeCatalog?.computerId === target.computerId && runtimeCatalog.provider === target.provider ? runtimeCatalog : undefined
+  const models = catalog?.models ?? []
+  const modelsLoaded = catalog?.models !== undefined
+  const modelsError = catalog?.error
   useEffect(() => {
     let active = true
-    setModels([])
-    setModelsError(undefined)
+    const scope = { computerId: target.computerId, provider: target.provider }
+    setRuntimeCatalog(scope)
     if (!targetPaired) return
     void getProviderRuntimeOptions(target.computerId, target.provider).then((options) => {
-      if (active) { setModels(options.models); setModelsError(undefined) }
-    }).catch((caught) => { if (active) setModelsError(scheduleError(caught)) })
+      if (active) setRuntimeCatalog({ ...scope, models: options.models })
+    }).catch((caught) => { if (active) setRuntimeCatalog({ ...scope, error: scheduleError(caught) }) })
     return () => { active = false }
   }, [target.computerId, target.provider, targetPaired])
   const preview = useMemo(() => {
@@ -64,19 +69,24 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
     setDraft((current) => ({ ...current, target: { ...current.target, [key]: value } }))
   const selectedModel = models.find((model) => model.id === target.model)
   const efforts = selectedModel?.reasoningEfforts ?? []
-  const contexts: RuntimeModelOption['contextTiers'] = selectedModel?.contextTiers ?? ['default']
+  const contexts: RuntimeModelOption['contextTiers'] = ['default', ...(selectedModel?.contextTiers.filter((context) => context !== 'default') ?? [])]
   return <form noValidate className="schedule-form" onSubmit={async (event) => {
     event.preventDefault()
     setError(undefined)
     if (!targetPaired) { setStep('Target'); setError('Choose a paired computer before saving this schedule.'); return }
-    if ((target.model || target.effort || target.context) && !selectedModel) {
-      setStep('Target'); setError('Choose an explicit available model before saving effort or context settings.'); return
+    if (!target.model && (target.effort || target.context === 'long_context')) {
+      setStep('Target'); setError('Choose an explicit model for effort or long context, or reset those options to defaults.'); return
     }
-    if (selectedModel && ((target.effort && !efforts.includes(target.effort)) || (target.context && !contexts.includes(target.context)))) {
+    if (modelsLoaded && target.model && !selectedModel) {
+      setStep('Target'); setError('The selected model is not in the current catalog. Choose an available model or Provider default.'); return
+    }
+    if (modelsLoaded && selectedModel && ((target.effort && !efforts.includes(target.effort)) || (target.context === 'long_context' && !contexts.includes(target.context)))) {
       setStep('Target'); setError('The selected model does not support the saved effort or context. Choose supported runtime options.'); return
     }
     if (target.permissionPolicy === 'allow-all' && !confirmed) { setError('Confirm Allow-all permissions explicitly before saving.'); return }
-    const parsed = scheduleCreateSchema.safeParse(draft)
+    const parsed = scheduleCreateSchema.safeParse({
+      ...draft, target: { ...target, context: target.context === 'default' ? undefined : target.context },
+    })
     if (!parsed.success) {
       const issue = parsed.error.issues[0]
       setError(issue ? `${issue.path.join('.')}: ${issue.message}` : 'Invalid schedule')
@@ -93,6 +103,9 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
       {(['Details', 'Target', 'Policies'] as const).map((name) =>
         <button type="button" aria-pressed={step === name} key={name} onClick={() => setStep(name)}>{name}</button>)}
     </div>
+    {targetPaired && !modelsLoaded && <p role="status" className="schedule-caption">
+      {modelsError ? `Runtime options could not be verified: ${modelsError}.` : 'Runtime options could not yet be verified (catalog loading).'} You can still save other edits.
+    </p>}
     <fieldset disabled={pending} hidden={step !== 'Details'}>
       <legend>Schedule details</legend>
       <label className="field">Name<input className="dialog-input" maxLength={200} value={draft.name} onChange={(event) => update('name', event.target.value)} /></label>
@@ -125,7 +138,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
     <fieldset disabled={pending} hidden={step !== 'Target'}>
       <legend>Session target</legend>
       {!targetPaired && <p role="status" className="schedule-caption">This target computer is not paired. Choose a paired computer before saving.</p>}
-      {targetPaired && !target.model && <p className="schedule-caption">Select an explicit model to configure effort and context capacity.</p>}
+      {targetPaired && !target.model && <p className="schedule-caption">Use default effort and context, or select an explicit model for runtime overrides.</p>}
       <div className="schedule-grid">
         <label className="field">Computer<select className="dialog-select" value={target.computerId} onChange={(event) => {
           update('target', { ...target, computerId: event.target.value, worktreeRoot: undefined, model: undefined, effort: undefined, context: undefined })
@@ -140,20 +153,19 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
         <label className="field">Model<select className="dialog-select" value={target.model ?? ''} onChange={(event) => {
           update('target', { ...target, model: event.target.value || undefined, effort: undefined, context: undefined })
         }}><option value="">Provider default</option>
-          {target.model && !selectedModel && <option value={target.model}>{target.model} (not in current catalog)</option>}
+          {target.model && !selectedModel && <option value={target.model}>{target.model} ({modelsLoaded ? 'not in current catalog' : 'unverified'})</option>}
           {models.map((model) => <option value={model.id} key={model.id}>{model.name}</option>)}
         </select></label>
-        <label className="field">Effort<select className="dialog-select" disabled={!selectedModel} value={target.effort ?? ''} onChange={(event) => updateTarget('effort', event.target.value as ScheduleTarget['effort'] || undefined)}>
+        <label className="field">Effort<select className="dialog-select" value={target.effort ?? ''} onChange={(event) => updateTarget('effort', event.target.value as ScheduleTarget['effort'] || undefined)}>
           <option value="">Default</option>
-          {target.effort && !efforts.includes(target.effort) && <option value={target.effort}>{target.effort} (not in current catalog)</option>}
+          {target.effort && !efforts.includes(target.effort) && <option value={target.effort}>{target.effort} ({!target.model ? 'needs a model' : modelsLoaded ? 'not in current catalog' : 'unverified'})</option>}
           {efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}</select></label>
-        <label className="field">Context<select className="dialog-select" disabled={!selectedModel} value={target.context ?? 'default'} onChange={(event) => updateTarget('context', event.target.value as ScheduleTarget['context'])}>
-          {target.context && !contexts.includes(target.context) && <option value={target.context}>{target.context} (not in current catalog)</option>}
+        <label className="field">Context<select className="dialog-select" value={target.context ?? 'default'} onChange={(event) => updateTarget('context', event.target.value === 'default' ? undefined : event.target.value as ScheduleTarget['context'])}>
+          {target.context && !contexts.includes(target.context) && <option value={target.context}>{target.context} ({!target.model ? 'needs a model' : modelsLoaded ? 'not in current catalog' : 'unverified'})</option>}
           {contexts.map((context) => <option key={context} value={context}>{selectedModel ? contextSizeLabel(selectedModel, context) : 'Automatic'}</option>)}</select></label>
         <label className="field">Mode<select className="dialog-select" value={target.mode} onChange={(event) => updateTarget('mode', event.target.value as ScheduleTarget['mode'])}>
           <option value="autopilot">Autopilot</option><option value="interactive">Interactive</option><option value="plan">Plan</option></select></label>
       </div>
-      {modelsError && <p role="status" className="schedule-caption">{modelsError}</p>}
       <p className="schedule-caption">The owning computer enforces allowed roots and launch capabilities. Older computers must be updated before they can run schedules.</p>
     </fieldset>
     <fieldset disabled={pending} hidden={step !== 'Policies'}>

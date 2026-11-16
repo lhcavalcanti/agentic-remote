@@ -664,7 +664,7 @@ export async function buildApp(
     if (managerStoreReady && managerStore) {
       const store = managerStore
       const published = new Map<string, string | undefined>()
-      const pending = new Map<string, { session?: ManagedSession; cachedDiscovery?: true; retired: boolean; writes: number; discovering: boolean }>()
+      const pending = new Map<string, { session?: ManagedSession; retired: boolean; writes: number; discovering: boolean }>()
       const tracking = (key: string) => {
         let state = pending.get(key)
         if (!state) {
@@ -690,17 +690,14 @@ export async function buildApp(
         const needsPublication = () => !state.retired && published.has(key) &&
           !store.isSessionRetired(computerId, sessionId) &&
           published.get(key) !== JSON.stringify(store.sessionProvenance(computerId, sessionId))
-        trackProvenanceWork(key, state, store.flush().then(async () => {
+        trackProvenanceWork(key, state, store.flush().then(() => {
           if (!needsPublication()) return
-          const beforeRead = state.session
-          // Replaying the cached startup roster must not fan out new node reads.
-          const current = state.cachedDiscovery
-            ? state.session
-            : await manager!.readSession(computerId, sessionId).catch(() => undefined)
+          // Metadata-only publication must never fetch transcripts or wait for a node.
+          const current = manager!.listCachedSessions?.().find((session) =>
+            session.computerId === computerId && session.id === sessionId)
           const latest = state.session
-          let session = current
-          if (latest && (latest !== beforeRead || (current &&
-            (latest.revision === undefined || current.revision === undefined || latest.revision >= current.revision)))) session = latest
+          const session = latest && (!current || latest.revision === undefined || current.revision === undefined ||
+            latest.revision >= current.revision) ? latest : current
           if (!session || !needsPublication()) return
           published.set(key, JSON.stringify(store.sessionProvenance(computerId, sessionId)))
           manager!.emit('event', { type: 'session.upserted', session, summary: true })
@@ -743,9 +740,6 @@ export async function buildApp(
       // Deferred to readiness so a hub that fails to build never starts registry writes.
       reconcileCachedSessionProvenance = () => {
         for (const session of manager!.listCachedSessions?.() ?? []) {
-          if (!store.sessionOrigin(session.computerId, session.id)) {
-            tracking(`${session.computerId}:${session.id}`).cachedDiscovery = true
-          }
           forwardToSessionProvenance!({ type: 'session.upserted', session, summary: true })
         }
       }

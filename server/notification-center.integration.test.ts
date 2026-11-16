@@ -326,8 +326,15 @@ describe('hub notification center', () => {
       finish(session('slow'))
       await runtime.notificationCenter!.flush()
       await vi.waitFor(() => expect(published.some((event) => event.type === 'computer.removed')).toBe(true))
-      const slowStates = published.filter((event) => event.type === 'session.upserted' && event.session.id === 'slow')
-      expect(slowStates.map((event) => event.type === 'session.upserted' && event.session.status)).toEqual(['running', 'idle'])
+      const slowStates = published.flatMap((event) =>
+        event.type === 'session.upserted' && event.session.id === 'slow' ? [event] : [])
+      expect(slowStates.filter((event) => !event.summary).map((event) => event.session.status)).toEqual(['running', 'idle'])
+      // Origin corrections may arrive between runtime states, but remain metadata-only.
+      const metadata = slowStates.filter((event) => event.summary)
+      expect(metadata.length).toBeLessThanOrEqual(1)
+      for (const event of metadata) expect(event).toMatchObject({
+        summary: true, session: { provenance: { origin: 'discovered' } },
+      })
       expect(published.findIndex((event) => event.type === 'computer.removed'))
         .toBeGreaterThan(published.findLastIndex((event) => event.type === 'session.upserted' && event.session.id === 'slow'))
     } finally {

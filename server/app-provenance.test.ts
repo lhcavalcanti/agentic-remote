@@ -76,7 +76,9 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
   })
   const runtime = await buildApp({ dataDirectory: directory, manager, managerAgent: false, logger: false, serveStatic: false })
   for (const initialize of initializers) initialize.mockRestore()
-  applications.push(runtime.app)
+  let closing: Promise<unknown> | undefined
+  const application = { close: () => closing ??= runtime.app.close() }
+  applications.push(application)
   await runtime.app.ready()
   const socket = await runtime.app.injectWS('/api/events', { headers: { host: 'localhost', origin: 'http://localhost' } })
   sockets.push(socket)
@@ -84,6 +86,10 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
   socket.on('message', (data) => messages.push(JSON.parse(data.toString())))
   return {
     manager, current, messages, readSession, managerEvents, listCachedSessions, store: runtimeStore,
+    close() {
+      socket.terminate()
+      return application.close()
+    },
     async createUser() {
       return runtime.app.inject({ method: 'POST', url: '/api/computers/studio/sessions', headers: { host: 'localhost', origin: 'http://localhost' }, payload: { cwd: '/fictional' } })
     },
@@ -115,6 +121,24 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
 }
 
 describe('hub provenance publication', () => {
+  it('closes after a large summary roster even when every passive read would remain unresolved', async () => {
+    const f = await fixture()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    releases.push(release)
+    f.readSession.mockImplementation(async (_computer, id) => {
+      await gate
+      return f.current.get(id)!
+    })
+    for (let index = 0; index < 50; index++) f.upsert(session(`roster-${index}`), true)
+    await vi.waitFor(async () => expect(Object.keys(await f.persisted())).toHaveLength(50))
+    let closed = false
+    const closing = f.close().then(() => { closed = true })
+    await vi.waitFor(() => expect(closed).toBe(true), { timeout: 2_000 })
+    await closing
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['user', 'clear'], ['user', 'recover'], ['manager', 'clear'], ['manager', 'recover'],
     ['schedule', 'clear'], ['schedule', 'recover'],
@@ -179,7 +203,6 @@ describe('hub provenance publication', () => {
     }))
     await vi.waitFor(() => expect(f.managerEvents.filter((event) => event.type === 'session.upserted')).toHaveLength(2))
     expect(f.managerEvents.at(-1)).toMatchObject({ type: 'session.upserted', summary: true, session: { id: 'early-external' } })
-    expect(f.listCachedSessions).toHaveBeenCalledOnce()
     f.upsert(session('early-external'))
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(record).toHaveBeenCalledOnce()
@@ -214,7 +237,7 @@ describe('hub provenance publication', () => {
     await f.store.updateRegistry((registry) => { registry['studio:late-launch'].title = 'Unrelated title update' })
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(f.messages.filter((event) => event.type === 'session.upserted')).toHaveLength(1)
-    expect(f.readSession).toHaveBeenCalledTimes(2)
+    expect(f.readSession).not.toHaveBeenCalled()
     expect(record).toHaveBeenCalledOnce()
   })
 
@@ -237,32 +260,52 @@ describe('hub provenance publication', () => {
     })
     await f.store.flush()
     await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(f.readSession).toHaveBeenCalledOnce()
+    expect(f.readSession).not.toHaveBeenCalled()
     expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
   })
 
-  it('does not resurrect a session removed during a corrected provenance read', async () => {
+  it('skips a correction without a tracked or cached payload until the next upsert', async () => {
     const f = await fixture()
     const launched = session('late-launch')
     f.upsert(launched)
     await vi.waitFor(() => expect(f.messages.some((event) =>
       event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
     )).toBe(true))
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => { release = resolve })
-    releases.push(release)
-    f.readSession.mockImplementationOnce(async () => { await gate; return launched })
+    f.listCachedSessions.mockReturnValue([])
+    f.messages.length = 0
     await recordScheduleProvenance(f.store, launched, {
       origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional launch',
     })
-    await vi.waitFor(() => expect(f.readSession).toHaveBeenCalledTimes(2))
-    f.current.delete(launched.id)
-    f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: launched.id })
-    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'session.removed')).toBe(true))
-    f.messages.length = 0
-    release()
+    await f.store.flush()
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    f.upsert(session(launched.id, 2))
+    await vi.waitFor(() => expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', session: expect.objectContaining({ id: launched.id, provenance: expect.objectContaining({ origin: 'schedule' }) }),
+    })))
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it('does not resurrect a session removed while looking up its cached publication payload', async () => {
+    const f = await fixture()
+    const launched = session('late-launch')
+    f.upsert(launched)
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    f.listCachedSessions.mockImplementationOnce(() => {
+      f.current.delete(launched.id)
+      f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: launched.id })
+      return [launched]
+    })
+    await recordScheduleProvenance(f.store, launched, {
+      origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional launch',
+    })
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'session.removed')).toBe(true))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    expect(f.readSession).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -297,22 +340,26 @@ describe('hub provenance publication', () => {
     expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance)).toMatchObject({ summary: true })
   })
 
-  it.each([1, 2])('marks a summary discovery republish metadata-only when the passive read has revision %s', async (revision) => {
+  it.each([
+    [1, 1, 1, false], [2, 1, 2, true], [1, 2, 2, false], [undefined, 2, 2, false],
+  ] as const)('uses cache revision %s and upsert revision %s for a metadata-only republish', async (cachedRevision, upsertRevision, expectedRevision, fromCache) => {
     const f = await fixture()
     const full = {
-      ...session('external', revision),
+      ...session('external', cachedRevision),
       messages: [{ id: 'held-message', role: 'assistant' as const, content: 'Keep this fictional transcript.', createdAt: session('external').updatedAt }],
     }
-    f.readSession.mockResolvedValue(full)
-    f.upsert(session('external'), true)
+    f.upsert(session('external', upsertRevision), true)
+    if (cachedRevision === undefined) f.current.delete('external')
+    else f.current.set('external', full)
     await vi.waitFor(() => expect(f.messages.some((message) =>
       message.type === 'session.upserted' && message.session.provenance?.origin === 'discovered',
     )).toBe(true))
     const republished = f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance)
     expect(republished).toMatchObject({
       type: 'session.upserted', summary: true,
-      session: { revision, messages: revision === 1 ? [] : full.messages, provenance: { origin: 'discovered' } },
+      session: { revision: expectedRevision, messages: fromCache ? full.messages : [], provenance: { origin: 'discovered' } },
     })
+    expect(f.readSession).not.toHaveBeenCalled()
   })
 
   it('publishes the current discovered session after persistence and never starts a rebroadcast loop', async () => {
@@ -340,7 +387,7 @@ describe('hub provenance publication', () => {
     f.upsert(f.current.get('external')!)
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(record).toHaveBeenCalledOnce()
-    expect(f.readSession).toHaveBeenCalledOnce()
+    expect(f.readSession).not.toHaveBeenCalled()
   })
 
   it('does not rebroadcast a discovery removed while its write is in flight', async () => {

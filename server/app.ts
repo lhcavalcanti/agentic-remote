@@ -390,6 +390,7 @@ export async function buildApp(
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   let forwardToSessionProvenance: ((event: HubEvent) => void) | undefined
   let releaseSessionProvenance: (() => void) | undefined
+  let reconcileCachedSessionProvenance: (() => void) | undefined
   const provenanceWrites = new Set<Promise<void>>()
   let forwardToProactive: ((event: HubEvent) => void) | undefined
   let forwardHubToDreamer: ((event: HubEvent) => void) | undefined
@@ -739,11 +740,14 @@ export async function buildApp(
         }
       }
       manager.on('event', forwardToSessionProvenance)
-      for (const session of manager.listCachedSessions?.() ?? []) {
-        if (!store.sessionOrigin(session.computerId, session.id)) {
-          tracking(`${session.computerId}:${session.id}`).cachedDiscovery = true
+      // Deferred to readiness so a hub that fails to build never starts registry writes.
+      reconcileCachedSessionProvenance = () => {
+        for (const session of manager!.listCachedSessions?.() ?? []) {
+          if (!store.sessionOrigin(session.computerId, session.id)) {
+            tracking(`${session.computerId}:${session.id}`).cachedDiscovery = true
+          }
+          forwardToSessionProvenance!({ type: 'session.upserted', session, summary: true })
         }
-        forwardToSessionProvenance({ type: 'session.upserted', session, summary: true })
       }
     }
     if (notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
@@ -876,6 +880,7 @@ export async function buildApp(
   // Ready only once the service has started, so the probe never races the
   // recovery of sessions that were open before a restart.
   app.addHook('onReady', async () => {
+    reconcileCachedSessionProvenance?.()
     if (hostTelemetry) {
       await startupPhases.run('hostTelemetry.start', async () => hostTelemetry.start())
     }

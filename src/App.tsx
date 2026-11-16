@@ -7739,20 +7739,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             event.computerId,
             eventSequenceRef.current,
           )
-          // Its sessions go with it, so nothing held for them can ever be
-          // settled again. Left behind, the text of a prompt that failed
-          // stayed in this browser's storage for good.
-          for (const key of Object.keys(restoredDraftStamps.current)) {
-            if (key.slice(0, key.indexOf(':')) === event.computerId) {
-              forgetRestoredDraft(key)
-              handledFailures.current.delete(key)
-              restoredFailures.current.delete(key)
-              unshownFailures.current.delete(key)
-            }
-          }
-          for (const key of acceptedSubmissionTokens.current.keys()) {
-            if (key.startsWith(`${event.computerId}:`)) acceptedSubmissionTokens.current.delete(key)
-          }
+          discardComputerLocalState(event.computerId)
           computersRef.current = computersRef.current.filter(
             (computer) => computer.id !== event.computerId,
           )
@@ -7761,35 +7748,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // computer that has been unpaired, so a tab still listing one would
           // offer a document it can no longer fetch.
           forgetComputerKnowledge(event.computerId)
-          setSideQuestions(withoutSideQuestions((key) => key.startsWith(`${event.computerId}:`)))
-          // Nothing on a computer that has gone is still on its way.
-          for (const key of [...pendingReplacements.current]) {
-            if (key.slice(0, key.indexOf(':')) === event.computerId) {
-              pendingReplacements.current.delete(key)
-              settleAttachmentTargetWaiters(key, undefined)
-            }
-          }
           for (const session of sessionsRef.current) {
-            if (session.computerId === event.computerId) {
-              removedSessions.current.add(sessionKey(session))
-              submissionAnchors.current.delete(sessionKey(session))
-            }
+            if (session.computerId === event.computerId) removedSessions.current.add(sessionKey(session))
           }
           setSessions((current) =>
             current.filter((session) => session.computerId !== event.computerId),
           )
           setBackgroundTaskSnapshots((current) =>
-            Object.fromEntries(
-              Object.entries(current).filter(
-                ([key]) => !key.startsWith(`${event.computerId}:`),
-              ),
-            ),
-          )
-          updateComposerDrafts(
-            Object.keys(composerDraftsRef.current).filter(
-              (key) => key.startsWith(`${event.computerId}:`),
-            ),
-            (current) =>
             Object.fromEntries(
               Object.entries(current).filter(
                 ([key]) => !key.startsWith(`${event.computerId}:`),
@@ -8491,7 +8456,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return false
     }
     const userTurns = selected.messages
-      .filter((message) => message.role === 'user' && message.content.trim())
+      .filter((message) => message.role === 'user' && !message.appGenerated && message.content.trim())
     const messages = userTurns.map((message) => message.content)
     if (messages.length === 0) {
       return false
@@ -13067,6 +13032,43 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       Object.entries(current).filter(([key]) => !key.startsWith(`${computerId}:`))))
   }
 
+  /**
+   * Browser-held state for a computer that is no longer paired: its sessions
+   * go with it, so nothing held for them can ever be settled again. Left
+   * behind, the text of a prompt that failed stayed in this browser's storage
+   * for good, and side answers stayed on screen. Shared by the removal event
+   * and a connection check that finds the computer unpaired.
+   */
+  function discardComputerLocalState(computerId: string) {
+    const owned = (key: string) => key.startsWith(`${computerId}:`)
+    for (const key of Object.keys(restoredDraftStamps.current)) {
+      if (owned(key)) {
+        forgetRestoredDraft(key)
+        handledFailures.current.delete(key)
+        restoredFailures.current.delete(key)
+        unshownFailures.current.delete(key)
+      }
+    }
+    for (const key of acceptedSubmissionTokens.current.keys()) {
+      if (owned(key)) acceptedSubmissionTokens.current.delete(key)
+    }
+    setSideQuestions(withoutSideQuestions(owned))
+    // Nothing on a computer that has gone is still on its way.
+    for (const key of [...pendingReplacements.current]) {
+      if (owned(key)) {
+        pendingReplacements.current.delete(key)
+        settleAttachmentTargetWaiters(key, undefined)
+      }
+    }
+    for (const session of sessionsRef.current) {
+      if (session.computerId === computerId) submissionAnchors.current.delete(sessionKey(session))
+    }
+    updateComposerDrafts(
+      Object.keys(composerDraftsRef.current).filter(owned),
+      (current) => Object.fromEntries(Object.entries(current).filter(([key]) => !owned(key))),
+    )
+  }
+
   async function checkComputerConnections() {
     const generation = ++snapshotGeneration.current
     const startedAtSequence = eventSequenceRef.current
@@ -13080,6 +13082,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       const removedAtSequence = nextSessionEventSequence()
       eventSequenceRef.current = removedAtSequence
       for (const id of forgotten) computerEventSequenceRef.current.set(id, removedAtSequence)
+      for (const id of forgotten) discardComputerLocalState(id)
       for (const session of sessionsRef.current) {
         if (!keepSession(session)) {
           const key = sessionKey(session)

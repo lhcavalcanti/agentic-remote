@@ -432,12 +432,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   provider listings MUST NOT list it as open, and sends to it are refused until
   it is reopened. A computer that does not advertise recoverable close offers
   only Delete permanently.
-- **Recently closed**, the last entry of the session list, MUST list closed
-  sessions newest first with when each closed and will be deleted, its
-  context, **Reopen**, and a confirmed **Delete permanently**. Reopen uses the
-  history reopen lifecycle and sends nothing. The owning computer MUST delete a
-  closed session permanently 14 days after it closed, checking at startup and
-  hourly; a failed deletion is logged and retried at the next check.
+- **Recently closed**, in the Sessions header between Refresh and New session,
+  MUST list closed sessions newest first with when each closed and will be
+  deleted, its context, **Reopen**, and a confirmed **Delete permanently**.
+  Reopen uses the history reopen lifecycle and sends nothing. The owning
+  computer MUST delete a closed session permanently 14 days after it closed,
+  checking at startup and hourly; a failed deletion is logged and retried at
+  the next check.
 - **Delete permanently** MUST close the owning provider process/session after
   confirmation and remove Agentic Remote state and session uploads. A session
   selected while another one is closing MUST stay selected; only a reader

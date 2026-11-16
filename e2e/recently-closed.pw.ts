@@ -50,12 +50,20 @@ async function open(page: Page, baseUrl: string, phone: boolean) {
 
 /** The Sessions list, opening the drawer a phone keeps it in. */
 async function sessions(page: Page, phone: boolean) {
-  if (phone && (await page.locator('aside.sidebar--open').count()) === 0) {
-    await page.getByRole('button', { name: 'Open sessions' }).click()
-  }
-  const list = page.getByRole('navigation', { name: 'Sessions' })
+  const list = await drawer(page, phone)
   await expect(list.locator('.session-item').first()).toBeVisible()
   return list
+}
+
+/** The Sessions navigation, whether or not any session has loaded yet. */
+async function drawer(page: Page, phone: boolean) {
+  if (phone && (await page.locator('aside.sidebar--open').count()) === 0) {
+    await page.getByRole('button', { name: 'Open sessions' }).click()
+    // Settled, so what is measured is where it stays.
+    await page.locator('aside.sidebar--open').evaluate((aside) =>
+      Promise.all(aside.getAnimations().map((animation) => animation.finished)))
+  }
+  return page.getByRole('navigation', { name: 'Sessions' })
 }
 
 function row(list: Locator, title: string) {
@@ -92,6 +100,84 @@ async function expectUsable(page: Page, dialog: Locator) {
   }
 }
 
+/**
+ * The Sessions header keeps Refresh, Recently closed and New session on its one
+ * row, in that order: nothing spills sideways, wraps or is cut short, including
+ * the chosen order, and the three buttons share one size, which a phone makes
+ * easy to hit.
+ */
+async function expectHeaderFits(list: Locator, phone: boolean) {
+  const header = await list.locator('.session-list__heading').evaluate(async (heading) => {
+    await document.fonts.ready
+    const box = (element: Element) => {
+      const { left, right, top, bottom } = element.getBoundingClientRect()
+      return { left, right, top, bottom }
+    }
+    const size = (element: HTMLElement) => ({ width: element.offsetWidth, height: element.offsetHeight })
+    const sidebar = heading.closest('aside')!
+    const buttons = [...heading.querySelectorAll('button')]
+    const badge = buttons
+      .find((button) => button.getAttribute('aria-label')?.startsWith('Recently closed'))
+      ?.querySelector('span[aria-hidden="true"]')
+    const select = heading.querySelector('select')!
+    const style = getComputedStyle(select)
+    const pen = document.createElement('canvas').getContext('2d')!
+    pen.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`
+    return {
+      frame: box(heading),
+      overflow: heading.scrollWidth - heading.clientWidth,
+      sidebarOverflow: sidebar.scrollWidth - sidebar.clientWidth,
+      parts: [...heading.children].map(box),
+      lines: [...heading.querySelectorAll('.session-list__title > *')].map((line) => ({
+        text: line.textContent,
+        cut: line.scrollWidth > line.clientWidth,
+        wrapped: line.getBoundingClientRect().height >= 2 * parseFloat(getComputedStyle(line).fontSize),
+      })),
+      buttons: buttons.map((button) => ({ name: button.getAttribute('aria-label'), ...box(button), ...size(button) })),
+      select: {
+        ...size(select),
+        label: select.selectedOptions[0].text,
+        needs: pen.measureText(select.selectedOptions[0].text).width,
+        room: select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+      },
+      badge: badge ? box(badge) : undefined,
+    }
+  })
+  const { frame, parts, buttons, select, badge } = header
+
+  expect(buttons.map(({ name }) => name)).toEqual([
+    expect.stringMatching(/^(Refresh|Retry refreshing) sessions/),
+    expect.stringMatching(/^Recently closed/),
+    'New session',
+  ])
+  expect(buttons[0].right).toBeLessThanOrEqual(buttons[1].left + 0.5)
+  expect(buttons[1].right).toBeLessThanOrEqual(buttons[2].left + 0.5)
+  expect(header).toMatchObject({ overflow: 0, sidebarOverflow: 0 })
+  for (const part of parts) {
+    expect(part.left).toBeGreaterThanOrEqual(frame.left - 0.5)
+    expect(part.right).toBeLessThanOrEqual(frame.right + 0.5)
+    // One row: every part shares the same band.
+    expect(part.top).toBeLessThan(Math.min(...parts.map(({ bottom }) => bottom)))
+  }
+  for (const line of header.lines) expect(line, line.text ?? '').toMatchObject({ cut: false, wrapped: false })
+  expect(select.needs, select.label).toBeLessThanOrEqual(select.room + 0.5)
+
+  for (const button of buttons) expect([button.width, button.height]).toEqual([buttons[2].width, buttons[2].height])
+  if (phone) {
+    for (const control of [...buttons, select]) {
+      expect(control.width).toBeGreaterThanOrEqual(TARGET)
+      expect(control.height).toBeGreaterThanOrEqual(TARGET)
+    }
+  }
+  if (badge) {
+    const entry = buttons[1]
+    expect(badge.left).toBeGreaterThanOrEqual(entry.left - 0.5)
+    expect(badge.top).toBeGreaterThanOrEqual(entry.top - 0.5)
+    expect(badge.right).toBeLessThanOrEqual(entry.right + 0.5)
+    expect(badge.bottom).toBeLessThanOrEqual(entry.bottom + 0.5)
+  }
+}
+
 async function screenshot(page: Page, name: string) {
   if (process.env.RECENTLY_CLOSED_SCREENSHOT) {
     // Away from every control, so no button is caught mid-hover.
@@ -113,7 +199,7 @@ for (const device of devices) {
       try {
         const entry = list.getByRole('button', { name: 'Recently closed, 1 session' })
         await expect(entry).toBeVisible()
-        expect((await bounds(entry)).height).toBeGreaterThanOrEqual(TARGET)
+        await expectHeaderFits(list, phone)
 
         const confirmation = await closeFromRow(list, 'Plan the knowledge workspace')
         await expect(confirmation).toContainText(
@@ -126,7 +212,8 @@ for (const device of devices) {
         const current = await sessions(page, phone)
         await expect(row(current, 'Plan the knowledge workspace')).toHaveCount(0)
         const recentEntry = current.getByRole('button', { name: 'Recently closed, 2 sessions' })
-        await recentEntry.scrollIntoViewIfNeeded()
+        await expect(recentEntry).toBeVisible()
+        await expectHeaderFits(current, phone)
         await screenshot(page, `${device.name}-list`)
         await recentEntry.click()
         const recent = page.getByRole('dialog', { name: 'Recently closed' })
@@ -154,6 +241,46 @@ for (const device of devices) {
         })
         expect(fixture.requests.filter((request) => request.path.endsWith('/messages'))).toEqual([])
       } finally {
+        fixture.assertHealthy()
+      }
+    })
+
+    test('keeps the header on one row while connecting and once the connection fails', async ({ page }, testInfo) => {
+      let answer!: () => void
+      const answered = new Promise<void>((resolve) => { answer = resolve })
+      // Page routes run before the fixture's: the session listing waits, then fails.
+      await page.route((url) => url.pathname === '/api/sessions', async (route) => {
+        await answered
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'The hub is unavailable' }),
+        })
+      })
+      const state = createWorkspaceFixtureState()
+      state.closedSessions.push(structuredClone(closedEarlier))
+      const fixture = await setupWorkspaceFixture(page, {
+        baseUrl: testInfo.project.use.baseURL!, knowledgeMode: 'hidden', state,
+      })
+      try {
+        await page.goto(fixture.url)
+        const list = await drawer(page, phone)
+        await expect(list.getByText('Connecting...')).toBeVisible()
+        await expectHeaderFits(list, phone)
+
+        answer()
+        await expect(list.getByText('Connection failed')).toBeVisible()
+        await expect(list.getByRole('button', { name: 'Recently closed, 1 session' })).toBeVisible()
+        // The widest status leaves every order its whole label; Custom order, the default, comes last.
+        const order = list.getByRole('combobox', { name: 'Session order' })
+        for (const value of ['recent', 'attention', 'name', 'custom']) {
+          await order.selectOption(value)
+          await expect(order).toHaveValue(value)
+          await expectHeaderFits(list, phone)
+        }
+        await screenshot(page, `${device.name}-connection-failed`)
+      } finally {
+        answer()
         fixture.assertHealthy()
       }
     })

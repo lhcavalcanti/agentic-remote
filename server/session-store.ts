@@ -200,6 +200,7 @@ interface StoredSession extends SessionDetail {
   sdkQueueAdmission?: SdkQueueAdmission
   recoveryResend?: RecoveryResend
   recoverySeed?: RecoverySeed
+  generatedPrompt?: { content: string } | { messageId: string }
   sdkRestartRecovery?: SdkRestartRecovery
   sdkAcceptedReply?: SdkAcceptedReply
   uploadOwnerIds?: string[]
@@ -343,6 +344,18 @@ function archivedMessage(message: ChatMessage): ChatMessage {
       'Stopped when the provider conversation was recovered.'
   }
   return archived
+}
+
+function markGeneratedPrompt(session: StoredSession, messages: ChatMessage[]): ChatMessage[] {
+  const generated = session.generatedPrompt
+  if (!generated) return messages
+  const message = messages.find((candidate) => candidate.role === 'user' &&
+    ('messageId' in generated ? candidate.id === generated.messageId : candidate.content === generated.content))
+  if (!message) return messages
+  // Bind the provider's identity once. Later identical user prompts, including
+  // after transcript pruning, must not inherit the automatic brief's marker.
+  session.generatedPrompt = { messageId: message.id }
+  return messages.map((candidate) => candidate === message ? { ...candidate, appGenerated: true } : candidate)
 }
 
 function ownsRecoverySeedFailure(session: StoredSession): boolean {
@@ -521,6 +534,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     sdkQueueAdmission,
     recoveryResend: _recoveryResend,
     recoverySeed,
+    generatedPrompt: _generatedPrompt,
     sdkRestartRecovery,
     sdkAcceptedReply: _sdkAcceptedReply,
     restartRecovery: _restartRecovery,
@@ -1127,7 +1141,7 @@ export class SessionStore {
     observation = this.observeTranscript(sessionId),
   ): Promise<SessionDetail | undefined> {
     return this.installTranscript(sessionId, observation, (session) => {
-      session.messages = messages
+      session.messages = markGeneratedPrompt(session, messages)
       return true
     })
   }
@@ -1151,7 +1165,7 @@ export class SessionStore {
       const nextUserInput = typeof pendingUserInput === 'function'
         ? pendingUserInput(session)
         : pendingUserInput
-      session.messages = nextMessages
+      session.messages = markGeneratedPrompt(session, nextMessages)
       if (nextUserInput !== undefined) {
         session.pendingUserInput = nextUserInput || undefined
       }
@@ -1959,6 +1973,7 @@ export class SessionStore {
       session.pendingUserInput = undefined
       session.recovery = undefined
       session.recoverySeed = undefined
+      session.generatedPrompt = undefined
       session.queuedPrompts = []
       session.queuedCount = 0
       session.queueState = undefined
@@ -2035,6 +2050,7 @@ export class SessionStore {
         queuedPromptReservation: undefined,
         sdkQueueAdmission: undefined,
         recoverySeed: undefined,
+        generatedPrompt: undefined,
         uploadOwnerIds: undefined,
         transcriptEpoch: undefined,
         updatedAt: new Date().toISOString(),
@@ -2154,6 +2170,7 @@ export class SessionStore {
           prompt: recoveryPrompt,
           state: 'pending',
         },
+        generatedPrompt: { content: recoveryPrompt },
         uploadOwnerIds: [
           ...new Set([
             ...(existing.uploadOwnerIds || []),
@@ -2431,7 +2448,8 @@ export class SessionStore {
         session.failedPrompt = { content: head.content, failedAt: createdAt, uncertain: true }
       }
       session.messages.push(
-        { id: userId, role: 'user', content, createdAt, deliveryState: 'pending' },
+        { id: userId, role: 'user', content, createdAt, deliveryState: 'pending',
+          ...(options.recoverySeedPrompt ? { appGenerated: true } : {}) },
         { id: assistantId, role: 'assistant', content: '', createdAt, streaming: true },
       )
       session.transcriptEpoch = assistantId
@@ -2463,6 +2481,7 @@ export class SessionStore {
         state: 'dispatching',
         startedAt: new Date().toISOString(),
       }
+      session.generatedPrompt ??= { content: prompt }
       if (session.failedPrompt && ownsRecoverySeedFailure(session)) session.failedPrompt.uncertain = true
     })
   }

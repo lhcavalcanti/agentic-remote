@@ -19200,6 +19200,33 @@ describe('App', () => {
     ))
   })
 
+  it('omits an automatic recovery brief from sent-message search and ArrowUp recall', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const recovered = {
+      ...session,
+      messages: [
+        { id: 'before', role: 'user' as const, content: 'User prompt before recovery', createdAt: '2026-11-14T12:00:00Z' },
+        { id: 'brief', role: 'user' as const, content: 'Conversation recovery context', appGenerated: true,
+          deliveryConfirmed: true, createdAt: '2026-11-14T12:01:00Z' },
+        { id: 'after', role: 'user' as const, content: 'User prompt after recovery', createdAt: '2026-11-14T12:02:00Z' },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([recovered])
+    vi.mocked(getSession).mockResolvedValue(recovered)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    const picker = screen.getByRole('dialog', { name: 'Sent messages' })
+    expect(within(picker).getAllByRole('option')).toHaveLength(2)
+    expect(picker).not.toHaveTextContent('Conversation recovery context')
+    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('User prompt after recovery')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('User prompt before recovery')
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it('supports command abbreviations and configures the web status line', async () => {
       const runtimeSession = {
         ...session,

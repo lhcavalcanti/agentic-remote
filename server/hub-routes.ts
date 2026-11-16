@@ -1262,6 +1262,8 @@ export async function registerHubRoutes(
     const previous = [broadcasts.get(key)?.promise, computerId ? broadcasts.get(computerKey)?.promise : undefined]
     if (event.type === 'computer.removed') {
       previous.push(...[...broadcasts.values()].filter((entry) => entry.computerId === computerId).map((entry) => entry.promise))
+    } else if (event.type === 'session.order.updated') {
+      previous.push(...[...broadcasts.values()].filter((entry) => entry.computerId !== undefined).map((entry) => entry.promise))
     }
     // Preserve each session's metadata/transcript order and computer retirement
     // barriers, without letting one passive detail read stall unrelated streams.

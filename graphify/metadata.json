@@ -575,7 +575,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "6058d28af1722518170d7c0fe0ba9c8e7a00a06a19074a65aa51d9e1f876be52",
+    "package.json": "84702d3762440d2767f15bce3d881e012943bc270042fc5e2660ab0bd26718c1",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "9a0249fb977ecff39695b090b5ba6bf4f6ec114b786636b52573a0c5cc087fb1",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -1119,15 +1119,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "2ca20bac5d64e20e15357f5739236d7b17c3aa50eb05843e4fd626f368d35bc4",
+    "GRAPH_REPORT.md": "40978fe571cfe687c17ab207a1ac94056c9bac3b30c06ad3bb0369aca0c26a29",
     "communities.json": "42015bcdbc1b2e0a028963648cea3af6fe1e5cc0adcbe9e8621c849466ad1587",
-    "graph.html": "9d19e326c3e41a01a2ae41d6b3519a0859875a225fae850ebffbb490bd54be98",
-    "graph.json": "82b45087085cec649bfb60b70d70b683bf6ef0453183d027d083f8706831c20b"
+    "graph.html": "801fcc1bbff71ed89ef32d8146f2279c32139460cbc32aef73ad4d6f67aa4f23",
+    "graph.json": "4c636c98c0dae29430afbcc4f60d282fca102b3b898def7e0d74fee25ae82207"
   },
   "schema_version": 1,
-  "source_commit": "43c3c6e85457b13c0f6256070212c9dabca8bab9",
-  "source_fingerprint": "8ce9d46d58f64b9f2d1c21993af2e88d80a00fa91e3bc02c739ac5d6f4e608f7",
+  "source_commit": "b6c4fee0f24de0c78ae042944fc8f8b444c92af9",
+  "source_fingerprint": "7175186264f393fc86b105b58c80fec78852cba46ccca228ecf122cfef83d625",
   "working_tree_changes": [
-    "src/index.css"
+    "package.json"
   ]
 }

@@ -8441,7 +8441,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return false
     }
     const userTurns = selected.messages
-      .filter((message) => message.role === 'user' && message.content.trim())
+      .filter((message) => message.role === 'user' && !message.appGenerated && message.content.trim())
     const messages = userTurns.map((message) => message.content)
     if (messages.length === 0) {
       return false

@@ -35,6 +35,8 @@ export interface SessionService {
   stop(): Promise<void>
   listSessions(): SessionDetail[]
   listHistory(): SessionDetail[]
+  /** Sessions closed through the app that can still be reopened. */
+  listClosedSessions?(): SessionDetail[]
   getSession(id: string): SessionDetail | undefined
   openSession(id: string): Promise<SessionDetail>
   activateSession(id: string): Promise<SessionDetail>
@@ -122,6 +124,10 @@ export interface SessionService {
     taskId: string,
   ): Promise<BackgroundTaskSnapshot>
   deleteSession(sessionId: string): Promise<void>
+  /** Stops a session but keeps it, with its provider data, to reopen. */
+  closeSession?(sessionId: string): Promise<SessionDetail>
+  /** Deletes a session still closed at or before `closedBefore`; false when it is not. */
+  deleteExpiredClosedSession?(sessionId: string, closedBefore: number): Promise<boolean>
   replyPermission(
     sessionId: string,
     requestId: string,

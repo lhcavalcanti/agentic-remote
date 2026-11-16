@@ -18,6 +18,8 @@ export interface AgentProviderCapability {
   supportsSessionResources?: boolean
   supportsContextRecovery?: boolean
   supportsSessionRetention?: boolean
+  /** Close keeps the session reopenable instead of deleting it. */
+  supportsRecoverableClose?: boolean
   /** Answers side questions about a session without prompting it. */
   supportsSideQuestions?: boolean
   unavailableReason?: string
@@ -339,6 +341,45 @@ export interface SessionRetentionPatch {
   idleDays?: number | null
 }
 
+/**
+ * What a closed session was about, kept with it so it can be recognised and
+ * reopened: worked out from its transcript when it closed, with no model call.
+ */
+export interface ClosedSessionContext {
+  title: string
+  cwd: string
+  /** The last few prompts, oldest first, each on one line and bounded. */
+  prompts: string[]
+  /** An excerpt of the last reply, when there was one. */
+  reply?: string
+}
+
+/**
+ * Why a session was interrupted:
+ * - `terminal-stopped`: its terminal was not running when the session was
+ *   viewed or recovered.
+ * - `restart`: the service restarted while the session was working, or while
+ *   an SDK reply was in flight.
+ * - `relaunch-failed`: starting its terminal again failed.
+ * - `queue-held`: queued work waits for an explicit Reopen.
+ * - `recovery-cancelled`: a recovered SDK turn was cancelled.
+ */
+export type SessionInterruptionCause =
+  | 'terminal-stopped'
+  | 'restart'
+  | 'relaunch-failed'
+  | 'queue-held'
+  | 'recovery-cancelled'
+
+export interface SessionInterruption {
+  detectedAt: string
+  previousStatus: SessionStatus
+  /** Absent on interruptions recorded before causes were kept. */
+  cause?: SessionInterruptionCause
+  /** The error behind the cause, bounded; only a failed relaunch has one. */
+  message?: string
+}
+
 export interface SessionSummary {
   id: string
   revision?: number
@@ -351,8 +392,14 @@ export interface SessionSummary {
   isOpen?: boolean
   retention?: SessionRetention
   retentionLastUsedAt?: string
-  interruption?: { detectedAt: string; previousStatus: SessionStatus }
+  interruption?: SessionInterruption
   archivedAt?: string
+  /**
+   * Closed through Agentic Remote: nothing runs for it, and it stays
+   * reopenable until it is deleted for good once its retention ends.
+   */
+  closedAt?: string
+  closedContext?: ClosedSessionContext
   queuedCount?: number
   queuedPrompts?: QueuedPrompt[]
   /** A claimed terminal queue head is still awaiting a safe delivery outcome. */
@@ -489,6 +536,8 @@ export type ServerEvent =
        * discards state that should have moved to the replacement.
        */
       replacedBy?: string
+      /** Set when the session was closed and stays reopenable, not deleted. */
+      closed?: boolean
     }
   | {
       type: 'session.tasks.updated'
@@ -542,6 +591,7 @@ export type HubEvent =
       sessionId: string
       /** See the node event above. */
       replacedBy?: string
+      closed?: boolean
     }
   | {
       type: 'session.tasks.updated'

@@ -2098,6 +2098,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingTerminalPromptDispatches = new Map<string, string>()
   private readonly deletingSessions = new Set<string>()
   private readonly deletedSessionIds = new Set<string>()
+  /** Being closed to reopen later: nothing may attach or wake its runtime. */
+  private readonly closingSessions = new Set<string>()
   /** SDK sessions owned by something else on this computer, such as the manager agent. */
   private readonly hiddenSessionIds = new Set<string>()
   private sideQuestionTimeoutMs = SIDE_QUESTION_TIMEOUT_MS
@@ -2348,6 +2350,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsSessionResources: true,
         supportsContextRecovery: true,
         supportsSessionRetention: true,
+        supportsRecoverableClose: true,
         supportsSideQuestions: true,
       },
     ]
@@ -2901,6 +2904,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private assertSendNotHeld(sessionId: string): void {
     const session = this.store.get(sessionId)
+    if (session?.closedAt) {
+      throw Object.assign(
+        queueConflict('Reopen the closed session before sending. Nothing was sent.'),
+        { uncertainDelivery: false },
+      )
+    }
     if (session?.interruption || session?.archivedAt) {
       throw Object.assign(
         queueConflict('Reopen the interrupted session before sending. Nothing was sent.'),
@@ -3089,6 +3098,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }))
   }
 
+  /** Sessions closed through the app that can still be reopened, newest closure first. */
+  listClosedSessions(): SessionDetail[] {
+    return this.listHistory()
+      .filter((session) => session.closedAt)
+      .sort((left, right) => right.closedAt!.localeCompare(left.closedAt!))
+  }
+
   /**
    * Keeps SDK sessions that belong to something else on this computer, such
    * as the manager agent's conversation, out of discovery and every list.
@@ -3269,7 +3285,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async openSession(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
-    if (stored.interruption || stored.archivedAt) return this.publicSession(stored)
+    // Read as kept: opening one of these must not start its runtime.
+    if (stored.interruption || stored.archivedAt || stored.closedAt || this.closingSessions.has(id)) {
+      return this.publicSession(stored)
+    }
     if (
       this.externalSessionIds.has(id) ||
       this.isTerminalRecoveryPending(id)
@@ -3286,7 +3305,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return this.publicSession(stored)
     }
     if (this.store.backend(id) === 'terminal') {
-      const interrupted = await this.store.markInterrupted(id)
+      const interrupted = await this.store.markInterrupted(id, 'terminal-stopped')
       this.publish(interrupted)
       return this.publicSession(interrupted)
     }
@@ -7771,6 +7790,171 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     )
   }
 
+  /**
+   * Deletes a closed session for good once its retention has ended. Decided
+   * in the lifecycle queue, so a reopen that got there first keeps it.
+   */
+  async deleteExpiredClosedSession(sessionId: string, closedBefore: number): Promise<boolean> {
+    return this.serializeLifecycle(sessionId, async () => {
+      const closedAt = this.store.get(sessionId)?.closedAt
+      if (!closedAt || !(Date.parse(closedAt) <= closedBefore)) return false
+      await this.deleteSerialized(sessionId)
+      return true
+    })
+  }
+
+  /**
+   * Closes a session so it can be reopened. What runs for it stops as a
+   * delete would stop it, but its record, transcript, and provider data stay.
+   */
+  async closeSession(sessionId: string): Promise<SessionDetail> {
+    return this.publicSession(await this.serializeLifecycle(sessionId, () =>
+      this.closeSerialized(sessionId),
+    ))
+  }
+
+  private async closeSerialized(sessionId: string): Promise<SessionDetail> {
+    const stored = this.store.get(sessionId)
+    if (!stored) {
+      throw new Error('Session not found')
+    }
+    if (stored.closedAt) return stored
+    const terminalBacked = this.store.backend(sessionId) === 'terminal'
+
+    this.deletingSessions.add(sessionId)
+    this.closingSessions.add(sessionId)
+    // Discovery that started before the runtime went holds an answer that
+    // predates the close.
+    this.discoveryGeneration += 1
+    try {
+      const stopped = await this.stopSessionRuntime(sessionId, terminalBacked)
+      if (!terminalBacked) {
+        // An attachment already on its way would land behind the close.
+        await this.loadingSessions.get(sessionId)?.catch(() => undefined)
+        const owner = this.sessions.get(sessionId)
+        if (owner) {
+          try {
+            await owner.disconnect()
+          } catch (error) {
+            await Promise.all([stopped.interruptedSdkRun, stopped.interruptedSdkFollowUp?.settled])
+            await this.reconcileRetainedSdkDeletion(
+              sessionId,
+              stopped.interruptedPrompt,
+              stopped.interruptedSdkTurn,
+              error,
+              'close',
+            )
+            throw error
+          }
+          this.removeSdkOwner(sessionId, owner)
+        }
+      }
+      stopped.interruptedSdkFollowUp?.cancel()
+      this.sdkFollowUpTrackers.delete(sessionId)
+      const closed = await this.store.closeSession(sessionId)
+      this.forgetSessionRuntime(sessionId)
+      this.externalSessionIds.delete(sessionId)
+      this.pendingTerminalPromptDispatches.delete(sessionId)
+      this.rediscoveredTerminalQueues.delete(sessionId)
+      this.liveTerminalAdmissions.delete(sessionId)
+      this.eventLogVersions.delete(sessionId)
+      this.eventLogFingerprints.delete(sessionId)
+      forgetSessionEvents(sessionId)
+      this.emit('event', { type: 'session.removed', sessionId, closed: true })
+      return closed
+    } finally {
+      this.deletingSessions.delete(sessionId)
+      this.closingSessions.delete(sessionId)
+      this.discoveryGeneration += 1
+    }
+  }
+
+  /**
+   * Stops what runs for a session that is leaving the open list: queued and
+   * running turns, its terminal process, and the requests it is waiting on.
+   * What becomes of its SDK owner and provider data is the caller's.
+   */
+  private async stopSessionRuntime(sessionId: string, terminalBacked: boolean) {
+    const queuedSdkRun = this.queuedPromptRuns.get(sessionId)
+    let interruptedPrompt = queuedSdkRun
+      ? this.activePrompts.get(sessionId)
+      : undefined
+    let interruptedSdkTurn = queuedSdkRun
+      ? this.sdkTurnsAwaited.get(sessionId)
+      : undefined
+    let interruptedSdkRun = queuedSdkRun
+    this.queuedPromptStops.get(sessionId)?.()
+    await this.admissions.wait(sessionId)
+    await Promise.allSettled(this.sdkReplyWrites(sessionId))
+    await this.queueOperations.get(sessionId)?.catch(() => undefined)
+    await this.queuedPromptRuns.get(sessionId)?.catch(() => undefined)
+    const active = this.sessions.get(sessionId)
+    const currentPrompt = this.activePrompts.get(sessionId)
+    if (currentPrompt) {
+      interruptedPrompt = currentPrompt
+      interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
+      interruptedSdkRun = this.sdkPromptRuns.get(sessionId)
+    }
+    const interruptedSdkFollowUp =
+      this.sdkFollowUpTrackers.get(sessionId)
+    await this.activeSessionStopper(sessionId)
+    if (active) {
+      if (this.activePrompts.has(sessionId)) {
+        interruptedSdkFollowUp?.settleWhenIdle()
+        this.activePrompts.delete(sessionId)
+        await active.abort()
+      }
+      if (terminalBacked) {
+        await active.disconnect()
+        this.removeSdkOwner(sessionId, active)
+      }
+    }
+    for (const [requestId, permission] of this.permissions) {
+      if (permission.sessionId === sessionId) {
+        permission.resolve({ kind: 'user-not-available' })
+        this.permissions.delete(requestId)
+      }
+    }
+    for (const [requestId, input] of this.userInputs) {
+      if (input.sessionId === sessionId) {
+        input.resolve({ answer: '', wasFreeform: true })
+        this.userInputs.delete(requestId)
+      }
+    }
+    for (const [requestId, elicitation] of this.elicitations) {
+      if (elicitation.sessionId === sessionId) {
+        elicitation.resolve({ action: 'cancel' })
+        this.elicitations.delete(requestId)
+      }
+    }
+    return { interruptedPrompt, interruptedSdkTurn, interruptedSdkRun, interruptedSdkFollowUp }
+  }
+
+  /** Drops what this service kept in memory for a session's runtime. */
+  private forgetSessionRuntime(sessionId: string): void {
+    this.pendingSdkQueueAdmissions.delete(sessionId)
+    this.forgetSdkReplies(sessionId)
+    this.hydratedSessions.delete(sessionId)
+    this.loadingSessions.delete(sessionId)
+    this.hydratingSessions.delete(sessionId)
+    this.activePrompts.delete(sessionId)
+    this.drainingSessions.delete(sessionId)
+    this.queueOperations.delete(sessionId)
+    this.pendingTerminalQueueSettlements.delete(sessionId)
+    this.clearTerminalQueueRetry(sessionId)
+    this.terminalQueueStates.delete(sessionId)
+    this.startupTerminalQueues.delete(sessionId)
+    this.workspaceVersions.delete(sessionId)
+    this.transcriptTakeInCosts.delete(sessionId)
+    this.backgroundTaskSyncs.delete(sessionId)
+    this.backgroundTaskTracker.remove(sessionId)
+    this.liveActivityEvents.delete(sessionId)
+    this.terminalUserInputChecks.delete(sessionId)
+    this.terminalUpdateChecks.delete(sessionId)
+    this.answeredTerminalPermissions.delete(sessionId)
+    this.answeredTerminalInputs.delete(sessionId)
+  }
+
   private async deleteSerialized(sessionId: string): Promise<void> {
     const stored = this.store.get(sessionId)
     if (!stored) {
@@ -7783,58 +7967,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     forgetSessionEvents(sessionId)
     let completed = false
     try {
-      const queuedSdkRun = this.queuedPromptRuns.get(sessionId)
-      let interruptedPrompt = queuedSdkRun
-        ? this.activePrompts.get(sessionId)
-        : undefined
-      let interruptedSdkTurn = queuedSdkRun
-        ? this.sdkTurnsAwaited.get(sessionId)
-        : undefined
-      let interruptedSdkRun = queuedSdkRun
-      this.queuedPromptStops.get(sessionId)?.()
-      await this.admissions.wait(sessionId)
-      await Promise.allSettled(this.sdkReplyWrites(sessionId))
-      await this.queueOperations.get(sessionId)?.catch(() => undefined)
-      await this.queuedPromptRuns.get(sessionId)?.catch(() => undefined)
-      const active = this.sessions.get(sessionId)
-      const currentPrompt = this.activePrompts.get(sessionId)
-      if (currentPrompt) {
-        interruptedPrompt = currentPrompt
-        interruptedSdkTurn = this.sdkTurnsAwaited.get(sessionId)
-        interruptedSdkRun = this.sdkPromptRuns.get(sessionId)
-      }
-      const interruptedSdkFollowUp =
-        this.sdkFollowUpTrackers.get(sessionId)
-      await this.activeSessionStopper(sessionId)
-      if (active) {
-        if (this.activePrompts.has(sessionId)) {
-          interruptedSdkFollowUp?.settleWhenIdle()
-          this.activePrompts.delete(sessionId)
-          await active.abort()
-        }
-        if (terminalBacked) {
-          await active.disconnect()
-          this.removeSdkOwner(sessionId, active)
-        }
-      }
-      for (const [requestId, permission] of this.permissions) {
-        if (permission.sessionId === sessionId) {
-          permission.resolve({ kind: 'user-not-available' })
-          this.permissions.delete(requestId)
-        }
-      }
-      for (const [requestId, input] of this.userInputs) {
-        if (input.sessionId === sessionId) {
-          input.resolve({ answer: '', wasFreeform: true })
-          this.userInputs.delete(requestId)
-        }
-      }
-      for (const [requestId, elicitation] of this.elicitations) {
-        if (elicitation.sessionId === sessionId) {
-          elicitation.resolve({ action: 'cancel' })
-          this.elicitations.delete(requestId)
-        }
-      }
+      const {
+        interruptedPrompt,
+        interruptedSdkTurn,
+        interruptedSdkRun,
+        interruptedSdkFollowUp,
+      } = await this.stopSessionRuntime(sessionId, terminalBacked)
 
       if (terminalBacked) {
         await removeCopilotSessionFiles(sessionId)
@@ -7860,27 +7998,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       interruptedSdkFollowUp?.cancel()
       this.sdkFollowUpTrackers.delete(sessionId)
       await this.store.remove(sessionId)
-      this.pendingSdkQueueAdmissions.delete(sessionId)
-      this.forgetSdkReplies(sessionId)
-      this.hydratedSessions.delete(sessionId)
-      this.loadingSessions.delete(sessionId)
-      this.hydratingSessions.delete(sessionId)
-      this.activePrompts.delete(sessionId)
-      this.drainingSessions.delete(sessionId)
-      this.queueOperations.delete(sessionId)
-      this.pendingTerminalQueueSettlements.delete(sessionId)
-      this.clearTerminalQueueRetry(sessionId)
-      this.terminalQueueStates.delete(sessionId)
-      this.startupTerminalQueues.delete(sessionId)
-      this.workspaceVersions.delete(sessionId)
-      this.transcriptTakeInCosts.delete(sessionId)
-      this.backgroundTaskSyncs.delete(sessionId)
-      this.backgroundTaskTracker.remove(sessionId)
-      this.liveActivityEvents.delete(sessionId)
-      this.terminalUserInputChecks.delete(sessionId)
-      this.terminalUpdateChecks.delete(sessionId)
-      this.answeredTerminalPermissions.delete(sessionId)
-      this.answeredTerminalInputs.delete(sessionId)
+      this.forgetSessionRuntime(sessionId)
       completed = true
       this.emit('event', { type: 'session.removed', sessionId })
     } finally {
@@ -7896,6 +8014,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     interruptedPrompt: ActivePrompt | undefined,
     interruptedSdkTurn: string | undefined,
     error: unknown,
+    lifecycle: 'deletion' | 'close' = 'deletion',
   ): Promise<void> {
     const retained = this.store.get(sessionId)
     if (
@@ -7917,7 +8036,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const message = error instanceof Error ? error.message : String(error)
     const explanation =
-      `Unable to complete the response: Session deletion failed before provider cleanup completed: ${message}`
+      `Unable to complete the response: Session ${lifecycle} failed before provider cleanup completed: ${message}`
     const queueAdmission = interruptedPrompt
       ? this.pendingSdkQueueAdmissions.get(sessionId)
       : undefined
@@ -8830,6 +8949,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error('Session is no longer available')
     }
     const retained = this.store.get(sessionId)
+    if (retained?.closedAt || this.closingSessions.has(sessionId)) {
+      throw queueConflict('Reopen the closed session before using its provider runtime.')
+    }
     if (retained?.interruption || retained?.archivedAt) {
       throw queueConflict('Reopen the retained session before using its provider runtime.')
     }
@@ -8955,8 +9077,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           .catch((error: unknown) => this.publishError(sessionId, error))
       }
     }
-    if (this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId)) {
-      await sdkSession.disconnect()
+    // A close that began while this attached has already stopped the runtime.
+    if (
+      this.stopped || this.deletedSessionIds.has(sessionId) || !this.store.get(sessionId) ||
+      this.closingSessions.has(sessionId) || this.store.isClosed(sessionId)
+    ) {
+      try {
+        await sdkSession.disconnect()
+      } catch (error) {
+        // Still running, so kept where Close (and a later Reopen or Delete)
+        // finds it rather than lost.
+        if (
+          (this.closingSessions.has(sessionId) || this.store.isClosed(sessionId)) &&
+          !this.sessions.has(sessionId)
+        ) {
+          this.installSdkOwner(sdkSession, sessionId, ownerGeneration)
+        }
+        throw error
+      }
       throw new Error('Session is no longer available')
     }
     if (this.terminalActivations.has(sessionId)) {
@@ -9290,7 +9428,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // The startup pump needs a positive owner, even if recovery cleanup has
     // already removed its startup marker. A FIFO alone cannot launch one.
     if (this.startupTerminalQueues.has(id) || session.queuedPrompts?.length) {
-      if (session.isOpen) this.publish(await this.store.markInterrupted(id))
+      if (session.isOpen) this.publish(await this.store.markInterrupted(id, 'queue-held'))
       return 'deferred'
     }
     this.launchingTerminalSessionIds.add(id)
@@ -9308,8 +9446,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const message = error instanceof Error ? error.message : String(error)
         try {
           if (this.store.get(id)) {
-            const failed = await this.store.markInterrupted(id)
-            this.publish(failed)
+            const failed = await this.store.markInterrupted(id, 'relaunch-failed', { message, replace: true })
+              .catch((cause: unknown) => {
+                // Already durably interrupted, the record stays reviewable;
+                // only the more specific cause could not be written.
+                if (this.store.get(id)?.interruption) return undefined
+                throw cause
+              })
+            if (failed) this.publish(failed)
           }
         } finally {
           this.publishError(
@@ -9407,7 +9551,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const storedBeforeDiscovery = this.store.discoveryIndex()
     const excluded = (id: string) =>
       this.deletedSessionIds.has(id) || this.hiddenSessionIds.has(id) ||
-      this.store.isRetiredSession(id)
+      this.store.isRetiredSession(id) || this.store.isClosed(id)
     activeSessions = activeSessions.filter((session) => !excluded(session.id))
     const storedIds = new Set(storedBeforeDiscovery.map((session) => session.id))
     const previouslyExternal = this.externalSessionIds
@@ -9519,8 +9663,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const indexed of this.store.discoveryIndex()) {
       const previous = before.get(indexed.id)
       if (previous?.revision === indexed.revision) continue
-      const lifecycleChanged =
-        Boolean(indexed.archivedAt && indexed.archivedAt !== previous?.archivedAt) ||
+      const archived = Boolean(indexed.archivedAt && indexed.archivedAt !== previous?.archivedAt)
+      const lifecycleChanged = archived ||
         Boolean(indexed.interruptedAt && indexed.interruptedAt !== previous?.interruptedAt)
       // History-only and closed records are not roster entries; publishing
       // them made every hub cache and re-probe them on each read.
@@ -9528,12 +9672,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const session = this.store.get(indexed.id)
       if (!session) continue
       this.publish(session)
-      if (lifecycleChanged) {
-        console.info(JSON.stringify({
-          sessionLifecycle: session.archivedAt ? 'archived' : 'interrupted',
-          sessionId: session.id,
-          at: session.archivedAt ?? session.interruption?.detectedAt,
-        }))
+      // The store logs each interruption when it records one.
+      if (archived) {
+        console.info(JSON.stringify({ sessionLifecycle: 'archived', sessionId: session.id, at: session.archivedAt }))
       }
     }
     this.nativeStartupDiscoveryReady = isCurrent()
@@ -9551,7 +9692,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.rediscoveredTerminalQueues.set(id, 'resume')
           continue
         }
-        const interrupted = await this.store.markInterrupted(id, true)
+        const interrupted = await this.store.markInterrupted(id, 'queue-held', { retainedQueueOnly: true })
         if (!isCurrent()) {
           this.nativeStartupDiscoveryReady = false
           return false
@@ -12114,6 +12255,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private publish(session: SessionDetail): void {
     if (this.stopped) return
+    // A closed session left the list with its removal; a write that lands
+    // afterwards must not put it back on any client.
+    if (this.store.isClosed(session.id)) return
     this.emit('event', { type: 'session.upserted', session: this.publicSession(session) })
   }
 

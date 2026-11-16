@@ -117,15 +117,15 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   them and refresh authoritative state.
 - Clearing a session replaces its identity, and the replacement MUST take the
   predecessor's exact position in the custom order and stay hidden if it was.
-  Deleting a session MUST remove it, and removing a computer MUST remove its
-  lane, hidden entries included; a partial or offline session listing MUST NOT
-  be treated as evidence that an entry is gone. A browser-local order from
-  before the hub owned it MAY seed an empty hub once, after which the hub
-  snapshot is authoritative.
+  Closing or deleting a session MUST remove it, and removing a computer MUST
+  remove its lane, hidden entries included; a partial or offline session
+  listing MUST NOT be treated as evidence that an entry is gone. A
+  browser-local order from before the hub owned it MAY seed an empty hub once,
+  after which the hub snapshot is authoritative.
 - Each session row MUST place **Close** above **Pause**/**Resume** in its
   lifecycle controls, followed by **Hide**/**Show** beside that pair so the row
-  does not grow. Close MUST use the same confirmed, permanently deleting
-  close lifecycle and owning-computer route as **Close session**; Pause and
+  does not grow. Close MUST use the same confirmation, close lifecycle (§3.3),
+  and owning-computer route as **Close session**; Pause and
   Resume retain their existing suspend lifecycle, availability, and labels.
   Hide and Show MUST stay available while the owning computer is offline, since
   the hub keeps them.
@@ -207,6 +207,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Managed session records MUST remain visible by default when their provider
   process disappears, including after overnight inactivity. Process loss MUST
   appear as interrupted/recoverable rather than Working or a silent close.
+- Each interruption MUST record its cause: its terminal had stopped, the
+  service restarted while it was working, its terminal could not be started
+  again (with the error), queued work waits for Reopen, or a recovered turn
+  was cancelled. The first cause stands, except that a failed relaunch
+  replaces it. The banner MUST name the cause beside Reopen; one recorded
+  without a cause keeps the generic notice. The owning computer MUST log one
+  `sessionLifecycle` line for each interruption it records and for each
+  completed suspend, resume, close, reopen of a closed session, and expiry.
 - Session retention MUST be persisted on the owning computer and broadcast to
   connected devices. A user MAY pin a session for review or opt into elapsed-age
   archival; default retention MUST be unlimited for records, not live processes.
@@ -243,7 +251,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   reconnect, and foreground return MUST refresh authoritative session state;
   they MUST NOT issue a second resume mutation or present continuity before
   the owner reports recovery complete.
-  Explicit Close/Delete MUST retain their existing user-confirmed semantics.
+  Explicit Close and Delete permanently MUST stay user-confirmed (§3.3).
   See [Session retention](session-retention.md) for settings and cleanup cadence.
 - An open new-session dialog MUST preserve user choices across computer status
   updates. If its computer becomes unavailable, it MUST select an available
@@ -407,10 +415,27 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   including after their last replacement is deleted. Retirement metadata MUST
   commit atomically with the identity change, and stale provider listings MUST
   NOT recreate those identities.
-- Delete MUST close the owning provider process/session after confirmation and
-  remove Agentic Remote state and session uploads. A session selected while
-  another one is closing MUST stay selected; only a reader still on the closed
-  session moves to a remaining one.
+- **Close** and **Close session** MUST ask first, offering **Close session**
+  and, set apart below it, **Delete permanently**. Close stops the provider
+  process or SDK owner and discards pending questions, permissions, and queued
+  messages (the confirmation counts queued ones), but the owning computer
+  keeps the record, uploads, and the provider's saved session, with a short
+  context computed without a model when it closes: title, folder, the last
+  three prompts, and an excerpt of the last reply. A closed session leaves the
+  list, custom order, and hidden set; discovery, restart recovery, and
+  provider listings MUST NOT list it as open, and sends to it are refused until
+  it is reopened. A computer that does not advertise recoverable close offers
+  only Delete permanently.
+- **Recently closed**, the last entry of the session list, MUST list closed
+  sessions newest first with when each closed and will be deleted, its
+  context, **Reopen**, and a confirmed **Delete permanently**. Reopen uses the
+  history reopen lifecycle and sends nothing. The owning computer MUST delete a
+  closed session permanently 14 days after it closed, checking at startup and
+  hourly; a failed deletion is logged and retried at the next check.
+- **Delete permanently** MUST close the owning provider process/session after
+  confirmation and remove Agentic Remote state and session uploads. A session
+  selected while another one is closing MUST stay selected; only a reader
+  still on the closed session moves to a remaining one.
 
 ### 3.4 Host reboot and power-loss recovery
 
@@ -708,6 +733,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   message; anything else it is shown goes through Oracle's judgment instead. Oracle approves what a
   session needs for its task and denies, or asks you about, anything
   destructive or beyond it; every answer appears in its transcript.
+- Oracle MAY list recently closed sessions with their context, in **Ask**
+  too, so you can find one by what it was doing, and in **Delegate** reopen
+  one when you ask; reopening sends nothing.
 - In **Delegate**, Oracle MAY suspend any session when you ask, a broad
   request such as pausing the idle review sessions included, MUST NOT suspend
   one on its own initiative, and resumes one when you ask. Both go through the
@@ -839,11 +867,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Oracle MUST NOT close a session itself unless **Closing Oracle's sessions**
   allows it (below). Otherwise it can only ask, as a card with
   **Close session** and **Keep it**, and the session stays open until you
-  confirm there. Your answer, and any deletion, reach the agent on its next
-  turn so it can update its memory.
+  confirm there. Its close is the recoverable Close (§3.3). Your answer, and
+  any close, reach the agent on its next turn so it can update its memory.
 - **App settings → Oracle → Closing Oracle's sessions** is **Ask me every
   time** by default. Only you can change it: no Oracle tool does. Set to
-  close idle sessions Oracle started, a close Oracle requests deletes the
+  close idle sessions Oracle started, a close Oracle requests closes the
   session at once only when all of these hold; otherwise it asks as above,
   and the card says why:
   - the request answers a message you typed, and Oracle is still answering
@@ -861,7 +889,7 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
     recorded;
   - Oracle has closed fewer than 5 sessions without asking for this message.
 
-  Such a close MUST be recorded as closing before the deletion, so a restart
+  Such a close MUST be recorded as closing before it starts, so a restart
   finishes it, and its card MUST show that Oracle closed it, with no buttons.
   Oracle learns the outcome from its tool result. A hub from before this
   setting does not report it, so App settings MUST NOT offer it there. Such a

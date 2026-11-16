@@ -484,6 +484,12 @@ export async function listHistory(): Promise<ManagedSession[]> {
   return response.sessions
 }
 
+/** Sessions closed on every reachable computer that can still be reopened. */
+export async function listClosedSessions(): Promise<ManagedSession[]> {
+  const response = await request<{ sessions: ManagedSession[] }>('/api/closed-sessions')
+  return response.sessions
+}
+
 export async function listKnowledgeRoots(): Promise<KnowledgeRoot[]> {
   const response = await request<{ roots: KnowledgeRoot[] }>(
     '/api/knowledge/roots',
@@ -1098,6 +1104,18 @@ export async function deleteSession(
   sessionId: string,
 ): Promise<void> {
   await requestVoid(sessionPath(computerId, sessionId), { method: 'DELETE' })
+}
+
+/** Stops a session but keeps it to reopen; `deleteSession` deletes for good. */
+export async function closeSession(
+  computerId: string,
+  sessionId: string,
+): Promise<ManagedSession> {
+  const response = await request<{ session: ManagedSession }>(
+    `${sessionPath(computerId, sessionId)}/close`,
+    { method: 'POST', body: '{}' },
+  )
+  return response.session
 }
 
 export async function replyPermission(

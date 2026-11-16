@@ -10,6 +10,7 @@ import {
   Eye,
   EyeOff,
   GripVertical,
+  History,
   Monitor,
   Pause,
   Play,
@@ -154,6 +155,7 @@ function SortableSessionItem({
   hidingSessions,
   onToggleSessionHidden,
   managedSessions,
+  recoverableClose,
 }: SessionActions & {
   session: ManagedSession
   selected: boolean
@@ -162,6 +164,8 @@ function SortableSessionItem({
   online: boolean
   reorderDisabled: boolean
   sorting: boolean
+  /** The owning computer keeps a closed session to reopen. */
+  recoverableClose: boolean
 }) {
   const {
     attributes,
@@ -303,7 +307,9 @@ function SortableSessionItem({
               ? `Reconnect ${computerName} to manage this session`
               : closing
                 ? 'Closing this session'
-                : 'Permanently delete this session and its history'
+                : recoverableClose
+                  ? 'Close this session; you can reopen it from Recently closed'
+                  : 'Permanently delete this session and its history'
           }
           type="button"
         >
@@ -463,6 +469,9 @@ function SortableComputerGroup({
                 sorting={sorting}
                 key={sessionKey(row.session)}
                 online={computer.online}
+                recoverableClose={Boolean(computer.providers?.some(
+                  (provider) => provider.supportsRecoverableClose === true,
+                ))}
                 selected={sessionKey(row.session) === selectedKey}
                 session={row.session}
               />
@@ -509,6 +518,8 @@ export function SessionNavigation({
   refreshState = 'fresh',
   refreshMessage,
   signInExpired,
+  recentlyClosedCount,
+  onOpenRecentlyClosed,
   ...actions
 }: SessionActions & {
   view: SessionNavigationView
@@ -536,6 +547,9 @@ export function SessionNavigation({
    * refresh failure would then only repeat.
    */
   signInExpired?: boolean
+  /** How many closed sessions can still be reopened, once known. */
+  recentlyClosedCount?: number
+  onOpenRecentlyClosed?: () => void
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
   onShowSuspendedChange: (show: boolean) => void
@@ -793,6 +807,24 @@ export function SessionNavigation({
             ))}
           </div>
         </SortableContext>
+        {onOpenRecentlyClosed ? (
+          <button
+            aria-label={recentlyClosedCount
+              ? `Recently closed, ${recentlyClosedCount} session${recentlyClosedCount === 1 ? '' : 's'}`
+              : 'Recently closed'}
+            className="session-list__recently-closed"
+            onClick={onOpenRecentlyClosed}
+            type="button"
+          >
+            <History aria-hidden="true" size={15} />
+            <span className="session-list__recently-closed-label">Recently closed</span>
+            {recentlyClosedCount ? (
+              <span aria-hidden="true" className="session-list__recently-closed-count">
+                {recentlyClosedCount}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
       </div>
     </nav>
   )

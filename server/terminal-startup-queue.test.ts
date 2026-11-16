@@ -675,8 +675,8 @@ describe('Persisted native queue startup', () => {
 
     const markInterrupted = runtime.store.markInterrupted.bind(runtime.store)
     const interruptionSpy = vi.spyOn(runtime.store, 'markInterrupted')
-      .mockImplementationOnce(async (id) => {
-        const interrupted = await markInterrupted(id)
+      .mockImplementationOnce(async (...args) => {
+        const interrupted = await markInterrupted(...args)
         runtime.service['discoveryGeneration'] += 1
         return interrupted
       })

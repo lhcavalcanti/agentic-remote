@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { SessionEvent } from '@github/copilot-sdk'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ServerEvent, SessionDetail } from '../shared/contracts.js'
 import { AgentService, type CopilotClientLike, type CopilotSessionLike } from './agent-service.js'
 import { SessionStore } from './session-store.js'
@@ -24,7 +24,7 @@ it('retains interrupted SDK queues across restart and requires explicit continua
   f.client.resumeSession = vi.fn(async () => owner)
   await f.service.start()
   expect(f.service.getSession('pending')).toMatchObject({
-    isOpen: true, status: 'error', interruption: { previousStatus: 'running' },
+    isOpen: true, status: 'error', interruption: { previousStatus: 'running', cause: 'restart' },
     restartRecovery: { state: 'interrupted' },
     queuedPrompts: [prompt('first'), prompt('second')],
   })
@@ -130,7 +130,7 @@ it('requires durable completion before a live idle event clears an accepted SDK 
     requestId: 'public-question', kind: 'user-input',
     input: { answer: 'Left', wasFreeform: false },
   }, 'pendingUserInput', () => false)
-  await f.store.markInterrupted('pending')
+  await f.store.markInterrupted('pending', 'restart')
   const recovery = await f.store.claimSdkRecovery('pending')
   const callbacks: Array<(event: SessionEvent) => void> = []
   const owner: CopilotSessionLike = {
@@ -167,7 +167,7 @@ it('does not let a worker idle event settle foreground SDK recovery', async () =
     session.status = 'running'
     session.queuedPrompts = [prompt('wait for the foreground turn')]
   })
-  await f.store.markInterrupted('pending')
+  await f.store.markInterrupted('pending', 'restart')
   const recovery = await f.store.claimSdkRecovery('pending')
   const callbacks: Array<(event: SessionEvent) => void> = []
   const owner: CopilotSessionLike = {
@@ -205,7 +205,7 @@ it('does not settle unattached SDK recovery from stale completion on Stop', asyn
     session.status = 'running'
     session.activity = 'Recovering the interrupted turn'
   })
-  await f.store.markInterrupted('pending')
+  await f.store.markInterrupted('pending', 'restart')
   const recovery = f.store.sdkRecovery('pending')!
   const before = f.store.get('pending')
   f.terminal.cancel.mockResolvedValue(false)
@@ -346,7 +346,7 @@ it('coalesces duplicate SDK startup recovery attempts into one provider resume',
   await f.store.update('pending', (session) => {
     session.status = 'running'
   })
-  await f.store.markInterrupted('pending')
+  await f.store.markInterrupted('pending', 'restart')
   const events = gate<SessionEvent[]>(sdkRecoveryEvents(true))
   const entered = gate(undefined)
   const owner = sdkSession('pending')
@@ -371,7 +371,7 @@ it('skips repeated SDK recovery triggers while this node already owns the runtim
   await f.store.update('pending', (session) => {
     session.status = 'running'
   })
-  await f.store.markInterrupted('pending')
+  await f.store.markInterrupted('pending', 'restart')
   const owner = sdkSession('pending')
   f.service['installSdkOwner'](owner, 'pending', 0)
   f.client.resumeSession = vi.fn(async () => sdkSession('pending'))
@@ -551,7 +551,7 @@ it('retains a saved recovered permission after its provider RPC disappears on re
       options: [{ optionId: 'reject', name: 'Reject', kind: 'reject_once' }],
     }
   })
-  await f.store.markInterrupted('pending')
+  await f.store.markInterrupted('pending', 'restart')
   const recovery = await f.store.claimSdkRecovery('pending')
   await f.store.bindRecoveredPermission('pending', recovery.generation, requestId, 'provider-permission', {
     requestId,
@@ -918,7 +918,7 @@ it('does not replace an accepted recovered permission with a different provider 
     session.status = 'waiting'
     session.pendingPermission = permission
   })
-  await f.store.markInterrupted('pending')
+  await f.store.markInterrupted('pending', 'restart')
   const previous = await f.store.claimSdkRecovery('pending')
   await f.store.bindRecoveredPermission(
     'pending', previous.generation,
@@ -2434,7 +2434,8 @@ describe('Deferred terminal ownership recovery', () => {
     await f.service.refreshDiscovery()
 
     expect(f.store.get('pending')).toMatchObject({
-      isOpen: true, status: 'error', interruption: expect.any(Object),
+      isOpen: true, status: 'error',
+      interruption: { previousStatus: 'idle', cause: 'relaunch-failed', message: 'Launch refused' },
     })
     expect((await f.persisted()).sessions.pending.managedOpen).toBe(true)
     expect(f.events).toContainEqual({
@@ -2565,7 +2566,7 @@ describe('Deferred terminal ownership recovery', () => {
     await f.store.readAfterWrites('pending')
   })
 
-  it('reports a genuine launch failure without rewriting an already durable interruption', async () => {
+  it('reports a genuine launch failure when its cause cannot be recorded over a durable interruption', async () => {
     const f = await fixture()
     f.ownership.aggregateError = undefined
     f.terminal.create.mockImplementationOnce(async () => {
@@ -2577,7 +2578,9 @@ describe('Deferred terminal ownership recovery', () => {
       type: 'error', sessionId: 'pending', message: 'Unable to recover terminal session: Launch refused',
     })
     expect((await f.persisted()).sessions.pending.managedOpen).toBe(true)
-    expect((await f.persisted()).sessions.pending.interruption).toMatchObject({ previousStatus: 'idle' })
+    // Discovery's durable interruption stands; only the more specific cause was lost.
+    expect((await f.persisted()).sessions.pending.interruption)
+      .toMatchObject({ previousStatus: 'idle', cause: 'terminal-stopped' })
     await f.unblockWrites()
     await f.store.readAfterWrites('pending')
   })
@@ -2768,7 +2771,7 @@ describe('Session retention safety', () => {
       session.status = 'error'
       session.failedPrompt = { content, failedAt: 'token-1' }
     })
-    await f.store.markInterrupted('pending')
+    await f.store.markInterrupted('pending', 'restart')
     await expect(submit(f)).rejects.toMatchObject({ statusCode: 409 })
     await f.store.flush()
     const persisted = (await f.persisted()).sessions.pending
@@ -2783,7 +2786,7 @@ describe('Session retention safety', () => {
     await f.store.update('pending', (session) => {
       session.failedPrompt = { content: 'Lost', failedAt: 'token-1' }
     })
-    await f.store.markInterrupted('pending')
+    await f.store.markInterrupted('pending', 'restart')
     await expect(f.store.claimFailedPrompt('pending', { content: 'Lost', failedAt: 'token-1' }, 'Lost', 'resend:x'))
       .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false })
     expect(f.store.get('pending')?.failedPrompt).toEqual({ content: 'Lost', failedAt: 'token-1' })
@@ -2852,7 +2855,7 @@ describe('Session retention safety', () => {
     const f = await fixture(['pending'], 'sdk')
     f.ownership.aggregateError = undefined
     await f.service.start()
-    await f.store.markInterrupted('pending')
+    await f.store.markInterrupted('pending', 'restart')
     await expect(f.service.restartSession('pending')).rejects.toMatchObject({ statusCode: 409 })
     expect(f.client.resumeSession).not.toHaveBeenCalled()
   })
@@ -2877,7 +2880,7 @@ describe('Session retention safety', () => {
   })
 
   it.each([
-    ['interrupted', (f: Awaited<ReturnType<typeof fixture>>) => f.store.markInterrupted('pending')],
+    ['interrupted', (f: Awaited<ReturnType<typeof fixture>>) => f.store.markInterrupted('pending', 'restart')],
     ['archived', (f: Awaited<ReturnType<typeof fixture>>) => f.store.update('pending', (session) => {
       session.isOpen = false
       session.archivedAt = timestamp
@@ -2940,7 +2943,7 @@ describe('Session retention safety', () => {
     })
     f.service['externalSessionIds'].add('pending')
     f.service['settleTerminalRecoveryForActivation']('pending')
-    if (state === 'interrupted') await f.store.markInterrupted('pending')
+    if (state === 'interrupted') await f.store.markInterrupted('pending', 'restart')
     else await f.store.update('pending', (session) => { session.archivedAt = timestamp })
     f.service['wakeTerminalQueue']('pending')
     await Promise.all(f.service['terminalQueueWakeups'].values())
@@ -2973,7 +2976,7 @@ describe('Session retention safety', () => {
     f.service['settleTerminalRecoveryForActivation']('pending')
     const claim = f.store.claimTerminalQueuedPrompt.bind(f.store)
     const claimed = vi.spyOn(f.store, 'claimTerminalQueuedPrompt').mockImplementationOnce(async (...args) => {
-      await f.store.markInterrupted('pending')
+      await f.store.markInterrupted('pending', 'restart')
       return claim(...args)
     })
     await f.drainNow()
@@ -3010,7 +3013,7 @@ describe('Session retention safety', () => {
     vi.spyOn(f.store, 'update').mockImplementation(async (id, ...rest) => {
       const current = f.store.get(id)
       // Retention commits just before the queue claim's own write.
-      if (!current?.interruption && !current?.queuedDispatch) await f.store.markInterrupted(id)
+      if (!current?.interruption && !current?.queuedDispatch) await f.store.markInterrupted(id, 'restart')
       return update(id, ...rest)
     })
     f.service['wakeSdkQueue']('pending')
@@ -3070,5 +3073,49 @@ describe('A steer persisted across a restart', () => {
     expect(f.store.terminalQueueDispatch('pending')).toBeUndefined()
     await f.drainNow()
     expect(f.terminal.send).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Interruption causes', () => {
+  function interruptions(info: MockInstance<typeof console.info>): unknown[] {
+    return info.mock.calls.flatMap(([line]) => {
+      if (typeof line !== 'string' || !line.startsWith('{')) return []
+      const parsed = JSON.parse(line) as { sessionLifecycle?: string }
+      return parsed.sessionLifecycle === 'interrupted' ? [parsed] : []
+    })
+  }
+
+  it('says a viewed terminal session had stopped, and logs it once', async () => {
+    const f = await fixture()
+    await f.store.setOpen('pending', false, true)
+    f.ownership.aggregateError = undefined
+    await f.service.start()
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    const viewed = await f.service.openSession('pending')
+    await f.service.openSession('pending')
+
+    expect(viewed.interruption).toEqual({
+      detectedAt: expect.any(String), previousStatus: 'idle', cause: 'terminal-stopped',
+    })
+    expect(interruptions(info)).toEqual([{
+      sessionLifecycle: 'interrupted', sessionId: 'pending', cause: 'terminal-stopped',
+      at: viewed.interruption!.detectedAt,
+    }])
+  })
+
+  it('logs a managed terminal discovery found stopped once', async () => {
+    const f = await fixture()
+    f.ownership.aggregateError = undefined
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    await f.service.start()
+
+    expect(interruptions(info)).toEqual([{
+      sessionLifecycle: 'interrupted', sessionId: 'pending', cause: 'terminal-stopped',
+      at: expect.any(String),
+    }])
+    // Recovery started its terminal again.
+    expect(f.store.get('pending')?.interruption).toBeUndefined()
   })
 })

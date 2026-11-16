@@ -77,8 +77,8 @@ transcript or recording artifact.
 
 The manager tool handler applies a centralized fail-closed policy. Voice may
 call only the explicit read/query allowlist (`list_computers`, `list_models`,
-`list_sessions`, `get_session`, `ask_session`, `list_skills`, `memory_list`, and
-`memory_read`). Every other existing or newly added tool is classified as a
+`list_sessions`, `list_closed_sessions`, `get_session`, `ask_session`,
+`list_skills`, `memory_list`, and `memory_read`). Every other existing or newly added tool is classified as a
 mutation until reviewed, so session actions, permission/trust answers,
 destructive confirmation, memory writes, and `set_session_folder` are rejected
 before argument parsing or side effects. Typed Ask retains its existing

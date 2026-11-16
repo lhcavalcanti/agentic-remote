@@ -36,8 +36,9 @@ session that gained an owner, an admitted send, or a lifecycle change after
 discovery's snapshot is never archived.
 
 Archival is not Delete or Close. It never terminates a live process, removes
-history, deletes a folder/worktree, or erases resumability. Explicit Close and
-Delete retain their existing destructive semantics and confirmations. Default
+history, deletes a folder/worktree, or erases resumability. Close and Delete
+permanently are confirmed user actions ([app spec §3.3](app-spec.md)): Close
+keeps a session reopenable for 14 days, then deletes it. Default
 retention does not start a process for every retained record. Existing safe
 startup recovery may restore an owned terminal; ordinary discovery does not
 respawn a missing one. Failed recovery leaves a visible interruption.
@@ -61,7 +62,9 @@ Lifecycle upserts carry interruption/archive metadata to all connected clients,
 including patched connections. Retention-capable nodes include archival metadata
 in authenticated snapshots, so reconnect distinguishes retained history from
 explicit deletion without fetching each archived transcript. Metadata-only lifecycle logs identify the
-session, transition, and UTC detection time; they contain no prompts or provider
+session, transition, interruption cause, and UTC detection time (with a failed
+relaunch's bounded error), and record each completed suspend, resume, close,
+reopen of a closed session, and expiry; they contain no prompts or provider
 credentials. Concurrent lifecycle changes invalidate stale discovery; retention
 is decided against the current durable record, not a previously read snapshot.
 An authoritative refresh keeps an unlisted archived row only while it is the

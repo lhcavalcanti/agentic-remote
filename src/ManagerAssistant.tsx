@@ -31,6 +31,7 @@ import type {
   ManagerStatus,
 } from '../shared/manager'
 import { MANAGER_MESSAGE_MAX_LENGTH, MANAGER_REMOVED_ATTACHMENTS_REASON } from '../shared/manager'
+import { CLOSED_SESSION_RETENTION_DAYS } from '../shared/closed-sessions'
 import {
   cancelManager,
   editQueuedManagerMessage,
@@ -241,12 +242,16 @@ const ConfirmationCard = memo(function ConfirmationCard({
 }) {
   const confirmation = message.confirmation!
   const ref = message.sessionRefs?.[0]
+  // Closes before closing kept sessions reopenable deleted them for good.
+  const kept = confirmation.recoverable
+    ? `You can reopen it from Recently closed for ${CLOSED_SESSION_RETENTION_DAYS} days.`
+    : 'It is permanently deleted.'
   const outcome = {
     pending: undefined,
     closing: 'Closing…',
     confirmed: confirmation.decidedBy === 'oracle'
-      ? 'Closed by Oracle without asking, as your setting allows. It is permanently deleted.'
-      : 'Closed. It is permanently deleted.',
+      ? `Closed by Oracle without asking, as your setting allows. ${kept}`
+      : `Closed. ${kept}`,
     declined: 'Kept open.',
     failed: `Could not close it: ${confirmation.error ?? 'unknown error'}`,
   }[confirmation.state]

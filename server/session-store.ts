@@ -10,6 +10,8 @@ import type {
   QueuedPrompt,
   SessionFileUpload,
   SessionDetail,
+  SessionInterruption,
+  SessionInterruptionCause,
   SessionRuntimeInfo,
   SessionRecoveryReason,
   SessionStatus,
@@ -19,6 +21,7 @@ import type {
 } from '../shared/contracts.js'
 import { resolveDataDirectory } from './paths.js'
 import { canArchiveSession, mergeSessionRetention, sessionRetentionSchema } from './session-retention.js'
+import { closedSessionContext, isClosedSessionContext } from '../shared/closed-sessions.js'
 
 export interface DiscoveredSession {
   id: string
@@ -106,20 +109,23 @@ export type TerminalQueueOutcome =
 export class RetainedSessionError extends Error {
   readonly statusCode = 409
   readonly uncertainDelivery = false
-  readonly reasonCode: `retained-session.${'archived' | 'interrupted'}`
+  readonly reasonCode: `retained-session.${RetainedState}`
 
-  constructor(state: 'archived' | 'interrupted', action: string) {
+  constructor(state: RetainedState, action: string) {
     super(`Reopen the ${state} session before ${action}. Nothing was changed.`)
     this.name = 'RetainedSessionError'
     this.reasonCode = `retained-session.${state}`
   }
 }
 
+type RetainedState = 'archived' | 'interrupted' | 'closed'
+
 export function assertSessionNotRetained(
-  session: Pick<SessionDetail, 'archivedAt' | 'interruption'> | undefined,
+  session: Pick<SessionDetail, 'archivedAt' | 'interruption' | 'closedAt'> | undefined,
   action: string,
   archivedOnly = false,
 ): void {
+  if (session?.closedAt) throw new RetainedSessionError('closed', action)
   if (session?.archivedAt) throw new RetainedSessionError('archived', action)
   if (!archivedOnly && session?.interruption) throw new RetainedSessionError('interrupted', action)
 }
@@ -246,6 +252,43 @@ function activityDuration(startedAt: string, completedAt: string): number | unde
 function activityResultPreview(value: string): string {
   const normalized = value.replace(/\s+/g, ' ').trim()
   return normalized.length > 320 ? `${normalized.slice(0, 319)}…` : normalized
+}
+
+const INTERRUPTION_MESSAGE_LIMIT = 200
+
+function interruptionMessage(value: string | undefined): string | undefined {
+  const normalized = value?.replace(/\s+/g, ' ').trim()
+  if (!normalized) return undefined
+  return normalized.length > INTERRUPTION_MESSAGE_LIMIT
+    ? `${normalized.slice(0, INTERRUPTION_MESSAGE_LIMIT - 1)}…`
+    : normalized
+}
+
+function isSameInterruption(left: SessionInterruption | undefined, right: SessionInterruption): boolean {
+  return left?.detectedAt === right.detectedAt && left.cause === right.cause &&
+    left.message === right.message
+}
+
+function logInterruption(sessionId: string, interruption: SessionInterruption): void {
+  console.info(JSON.stringify({
+    sessionLifecycle: 'interrupted',
+    sessionId,
+    cause: interruption.cause,
+    at: interruption.detectedAt,
+    ...(interruption.message ? { message: interruption.message } : {}),
+  }))
+}
+
+// Every interruption is recorded through a commit, so comparing what each one
+// installed logs each newly recorded interruption once, whichever path made it.
+function logRecordedInterruptions(previous: StoredState, committed: StoredState): void {
+  for (const [id, session] of Object.entries(committed.sessions)) {
+    const before = previous.sessions[id]
+    if (session === before || !session?.interruption) continue
+    if (!isSameInterruption(before?.interruption, session.interruption)) {
+      logInterruption(id, session.interruption)
+    }
+  }
 }
 
 function archivedMessage(message: ChatMessage): ChatMessage {
@@ -567,6 +610,7 @@ export class SessionStore {
     for (const recovery of Object.values(recoveries)) validateSdkRestartRecovery(recovery)
     for (const reply of Object.values(replies)) validateSdkAcceptedReply(reply)
     const legacyRetirements: string[] = []
+    const interrupted: string[] = []
     let staleSdkInteractionMarked = Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
       Object.keys(replies).some((id) => !Object.hasOwn(loaded.sessions, id))
     for (const [id, session] of Object.entries(loaded.sessions)) {
@@ -576,10 +620,34 @@ export class SessionStore {
       if (session.retentionLastUsedAt !== undefined && !Number.isFinite(Date.parse(session.retentionLastUsedAt))) {
         throw new Error('Invalid session retention activity timestamp')
       }
+      if (session.closedAt !== undefined || session.closedContext !== undefined) {
+        // An older release that reopened a closed record keeps fields it does
+        // not know; its reopen is what stands.
+        if (session.managedOpen === true || session.closedAt === undefined) {
+          session.closedAt = undefined
+          session.closedContext = undefined
+          staleSdkInteractionMarked = true
+        } else {
+          // Unreadable closure metadata is replaced rather than refused, so
+          // the record stays closed and still expires.
+          if (typeof session.closedAt !== 'string' || !Number.isFinite(Date.parse(session.closedAt))) {
+            session.closedAt = new Date(this.now()).toISOString()
+            staleSdkInteractionMarked = true
+          }
+          if (session.closedContext !== undefined && !isClosedSessionContext(session.closedContext)) {
+            session.closedContext = undefined
+            staleSdkInteractionMarked = true
+          }
+        }
+      }
       if (session.interruption !== undefined && (
         !session.interruption || typeof session.interruption !== 'object' ||
         !Number.isFinite(Date.parse(session.interruption.detectedAt)) ||
-        !['idle', 'running', 'waiting', 'error'].includes(session.interruption.previousStatus)
+        !['idle', 'running', 'waiting', 'error'].includes(session.interruption.previousStatus) ||
+        // An unknown cause is kept: a newer release may have recorded it.
+        (session.interruption.cause !== undefined &&
+          (typeof session.interruption.cause !== 'string' || !session.interruption.cause)) ||
+        (session.interruption.message !== undefined && typeof session.interruption.message !== 'string')
       )) throw new Error('Invalid session interruption metadata')
       if (session.sdkRestartRecovery !== undefined) {
         validateSdkRestartRecovery(session.sdkRestartRecovery)
@@ -608,11 +676,11 @@ export class SessionStore {
       }
       if (session.queueState !== undefined) validateQueueState(session.queueState)
       session.provider ??= 'copilot'
-      session.isOpen = session.managedOpen === true || (session.isOpen === true && Boolean(
+      session.isOpen = !session.closedAt && (session.managedOpen === true || (session.isOpen === true && Boolean(
         session.retention?.pinned || session.queuedPrompts?.length || session.pendingPermission ||
         session.pendingUserInput || session.failedPrompt || session.recoverySeed ||
         session.queuedDispatch || session.terminalQueueDispatch || session.sdkQueueAdmission,
-      ))
+      )))
       if (!session.interruption && (
         (session.managedOpen &&
           (session.status === 'running' || session.status === 'waiting' || session.status === 'error')) ||
@@ -620,8 +688,9 @@ export class SessionStore {
           session.isOpen && Boolean(session.sdkAcceptedReply))
       )) {
         session.interruption = {
-          detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+          detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status, cause: 'restart',
         }
+        interrupted.push(id)
         staleSdkInteractionMarked = true
       }
       if (session.backend === 'sdk' && session.interruption) {
@@ -760,6 +829,10 @@ export class SessionStore {
     this.state = loaded
     this.checkpoint = loaded
     this.liveMutableSessions = new WeakSet()
+    for (const id of interrupted) {
+      const interruption = loaded.sessions[id]?.interruption
+      if (interruption) logInterruption(id, interruption)
+    }
   }
 
   list(): SessionDetail[] {
@@ -801,6 +874,11 @@ export class SessionStore {
 
   isRetiredSession(id: string): boolean {
     return this.retiredIds(this.state).has(id)
+  }
+
+  /** Closed through the app: kept to reopen, with nothing running for it. */
+  isClosed(id: string): boolean {
+    return Boolean(this.state.sessions[id]?.closedAt) && !this.isRetiredSession(id)
   }
 
   private retiredIds(state: StoredState): ReadonlySet<string> {
@@ -893,6 +971,8 @@ export class SessionStore {
       for (const discovered of sessions) {
         if (this.retiredIds(state).has(discovered.id)) continue
         const previous = state.sessions[discovered.id]
+        // A closed record keeps what it was when it closed.
+        if (previous?.closedAt) continue
         if (previous) {
           const cwd = previous.contextCwd ? previous.cwd : discovered.cwd
           const title =
@@ -1046,7 +1126,7 @@ export class SessionStore {
   }
 
   private isArchivable(session: StoredSession): boolean {
-    return !this.isProtectedRecord(session) && canArchiveSession(session, this.now())
+    return !session.closedAt && !this.isProtectedRecord(session) && canArchiveSession(session, this.now())
   }
 
   /**
@@ -1095,6 +1175,8 @@ export class SessionStore {
       if (isCurrent && !isCurrent()) return () => undefined
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
+        // Closed on purpose: neither a live owner nor its age changes that.
+        if (session.closedAt) continue
         const present = active.has(session.id)
         const protectedRecord = this.isProtectedRecord(session)
         const archive = !present && !protectedRecord && canArchiveSession(session, this.now()) &&
@@ -1114,6 +1196,7 @@ export class SessionStore {
           : isOpen && session.backend === 'terminal' && !session.suspended
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+              cause: retainQueuedTerminal ? 'queue-held' : 'terminal-stopped',
             }
             : session.interruption
         const stalePermission = Boolean(interruption && session.pendingPermission && !session.pendingPermission.stale)
@@ -1154,6 +1237,7 @@ export class SessionStore {
       if (isCurrent && !isCurrent()) return () => released
       for (const session of Object.values(state.sessions)) {
         if (this.retiredIds(state).has(session.id)) continue
+        if (session.closedAt) continue
         if (activeTerminal.has(session.id)) {
           const admitted = session.managedOpen !== true &&
             (liveAdmission?.(session.id) ?? false)
@@ -1162,6 +1246,7 @@ export class SessionStore {
           const interruption = retainQueuedTerminal
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
+              cause: 'queue-held',
             }
             : undefined
           if (
@@ -1240,10 +1325,15 @@ export class SessionStore {
     isOpen: boolean,
     managedOpen = false,
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    let reopenedAt: string | undefined
+    const updated = await this.mutate(sessionId, (session) => {
       session.isOpen = isOpen
+      reopenedAt = undefined
       if (isOpen) {
         session.retentionLastUsedAt = new Date(this.now()).toISOString()
+        if (session.closedAt) reopenedAt = session.retentionLastUsedAt
+        session.closedAt = undefined
+        session.closedContext = undefined
         if (session.interruption && (session.backend === 'sdk' ||
             session.pendingPermission?.stale || session.pendingUserInput?.stale)) {
           session.status = 'error'
@@ -1258,6 +1348,10 @@ export class SessionStore {
         session.managedOpen = isOpen
       }
     })
+    if (reopenedAt) {
+      console.info(JSON.stringify({ sessionLifecycle: 'reopened', sessionId, at: reopenedAt }))
+    }
+    return updated
   }
 
   /**
@@ -1272,15 +1366,31 @@ export class SessionStore {
   }
 
   /**
+   * Records why a session was interrupted. An existing interruption keeps its
+   * cause unless `replace` is set: a failed relaunch explains an interruption
+   * discovery already recorded better, so it takes over the cause and keeps
+   * when the interruption was detected.
+   *
    * `retainedQueueOnly` re-checks at commit that the record still holds a
    * queue it may not deliver, so a Reopen or recovery grant that landed after
    * the caller decided is not interrupted again.
    */
-  async markInterrupted(sessionId: string, retainedQueueOnly = false): Promise<SessionDetail> {
+  async markInterrupted(
+    sessionId: string,
+    cause: SessionInterruptionCause,
+    options: { message?: string; replace?: boolean; retainedQueueOnly?: boolean } = {},
+  ): Promise<SessionDetail> {
+    const message = interruptionMessage(options.message)
+    const replaces = (session: StoredSession) => Boolean(options.replace && session.interruption &&
+      (session.interruption.cause !== cause || session.interruption.message !== message))
     return this.mutate(sessionId, (session) => {
-      session.interruption ??= {
-        detectedAt: new Date(this.now()).toISOString(),
-        previousStatus: session.status,
+      if (!session.interruption || replaces(session)) {
+        session.interruption = {
+          detectedAt: session.interruption?.detectedAt ?? new Date(this.now()).toISOString(),
+          previousStatus: session.interruption?.previousStatus ?? session.status,
+          cause,
+          ...(message ? { message } : {}),
+        }
       }
       if (session.backend === 'sdk') {
         session.sdkRestartRecovery ??= {
@@ -1292,8 +1402,8 @@ export class SessionStore {
       }
       if (session.pendingPermission) session.pendingPermission.stale = true
       if (session.pendingUserInput) session.pendingUserInput.stale = true
-    }, (session) => (!retainedQueueOnly || requiresExplicitTerminalReopen(session)) && (
-      !session.interruption ||
+    }, (session) => !session.closedAt && (!options.retainedQueueOnly || requiresExplicitTerminalReopen(session)) && (
+      !session.interruption || replaces(session) ||
       Boolean(session.pendingPermission && !session.pendingPermission.stale) ||
       Boolean(session.pendingUserInput && !session.pendingUserInput.stale)))
   }
@@ -1556,6 +1666,7 @@ export class SessionStore {
       session.interruption = {
         detectedAt: session.sdkRestartRecovery.detectedAt,
         previousStatus: session.sdkRestartRecovery.previousStatus,
+        cause: 'recovery-cancelled',
       }
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
       state.sessions[sessionId] = session
@@ -1563,11 +1674,66 @@ export class SessionStore {
     })
   }
 
+  /**
+   * Closes a session without deleting it. It leaves the open list and the
+   * recovery set, keeps its identity, transcript, and provider data, and
+   * records what it was about. Anything waiting to be sent goes with the
+   * runtime, so reopening never sends anything by itself. Closing a closed
+   * session changes nothing, so its retention keeps counting from the first.
+   */
+  async closeSession(sessionId: string): Promise<SessionDetail> {
+    let closedAt: string | undefined
+    const closed = await this.mutate(sessionId, (session) => {
+      session.closedContext = closedSessionContext({
+        title: session.title,
+        cwd: session.cwd,
+        messages: [...(session.archivedMessages || []), ...session.messages],
+      })
+      session.closedAt = new Date(this.now()).toISOString()
+      closedAt = session.closedAt
+      session.isOpen = false
+      session.managedOpen = false
+      session.suspended = undefined
+      session.archivedAt = undefined
+      session.interruption = undefined
+      session.sdkRestartRecovery = undefined
+      session.sdkAcceptedReply = undefined
+      session.status = 'idle'
+      session.activity = undefined
+      session.pendingPermission = undefined
+      session.pendingUserInput = undefined
+      session.queuedPrompts = []
+      session.queuedCount = 0
+      session.queueState = undefined
+      session.queuedDispatch = undefined
+      session.queueDispatchAt = undefined
+      session.terminalQueueDispatch = undefined
+      session.queuedPromptReservation = undefined
+      session.sdkQueueAdmission = undefined
+      session.recoverySeed = undefined
+      session.recoveryResend = undefined
+      session.failedPrompt = undefined
+      // Whatever was reading the transcript when it closed must not land
+      // afterwards.
+      session.transcriptEpoch = randomUUID()
+      for (const message of session.messages) {
+        message.streaming = false
+        if (message.role === 'activity' && message.activityStatus === 'running') {
+          message.activityStatus = 'failed'
+        }
+      }
+    }, (session) => !session.closedAt, true)
+    if (closedAt) console.info(JSON.stringify({ sessionLifecycle: 'closed', sessionId, at: closedAt }))
+    return closed
+  }
+
   async setSuspended(
     sessionId: string,
     suspended: boolean,
   ): Promise<SessionDetail> {
-    return this.mutate(sessionId, (session) => {
+    let changed = false
+    const session = await this.mutate(sessionId, (session) => {
+      changed = Boolean(session.suspended) !== suspended
       session.suspended = suspended
       // A suspended session is put down on purpose, not found missing, and it
       // keeps its place in the list either way. Written here so the state is
@@ -1586,6 +1752,15 @@ export class SessionStore {
       // it here would send a session to the top of the list for being put
       // down -- the opposite of keeping the place it had.
     })
+    // Both providers suspend and resume through here, once the change is durable.
+    if (changed) {
+      console.info(JSON.stringify({
+        sessionLifecycle: suspended ? 'suspended' : 'resumed',
+        sessionId,
+        at: new Date(this.now()).toISOString(),
+      }))
+    }
+    return session
   }
 
   async setBackend(
@@ -1910,6 +2085,7 @@ export class SessionStore {
     prepend = false,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
+      if (session.closedAt) throw new RetainedSessionError('closed', 'queueing work')
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
@@ -3227,9 +3403,10 @@ export class SessionStore {
       // I/O belongs to the next write, never to this write's acknowledgement.
       this.pendingPersist = undefined
       const changes = this.takeBatch()
+      const previous = this.checkpoint
       let candidate = {
-        ...this.checkpoint,
-        sessions: { ...this.checkpoint.sessions },
+        ...previous,
+        sessions: { ...previous.sessions },
       }
       const mutableSessions = new WeakSet<StoredSession>()
       const applied: (() => void)[] = []
@@ -3292,6 +3469,7 @@ export class SessionStore {
       } finally {
         this.writingState = undefined
       }
+      logRecordedInterruptions(previous, candidate)
       // Read results only after installation, including newer live deltas and
       // the rest of this successful batch, never a later uncommitted mutation.
       for (const resolve of applied) {

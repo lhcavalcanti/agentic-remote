@@ -2229,14 +2229,15 @@ describe('ManagerAssistant', () => {
       confirmation: { kind: 'close-session' as const, computerId: 'hub', sessionId: 's1', title: 'Docs', state: 'pending' as const },
     }
     vi.mocked(resolveManagerConfirmation).mockResolvedValue({
-      ...request, updatedAt: '2026-10-15T00:00:02.000Z', confirmation: { ...request.confirmation, state: 'confirmed' },
+      ...request, updatedAt: '2026-10-15T00:00:02.000Z',
+      confirmation: { ...request.confirmation, state: 'confirmed', recoverable: true },
     })
     setup({ ...empty, messages: [request] })
     await openPanel()
     expect(screen.getByText('Close "Docs"? It finished.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Close session' }))
     await waitFor(() => expect(resolveManagerConfirmation).toHaveBeenCalledWith('c1', true))
-    expect(await screen.findByText('Closed. It is permanently deleted.')).toBeInTheDocument()
+    expect(await screen.findByText('Closed. You can reopen it from Recently closed for 14 days.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Close session' })).not.toBeInTheDocument()
   })
 
@@ -2246,12 +2247,20 @@ describe('ManagerAssistant', () => {
       messages: [{
         id: 'c1', role: 'activity', content: 'Close "Docs": Its PR merged.', createdAt: 't', tool: 'close_session',
         sessionRefs: [{ computerId: 'hub', sessionId: 's1', title: 'Docs' }],
-        confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 's1', title: 'Docs', state: 'confirmed', decidedBy: 'oracle' },
+        confirmation: {
+          kind: 'close-session', computerId: 'hub', sessionId: 's1', title: 'Docs', state: 'confirmed', decidedBy: 'oracle', recoverable: true,
+        },
+      }, {
+        // Closed by an earlier release, when closing deleted for good.
+        id: 'c0', role: 'activity', content: 'Close "Old notes"?', createdAt: 't', tool: 'close_session',
+        sessionRefs: [{ computerId: 'hub', sessionId: 's0', title: 'Old notes' }],
+        confirmation: { kind: 'close-session', computerId: 'hub', sessionId: 's0', title: 'Old notes', state: 'confirmed' },
       }],
     })
     await openPanel()
     expect(screen.getByText('Close "Docs": Its PR merged.')).toBeInTheDocument()
-    expect(screen.getByText('Closed by Oracle without asking, as your setting allows. It is permanently deleted.')).toBeInTheDocument()
+    expect(screen.getByText('Closed by Oracle without asking, as your setting allows. You can reopen it from Recently closed for 14 days.')).toBeInTheDocument()
+    expect(screen.getByText('Closed. It is permanently deleted.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Close session' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Keep it' })).not.toBeInTheDocument()
   })

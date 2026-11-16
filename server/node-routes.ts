@@ -522,6 +522,10 @@ export async function registerNodeRoutes(
         sessions: service.listHistory(),
       }))
 
+      node.get('/closed-sessions', async () => ({
+        sessions: service.listClosedSessions?.() ?? [],
+      }))
+
       node.get<{ Querystring: { path?: string; scope?: string } }>(
         '/directories',
         async (request) => {
@@ -943,6 +947,17 @@ export async function registerNodeRoutes(
         async (request) => {
           await service.deleteSession(request.params.sessionId)
           return { ok: true }
+        },
+      )
+
+      // Close keeps the session to reopen; DELETE above stays permanent.
+      node.post<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/close',
+        async (request) => {
+          if (!service.closeSession) {
+            throw Object.assign(new Error('This computer cannot keep closed sessions to reopen.'), { statusCode: 409 })
+          }
+          return { session: await service.closeSession(request.params.sessionId) }
         },
       )
 

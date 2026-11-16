@@ -1,6 +1,6 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
 import { describe, expect, it, vi } from 'vitest'
-import type { KnowledgeRoot, SessionKnowledgeBinding } from '../shared/contracts'
+import type { KnowledgeRoot, ManagedSession, SessionKnowledgeBinding } from '../shared/contracts'
 import { ORACLE_VOICE_PROTOCOL, type VoiceCapabilities } from '../shared/oracle-voice'
 import type { SettingsProfileSnapshot, SettingsUpdateResult } from '../shared/settings-profile'
 import {
@@ -171,5 +171,37 @@ describe('workspace fixture hub protocol', () => {
     })
     expect(refused.status).toBe(400)
     expect(() => fixture.assertHealthy()).toThrow()
+  })
+
+  it('closes a session to reopen, reopens it, and deletes one for good', async () => {
+    const { fixture, openEvents, request, state } = await fixtureApi()
+    const sent = openEvents()
+    const path = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
+    const ids = async (list: string) =>
+      (await request<{ sessions: ManagedSession[] }>(list)).body.sessions.map((session) => session.id)
+
+    const closed = await request<{ session: ManagedSession }>(`${path}/close`, 'POST', {})
+    expect(closed.body.session).toMatchObject({
+      id: SELECTED_SESSION_ID,
+      isOpen: false,
+      closedAt: expect.any(String),
+      closedContext: { title: 'Plan the knowledge workspace', prompts: expect.any(Array) },
+    })
+    expect(await ids('/api/sessions')).not.toContain(SELECTED_SESSION_ID)
+    expect(await ids('/api/closed-sessions')).toEqual([SELECTED_SESSION_ID])
+
+    const reopened = await request<{ session: ManagedSession }>(`${path}/open`, 'POST', {})
+    expect(reopened.body.session).toMatchObject({ id: SELECTED_SESSION_ID, isOpen: true })
+    expect(reopened.body.session).not.toHaveProperty('closedAt')
+    expect(await ids('/api/closed-sessions')).toEqual([])
+
+    expect((await request(path, 'DELETE')).status).toBe(204)
+    expect(state.sessions.map((session) => session.id)).not.toContain(SELECTED_SESSION_ID)
+    expect(sent).toEqual([
+      { type: 'session.removed', computerId: 'fixture-studio', sessionId: SELECTED_SESSION_ID, closed: true },
+      { type: 'session.upserted', session: expect.objectContaining({ id: SELECTED_SESSION_ID, isOpen: true }) },
+      { type: 'session.removed', computerId: 'fixture-studio', sessionId: SELECTED_SESSION_ID },
+    ])
+    fixture.assertHealthy()
   })
 })

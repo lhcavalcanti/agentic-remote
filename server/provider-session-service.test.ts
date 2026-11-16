@@ -107,3 +107,41 @@ describe('provider queued dispatch aggregation', () => {
     expect(unadvertised.askSession).not.toHaveBeenCalled()
   })
 })
+
+describe('closed sessions across providers', () => {
+  function closable(id: AgentProvider) {
+    const owner = provider(id)
+    const closedAt = '2020-01-01T00:00:00.000Z'
+    return Object.assign(owner, {
+      start: vi.fn(async () => undefined),
+      stop: vi.fn(async () => undefined),
+      closeSession: vi.fn(async (sessionId: string) => ({
+        ...owner.getSession(sessionId)!, isOpen: false, closedAt,
+      })),
+      listClosedSessions: () => [{ ...owner.getSession(`${id}-session`)!, isOpen: false, closedAt }],
+      deleteExpiredClosedSession: vi.fn(async () => true),
+    })
+  }
+
+  it('closes on the owning provider and sweeps every provider once started', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const copilot = closable('copilot')
+    const claude = closable('claude')
+    const aggregate = new ProviderSessionService(
+      copilot as unknown as SessionService, claude as unknown as SessionService,
+    )
+
+    await expect(aggregate.closeSession('claude-session')).resolves.toMatchObject({ closedAt: expect.any(String) })
+    expect(claude.closeSession).toHaveBeenCalledExactlyOnceWith('claude-session')
+    expect(copilot.closeSession).not.toHaveBeenCalled()
+    expect(aggregate.listClosedSessions().map((session) => session.id).sort())
+      .toEqual(['claude-session', 'copilot-session'])
+
+    await aggregate.start()
+    await vi.waitFor(() => {
+      expect(copilot.deleteExpiredClosedSession).toHaveBeenCalledWith('copilot-session', expect.any(Number))
+      expect(claude.deleteExpiredClosedSession).toHaveBeenCalledWith('claude-session', expect.any(Number))
+    })
+    await aggregate.stop()
+  })
+})

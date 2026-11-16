@@ -137,10 +137,15 @@ logs() {
 Usage: agentic-remote logs [--why [--since TIME] [--json]]
 
 No options: follow the service journal, unchanged.
-  --why         Explain the last startup, structured error, or unit failure.
+  --why         Explain the most recent startup, structured error, or unit failure.
   --since TIME  Journal time window (default: -6h); requires --why.
   --json        Emit {failure, correlation, before:[...], after:[...]}; requires --why.
   --help, -h    Show this help.
+
+While the service is not active, an unfinished startup newer than the last
+startup failure is reported. Otherwise the newest failure is, but a startup
+failure, then a structured error, logged in the 2 minutes before it takes
+precedence, so an error just before a crash explains it.
 
 Reads the whole window (up to 64 MB of journal output; narrow --since if it
 is larger), even with the service down. Shows up to 20
@@ -181,7 +186,9 @@ function redact(value) {
       return /token|authorization|password|passwd|secret|api[_-]?key|credential|cookie|signature|^(?:auth|code|sig)$/i.test(name)
         ? `${separator}${key}=[REDACTED]` : match
     })
-    .replace(/(\b(?:proxy-)?authorization["']?\s*[:=]\s*["']?)(?:(?:Bearer|Basic)\s+)?[^\s,;"'}]+/gi, '$1[REDACTED]')
+    // Cookie and authorization values (several cookies, Digest, Negotiate, AWS4 signatures) contain
+    // spaces, commas, and quotes, so redact through the end of the line.
+    .replace(/((?:cookie|authorization)[\w.-]{0,32}["']?\s*[:=]\s*)[^\n]*/gi, '$1[REDACTED]')
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 [REDACTED]')
     .replace(/(\b[\w.-]*(?:token|password|passwd|secret|api[_-]?key|credential)[\w.-]*["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&}]+)/gi, '$1[REDACTED]')
     .replace(/(--[\w-]*(?:token|password|secret|api-key)[\w-]*\s+)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
@@ -212,12 +219,38 @@ function correlations(item) {
   return output
 }
 const JOURNAL_MAX_BYTES = 64 * 1024 * 1024
+const WINDOW_MS = 2 * 60 * 1000
 class JournalTooLarge extends Error {}
+// journalctl -o json encodes a MESSAGE with control bytes (such as colours) as an array of bytes and
+// may encode one as null; never fall back to the envelope, which would bypass parsing and redaction.
+function journalMessage(envelope, line) {
+  if (!envelope || !('MESSAGE' in envelope || '__CURSOR' in envelope)) return line
+  const value = envelope.MESSAGE
+  if (typeof value === 'string') return value
+  return Array.isArray(value) && value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)
+    ? Buffer.from(value).toString('utf8') : ''
+}
+// Remove CSI (colour), OSC (title, hyperlink), and other escape sequences before parsing and redacting.
+const terminalText = (value) => value.replace(
+  /(?:\x1b\[|\x9b)[0-?]*[ -\/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|\x1b[ -\/]*[0-~]/g, '')
+const structuredError = ({ item }) => {
+  if (!item) return false
+  const level = typeof item.level === 'string' ? item.level.trim().toLowerCase() : item.level
+  if ((typeof level === 'number' || (typeof level === 'string' && level !== '')) && Number.isFinite(Number(level))) {
+    return Number(level) >= 50
+  }
+  if (typeof level === 'string' && /^(trace|debug|info|warn|warning|error|fatal)$/.test(level)) {
+    return /^(error|fatal)$/.test(level)
+  }
+  return item.err != null || item.type === 'error'
+}
+const unitFailure = ({ item, message }) => !item &&
+  /\bFailed with result\b|\bStart request repeated too quickly\b|\bFailed to start\b|\bcode=(?:killed|dumped)\b|\bstatus=[1-9]\d*(?:\/|\b)/i.test(message)
 function explain() {
   if (!executable('journalctl')) throw new Error()
   // Structured service lines are large; request only MESSAGE (address fields such as
-  // __REALTIME_TIMESTAMP are always included) and allow a bounded larger buffer.
-  const journal = spawnSync('journalctl', ['--user', '--unit', serviceName, '-o', 'json', '--output-fields=MESSAGE',
+  // __REALTIME_TIMESTAMP are always included), in full, and allow a bounded larger buffer.
+  const journal = spawnSync('journalctl', ['--user', '--unit', serviceName, '-o', 'json', '--output-fields=MESSAGE', '--all',
     '--since', since, '--no-pager'], {
     encoding: 'utf8', timeout: 20000, maxBuffer: JOURNAL_MAX_BYTES, stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -226,7 +259,7 @@ function explain() {
   let privateKey
   const entries = journal.stdout.split('\n').filter((line) => line.trim()).map((line) => {
     const envelope = parseRecord(line)
-    const message = typeof envelope?.MESSAGE === 'string' ? envelope.MESSAGE : line
+    const message = terminalText(journalMessage(envelope, line))
     const item = parseRecord(message)
     // Track split PEM blocks across the whole journal before limiting displayed context.
     const continuedKey = !!privateKey
@@ -238,8 +271,9 @@ function explain() {
       privateKeyFragment: continuedKey || !!privateKey }
   })
   const { lastFailure, unfinished } = startupSignals(entries.map((entry) => entry.item))
-  let signal = lastFailure && { ...lastFailure, kind: 'startup' }
-  if (!signal && unfinished) {
+  let signal
+  // As in doctor: an unfinished startup newer than the last startup failure explains an inactive unit.
+  if (unfinished && (!lastFailure || unfinished.index > lastFailure.index)) {
     const state = run('systemctl', ['--user', 'is-active', serviceName])
     // Unknown state is not evidence that a running phase is unfinished.
     if (!state.error && state.status !== 0 && /^(inactive|failed|deactivating)$/.test(state.stdout.trim())) {
@@ -247,23 +281,21 @@ function explain() {
     }
   }
   if (!signal) {
-    const index = entries.findLastIndex(({ item }) => {
-      if (!item) return false
-      const level = typeof item.level === 'string' ? item.level.trim().toLowerCase() : item.level
-      if ((typeof level === 'number' || (typeof level === 'string' && level !== '')) && Number.isFinite(Number(level))) {
-        return Number(level) >= 50
-      }
-      if (typeof level === 'string' && /^(trace|debug|info|warn|warning|error|fatal)$/.test(level)) {
-        return /^(error|fatal)$/.test(level)
-      }
-      return item.err != null || item.type === 'error'
+    // Report the newest failure, but prefer (in this order) one logged up to WINDOW_MS before it,
+    // so an error just before a crash explains the crash. Untimed candidates cannot be compared.
+    const error = entries.findLastIndex(structuredError)
+    const unit = entries.findLastIndex(unitFailure)
+    const candidates = [
+      lastFailure && { ...lastFailure, kind: 'startup' },
+      error >= 0 && { index: error, kind: 'error' },
+      unit >= 0 && { index: unit, kind: 'unit' },
+    ].filter(Boolean)
+    const newest = candidates.reduce((latest, candidate) => candidate.index > latest.index ? candidate : latest, candidates[0])
+    const end = Date.parse(entries[newest?.index]?.time)
+    signal = candidates.find((candidate) => {
+      const age = end - Date.parse(entries[candidate.index].time)
+      return candidate === newest || (age >= 0 && age <= WINDOW_MS)
     })
-    if (index >= 0) signal = { index, kind: 'error' }
-  }
-  if (!signal) {
-    const index = entries.findLastIndex(({ item, message }) => !item &&
-      /\bFailed with result\b|\bStart request repeated too quickly\b|\bFailed to start\b|\bcode=(?:killed|dumped)\b|\bstatus=[1-9]\d*(?:\/|\b)/i.test(message))
-    if (index >= 0) signal = { index, kind: 'unit' }
   }
   if (!signal) return { failure: null, correlation: {}, omittedWindowLines: 0, before: [], after: [] }
   const entry = entries[signal.index]
@@ -281,7 +313,7 @@ function explain() {
   const label = { sessionId: 'same session', requestId: 'same request', phase: 'same phase', computerId: 'same computer' }[key]
   const same = key ? preceding.filter((item) => item.correlation[key] === entry.correlation[key]).slice(-20) : []
   const window = preceding.filter((item) => !same.includes(item) && entry.time && item.time &&
-    Date.parse(item.time) >= Date.parse(entry.time) - 120000 && Date.parse(item.time) <= Date.parse(entry.time))
+    Date.parse(item.time) >= Date.parse(entry.time) - WINDOW_MS && Date.parse(item.time) <= Date.parse(entry.time))
   // A busy hub logs hundreds of requests per minute; keep the lines closest to the failure.
   const nearby = window.slice(-20)
   const output = (item, block) => ({
@@ -581,9 +613,13 @@ function originCheck() {
       if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.host || parsed.origin === 'null') throw new Error()
       return parsed
     })
-    const loopback = !entries.length || origins.some((origin) =>
-      ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname))
-    if (!loopback) return add('origins', 'fail', 'Allowed origins do not include loopback')
+    // An explicit list replaces the server's loopback allowance; loopback stays optional because
+    // /health is not origin-checked and a remote-only hub never needs it.
+    const loopback = origins.some((origin) => ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname))
+    const scope = !entries.length
+      ? 'Allowed origins are unset; the server derives them from HOST and PORT and allows loopback'
+      : `Allowed origins parse; ${loopback ? 'loopback is listed'
+        : 'no loopback origin is listed, so browser access through localhost is not allowed'}`
     const [tunnelId, ...tunnelRegion] = tunnel.toLowerCase().split('.')
     const tunnelOrigin = origins.some((origin) => {
       const labels = origin.hostname.split('.')
@@ -592,10 +628,9 @@ function originCheck() {
         (tunnelRegion.length ? labels.slice(1, -2).join('.') === tunnelRegion.join('.') :
           labels.length === 3 || labels.length === 4)
     })
-    add('origins', tunnel && !tunnelOrigin ? 'warn' : 'ok', tunnel && !tunnelOrigin
-      ? 'Allowed origins include loopback but not the selected tunnel HTTPS origin and port'
-      : `Allowed origins parse and include loopback${tunnel ? ' and the selected tunnel origin' :
-        entries.length ? '' : ' (server defaults)'}`)
+    add('origins', tunnel && !tunnelOrigin ? 'warn' : 'ok', !tunnel ? scope : tunnelOrigin
+      ? `${scope}; the selected tunnel origin is listed`
+      : `${scope}; the selected tunnel HTTPS origin and port are not listed`)
   } catch { add('origins', 'fail', 'Invalid AGENTIC_REMOTE_ALLOWED_ORIGINS entry; expected http(s)://host[:port]') }
 }
 

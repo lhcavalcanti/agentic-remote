@@ -404,7 +404,7 @@ describe('read-only doctor CLI', () => {
   it.each([
     ['not-an-origin', 'fail'],
     ['localhost:1234', 'fail'],
-    ['https://fixture.devtunnels.ms', 'fail'],
+    ['https://fixture.devtunnels.ms', 'warn'],
     ['http://localhost:1234', 'warn'],
     ['http://localhost:1234/path,https://fixture.devtunnels.ms/path', 'warn'],
     ['', 'warn'],
@@ -412,6 +412,23 @@ describe('read-only doctor CLI', () => {
     const context = await fixture()
     await context.configure({ AGENTIC_REMOTE_ALLOWED_ORIGINS: origins })
     expect(check(await context.run(), 'origins')?.status).toBe(status)
+  })
+
+  it.each([
+    ['only the selected tunnel', 'https://fixture-PORT.usw2.devtunnels.ms', 'fixture.usw2',
+      'no loopback origin is listed, so browser access through localhost is not allowed'],
+    ['only a reverse proxy', 'https://agents.example.test', '',
+      'no loopback origin is listed, so browser access through localhost is not allowed'],
+    ['loopback and the selected tunnel', 'http://[::1]:PORT,https://fixture-PORT.usw2.devtunnels.ms', 'fixture.usw2',
+      'loopback is listed'],
+  ])('passes an explicit allowlist of %s and says whether local browsing is allowed', async (_case, origins, tunnel, local) => {
+    const context = await fixture()
+    await context.configure({
+      AGENTIC_REMOTE_ALLOWED_ORIGINS: origins.replaceAll('PORT', String(context.port)), AGENTIC_REMOTE_DEVTUNNEL_ID: tunnel,
+    })
+    const result = await context.run()
+    expect(result.code).toBe(0)
+    expect(check(result, 'origins')).toMatchObject({ status: 'ok', detail: expect.stringContaining(local) })
   })
 
   it.each([

@@ -20,10 +20,12 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-const journalLine = (message: Log, seconds = 0) => JSON.stringify({
-  __REALTIME_TIMESTAMP: String((epoch + seconds * 1000) * 1000),
-  MESSAGE: typeof message === 'string' ? message : JSON.stringify(message),
+const journalRecord = (MESSAGE: unknown, seconds = 0) => JSON.stringify({
+  __REALTIME_TIMESTAMP: String((epoch + seconds * 1000) * 1000), MESSAGE,
 })
+const journalLine = (message: Log, seconds = 0) =>
+  journalRecord(typeof message === 'string' ? message : JSON.stringify(message), seconds)
+const oomKill = "agentic-remote.service: Failed with result 'oom-kill'."
 
 async function fixture(lines: string[] = []) {
   const parent = path.join(process.cwd(), '.agentic-remote')
@@ -45,7 +47,7 @@ async function fixture(lines: string[] = []) {
   }
   await stub('journalctl', [
     'if [[ "$*" == "--user --unit agentic-remote.service --follow" ]]; then echo "following fixture"; exit 0; fi',
-    '[[ "$*" == "--user --unit agentic-remote.service -o json --output-fields=MESSAGE --since $TEST_SINCE --no-pager" ]] || exit 99',
+    '[[ "$*" == "--user --unit agentic-remote.service -o json --output-fields=MESSAGE --all --since $TEST_SINCE --no-pager" ]] || exit 99',
     'if [[ -n "${TEST_JOURNAL_ERROR:-}" ]]; then printf "%s\\n" "$TEST_JOURNAL_ERROR" >&2; exit "${TEST_JOURNAL_STATUS:-1}"; fi',
     'while IFS= read -r line; do printf "%s\\n" "$line"; done <"$TEST_JOURNAL"',
   ].join('\n'))
@@ -212,7 +214,7 @@ describe('read-only logs explanation CLI', () => {
     expect(explanation(await context.run()).failure).toBeNull()
   })
 
-  it('clears unfinished phases on a new app.build and prioritizes startup failures over later errors', async () => {
+  it('clears unfinished phases on a new app.build and prefers a startup failure over a later error within two minutes', async () => {
     const context = await fixture([
       journalLine({ startupPhase: 'copilot.sdk', event: 'begin' }, -600),
       journalLine({ startupPhase: 'app.build', event: 'begin' }, -5),
@@ -224,7 +226,42 @@ describe('read-only logs explanation CLI', () => {
       journalLine({ startupPhase: 'app.build', event: 'begin' }, -1),
       journalLine({ level: 50, msg: 'later error' }),
     ].join('\n') + '\n')
-    expect(explanation(await context.run()).failure).toMatchObject({ kind: 'startup', phase: 'fastify.listen' })
+    expect(explanation(await context.run(undefined, { TEST_ACTIVE: 'active' })).failure)
+      .toMatchObject({ kind: 'startup', phase: 'fastify.listen' })
+  })
+
+  it('reports an unfinished startup newer than a recovered startup failure while the unit is not active', async () => {
+    const context = await fixture([
+      journalLine({ startupPhase: 'fastify.listen', event: 'fail' }, -3 * 3600),
+      journalLine({ startupPhase: 'app.build', event: 'begin' }, -60),
+      journalLine({ startupPhase: 'app.build', event: 'complete' }, -59),
+      journalLine({ startupPhase: 'copilot.start', event: 'begin' }, -58),
+    ])
+    expect(explanation(await context.run()).failure).toMatchObject({ kind: 'unfinished-startup', phase: 'copilot.start' })
+    expect(explanation(await context.run(undefined, { TEST_ACTIVE: 'active' })).failure)
+      .toMatchObject({ kind: 'startup', phase: 'fastify.listen' })
+  })
+
+  it.each([
+    ['a unit failure over a routine error ten minutes earlier', [
+      journalLine({ level: 50, statusCode: 409, msg: 'This session is already responding' }, -600),
+      journalLine(oomKill),
+    ], { kind: 'unit', message: oomKill }],
+    ['a structured error ten seconds before a unit failure', [
+      journalLine({ level: 50, msg: 'heap allocation failed' }, -10),
+      journalLine(oomKill),
+    ], { kind: 'error', message: 'heap allocation failed' }],
+    ['a newer error over a startup failure three hours earlier', [
+      journalLine({ startupPhase: 'fastify.listen', event: 'fail' }, -3 * 3600),
+      journalLine({ level: 50, msg: 'route failed' }),
+    ], { kind: 'error', message: 'route failed' }],
+    ['only the newest candidate when timestamps are missing', [
+      JSON.stringify({ MESSAGE: JSON.stringify({ level: 50, msg: 'untimed error' }) }),
+      JSON.stringify({ MESSAGE: oomKill }),
+    ], { kind: 'unit', message: oomKill }],
+  ])('reports %s', async (_case, lines, failure) => {
+    const context = await fixture(lines)
+    expect(explanation(await context.run()).failure).toMatchObject(failure)
   })
 
   it('caps same-key context at 20 and following context at 5 without duplicating window lines', async () => {
@@ -287,6 +324,49 @@ describe('read-only logs explanation CLI', () => {
       expect(result.stdout).toContain('ok=visible')
       expect(result.stdout).toContain('[REDACTED]')
     }
+  })
+
+  it('redacts whole Cookie, Set-Cookie, and Authorization header values in human and JSON output', async () => {
+    const secrets = ['cookie-one', 'cookie-two', 'cookie-three', 'set-cookie-value', 'digest-user', 'digest-nonce',
+      'digest-response', 'negotiate-value', 'msg-cookie', 'aws-signature', 'json-cookie']
+    const context = await fixture([
+      journalLine('Cookie: session=cookie-one; theme=cookie-two; csrf=cookie-three', -4),
+      journalLine('Set-Cookie: sid=set-cookie-value; Path=/; Expires=Wed, 18 Nov 2026 07:28:00 GMT; HttpOnly; Secure', -3),
+      journalLine('Authorization: Digest username="digest-user", realm="fixture", nonce="digest-nonce", response="digest-response"', -2),
+      journalLine({ level: 50, sessionId: 'session', msg: 'upstream rejected Proxy-Authorization: Negotiate negotiate-value; Cookie: a=msg-cookie' }),
+      journalLine('authorization: AWS4-HMAC-SHA256 Credential=fixture/20261116/us-east-1/s3/aws4_request, SignedHeaders=host, Signature=aws-signature', 1),
+      journalLine('replaying {"headers":{"cookie":"sid=json-cookie"}}', 2),
+    ])
+    for (const args of [['--why'], ['--why', '--json']]) {
+      const result = await context.run(args)
+      expect(result.code).toBe(0)
+      expect(result.stdout).toContain('upstream rejected')
+      expect(result.stdout).toContain('[REDACTED]')
+      for (const secret of secrets) expect(result.stdout).not.toContain(secret)
+    }
+  })
+
+  it('decodes byte-array messages and strips terminal escapes before detecting failures and redacting', async () => {
+    const coloured = (message: string, seconds = 0) => journalRecord([...Buffer.from(message)], seconds)
+    const secrets = ['coloured-bearer', 'linked-bearer']
+    const context = await fixture([
+      journalRecord(null, -3),
+      coloured('\x1b[1mAuthorization:\x1b[0m Bearer \x1b[33mcoloured-bearer\x1b[0m', -2),
+      coloured('retrying with \x1b]8;;https://fixture.invalid\x07\x1b[1mBearer\x1b[0m\x1b]8;;\x1b\\ linked-bearer', -1),
+      coloured(`\x1b[31m${JSON.stringify({ level: 50, msg: 'coloured failure' })}\x1b[0m`),
+    ])
+    for (const args of [['--why'], ['--why', '--json']]) {
+      const result = await context.run(args)
+      expect(result.code).toBe(0)
+      expect(result.stdout).toContain('coloured failure')
+      expect(result.stdout).not.toContain('MESSAGE')
+      for (const secret of secrets) {
+        expect(result.stdout).not.toContain(secret)
+        expect(result.stdout).not.toContain([...Buffer.from(secret)].join(','))
+      }
+    }
+    expect(explanation(await context.run()).failure).toMatchObject({ kind: 'error', message: 'coloured failure' })
+    expect(await readFile(context.calls, 'utf8')).toContain(' --output-fields=MESSAGE --all ')
   })
 
   it.each(['PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'OPENSSH PRIVATE KEY', 'ENCRYPTED PRIVATE KEY'])(
@@ -354,7 +434,7 @@ describe('read-only logs explanation CLI', () => {
     expect(await readFile(context.environment, 'utf8')).toBe('TOKEN=environment-must-not-be-printed\n')
     await expect(readFile(marker)).rejects.toMatchObject({ code: 'ENOENT' })
     expect((await readFile(context.calls, 'utf8')).trim().split('\n')).toEqual([
-      'journalctl --user --unit agentic-remote.service -o json --output-fields=MESSAGE --since -6h --no-pager',
+      'journalctl --user --unit agentic-remote.service -o json --output-fields=MESSAGE --all --since -6h --no-pager',
     ])
   })
 

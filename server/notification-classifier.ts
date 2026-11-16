@@ -156,10 +156,12 @@ export function classifyHostNotification(
   cursors: NotificationCursors,
   now: string,
   observations: NotificationCursors = cursors,
+  receivedAt = now,
 ): NotificationRecord[] {
   const nowMs = Date.parse(now)
+  const queueAgeMs = Math.max(0, nowMs - Date.parse(receivedAt))
   const sampleMs = snapshot?.latest
-    ? snapshot.sampleAgeMs === undefined ? Date.parse(snapshot.latest.at) : nowMs - snapshot.sampleAgeMs
+    ? snapshot.sampleAgeMs === undefined ? Date.parse(snapshot.latest.at) : nowMs - snapshot.sampleAgeMs - queueAgeMs
     : NaN
   const sampleAt = Number.isFinite(sampleMs) ? new Date(sampleMs).toISOString() : undefined
   const fresh = Number.isFinite(sampleMs) && sampleMs <= nowMs + 5000 && nowMs - sampleMs <= HOST_ALERT_MAX_SAMPLE_AGE_MS
@@ -252,6 +254,8 @@ export function classifyOracleNotification(event: ManagerEvent, now: string, rep
   }
   const reply = message.role === 'user' ? replies.get(message.id) : undefined
   if (message.role === 'user') replies.delete(message.id)
+  if (message.role === 'user' && (message.suppressNotification || message.source === 'proactive' ||
+      message.automatic?.kind === 'proactive')) return []
   let suffix: string
   let title: string
   let body: string

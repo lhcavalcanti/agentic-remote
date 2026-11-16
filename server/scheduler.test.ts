@@ -43,7 +43,7 @@ class FakeLauncher implements ScheduleLauncher {
   })
 }
 
-async function fixture(options: Parameters<typeof createInput>[0] = {}, online = () => true) {
+async function fixture(options: Parameters<typeof createInput>[0] = {}, online: (computerId: string) => boolean = () => true) {
   const directory = await root()
   const store = new SchedulerStore(directory)
   await store.initialize()
@@ -682,6 +682,57 @@ describe('hub schedule dispatcher', () => {
     expect(launcher.launch.mock.calls.at(-1)).toEqual([
       expect.objectContaining({ id: queued.id }), expect.objectContaining({ target: expect.objectContaining({ computerId: 'studio' }) }),
     ])
+  })
+
+  it.each(['completed', 'missed'] as const)('keeps target-edited runs FIFO across restart until the offline predecessor is %s', async (outcome) => {
+    let studioOnline = false
+    const targetOnline = (computerId: string) => computerId !== 'studio' || studioOnline
+    const { dispatcher, store, launcher, schedule, directory } = await fixture({ overlap: 'queue' }, targetOnline)
+    await dispatcher.start()
+    const older = await dispatcher.runNow(schedule.id)
+    await store.update(schedule.id, {
+      revision: 1, target: { computerId: 'other', folder: '/other/project', provider: 'claude' },
+    })
+    const newer = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    expect(store.getRun(older.id)).toMatchObject({ status: 'pending', retryUntil: '2026-11-14T08:10:00.000Z' })
+    expect(store.getRun(newer.id).status).toBe('pending')
+    expect(launcher.launch).not.toHaveBeenCalled()
+    const independent = await store.create(createInput({
+      name: 'Independent', target: { computerId: 'other', folder: '/independent', provider: 'copilot' },
+    }))
+    const unrelated = await dispatcher.runNow(independent.id)
+    await settle(dispatcher)
+    expect(store.getRun(unrelated.id).status).toBe('running')
+    expect(store.allRuns().filter(holdsSlot)).toHaveLength(1)
+    await dispatcher.stop()
+    const recovered = new SchedulerStore(directory)
+    const restarted = new SchedulerDispatcher(recovered, launcher, { targetOnline })
+    dispatchers.push(restarted)
+    await restarted.start()
+    await settle(restarted)
+    expect(recovered.getRun(older.id).status).toBe('pending')
+    expect(recovered.getRun(newer.id).status).toBe('pending')
+    if (outcome === 'completed') {
+      studioOnline = true
+      await settle(restarted)
+      expect(recovered.getRun(older.id).status).toBe('running')
+      expect(recovered.getRun(newer.id).status).toBe('pending')
+      launcher.states.set(older.launchId, { state: 'terminated', outcome: 'succeeded' })
+    } else {
+      vi.setSystemTime(new Date(Date.parse(INITIAL) + SCHEDULER_LATE_MS))
+      await settle(restarted)
+      expect(recovered.getRun(older.id).status).toBe('pending')
+      expect(recovered.getRun(newer.id).status).toBe('pending')
+      vi.setSystemTime(new Date(Date.now() + 1))
+    }
+    await settle(restarted)
+    expect(recovered.getRun(older.id).status).toBe(outcome === 'completed' ? 'succeeded' : 'missed')
+    expect(recovered.getRun(newer.id)).toMatchObject({ status: 'running', computerId: 'other' })
+    expect(launcher.launch.mock.calls.map(([run]) => run.id)).toEqual(
+      outcome === 'completed' ? [unrelated.id, older.id, newer.id] : [unrelated.id, newer.id],
+    )
+    expect(recovered.allRuns().filter(holdsSlot)).toHaveLength(2)
   })
 
   it('does not create sessions with the no-op runner', async () => {

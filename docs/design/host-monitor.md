@@ -44,6 +44,8 @@ Attribution does not initialize providers or call SDK APIs. Terminal observation
 
 `get_host_status({ computerId? })` uses `ComputerManager.hostTelemetryTarget`, the same path as the hub API; it never reads `/proc` directly. A computer ID or name selects one computer. Without it, the tool reads at most eight computers and reports omissions; the entire result is capped at 16,000 characters, with bounded names and a truncation notice. It reports hostname, hub/node role, the explicit WSL VM label, CPU, used/available memory, free space on the data mount, 1/5/15-minute load, and sample age. Samples older than 30 seconds are marked stale.
 
+Paired-computer ages use the supplied monotonic sample age, never a blind comparison of node and hub wall clocks. Legacy payloads without sample age retain their metrics but explicitly report unknown sample age and current health, with an update instruction; they are not labeled current or fresh.
+
 The five highest-CPU visible processes include executable basename, PID, CPU, RSS, and conservative ownership. Only proven session-owned rows receive session links; shared runtimes never receive inferred session IDs. Partial inventories are labeled. The first process scan has no CPU baseline and therefore reports zero, as above. The existing five-second scan admission remains in force: a rate-limited or failed inventory is explicitly unavailable without discarding the host summary. Reads neither subscribe viewers nor change sampler cadence.
 
 The tool is read-only in Ask, Delegate, voice, and proactive turns. The production resolver returns a disabled response when the hub flag is off, without constructing a sampler or contacting nodes; Oracle can explain that status is “not available on this computer.” Older/disabled nodes receive the same explicit unavailable state with an update/enable instruction, and offline computers remain unavailable. Runtime errors and pairing details never enter the result. No process control or provider startup is involved.
@@ -53,6 +55,8 @@ The tool is read-only in Ask, Delegate, voice, and proactive turns. The producti
 Only a hub with both `hostMonitor` and `notificationCenter` enabled constructs `HostAlertMonitor`. It starts under `hostAlerts.start` and stops before notification storage is flushed. It polls snapshots through ComputerManager every 15 seconds after the previous poll settles, with at most four concurrent node reads. It never requests process inventories, opens live viewers, or raises idle sampling to one second. Missing capabilities, disabled nodes, connection failures, and offline computers provide unavailable observations rather than invented resource readings.
 
 Resource observations enter `NotificationCenterService.host` and the canonical notification classifier/store. They create warning-severity `host.alert` records only; they do not add a new push/native delivery path or change existing error-severity health alerts.
+
+Freshness is evaluated at classification time, adding elapsed hub queue time to the sample age captured when the hub received the snapshot. The receipt timestamp belongs to the hub, so paired-computer clock skew cannot make queued data look newer.
 
 - Memory must stay strictly above 90% for at least two minutes of fresh readings. A below-trigger reading resets a pending interval. An active episode recovers at or below 85%.
 - Disk free space on the data mount must be strictly below 5%; an active episode recovers at or above 7%.

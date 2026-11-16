@@ -92,6 +92,7 @@ function NavigationHarness({
   suspendingSessions = new Set<string>(),
   recentlyClosedCount,
   onOpenRecentlyClosed,
+  onRefresh,
 }: {
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
@@ -110,6 +111,7 @@ function NavigationHarness({
   suspendingSessions?: ReadonlySet<string>
   recentlyClosedCount?: number
   onOpenRecentlyClosed?: () => void
+  onRefresh?: () => void
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
@@ -163,6 +165,7 @@ function NavigationHarness({
         sort={sort}
         recentlyClosedCount={recentlyClosedCount}
         onOpenRecentlyClosed={onOpenRecentlyClosed}
+        onRefresh={onRefresh}
       />
     </DndContext>
   )
@@ -755,17 +758,32 @@ describe('session navigation', () => {
     )
   })
 
-  it('ends the list with Recently closed and how many it holds', () => {
+  it('offers Recently closed in the header between Refresh and New session, with how many it holds', () => {
     const onOpen = vi.fn()
-    const { rerender } = render(<NavigationHarness onOpenRecentlyClosed={onOpen} recentlyClosedCount={3} />)
-    const entry = screen.getByRole('button', { name: 'Recently closed, 3 sessions' })
-    const lastGroup = screen.getByRole('region', { name: 'Travel laptop' })
+    const header = (count?: number) => (
+      <NavigationHarness onOpenRecentlyClosed={onOpen} onRefresh={vi.fn()} recentlyClosedCount={count} />
+    )
+    const { rerender } = render(header(3))
+    const list = screen.getByRole('navigation', { name: 'Sessions' })
+    const entry = within(list).getByRole('button', { name: 'Recently closed, 3 sessions' })
 
-    expect(lastGroup.compareDocumentPosition(entry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Document order is keyboard order, and the list no longer ends with it.
+    expect(within(list).getAllByRole('button').slice(0, 3).map((button) => button.getAttribute('aria-label')))
+      .toEqual(['Refresh sessions and Oracle', 'Recently closed, 3 sessions', 'New session'])
+    expect(within(list).getAllByRole('button', { name: /^Recently closed/ })).toEqual([entry])
+    expect(entry).toHaveAttribute('title', 'Reopen a session closed in the last 14 days')
+    expect(within(entry).getByText('3')).toHaveAttribute('aria-hidden', 'true')
     fireEvent.click(entry)
     expect(onOpen).toHaveBeenCalledOnce()
-    rerender(<NavigationHarness onOpenRecentlyClosed={onOpen} />)
-    expect(screen.getByRole('button', { name: 'Recently closed' })).toBeInTheDocument()
+
+    rerender(header(1))
+    expect(screen.getByRole('button', { name: 'Recently closed, 1 session' })).toHaveTextContent('1')
+    rerender(header(140))
+    expect(screen.getByRole('button', { name: 'Recently closed, 140 sessions' }).textContent).toBe('99+')
+    for (const count of [0, undefined]) {
+      rerender(header(count))
+      expect(screen.getByRole('button', { name: 'Recently closed' }).textContent).toBe('')
+    }
   })
 
   it('holds back only the session that is closing', () => {

@@ -3,6 +3,7 @@ import type { ComputerSummary, RuntimeModelOption } from '../../shared/contracts
 import { nextOccurrences, validateRecurrence } from '../../shared/schedule-recurrence'
 import { DEFAULT_SCHEDULE_TIMEZONE, scheduleCreateSchema, type Schedule, type ScheduleRecurrence, type ScheduleTarget } from '../../shared/schedules'
 import { getProviderRuntimeOptions } from '../api'
+import { contextSizeLabel } from '../session-setup/runtime-presentation'
 import { editableSchedule, scheduleError, scheduleTime } from './format'
 import { FolderPicker } from './FolderPicker'
 
@@ -148,7 +149,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
           {efforts.map((effort) => <option key={effort} value={effort}>{effort}</option>)}</select></label>
         <label className="field">Context<select className="dialog-select" disabled={!selectedModel} value={target.context ?? 'default'} onChange={(event) => updateTarget('context', event.target.value as ScheduleTarget['context'])}>
           {target.context && !contexts.includes(target.context) && <option value={target.context}>{target.context} (not in current catalog)</option>}
-          {contexts.map((context) => <option key={context} value={context}>{context === 'default' ? 'Default' : 'Long context'}</option>)}</select></label>
+          {contexts.map((context) => <option key={context} value={context}>{selectedModel ? contextSizeLabel(selectedModel, context) : 'Automatic'}</option>)}</select></label>
         <label className="field">Mode<select className="dialog-select" value={target.mode} onChange={(event) => updateTarget('mode', event.target.value as ScheduleTarget['mode'])}>
           <option value="autopilot">Autopilot</option><option value="interactive">Interactive</option><option value="plan">Plan</option></select></label>
       </div>

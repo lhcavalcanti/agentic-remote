@@ -149,6 +149,8 @@ The current reader accepts legacy runs without full receipts or worktree records
 
 ## Client UI preview
 
+Changing the target computer clears its computer-bound worktree root as well as model overrides; the new owner resolves its own allowed root. Effort and context controls use only the selected model's advertised capabilities, and saving model-specific settings requires an available compatible model. Selecting Provider default clears and disables those overrides. Context options reuse the New session/runtime `contextSizeLabel` formatter to show token capacities, or Automatic when the catalog provides no limit.
+
 Recent runs are optional enrichment: a failed recent-run request leaves schedule management available, shows a quiet availability notice beside the list, and labels last-result chips as unavailable rather than claiming there were no runs. Successful refreshes clear the notice; only schedule-list failures use the top-level error. Aborted refreshes cannot publish either data or enrichment errors.
 
 `schedulerView` requires the authoritative hub `scheduler` flag. The rail or drawer footer opens the list with recurrence summaries, next occurrences in each schedule's IANA timezone, recent-result chips, enable controls, manual Run now, edit, duplicate and archive. Duplicates and restored archives start paused. Archived schedules remain inspectable through the archive filter.

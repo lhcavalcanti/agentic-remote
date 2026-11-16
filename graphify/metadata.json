@@ -458,9 +458,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 239,
+  "communities": 244,
   "community_algorithm": "louvain-seed-42",
-  "edges": 21206,
+  "edges": 21208,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -490,9 +490,9 @@
     ".superpowers/sdd/2026-10-16-oracle-conversation-mode/task-12-report.md": "2304e949b2a567547acea0bce1391c2ef9cc1e28031cec4d9b1febfb2155f49a",
     ".superpowers/sdd/2026-10-16-oracle-conversation-mode/task-9-report.md": "ac55441561d6ec7420901aa98bf892c545ebb5b8c9919db34eabdca53cde729f",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
-    "README.md": "57ac364d4d927278bc1b3f749e9336b6416104c6f6fb3a72e7c57365922a65d5",
+    "README.md": "3d9cbc7c770bf9f77fdb62552f05bc5a369d08e1be522d304fa8e70e839b17c6",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
-    "bin/agentic-remote": "4ab68576325d884749b8f530f247b0c6f9c66882f1bac9b493accd66c176bc07",
+    "bin/agentic-remote": "82c9cc07f88c5443b42df85d8954ca0a7e6b4aa5b3d032d743a32c9c3946cc3c",
     "bin/agentic-remote-gate": "a6e8d2b46bf441c15a4b698a68e9ccfef0c359a346e63d8d5e18e511e1a040bf",
     "bin/agentic-remote-promotion-monitor": "e3b0ccc2e8c99b5e725cc5e85f3b422aac901ce386f8f8ca21023d867497d881",
     "bin/agentic-remote-promotion-setup": "a98d649946727ac53fe1df94ceea5a8dfe3bae83a0ea1f30da343e0699e220aa",
@@ -577,7 +577,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "8ebaf35a3c3b3acc2563fd913e30cabcfa5c1f2a1d3ef7e0d52b03c6ad2e69f9",
+    "package.json": "e5be1ea4a254ee63b813f32b5a61b7c93e138cecc61662568d2161755e3393d9",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "9a0249fb977ecff39695b090b5ba6bf4f6ec114b786636b52573a0c5cc087fb1",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -639,7 +639,7 @@
     "server/delegated-transcription-service.ts": "875a5d15fb582e7d836b6d3f5d1cc7328480fa793d63f272aa3c163b1c07afb7",
     "server/directory-browser.test.ts": "9952e56f0dbc161daaa8e5ad8da3498629d83e2b934963266f6ee87ab9385ccb",
     "server/directory-browser.ts": "5d730a0c7bb9447c4308f744ed724af55d838c7e9f56fbdf89f403195142a26b",
-    "server/doctor-cli.test.ts": "c04c77ff41cd1dc0e6f91b4c083d5616be496d08387cfbd7409efba1e95f8d30",
+    "server/doctor-cli.test.ts": "4163b42c7276caeb4b6cfc2a878455ecaec411c4b6d748438a8c4853feaa595e",
     "server/dreamer-app.test.ts": "809b104164fadc67c6ed79f859c1bc24679804244c975b6fb200a2e7107a0a86",
     "server/dreamer-planner.test.ts": "9707276aa6a0f558f2972d0072cb86801e0f7b3c257594648afb5727373c1d2e",
     "server/dreamer-planner.ts": "9762d1a329379168c411adfdeead351660531141c8caa493c423c0e738ff98a6",
@@ -664,7 +664,7 @@
     "server/index.ts": "b1189fbad8cdf82b6df96a6571a9c6fcf28b4caae96ac2f35c5d7532b33b9b29",
     "server/knowledge-store.test.ts": "f9ee699c3e51c98ccb043ccc23323ed3ac4718a713dfcc924c390c7e96d8439c",
     "server/knowledge-store.ts": "a4ec94cabb119e24fa92b474eaed1386021a4673c7cd0f10fe4c219b1753b45c",
-    "server/logs-cli.test.ts": "498c12cb7d64d4aeab4acf7e8a1bcf98f779d93ce4b0f8a727b37025392f096c",
+    "server/logs-cli.test.ts": "0f4b763c5cae889eef4f632698947778b66d4b79120b3a85cbb3fc68b28f8c6d",
     "server/manager-agent.test.ts": "ec720f6dff9888b2e2fa9bcdba779a5ddfe761a1c09d71c86b5e59e3073d035a",
     "server/manager-agent.ts": "bd1cab4c57b245b64188083790b973422a20fe81351d544e123e12a3245b4519",
     "server/manager-context.test.ts": "ca91f57b0c9d0c843986608a25227dc1f878c79df2cd7ad158b3f053deef381a",
@@ -1021,7 +1021,7 @@
     "vite.config.ts": "add9265ffdcdcea0f80fafa728624f840c37a00d29f992c5e8c9d79a2ccb5e3b"
   },
   "mode": "local-ast-only",
-  "nodes": 7651,
+  "nodes": 7652,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1123,13 +1123,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "be6a24bb0abbb88db634d1b29199edc001ddfeea8b08fb863e8d3a7be26e1574",
-    "communities.json": "0bf02ef4a92eaa1c20bcee0f4a0f909a4635159c70ae95e777f945b8d83097a5",
-    "graph.html": "bde743c7c6e3d8614897e79fdb5822ce93cde80be36addc5f0c2f282da48132f",
-    "graph.json": "7fcc241a24f55736c324aecfa77d8c9cb39079922d7b5b58118ca841a1b22815"
+    "GRAPH_REPORT.md": "922419c393c518f60d428f76caad38f4e747fc25c1958f8373226c0f377a7317",
+    "communities.json": "98f99a52bbe9fbfb00eee22cb05f9567ac216b208c3f78a17809e0f892235589",
+    "graph.html": "4da1fe9932db553397b05e7a4d7a833cdcd72b102f41790ad69c2e19a2580da5",
+    "graph.json": "c82bd35940f09743c90967ebbc6ace7eaa3daaf4b163aef44a72ae2f310d91c1"
   },
   "schema_version": 1,
-  "source_commit": "9e67e3f9c2151f08bd3c4bd5d9f58d24f71c98ce",
-  "source_fingerprint": "9e2da64b0685b7f980882059a559eb1f00f621dc725a9777736bc7f8c4b47e13",
+  "source_commit": "ec5858772b4a7a8e207d5e10b202de5a3da1a0bc",
+  "source_fingerprint": "fb394f62501d9787713848eb1f087dbd79c657943ceadf11b12825813db64418",
   "working_tree_changes": []
 }

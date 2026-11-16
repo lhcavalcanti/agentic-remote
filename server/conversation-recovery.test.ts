@@ -452,6 +452,7 @@ describe('conversation recovery', () => {
     expect(recovered.messages.some((message) =>
       message.role === 'notice' && message.content.includes('read-only history'))).toBe(true)
     expect(recovered.messages.at(-2)?.role).toBe('user')
+    expect(recovered.messages.at(-2)?.appGenerated).toBe(true)
   })
 
   it('replaces and seeds a tmux conversation before its preserved queue can drain', async () => {

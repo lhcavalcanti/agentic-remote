@@ -456,9 +456,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 246,
+  "communities": 228,
   "community_algorithm": "louvain-seed-42",
-  "edges": 21180,
+  "edges": 21185,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -497,7 +497,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "30bf25fde1077b17185b76d55a26d567a8ab7c58aa37ed33abba2b59dbfda53b",
+    "docs/app-spec.md": "3d4abeebe17b6386a281fb9db94ab5758ca180d81141cd4d7e5f7a20438c0a32",
     "docs/architecture.md": "7cd18b668f5792d250a763da97879f938a96c9a7150410805da62b2a8b68126b",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -553,7 +553,7 @@
     "e2e/oracle-conversation-real.test.ts": "b13c24bb2dd23c1328031b0b8627f0f44cd46993b45cba6dca34424baef3ca41",
     "e2e/oracle-conversation.test.ts": "042358c5a9c196ba65f33d14b0e1e802ffcaaa7c954884dcff15ae64dc4f0e97",
     "e2e/oracle-dock.pw.ts": "1ca4e41cefe357f38d7551d6d50701ef44a95cfef7703ddd14d4411d3ebb6997",
-    "e2e/recently-closed.pw.ts": "0b1368bbc38734201834122525dbcf18f15c2eeac1514e27163036c123b9759d",
+    "e2e/recently-closed.pw.ts": "c82681c8126909a59d2ff80bcc235de226a6cef0f5b8fe95aa8d403c0564e7bd",
     "e2e/render-workspace-gifs.ts": "94bc45412aa8d0dc77dbe9e013bcce86c22abd1a04fff645e7c2ec6c8bab87ae",
     "e2e/screenshot-stability.test.ts": "f6193a86a40580d461d7a5473490196e8ebe6aab978a2d794bd157f6bc1c82f4",
     "e2e/screenshot-stability.ts": "7f52b64902d7dc77c02cd11a69682dd46f3c6028d19221098794ef31d2c7e16a",
@@ -575,7 +575,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "2bce03dedbd595a096c758a9a496b29f4a5c421ef97504eb195bac131e7db0dc",
+    "package.json": "84702d3762440d2767f15bce3d881e012943bc270042fc5e2660ab0bd26718c1",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "9a0249fb977ecff39695b090b5ba6bf4f6ec114b786636b52573a0c5cc087fb1",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -857,10 +857,10 @@
     "shared/side-question.ts": "026d2e3fae18f5348da782057d669400bb67ed91b7623fe3975c1f2d788ea855",
     "shared/submission-error.ts": "5a72ca9b395ae0d7f6f34caf0f3c8f6ce35867b75015a8ae86e147c13f0ca590",
     "shared/terminal-timing.ts": "911b7c377ae0b827e6a1e507c34a6ef6496cfb16367d2f2488e59524bcab4911",
-    "shell/README.md": "1b8d0ca1c7ead9737f21afab9cd95c9c688c6c6ec5d41bb112feebbecc49a3d1",
+    "shell/README.md": "79c9791fb3eeab5cbe2853a398e30615cd58036635129448fc75553bedfa0f3e",
     "shell/index.html": "8061d602bed5d4dbaf2d8f74b82cb012ada934e1eda19e5756a6c9f7c326e307",
-    "shell/package.json": "ee8db4ca8c6b9658dafdc5c8ad8246a9c17479d105a4b3b1441f9527a318b090",
-    "shell/src-tauri/Cargo.toml": "b5130c593144f30195a0412420749e286811ce50cfb3c129bf458d02da12ea6a",
+    "shell/package.json": "9b31ce9a1368dfa207344317d3e9b37efd378a196f26764ed97052e9540a60e7",
+    "shell/src-tauri/Cargo.toml": "72141c08fd461ab34d33cd22d826595f49e2bc02c1435cc5f3259ac2041fa21e",
     "shell/src-tauri/build.rs": "0986b6a87cd5c7e9ebf3c21e8960baf76ee81dbf7aa31aec97bafbb8005f0dc6",
     "shell/src-tauri/capabilities/desktop.json": "78f8601131ac2042ba7b2c18d76a8c7668ed0fb3ad075f008826e1bfe28af0e2",
     "shell/src-tauri/capabilities/settings-local.json": "9464161e00bcfa57dd4c560c9d1b0813a1de1480e0a0427f854b7146fceb47a3",
@@ -868,7 +868,7 @@
     "shell/src-tauri/src/config.rs": "a4d6a7d899f38f8c1f1bc301402965cce26e0ca2cff01d862d9645b019ca4ea4",
     "shell/src-tauri/src/lib.rs": "efdd263fcca5edb6716afd692696c45e176fb91550ec5220f6d6a3c39d67ad3b",
     "shell/src-tauri/src/main.rs": "dd4880c0ce027b954644bd093c2ef67007bce49f8770392d810a2000d4f79612",
-    "shell/src-tauri/tauri.conf.json": "6f805f1b27aea0dd6a6e061582cee85a5b4eec1aac9c1defc838940aee9ff635",
+    "shell/src-tauri/tauri.conf.json": "643d776b06ecc8a1bece869b70ff74cb844680ad13128bc5611a34299474909e",
     "shell/src/settings.css": "f2b070b5267f777b0b62a6f7786010af768a9b3501160960f8cfad24aa87948c",
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
@@ -905,8 +905,8 @@
     "src/SentMessageContent.tsx": "5fcee69fb6e4602e1e3dc7f30ae61120992ce6c52db13cdbad6553d102a1ae3d",
     "src/SessionActions.test.tsx": "8c3b1e18436507aa07a61b4f229b77466c086ecb3a6f195865ae0f7e41a028c6",
     "src/SessionActions.tsx": "058d8adc943e9f0dcf42cbce3c58c4b5c550b47816a98769c9c894fb2e32d563",
-    "src/SessionNavigation.test.tsx": "bb15cb292237308234206eac0e57b7e9f715323d7e59c87eb665d07d1430710c",
-    "src/SessionNavigation.tsx": "efbb9162fdee46e85511d14140b526061038368d8b40fe9348bbe30cac546da9",
+    "src/SessionNavigation.test.tsx": "4405c2e4d493df2fb9e1346197c014aedf47013b58d55ec5c7b2508da9f5a2fc",
+    "src/SessionNavigation.tsx": "611575c76d8ca10502fb7f10b28cad9a8c644792f44ff5d7eacb20626933fc03",
     "src/SessionResources.test.tsx": "a856d939f3da4bf2f40c315d958dfd2931b47bfe4db345bbc2cb02b58effc7ec",
     "src/SessionResources.tsx": "e1d59c13b923197f6c57f02b0ed86abc867c4dea8c21c2950b7748140ef35b1f",
     "src/SessionRetentionSettings.test.tsx": "246e28a0136b7643948f61c38ced58127f3a94c8df918dfad709d5346d60c7b1",
@@ -938,7 +938,7 @@
     "src/features/prompts/PromptCards.tsx": "6d23f53748d6c60de9e4f47f0b6c36c1776586f69009ad3c53ec3680547fcafd",
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
     "src/hub-sign-in.ts": "bb68abb53da257f7c544d3824934d97768e110009412ea3d1a91d9202580d976",
-    "src/index.css": "476a93cbe234c8bb965c8015348c869dcc2c7a25cb187fa1f8014e55e15423a4",
+    "src/index.css": "0eb82f3bb76d8591332a8dfe6c6915fade464f2803b7ce17224be70f29648788",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -1017,7 +1017,7 @@
     "vite.config.ts": "31be467d5a7f248f6e4919435225ec458b7f6452cc46628bd13372071bc61e2c"
   },
   "mode": "local-ast-only",
-  "nodes": 7632,
+  "nodes": 7634,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1119,13 +1119,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "909ab8703692910234b8006ded3b1ba87a7513474338baf172a0824dd48b2f6a",
-    "communities.json": "b6ee5114ebca319820a592da28d271d9df05fe8e5d96f82481a170a322595d52",
-    "graph.html": "b7c52d088208f26cb95d0f74673b136ddadc61a73812b664054511b4ba471a6a",
-    "graph.json": "2a141c03fd0f1acaee80b1555b0836b987c3cf7d20e9ca29e1b25afd87b84e69"
+    "GRAPH_REPORT.md": "40978fe571cfe687c17ab207a1ac94056c9bac3b30c06ad3bb0369aca0c26a29",
+    "communities.json": "42015bcdbc1b2e0a028963648cea3af6fe1e5cc0adcbe9e8621c849466ad1587",
+    "graph.html": "801fcc1bbff71ed89ef32d8146f2279c32139460cbc32aef73ad4d6f67aa4f23",
+    "graph.json": "4c636c98c0dae29430afbcc4f60d282fca102b3b898def7e0d74fee25ae82207"
   },
   "schema_version": 1,
-  "source_commit": "ce1557ae8cf62df08adb4619d0df0cb434c1ce75",
-  "source_fingerprint": "6f95ce7b313adf0135c9603e6ddb7751f5930abdf81b713b2f58164457e1f3c7",
-  "working_tree_changes": []
+  "source_commit": "b6c4fee0f24de0c78ae042944fc8f8b444c92af9",
+  "source_fingerprint": "7175186264f393fc86b105b58c80fec78852cba46ccca228ecf122cfef83d625",
+  "working_tree_changes": [
+    "package.json"
+  ]
 }

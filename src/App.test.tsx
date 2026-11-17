@@ -47,6 +47,7 @@ import {
   activateSession,
   cancelBackgroundTask,
   askSession,
+  removeComputer,
   cancelSession,
   clearConversation,
   recoverConversation,
@@ -18438,6 +18439,85 @@ describe('App', () => {
     expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
   })
 
+  it('drops side answers when a reconnect snapshot overtakes a connection check', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote: ComputerSummary = {
+      ...secondComputer,
+      providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+    const remoteSession = { ...session, id: 'remote-side-session', computerId: remote.id, computerName: remote.name, title: 'Remote side chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    vi.mocked(askSession).mockResolvedValue('Remote side answer.')
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Remote side chat')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+    fireEvent.change(screen.getByLabelText('Side question'), { target: { value: 'Still running?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+    expect(await screen.findByText('Remote side answer.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finishCheck!: (value: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finishCheck = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    vi.mocked(listSessions).mockResolvedValue([session])
+    await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+    await act(async () => { finishCheck([computer]) })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))
+    expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
+  })
+
+  it('drops side answers when removing a computer while the event socket is down', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote: ComputerSummary = {
+      ...secondComputer,
+      providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+    const remoteSession = { ...session, id: 'remote-side-session', computerId: remote.id, computerName: remote.name, title: 'Remote side chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    vi.mocked(askSession).mockResolvedValue('Remote side answer.')
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Remote side chat')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+    fireEvent.change(screen.getByLabelText('Side question'), { target: { value: 'Still running?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+    expect(await screen.findByText('Remote side answer.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${remote.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(remote.id))
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))
+    expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
+  })
+
   it.each(['computer', 'session', 're-added computer'] as const)('settles a newer %s update when a connection check omits its computer', async (changed) => {
     seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Live remote chat' }
@@ -19231,6 +19311,85 @@ describe('App', () => {
     expect(within(header).getByRole('img', { name: 'Started by Oracle' })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: '1 subagent running' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'View background tasks' })).toHaveTextContent('0 background tasks running')
+  })
+
+  it.each([undefined, true])('offers delivery choices for a rapid second Send before polling (steering=%s)', async (supportsSteering) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const backgroundOnly = {
+      ...session, status: 'running' as const, revision: 10,
+      foregroundTurnActive: supportsSteering === undefined ? undefined : false,
+    }
+    const accepted = { ...backgroundOnly, revision: 11 }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    vi.mocked(sendMessage).mockResolvedValueOnce(accepted).mockResolvedValueOnce({ ...accepted, revision: 13 })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.change(textarea, { target: { value: 'Start a foreground turn' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+    fireEvent.change(textarea, { target: { value: 'An immediate follow-up' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled())
+    const detailReads = vi.mocked(getSession).mock.calls.length
+    // The hub may publish the same accepted revision before polling the CLI.
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({ type: 'session.upserted', session: accepted }),
+    } as MessageEvent))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    const steer = screen.getByRole('menuitem', { name: /Steer —/ })
+    expect(steer).toHaveAttribute('aria-disabled', supportsSteering ? 'false' : 'true')
+    if (!supportsSteering) expect(steer).toHaveAccessibleDescription(/Update this computer/)
+    expect(getSession).toHaveBeenCalledTimes(detailReads)
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({ type: 'session.upserted', session: { ...accepted, revision: 12 } }),
+    } as MessageEvent))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(sendMessage).mock.calls[1][2]).toMatchObject({ content: 'An immediate follow-up', enqueue: false })
+  })
+
+  it('clears the local foreground handoff when a follow-up send fails', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const backgroundOnly = { ...session, status: 'running' as const, foregroundTurnActive: false, revision: 10 }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    vi.mocked(sendMessage).mockResolvedValueOnce({ ...backgroundOnly, revision: 11 })
+      .mockRejectedValueOnce(new Error('Steer request failed'))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Start foreground work' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+    fireEvent.change(textarea, { target: { value: 'Keep this failed follow-up' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Steer —/ }))
+    await screen.findAllByText('Steer request failed')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    expect(textarea).toHaveValue('Keep this failed follow-up')
+    expect(sendMessage).toHaveBeenCalledTimes(2)
   })
 
   it('previews searched sent messages without sending and restores the parked collapsed-paste draft on cancel', async () => {

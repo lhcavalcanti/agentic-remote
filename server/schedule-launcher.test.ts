@@ -649,6 +649,26 @@ describe('schedule runner', () => {
     expect(f.host.replyUserInput).not.toHaveBeenCalled()
   })
 
+  it.each([
+    [false, true, 'running'], [true, true, 'terminated'],
+    [false, false, 'needs-input'], [true, false, 'needs-input'],
+  ] as const)('gates recovered questions only while actionable (accepted=%s stale=%s)', async (accepted, stale, state) => {
+    const f = await fixture()
+    f.setLaunch({
+      launchId: f.run.launchId, sessionId: 'session-one',
+      receipts: accepted ? [{ ...f.receipt, outcome: 'succeeded' }] : [],
+    })
+    f.setDetail({
+      status: 'idle', pendingUserInput: { requestId: 'recovered-question', question: 'Choose?', choices: [], allowFreeform: true, stale },
+    })
+    const result = await f.runner.reconcile(f.run)
+    expect(result.state).toBe(state)
+    if (accepted && stale) expect(result.outcome).toBe('succeeded')
+    expect(f.host.sendMessage).toHaveBeenCalledTimes(!accepted && stale ? 1 : 0)
+    expect(f.host.replyUserInput).not.toHaveBeenCalled()
+    expect(f.host.replyPermission).not.toHaveBeenCalled()
+  })
+
   it('retains a pre-delivery folder-trust question as needs-input instead of inferring success from idle', async () => {
     const f = await fixture()
     f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [], sessionStatus: 'idle' })

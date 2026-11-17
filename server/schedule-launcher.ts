@@ -273,7 +273,8 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
   }
 
   private needsInput(session: ManagedSession): boolean {
-    return Boolean((session.pendingPermission && !session.pendingPermission.stale) || session.pendingUserInput)
+    return Boolean((session.pendingPermission && !session.pendingPermission.stale) ||
+      (session.pendingUserInput && !session.pendingUserInput.stale))
   }
 
   private async terminal(run: ScheduleRun, result: ScheduleReconciliation, fenced = true): Promise<ScheduleReconciliation> {

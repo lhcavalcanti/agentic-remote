@@ -9,7 +9,7 @@ import type {
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import type { ComputerManager } from './computer-manager.js'
 import type { PromptAcceptanceReceipt } from '../shared/launch-identity.js'
-import { updateComputerForLaunchIdentity } from './launch-identity.js'
+import { updateComputerForLaunchIdentity, withSessionCreateBoundary } from './launch-identity.js'
 
 export type SessionLauncherHost = Pick<
   ComputerManager,
@@ -63,6 +63,8 @@ interface SessionLauncherOptions<Provenance extends object> {
 
 /** Creation succeeded; a provenance failure must never be treated as a creation refusal. */
 export class SessionLaunchPreparationError extends Error {
+  readonly uncertainDelivery = true
+
   constructor(readonly created: ManagedSession, cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause })
   }
@@ -109,37 +111,40 @@ export class SessionLauncher<Provenance extends object> {
   }
 
   async createSession(input: SessionLaunchInput<Provenance>): Promise<SessionLaunch> {
-    if (input.permissionPolicy !== 'ask' && input.permissionPolicy !== 'allow-all') {
-      throw new Error('permissionPolicy must be ask or allow-all')
-    }
-    requireFolderTrust(input.folderTrust)
-    if (!input.provenance) throw new Error('provenance is required')
-    const created = await this.host.createSession(input.computerId, {
-      cwd: input.folder,
-      ...(input.launchId !== undefined ? { launchId: input.launchId } : {}),
-      provider: input.provider,
-      terminalBacked: input.backend === 'terminal',
-      allowAllPermissions: input.permissionPolicy === 'allow-all',
-      ...(input.mode ? { mode: input.mode } : {}),
-      ...(input.model ? { model: input.model } : {}),
-      ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
-      ...(input.contextTier ? { contextTier: input.contextTier } : {}),
-    })
-    let session = created
-    if (input.title !== undefined) {
-      try {
-        session = await this.host.renameSession(input.computerId, created.id, { title: input.title })
-      } catch {
-        session = { ...created, title: created.title }
+    return withSessionCreateBoundary(async (beginCreate) => {
+      if (input.permissionPolicy !== 'ask' && input.permissionPolicy !== 'allow-all') {
+        throw new Error('permissionPolicy must be ask or allow-all')
       }
-      session = { ...session, title: session.title || input.title }
-    }
-    try {
-      await this.options.recordProvenance(session, input.provenance)
-    } catch (error) {
-      throw new SessionLaunchPreparationError(created, error)
-    }
-    return { created, session, folderTrust: input.folderTrust }
+      requireFolderTrust(input.folderTrust)
+      if (!input.provenance) throw new Error('provenance is required')
+      beginCreate()
+      const created = await this.host.createSession(input.computerId, {
+        cwd: input.folder,
+        ...(input.launchId !== undefined ? { launchId: input.launchId } : {}),
+        provider: input.provider,
+        terminalBacked: input.backend === 'terminal',
+        allowAllPermissions: input.permissionPolicy === 'allow-all',
+        ...(input.mode ? { mode: input.mode } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.reasoningEffort ? { reasoningEffort: input.reasoningEffort } : {}),
+        ...(input.contextTier ? { contextTier: input.contextTier } : {}),
+      })
+      let session = created
+      if (input.title !== undefined) {
+        try {
+          session = await this.host.renameSession(input.computerId, created.id, { title: input.title })
+        } catch {
+          session = { ...created, title: created.title }
+        }
+        session = { ...session, title: session.title || input.title }
+      }
+      try {
+        await this.options.recordProvenance(session, input.provenance)
+      } catch (error) {
+        throw new SessionLaunchPreparationError(created, error)
+      }
+      return { created, session, folderTrust: input.folderTrust }
+    })
   }
 
   observeSession(session: SessionReference): Promise<ManagedSession> {
@@ -214,10 +219,10 @@ export class SessionLauncher<Provenance extends object> {
   }
 
   /**
-   * Without waitMs, look once. Trust is handled only during delivery, after
-   * naming and provenance recording, never as a side effect of observation.
+   * Without waitMs, look once. Explicit delivery or recovery may apply the
+   * caller's trust policy; passive observation never approves anything.
    */
-  private async trustFolder(target: SessionPromptTarget, waitMs = 0): Promise<boolean> {
+  async trustFolder(target: SessionPromptTarget, waitMs = 0): Promise<boolean> {
     if (target.folderTrust === 'ask') return false
     const { session } = target
     const deadline = Date.now() + waitMs

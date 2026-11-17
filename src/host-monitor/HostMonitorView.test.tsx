@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { hostMetricNames, type HostSnapshot } from '../../shared/host-telemetry'
+import { SubmissionError } from '../../shared/submission-error'
 import { request } from '../api'
 import { HostMonitorView } from './HostMonitorView'
 import { useHostMonitor } from './use-host-monitor'
@@ -138,6 +139,86 @@ it('retries failed initial snapshots with backoff and cancels retries when close
   unmount()
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
   expect(request).toHaveBeenCalledTimes(3)
+})
+
+it.each([
+  [502, 'HOST_TELEMETRY_INVALID'],
+  [409, undefined],
+] as const)('requires a manual retry for incompatible telemetry (%s, %s)', async (status, code) => {
+  vi.useFakeTimers()
+  vi.mocked(request).mockRejectedValue(Object.assign(new SubmissionError(
+    status === 409 ? 'Update this computer (Studio) to use host monitoring.' : 'This computer returned invalid host telemetry',
+    status,
+  ), { code }))
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  expect(result.current.error).toContain('Update this computer')
+  if (status === 409) expect(result.current.error).toBe('Update this computer (Studio) to use host monitoring.')
+  expect(result.current.retryRequired).toBe(true)
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(1)
+  expect(Socket.instances).toHaveLength(0)
+  act(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  act(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  expect(request).toHaveBeenCalledTimes(1)
+  vi.mocked(request).mockResolvedValue(snapshot)
+  await act(async () => { result.current.retry() })
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(result.current.error).toBeUndefined()
+  expect(result.current.retryRequired).toBe(false)
+  expect(Socket.instances).toHaveLength(1)
+})
+
+it.each([
+  [502, undefined],
+  [503, undefined],
+  [502, 'OTHER_GATEWAY_ERROR'],
+] as const)('keeps automatic retries for transient gateway errors (%s, %s)', async (status, code) => {
+  vi.useFakeTimers()
+  const error = Object.assign(new SubmissionError('Temporarily unavailable', status), { code })
+  vi.mocked(request).mockRejectedValueOnce(error).mockRejectedValueOnce(error).mockResolvedValue(snapshot)
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  await act(async () => { await vi.advanceTimersByTimeAsync(999) })
+  expect(request).toHaveBeenCalledTimes(1)
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(request).toHaveBeenCalledTimes(2)
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(request).toHaveBeenCalledTimes(3)
+  expect(result.current.error).toBeUndefined()
+  expect(Socket.instances).toHaveLength(1)
+})
+
+it('offers a working Retry control after the hub rejects invalid node telemetry', async () => {
+  vi.mocked(request).mockRejectedValueOnce(Object.assign(
+    new SubmissionError('This computer returned invalid host telemetry', 502), { code: 'HOST_TELEMETRY_INVALID' },
+  ))
+  render(<HostMonitorView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  expect((await screen.findByRole('alert')).textContent).toContain('Update this computer')
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await screen.findByText('18.0%')
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  expect(request).toHaveBeenCalledTimes(2)
+})
+
+it('stops auxiliary polling until an incompatible stream is manually retried', async () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useHostMonitor('studio', true, true, true))
+  await act(async () => {})
+  expect(request).toHaveBeenCalledTimes(3)
+  act(() => Socket.instances[0].onmessage?.({ data: '{"type":"unsupported"}' }))
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(3)
+  await act(async () => { result.current.retry() })
+  expect(request).toHaveBeenCalledTimes(6)
+  expect(result.current.error).toBeUndefined()
 })
 
 it('preserves update-required after an invalid frame closes and ignores later frames', async () => {

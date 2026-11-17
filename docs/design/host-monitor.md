@@ -74,7 +74,7 @@ The telemetry contract does not retain historical disk capacity. The client ther
 
 Processes requests run sequentially at most every five seconds only while that tab and document are visible. All, Agentic Remote, and Agent sessions filters retain shared-runtime labels; only proven session ownership enables an Open session link. No arguments or process-control actions are shown. Pause freezes presentation, not collection or subscription. Closing the view, switching computers, going offline, or hiding the document releases the stream and timers; reopening refetches authoritative data. Compatibility, disabled-computer and offline failures retain their actionable messages.
 
-An open monitor retries failed initial snapshots and lost streams with bounded exponential backoff from 1 to 30 seconds; hiding or closing it cancels pending work. Invalid snapshots/frames and explicit version-conflict responses remain in the actionable update-required state without automatic retries. Reopening the view allows a fresh compatibility check.
+An open monitor retries failed initial snapshots and lost streams with bounded exponential backoff from 1 to 30 seconds; hiding or closing it cancels pending work. Invalid snapshots/frames, HTTP 502 responses with `code: "HOST_TELEMETRY_INVALID"` and explicit 409 responses stop automatic connection retries and auxiliary polling, retaining the actionable update-required or disabled-computer message with a manual Retry button. Other gateway 502/503 failures keep the existing backoff. Retry (or reopening the view) performs a fresh compatibility check; hiding and showing the same incompatible view does not bypass the manual retry requirement.
 
 ## Remaining integration
 

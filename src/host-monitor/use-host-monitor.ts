@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   HostHistorySchema, HostProcessesSchema, HostSnapshotSchema, HostTelemetryMessageSchema,
   type HostMinuteAggregate, type HostProcesses, type HostSnapshot,
@@ -13,15 +13,22 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
   const [error, setError] = useState<string>()
   const [processError, setProcessError] = useState<string>()
   const [historyError, setHistoryError] = useState<string>()
+  const [retryRequired, setRetryRequired] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
   const base = `/api/computers/${encodeURIComponent(computerId)}/host`
+  const retryConnection = useCallback(() => {
+    setError(undefined)
+    setRetryRequired(false)
+    setAttempt((current) => current + 1)
+  }, [])
   useEffect(() => {
     const changed = () => setVisible(document.visibilityState !== 'hidden')
     document.addEventListener('visibilitychange', changed)
     return () => document.removeEventListener('visibilitychange', changed)
   }, [])
   useEffect(() => {
-    if (!active || !visible) return
+    if (!active || !visible || retryRequired) return
     let disposed = false
     let socket: WebSocket | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
@@ -33,11 +40,14 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
       clearTimeout(retry)
       retry = setTimeout(() => void connect(), Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5)))
     }
-    function requireUpdate() {
+    function requireUpdate(message = 'This computer sent invalid host telemetry. Update this computer.') {
       incompatible = true
       clearTimeout(retry)
-      setError('This computer sent invalid host telemetry. Update this computer.')
-      socket?.close()
+      setError(message)
+      setRetryRequired(true)
+      const current = socket
+      socket = undefined
+      current?.close()
     }
     function accept(value: HostSnapshot) {
       setSnapshot(value)
@@ -76,16 +86,18 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
         current.onerror = () => current.close()
       } catch (caught) {
         if (disposed) return
-        setError(caught instanceof Error ? caught.message : 'Host monitor is unavailable')
-        if (caught && typeof caught === 'object' && 'statusCode' in caught && caught.statusCode === 409) incompatible = true
-        else reconnect()
+        const message = caught instanceof Error ? caught.message : 'Host monitor is unavailable'
+        const invalidTelemetry = caught && typeof caught === 'object' && 'code' in caught && caught.code === 'HOST_TELEMETRY_INVALID'
+        if (invalidTelemetry || (caught && typeof caught === 'object' && 'statusCode' in caught && caught.statusCode === 409)) {
+          requireUpdate(invalidTelemetry ? undefined : message)
+        } else { setError(message); reconnect() }
       }
     }
     void connect()
     return () => { disposed = true; controller.abort(); clearTimeout(retry); socket?.close() }
-  }, [base, active, visible])
+  }, [base, active, visible, retryRequired, attempt])
   useEffect(() => {
-    if (!active || !visible || !processesOpen) return
+    if (!active || !visible || !processesOpen || retryRequired) return
     let disposed = false
     let next: ReturnType<typeof setTimeout> | undefined
     const controller = new AbortController()
@@ -99,9 +111,9 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
     }
     void poll()
     return () => { disposed = true; controller.abort(); clearTimeout(next) }
-  }, [base, active, visible, processesOpen])
+  }, [base, active, visible, processesOpen, retryRequired])
   useEffect(() => {
-    if (!active || !visible || !historyOpen) return
+    if (!active || !visible || !historyOpen || retryRequired) return
     let disposed = false
     let next: ReturnType<typeof setTimeout> | undefined
     const controller = new AbortController()
@@ -115,6 +127,6 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
     }
     void poll()
     return () => { disposed = true; controller.abort(); clearTimeout(next) }
-  }, [base, active, visible, historyOpen])
-  return { snapshot, history, processes, diskSamples, error, processError, historyError }
+  }, [base, active, visible, historyOpen, retryRequired])
+  return { snapshot, history, processes, diskSamples, error, processError, historyError, retryRequired, retry: retryConnection }
 }

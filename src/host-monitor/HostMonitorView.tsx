@@ -85,7 +85,9 @@ function HostComputerView({ computer, onHostname, onOpenSession }: {
       }}>{paused ? <Play size={16} /> : <Pause size={16} />}{paused ? 'Resume' : 'Pause'}</button>
     </div>
     {info?.isWsl && <p className="host-notice">WSL VM, not the Windows host{info.wslDistro ? ` · ${info.wslDistro}` : ''}</p>}
-    {monitor.error && <p className="host-notice" role="alert">{monitor.error}</p>}
+    {monitor.error && <p className="host-notice" role="alert">{monitor.error}{monitor.retryRequired && <>
+      {' '}<button type="button" className="secondary-button" onClick={monitor.retry}>Retry</button>
+    </>}</p>}
     <div role="tablist" aria-label="Host monitor views" className="host-tabs">
       {(['Overview', 'Processes'] as const).map((name) => <button type="button" key={name} role="tab" aria-selected={tab === name} onClick={() => setTab(name)}>{name}</button>)}
     </div>

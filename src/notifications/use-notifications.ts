@@ -7,6 +7,7 @@ export function useNotifications(enabled: boolean) {
   const [records, setRecords] = useState<NotificationRecord[]>([])
   const [error, setError] = useState<string>()
   const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const [mutating, setMutating] = useState(false)
   const active = useRef(false)
   const enableGeneration = useRef(0)
@@ -19,7 +20,7 @@ export function useNotifications(enabled: boolean) {
     setLoading(true)
     try {
       const response = await request<{ notifications: NotificationRecord[] }>('/api/notifications', { cache: 'no-store', signal: pending.signal })
-      if (!pending.signal.aborted && active.current) { setRecords(response.notifications); setError(undefined) }
+      if (!pending.signal.aborted && active.current) { setRecords(response.notifications); setLoaded(true); setError(undefined) }
     } catch (caught) {
       if (!pending.signal.aborted && active.current) setError(caught instanceof Error ? caught.message : 'Notifications are unavailable')
     } finally { if (!pending.signal.aborted && active.current) setLoading(false) }
@@ -28,7 +29,9 @@ export function useNotifications(enabled: boolean) {
     enableGeneration.current++
     active.current = enabled
     setMutating(false)
-    if (!enabled) return
+    setLoaded(false)
+    setError(undefined)
+    if (!enabled) { setLoading(false); return }
     void refresh()
     const unsubscribe = subscribeFeatureEvents((event) => {
       if (event.type === 'notifications.changed' || event.type === 'hub.connected') void refresh()
@@ -47,6 +50,6 @@ export function useNotifications(enabled: boolean) {
     } catch (caught) { if (ownsGeneration()) setError(caught instanceof Error ? caught.message : 'Could not update notifications') }
     finally { if (ownsGeneration()) setMutating(false) }
   }
-  return { records: enabled ? records : [], error, loading, mutating, mutate,
+  return { records: enabled ? records : [], error, loading, loaded: enabled && loaded, mutating, mutate,
     unreadCount: enabled ? records.filter((record) => !record.readAt && !record.dismissedAt).length : 0 }
 }

@@ -11,7 +11,7 @@ import type { SessionDetail } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import { AgentService, type CopilotClientLike } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
-import { awaitTermination, LaunchCreations } from './launch-identity.js'
+import { awaitTermination, LaunchCreations, withSessionCreateBoundary } from './launch-identity.js'
 import { SessionStore } from './session-store.js'
 import { ProviderSessionService } from './provider-session-service.js'
 import type { SessionService } from './session-service.js'
@@ -65,6 +65,27 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
+})
+
+describe('session create certainty boundary', () => {
+  it('marks frozen preparation errors certain without mutating the original error', async () => {
+    const cause = Object.freeze(new Error('Preparation failed'))
+    await expect(withSessionCreateBoundary(async () => { throw cause }))
+      .rejects.toMatchObject({ message: cause.message, cause, statusCode: 400, uncertainDelivery: false })
+    expect(cause).not.toHaveProperty('uncertainDelivery')
+  })
+
+  it('preserves transient preparation status for the retry window', async () => {
+    const cause = Object.assign(new Error('Preparation temporarily unavailable'), { statusCode: 503 })
+    await expect(withSessionCreateBoundary(async () => { throw cause }))
+      .rejects.toMatchObject({ statusCode: 503, uncertainDelivery: false })
+  })
+
+  it('preserves post-boundary errors rather than guessing certainty from their name', async () => {
+    const cause = Object.assign(new Error('Creation response is uncertain'), { name: 'RuntimeConfigurationError', statusCode: 400 })
+    await expect(withSessionCreateBoundary(async (beginCreate) => { beginCreate(); throw cause })).rejects.toBe(cause)
+    expect(cause).not.toHaveProperty('uncertainDelivery')
+  })
 })
 
 describe('durable launch identity', () => {

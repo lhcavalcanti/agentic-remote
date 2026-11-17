@@ -368,13 +368,88 @@ describe('schedule runner', () => {
   it('settles an owner runtime-validation refusal without reserving an uncertain launch slot', async () => {
     const f = await fixture()
     vi.mocked(f.host.createSession).mockRejectedValue(Object.assign(new Error('Selected model is not available'), {
-      name: 'RuntimeConfigurationError', statusCode: 400,
+      name: 'RuntimeConfigurationError', statusCode: 400, uncertainDelivery: false,
     }))
     const dispatcher = new SchedulerDispatcher(f.store, f.runner)
     dispatchers.push(dispatcher)
     await dispatcher.start()
     await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
     expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+  })
+
+  it.each(['copilot', 'claude'] as const)('fails a definitive %s owner directory check before creation and releases its slot', async (provider) => {
+    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider } })
+    const folder = path.join(f.directory, 'vanished-folder')
+    await mkdir(folder)
+    const ownerStore = new SessionStore(path.join(f.directory, 'directory-owner'))
+    await ownerStore.initialize()
+    const sdkCreate = vi.fn()
+    const owner = provider === 'copilot'
+      ? new AgentService(ownerStore, { createSession: sdkCreate, stop: vi.fn(async () => []) } as unknown as CopilotClientLike)
+      : new ClaudeAgentService(ownerStore, '/bin/true', {
+          query: (() => Object.assign((async function* () { yield* [] })(), { supportedModels: async () => [] })) as unknown as ClaudeSdk['query'],
+          deleteSession: vi.fn(), getSessionInfo: vi.fn(), renameSession: vi.fn(),
+        }, async () => ({ loggedIn: true }))
+    const createStored = vi.spyOn(ownerStore, 'create')
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    try {
+      if (provider === 'claude') await owner.providerRuntimeOptions('claude')
+      vi.mocked(f.host.validateSessionDirectory).mockImplementation(async () => {
+        await rm(folder, { recursive: true })
+        return folder
+      })
+      vi.mocked(f.host.createSession).mockImplementation(async (computerId, input) => ({
+        ...await owner.createSession(input.cwd, false, false, provider, input.model, input.reasoningEffort,
+          input.contextTier, input.mode, input.launchId), computerId, computerName: 'Fictional studio',
+      }))
+      await dispatcher.start()
+      await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+      expect(f.store.getRun(f.run.id).error).toContain(`Folder does not exist: ${folder}`)
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(sdkCreate).not.toHaveBeenCalled()
+      expect(createStored).not.toHaveBeenCalled()
+      expect(ownerStore.reconcileLaunch(f.run.launchId)).toBeUndefined()
+      expect(f.host.sendMessage).not.toHaveBeenCalled()
+    } finally { await dispatcher.stop(); await owner.stop(); await ownerStore.close() }
+  })
+
+  it('settles a certain pre-create refusal even when it has no HTTP status', async () => {
+    const f = await fixture()
+    vi.mocked(f.host.createSession).mockRejectedValue(Object.assign(new Error('Owner rejected creation before allocating a session'), {
+      uncertainDelivery: false,
+    }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    expect(f.store.getRun(f.run.id).error).toBe('Owner rejected creation before allocating a session')
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+  })
+
+  it('keeps an unknown SDK creation result reserved after the owner create boundary', async () => {
+    const f = await fixture()
+    const ownerStore = new SessionStore(path.join(f.directory, 'uncertain-owner'))
+    await ownerStore.initialize()
+    const sdkCreate = vi.fn(async () => { throw new Error('SDK creation result is unknown') })
+    const owner = new AgentService(ownerStore, { createSession: sdkCreate, stop: vi.fn(async () => []) } as unknown as CopilotClientLike)
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    try {
+      vi.mocked(f.host.validateSessionDirectory).mockResolvedValue(f.directory)
+      vi.mocked(f.host.createSession).mockImplementation(async (computerId, input) => ({
+        ...await owner.createSession(input.cwd, false, false, 'copilot', undefined, undefined, undefined, input.mode, input.launchId),
+        computerId, computerName: 'Fictional studio',
+      }))
+      await dispatcher.start()
+      await vi.waitFor(() => expect(sdkCreate).toHaveBeenCalledOnce())
+      await dispatcher.tick()
+      expect(f.store.getRun(f.run.id).status).toBe('launching')
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(true)
+      expect(f.store.getRun(f.run.id).rootPromptAcceptance).toBeUndefined()
+      expect(f.host.sendMessage).not.toHaveBeenCalled()
+      expect(sdkCreate).toHaveBeenCalledOnce()
+    } finally { await dispatcher.stop(); await owner.stop(); await ownerStore.close() }
   })
 
   it.each(['empty-local', 'transport-local', 'timeout-local', 'empty-remote'] as const)(

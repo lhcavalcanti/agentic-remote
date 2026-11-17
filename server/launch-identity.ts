@@ -8,6 +8,26 @@ export function updateComputerForLaunchIdentity(): Error {
   })
 }
 
+/** Only the owner of the actual create boundary may prove preparation side-effect-free. */
+export async function withSessionCreateBoundary<T>(
+  operation: (beginCreate: () => void) => Promise<T>,
+): Promise<T> {
+  let attempted = false
+  try {
+    return await operation(() => { attempted = true })
+  } catch (cause) {
+    if (attempted) throw cause
+    const error = new Error(cause instanceof Error ? cause.message : String(cause), { cause })
+    error.name = cause instanceof Error ? cause.name : 'Error'
+    const status = cause && typeof cause === 'object'
+      ? Number('statusCode' in cause ? cause.statusCode : 'status' in cause ? cause.status : undefined) : NaN
+    throw Object.assign(error, {
+      statusCode: Number.isInteger(status) && status >= 400 && status < 600 ? status : 400,
+      uncertainDelivery: false,
+    })
+  }
+}
+
 export class LaunchCreations {
   private readonly pending = new Map<string, Promise<SessionDetail>>()
 

@@ -168,13 +168,12 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     }).catch((error: unknown) => {
       const status = error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : undefined
       const uncertainty = deliveryUncertaintyFromError(error)
-      const prelaunch = uncertainty === false ||
-        (uncertainty !== true && error instanceof Error && error.name === 'RuntimeConfigurationError')
+      const prelaunch = uncertainty === false
       if (prelaunch && status !== undefined && (status >= 500 || status === 408 || status === 429)) {
         throw new ScheduleTargetUnavailableError('Runtime models are temporarily unavailable. Try again.')
       }
-      if (prelaunch && status !== undefined && status >= 400 && status < 500 && error instanceof Error) {
-        throw new ScheduleLaunchRefusedError(error.message)
+      if (prelaunch) {
+        throw new ScheduleLaunchRefusedError(error instanceof Error ? error.message : 'The owner refused session creation')
       }
       throw error
     })

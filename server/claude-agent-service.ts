@@ -54,7 +54,7 @@ import {
   type QueuedPromptReservation, type TranscriptObservation,
 } from './session-store.js'
 import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
-import { LaunchCreations, awaitTermination } from './launch-identity.js'
+import { LaunchCreations, awaitTermination, withSessionCreateBoundary } from './launch-identity.js'
 import {
   acceptanceReceipt,
   explicitlyRefused,
@@ -531,7 +531,7 @@ export class ClaudeAgentService
     mode?: AgentMode,
     launchId?: string,
   ): Promise<SessionDetail> {
-    return this.launchCreations.run(this.store, launchId, async () => {
+    return this.launchCreations.run(this.store, launchId, () => withSessionCreateBoundary(async (beginCreate) => {
       if (provider !== 'claude') {
         throw new Error(`Provider ${provider} is not handled by Claude Agent`)
       }
@@ -562,6 +562,7 @@ export class ClaudeAgentService
       if (defaultModel && !defaultModel.contextTiers.includes(tier)) {
         throw new Error('Selected context tier is not supported by this model')
       }
+      beginCreate()
       const session = await this.store.create(
         {
           id,
@@ -585,7 +586,7 @@ export class ClaudeAgentService
       )
       this.publish(session)
       return session
-    })
+    }))
   }
 
   uploadFile(

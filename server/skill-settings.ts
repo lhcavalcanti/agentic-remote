@@ -25,7 +25,12 @@ async function readBounded(file: string, missing = false): Promise<string> {
       const bytes = Buffer.alloc(MAX_FILE_BYTES + 1)
       const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
       if (bytesRead > MAX_FILE_BYTES) throw new SkillSettingsError('Skill settings contain an oversized file.')
-      return bytes.subarray(0, bytesRead).toString('utf8')
+      try {
+        // Keep a leading BOM so a safe edit cannot silently remove its bytes.
+        return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, bytesRead))
+      } catch {
+        throw new SkillSettingsError('CLI settings could not be read safely: invalid UTF-8. Edit the file manually before changing skills.')
+      }
     } finally { await handle.close() }
   } catch (error) {
     if (missing && (error as NodeJS.ErrnoException).code === 'ENOENT') return ''
@@ -123,7 +128,10 @@ export class SkillSettingsService {
 
   async snapshot(): Promise<SkillSettingsSnapshot> {
     let raw: string
-    try { raw = await readBounded(this.file, true) } catch { throw new SkillSettingsError('CLI settings could not be read safely.') }
+    try { raw = await readBounded(this.file, true) } catch (error) {
+      if (error instanceof SkillSettingsError) throw error
+      throw new SkillSettingsError('CLI settings could not be read safely.')
+    }
     const settings = settingsObject(raw)
     const disabled = new Set(((settings.disabledSkills ?? []) as string[]).map((name) => name.toLowerCase()))
     const repositoryDisabled = new Set<string>()

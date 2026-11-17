@@ -28,6 +28,32 @@ async function fixture(label: string) {
 }
 
 describe('computer skill settings routes', () => {
+  it.each(['hub', 'node'] as const)('reports unreadable UTF-8 for %s skill reads and refuses writes without changing bytes', async (role) => {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://skills.example.test')
+    const files = await fixture(role)
+    const before = await files.settings.snapshot()
+    const file = path.join(files.copilotHome, 'settings.json')
+    const bytes = Buffer.concat([Buffer.from('{"retained":"'), Buffer.from([0xff]), Buffer.from('"}')])
+    await writeFile(file, bytes)
+    const runtime = await buildApp({
+      role, dataDirectory: path.join(files.directory, 'data'), skillSettings: files.settings, managerAgent: false, logger: false,
+    })
+    applications.push(runtime.app)
+    const url = role === 'hub' ? `/api/computers/${runtime.identity.info.id}/skills` : '/node-api/skills'
+    const headers = role === 'hub'
+      ? { host: 'skills.example.test', origin: 'https://skills.example.test' }
+      : { authorization: `Bearer ${runtime.identity.token}` }
+    for (const method of ['GET', 'PATCH'] as const) {
+      const response = await runtime.app.inject({
+        url, headers, method,
+        ...(method === 'PATCH' ? { payload: { name: 'sample', enabled: false, confirmed: true, revision: before.revision } } : {}),
+      })
+      expect(response.statusCode, response.body).toBe(409)
+      expect(response.json().error).toMatch(/read safely.*invalid UTF-8/)
+      expect(await readFile(file)).toEqual(bytes)
+    }
+  })
+
   it('routes a confirmed change only to the authenticated selected computer and rejects browser node origins', async () => {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://skills.example.test')
     const nodeFiles = await fixture('node')

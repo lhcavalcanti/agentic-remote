@@ -47,6 +47,7 @@ import {
   activateSession,
   cancelBackgroundTask,
   askSession,
+  removeComputer,
   cancelSession,
   clearConversation,
   recoverConversation,
@@ -18432,6 +18433,85 @@ describe('App', () => {
     act(() => {
       MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
       MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))
+    expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
+  })
+
+  it('drops side answers when a reconnect snapshot overtakes a connection check', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote: ComputerSummary = {
+      ...secondComputer,
+      providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+    const remoteSession = { ...session, id: 'remote-side-session', computerId: remote.id, computerName: remote.name, title: 'Remote side chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    vi.mocked(askSession).mockResolvedValue('Remote side answer.')
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Remote side chat')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+    fireEvent.change(screen.getByLabelText('Side question'), { target: { value: 'Still running?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+    expect(await screen.findByText('Remote side answer.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finishCheck!: (value: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finishCheck = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    vi.mocked(listSessions).mockResolvedValue([session])
+    await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+    await act(async () => { finishCheck([computer]) })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))
+    expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
+  })
+
+  it('drops side answers when removing a computer while the event socket is down', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote: ComputerSummary = {
+      ...secondComputer,
+      providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+    const remoteSession = { ...session, id: 'remote-side-session', computerId: remote.id, computerName: remote.name, title: 'Remote side chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    vi.mocked(askSession).mockResolvedValue('Remote side answer.')
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Remote side chat')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+    fireEvent.change(screen.getByLabelText('Side question'), { target: { value: 'Still running?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+    expect(await screen.findByText('Remote side answer.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${remote.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(remote.id))
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
     })
     fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
     await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))

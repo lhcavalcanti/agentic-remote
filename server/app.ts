@@ -8,6 +8,7 @@ import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
 import { parseFeatureFlag, readHubFeatureFlags } from '../shared/feature-flags.js'
+import type { SchedulerChanged } from '../shared/schedules.js'
 import type {
   HubEvent,
   ManagedSession,
@@ -29,6 +30,7 @@ import { JournalRecorder, recordScheduleProposal } from './manager-journal.js'
 import { registerManagerRoutes } from './manager-routes.js'
 import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
 import { ManagerStore } from './manager-store.js'
+import { sessionProvenanceProjection } from './session-provenance.js'
 import { ManagerProactiveCoordinator } from './manager-proactive-coordinator.js'
 import { ManagerProactiveInbox } from './manager-proactive-inbox.js'
 import { OracleTaskStore, unfinishedOracleTaskSessions } from './oracle-task-store.js'
@@ -390,6 +392,7 @@ export async function buildApp(
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   let forwardToSessionProvenance: ((event: HubEvent) => void) | undefined
   let releaseSessionProvenance: (() => void) | undefined
+  let releaseScheduleProvenance: (() => void) | undefined
   let reconcileCachedSessionProvenance: (() => void) | undefined
   const provenanceWrites = new Set<Promise<void>>()
   let forwardToProactive: ((event: HubEvent) => void) | undefined
@@ -663,6 +666,10 @@ export async function buildApp(
     }
     if (managerStoreReady && managerStore) {
       const store = managerStore
+      const projection = sessionProvenanceProjection(store, scheduler?.store)
+      const fingerprint = (computerId: string, sessionId: string) => JSON.stringify(
+        projection.project<Pick<ManagedSession, 'computerId' | 'id' | 'provenance'>>({ computerId, id: sessionId }).provenance,
+      )
       const published = new Map<string, string | undefined>()
       const pending = new Map<string, { session?: ManagedSession; retired: boolean; writes: number; discovering: boolean }>()
       const tracking = (key: string) => {
@@ -689,7 +696,7 @@ export async function buildApp(
         const state = tracking(key)
         const needsPublication = () => !state.retired && published.has(key) &&
           !store.isSessionRetired(computerId, sessionId) &&
-          published.get(key) !== JSON.stringify(store.sessionProvenance(computerId, sessionId))
+          published.get(key) !== fingerprint(computerId, sessionId)
         trackProvenanceWork(key, state, store.flush().then(() => {
           if (!needsPublication()) return
           // Metadata-only publication must never fetch transcripts or wait for a node.
@@ -699,20 +706,33 @@ export async function buildApp(
           const session = latest && (!current || latest.revision === undefined || current.revision === undefined ||
             latest.revision >= current.revision) ? latest : current
           if (!session || !needsPublication()) return
-          published.set(key, JSON.stringify(store.sessionProvenance(computerId, sessionId)))
+          published.set(key, fingerprint(computerId, sessionId))
           manager!.emit('event', { type: 'session.upserted', session, summary: true })
         }))
       }
       releaseSessionProvenance = store.onSessionProvenanceChanged((sessions) => {
         for (const { computerId, sessionId } of sessions) publishAfter(computerId, sessionId)
       })
+      if (scheduler) {
+        const schedules = scheduler.store
+        const refreshScheduleProvenance = ({ scheduleId }: SchedulerChanged) => {
+          for (const session of manager!.listCachedSessions?.() ?? []) {
+            const provenance = store.sessionProvenance(session.computerId, session.id)
+            if (provenance?.origin === 'schedule' && provenance.scheduleId === scheduleId) {
+              publishAfter(session.computerId, session.id)
+            }
+          }
+        }
+        schedules.on('changed', refreshScheduleProvenance)
+        releaseScheduleProvenance = () => { schedules.off('changed', refreshScheduleProvenance) }
+      }
       forwardToSessionProvenance = (event) => {
         if (event.type === 'session.upserted') {
           const { computerId, id } = event.session
           const key = `${computerId}:${id}`
           const state = pending.get(key)
           if (state) { state.session = event.session; state.retired = false }
-          published.set(key, JSON.stringify(store.sessionProvenance(computerId, id)))
+          published.set(key, fingerprint(computerId, id))
           if (store.sessionOrigin(computerId, id)) return
           const discovery = tracking(key)
           if (discovery.discovering) return
@@ -911,6 +931,7 @@ export async function buildApp(
     if (forwardToJournal) manager?.off('event', forwardToJournal)
     if (forwardToSessionProvenance) manager?.off('event', forwardToSessionProvenance)
     releaseSessionProvenance?.()
+    releaseScheduleProvenance?.()
     await Promise.all(provenanceWrites)
     if (forwardToProactive) manager?.off('event', forwardToProactive)
     if (forwardHubToDreamer) manager?.off('event', forwardHubToDreamer)

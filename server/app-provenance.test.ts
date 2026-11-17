@@ -85,7 +85,7 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
   const messages: HubEvent[] = []
   socket.on('message', (data) => messages.push(JSON.parse(data.toString())))
   return {
-    manager, current, messages, readSession, managerEvents, listCachedSessions, store: runtimeStore,
+    manager, current, messages, readSession, managerEvents, listCachedSessions, store: runtimeStore, schedules: runtime.scheduler?.store,
     close() {
       socket.terminate()
       return application.close()
@@ -120,7 +120,88 @@ async function fixture(origin?: SessionOrigin, scheduler = false, evidence = tru
   }
 }
 
+async function scheduledFixture() {
+  const f = await fixture(undefined, true)
+  const schedules = f.schedules!
+  const create = (name: string) => schedules.create({
+    name, enabled: false, prompt: 'Review a fictional document.',
+    target: { computerId: 'studio', folder: '/fictional', provider: 'copilot' },
+    recurrence: { type: 'hourly', everyHours: 1 }, timezone: 'UTC',
+  })
+  const schedule = await create('Original name')
+  const other = await create('Other schedule')
+  for (const [id, source] of [['scheduled-one', schedule], ['scheduled-two', schedule], ['other-scheduled', other]] as const) {
+    const value = session(id)
+    f.upsert(value)
+    await recordScheduleProvenance(f.store, value, {
+      origin: 'schedule', scheduleId: source.id, scheduleRunId: `run-${id}`, task: 'Fictional scheduled task',
+    })
+  }
+  f.upsert(session('unrelated-user'))
+  await f.store.recordUserSession(session('unrelated-user'))
+  await vi.waitFor(() => {
+    for (const [id, name] of [['scheduled-one', schedule.name], ['scheduled-two', schedule.name], ['other-scheduled', other.name]]) {
+      expect(f.messages).toContainEqual(expect.objectContaining({
+        type: 'session.upserted', session: expect.objectContaining({ id, provenance: expect.objectContaining({ scheduleName: name }) }),
+      }))
+    }
+    expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', session: expect.objectContaining({ id: 'unrelated-user', provenance: { origin: 'user' } }),
+    }))
+  })
+  f.messages.length = 0
+  return { ...f, schedules, schedule }
+}
+
 describe('hub provenance publication', () => {
+  it('reprojects renamed schedule labels once without touching unrelated sessions or unchanged labels', async () => {
+    const f = await scheduledFixture()
+    const writes = vi.spyOn(f.store, 'updateRegistry')
+    const renamed = await f.schedules.update(f.schedule.id, { revision: f.schedule.revision, name: 'Renamed schedule' })
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toHaveLength(2))
+    for (const id of ['scheduled-one', 'scheduled-two']) expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', summary: true, session: expect.objectContaining({
+        id, provenance: { origin: 'schedule', scheduleId: renamed.id, scheduleRunId: `run-${id}`, scheduleName: renamed.name },
+      }),
+    }))
+    f.messages.length = 0
+    await f.schedules.update(renamed.id, { revision: renamed.revision, prompt: 'An unrelated prompt change.' })
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'schedules.changed')).toBe(true))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    expect(f.readSession).not.toHaveBeenCalled()
+    expect(writes).not.toHaveBeenCalled()
+  })
+
+  it('retains archived schedule labels and removes deleted names with metadata-only corrections', async () => {
+    const f = await scheduledFixture()
+    const archived = await f.schedules.setArchived(f.schedule.id, f.schedule.revision, true)
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'schedules.changed')).toBe(true))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    f.messages.length = 0
+    await f.schedules.delete(archived.id, archived.revision)
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toHaveLength(2))
+    for (const id of ['scheduled-one', 'scheduled-two']) expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', summary: true, session: expect.objectContaining({
+        id, provenance: { origin: 'schedule', scheduleId: archived.id, scheduleRunId: `run-${id}` },
+      }),
+    }))
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it('does not reproject removed or retired scheduled rows even if they remain cached', async () => {
+    const f = await scheduledFixture()
+    f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: 'scheduled-one' })
+    await f.store.updateRegistry((registry) => { registry['studio:scheduled-two'].removedAt = new Date().toISOString() })
+    f.messages.length = 0
+    await f.schedules.update(f.schedule.id, { revision: f.schedule.revision, name: 'Renamed after retirement' })
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'schedules.changed')).toBe(true))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
   it('closes after a large summary roster even when every passive read would remain unresolved', async () => {
     const f = await fixture()
     let release!: () => void

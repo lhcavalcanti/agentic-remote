@@ -70,6 +70,54 @@ it('renders current and trended 1, 5 and 15 minute load', async () => {
   for (const minutes of [1, 5, 15]) expect(screen.getByRole('img', { name: `Load · ${minutes} min trend` }).querySelector('path')?.getAttribute('d')).toMatch(/^M/)
 })
 
+it.each([true, false])('selects arriving computers, preferring the local hub when present (%s)', async (includeHub) => {
+  const node = { ...computer, id: 'build', name: 'Build node', isLocal: false }
+  const props = { enabled: true, onClose: vi.fn(), onOpenSession: vi.fn() }
+  const { rerender } = render(<HostMonitorView {...props} computers={[]} />)
+  expect(screen.getByText('No computer is selected.')).toBeTruthy()
+  expect(request).not.toHaveBeenCalled()
+  rerender(<HostMonitorView {...props} computers={includeHub ? [node, computer] : [node]} />)
+  await screen.findByText('18.0%')
+  const selected = includeHub ? computer.id : node.id
+  expect(screen.getByRole('combobox', { name: 'Computer' })).toHaveProperty('value', selected)
+  expect(request).toHaveBeenCalledWith(`/api/computers/${selected}/host`, expect.anything())
+  expect(screen.queryByText('No computer is selected.')).toBeNull()
+})
+
+it.each([true, false])('replaces a removed selection with the local hub or first computer (%s)', async (includeHub) => {
+  const removed = { ...computer, id: 'removed', name: 'Removed node', isLocal: false }
+  const first = { ...computer, id: 'first', name: 'First node', isLocal: false }
+  const props = { enabled: true, onClose: vi.fn(), onOpenSession: vi.fn() }
+  const { rerender } = render(<HostMonitorView {...props} computers={[removed]} />)
+  await screen.findByText('18.0%')
+  const remaining = includeHub ? [first, computer] : [first]
+  rerender(<HostMonitorView {...props} computers={remaining} />)
+  const selected = includeHub ? computer.id : first.id
+  await waitFor(() => expect(request).toHaveBeenCalledWith(`/api/computers/${selected}/host`, expect.anything()))
+  expect(screen.getByRole('combobox', { name: 'Computer' })).toHaveProperty('value', selected)
+  expect(Socket.instances[0].close).toHaveBeenCalledOnce()
+  rerender(<HostMonitorView {...props} computers={[...remaining, removed]} />)
+  expect(screen.getByRole('combobox', { name: 'Computer' })).toHaveProperty('value', selected)
+  rerender(<HostMonitorView {...props} computers={[]} />)
+  expect(screen.getByText('No computer is selected.')).toBeTruthy()
+  rerender(<HostMonitorView {...props} computers={[removed]} />)
+  await waitFor(() => expect(Socket.instances.at(-1)?.url).toContain('/removed/host/live'))
+})
+
+it('preserves a user-selected node when the computer list changes', async () => {
+  const node = { ...computer, id: 'build', name: 'Build node', isLocal: false }
+  const props = { enabled: true, onClose: vi.fn(), onOpenSession: vi.fn() }
+  const { rerender } = render(<HostMonitorView {...props} computers={[computer, node]} />)
+  await screen.findByText('18.0%')
+  fireEvent.change(screen.getByRole('combobox', { name: 'Computer' }), { target: { value: node.id } })
+  await waitFor(() => expect(Socket.instances.at(-1)?.url).toContain('/build/host/live'))
+  const socketCount = Socket.instances.length
+  rerender(<HostMonitorView {...props} computers={[{ ...node, name: 'Renamed build node' }, computer]} />)
+  expect(screen.getByRole('combobox', { name: 'Computer' })).toHaveProperty('value', node.id)
+  expect(Socket.instances).toHaveLength(socketCount)
+  expect(Socket.instances.at(-1)?.close).not.toHaveBeenCalled()
+})
+
 it('retries failed initial snapshots with backoff and cancels retries when closed', async () => {
   vi.useFakeTimers()
   vi.mocked(request).mockRejectedValueOnce(new Error('503 unavailable')).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(snapshot)

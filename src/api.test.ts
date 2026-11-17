@@ -25,6 +25,7 @@ import {
   removeQueuedPrompt,
   removeManagerFile,
   readKnowledgeFile,
+  request,
   sendMessage,
   sendTestPushNotification,
   transcribeAudio,
@@ -170,6 +171,21 @@ describe('API request headers', () => {
     await expect(listComputers()).rejects.toMatchObject({
       statusCode: 502,
       message: 'The gateway could not reach Agentic Remote (502). Check the hub service and tunnel, then retry.',
+    })
+  })
+
+  it.each([
+    ['HOST_TELEMETRY_INVALID', 'HOST_TELEMETRY_INVALID'],
+    [undefined, undefined],
+    [502, undefined],
+    [null, undefined],
+  ])('preserves only string error codes from HTTP responses (%j)', async (code, expectedCode) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'This computer returned invalid host telemetry', code, uncertainDelivery: false,
+    }, { status: 502 })))
+    await expect(request('/api/computers/studio/host')).rejects.toMatchObject({
+      statusCode: 502, message: 'This computer returned invalid host telemetry',
+      code: expectedCode, uncertainDelivery: false,
     })
   })
 

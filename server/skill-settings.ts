@@ -322,10 +322,12 @@ export class SkillSettingsService {
     const raw = await readBounded(this.file, true)
     if (revision(raw) !== input.revision) throw new SkillSettingsError('CLI settings changed. Refresh and confirm again.')
     const settings = settingsObject(raw)
-    const disabled = new Set(((settings.disabledSkills ?? []) as string[]).filter((name) => name.toLowerCase() !== target.name.toLowerCase()))
-    if (!input.enabled) disabled.add(target.name)
+    const names = (settings.disabledSkills ?? []) as string[]
+    const isTarget = (name: string) => name.toLowerCase() === target.name.toLowerCase()
+    const disabled = input.enabled ? names.filter((name) => !isTarget(name))
+      : names.some(isTarget) ? names : [...names, target.name]
     let serialized: string
-    try { serialized = replaceDisabledSkills(raw, [...disabled].sort()) }
+    try { serialized = replaceDisabledSkills(raw, disabled) }
     catch (error) { throw new SkillSettingsError(error instanceof Error ? error.message : 'Edit disabledSkills manually.') }
     await mkdir(this.copilotHome, { recursive: true, mode: 0o700 })
     const staged = path.join(this.copilotHome, `.settings-${randomUUID()}.json`)

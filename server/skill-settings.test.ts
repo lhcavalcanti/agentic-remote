@@ -292,6 +292,31 @@ describe('read-only skill discovery and settings changes', () => {
     expect(await readFile(file, 'utf8')).toContain('/* keep entry explanation */')
   })
 
+  it('disables only the requested name while preserving unrelated duplicates, spelling and order', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    const raw = '{"disabledSkills":["z\\u0065bra", /* retain */ "dup", "dup", "Alpha"],"retained":true}'
+    await writeFile(file, raw)
+    const before = await service.snapshot()
+    const after = await service.update({ name: 'sample', enabled: false, confirmed: true, revision: before.revision })
+    const expected = Buffer.from(raw.replace('"Alpha"]', '"Alpha", "sample"]'))
+    expect(await readFile(file)).toEqual(expected)
+    expect(after.skills[0].enabled).toBe(false)
+    await service.update({ name: 'sample', enabled: false, confirmed: true, revision: after.revision })
+    expect(await readFile(file)).toEqual(expected)
+  })
+
+  it('enables only the requested name, removing its case variants without deduplicating other entries', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    const raw = '{"disabledSkills":["z\\u0065bra",/* retain first */"SAMPLE", "dup",/* retain second */"sample", "dup", "Alpha"],"retained":true}'
+    await writeFile(file, raw)
+    const before = await service.snapshot()
+    const after = await service.update({ name: 'sample', enabled: true, confirmed: true, revision: before.revision })
+    expect(await readFile(file)).toEqual(Buffer.from(raw.replace('"SAMPLE",', '').replace('"sample",', '')))
+    expect(after.skills[0].enabled).toBe(true)
+  })
+
   it('refuses writes with ambiguous duplicate keys', async () => {
     const raw = '{"disabledSkills":[],"disabledSkills":[]}'
     await skill(path.join(copilotHome, 'skills'), 'sample')

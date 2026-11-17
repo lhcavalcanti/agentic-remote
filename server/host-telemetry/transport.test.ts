@@ -373,6 +373,13 @@ describe('gated hub and authenticated node host transport', () => {
       const response = await hub.app.inject({ url: prefix + suffix })
       expect(response.statusCode).toBe(statusCode)
       expect(response.json().error).toMatch(message)
+      if (statusCode === 502) {
+        expect(response.json()).toEqual({
+          error: 'This computer returned invalid host telemetry', code: 'HOST_TELEMETRY_INVALID',
+        })
+      } else {
+        expect(response.json()).not.toHaveProperty('code')
+      }
       expect(hub.manager!.listComputers().find((computer) => computer.id === node.identity.info.id)?.online).toBe(true)
     }
   })

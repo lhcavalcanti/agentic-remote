@@ -294,8 +294,10 @@ export async function buildApp(
       explicitStatusCode < 600
     ) {
       noteRefusalReason(request, refusalReasonFromError(error, explicitStatusCode))
+      const code = error !== null && typeof error === 'object' ? Reflect.get(error, 'code') : undefined
       return reply.code(explicitStatusCode).send({
         error: error instanceof Error ? error.message : 'Request failed',
+        ...(typeof code === 'string' ? { code } : {}),
         ...(submission ? { submission } : {}),
         ...(explicitUncertainty === undefined
           ? {}

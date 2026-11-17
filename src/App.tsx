@@ -4593,6 +4593,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const recordingStreamRef = useRef<MediaStream | undefined>(undefined)
   const recordingChunksRef = useRef<Blob[]>([])
   const recordingSessionRef = useRef<ManagedSession | undefined>(undefined)
+  const recordingIntakeSequenceRef = useRef(0)
   const recordingTimerRef = useRef<number | undefined>(undefined)
   const recordingStartedAtRef = useRef(0)
   const discardRecordingRef = useRef(false)
@@ -10961,21 +10962,25 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
   }
 
+  /** Unpairing discards a computer's drafts, even if it is paired again before queued work runs. */
+  function unpairedSince(computerId: string, intakeSequence: number) {
+    return (computerEventSequenceRef.current.get(computerId) || 0) > intakeSequence
+  }
+
   async function transcribeFile(
     file: File,
     targetSession: ManagedSession | undefined = selected,
+    intakeSequence = eventSequenceRef.current,
   ) {
-    if (!targetSession) {
+    if (!targetSession || unpairedSince(targetSession.computerId, intakeSequence)) {
       return
     }
     const targetKey = sessionKey(targetSession)
-    const startedAtSequence = eventSequenceRef.current
     setTranscribing(true)
     setError(undefined)
     try {
       const result = await transcribeAudio(file)
-      // Unpairing discards the session's drafts even if the computer is paired again before this returns.
-      if ((computerEventSequenceRef.current.get(targetSession.computerId) || 0) > startedAtSequence) return
+      if (unpairedSince(targetSession.computerId, intakeSequence)) return
       appendComposerForKey(targetKey, result.transcript)
       if (
         selectedRef.current &&
@@ -11040,6 +11045,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       mediaRecorderRef.current = recorder
       recordingChunksRef.current = []
       recordingSessionRef.current = selected
+      recordingIntakeSequenceRef.current = eventSequenceRef.current
       discardRecordingRef.current = false
       recorder.addEventListener('dataavailable', (event) => {
         if (event.data.size > 0) {
@@ -11061,8 +11067,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         const file = new File(chunks, `recording.${extension}`, {
           type: mimeType,
         })
+        const intakeSequence = recordingIntakeSequenceRef.current
         const releaseIntake = holdAttachmentIntake()
-        void queueAttachmentWork(() => transcribeFile(file, targetSession))
+        void queueAttachmentWork(() => transcribeFile(file, targetSession, intakeSequence))
           .then(releaseIntake, releaseIntake)
       })
       recorder.addEventListener('error', () => {
@@ -11173,7 +11180,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       { message: string; retryable: boolean }
     >(),
     releaseIntake?: () => void,
+    intakeSequence = eventSequenceRef.current,
   ) {
+    if (unpairedSince(targetSession.computerId, intakeSequence)) return
     const targetKey = sessionKey(targetSession)
     const liveKey = followReplacementsRef.current(targetKey)
     const lineageAvailable =
@@ -11184,6 +11193,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     if (!liveTarget && files.some((file) => !isAudioFile(file))) {
       liveTarget = await waitForAttachmentTarget(targetSession)
+      if (unpairedSince(targetSession.computerId, intakeSequence)) return
     }
     if (!liveTarget && files.some((file) => !isAudioFile(file))) {
       clipboardPasteBatchesRef.current.delete(liveKey)
@@ -11246,7 +11256,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             !removedSessions.current.has(targetKey) ||
             followReplacementsRef.current(targetKey) !== targetKey
           ) {
-            await transcribeFile(item.file, targetSession)
+            await transcribeFile(item.file, targetSession, intakeSequence)
           }
         } finally {
           for (const key of new Set([
@@ -11305,6 +11315,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       setError('Stop recording before attaching files.')
       return Promise.resolve()
     }
+    const intakeSequence = eventSequenceRef.current
     if (deduplicateClipboard) {
       const ownerKey = followReplacementsRef.current(sessionKey(targetSession))
       const now = Date.now()
@@ -11374,6 +11385,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               targetSession,
               preflightErrors,
               releaseIntake,
+              intakeSequence,
             )
           }
         } finally {
@@ -11388,7 +11400,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     const releaseIntake = holdAttachmentIntake()
     const work = queueAttachmentWork(() =>
-      processAttachedFiles(files, targetSession, undefined, releaseIntake),
+      processAttachedFiles(files, targetSession, undefined, releaseIntake, intakeSequence),
     )
     void work.then(releaseIntake, releaseIntake)
     return work

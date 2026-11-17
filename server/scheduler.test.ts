@@ -3,11 +3,12 @@ import { chmod, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from '
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ScheduleCreate, ScheduleRun } from '../shared/schedules.js'
+import { classifyScheduleNotification } from './notification-classifier.js'
 import {
   NoopScheduleLauncher, SchedulerDispatcher, ScheduleTargetUnavailableError,
   SCHEDULER_LATE_MS, type ScheduleLauncher, type ScheduleReconciliation, type ScheduleStopAcknowledgement,
 } from './scheduler-dispatcher.js'
-import { holdsSlot, SchedulerStore, SCHEDULE_RUN_LIMIT } from './scheduler-store.js'
+import { holdsSlot, occurrenceKey, SchedulerStore, SCHEDULE_RUN_LIMIT } from './scheduler-store.js'
 
 const INITIAL = '2026-11-14T08:00:00.000Z'
 const directories: string[] = []
@@ -52,6 +53,23 @@ async function fixture(options: Parameters<typeof createInput>[0] = {}, online: 
   const dispatcher = new SchedulerDispatcher(store, launcher, { targetOnline: online })
   dispatchers.push(dispatcher)
   return { directory, store, schedule, launcher, dispatcher }
+}
+
+async function retainedHistory(notify: ScheduleCreate['notify'], status: 'failed' | 'succeeded') {
+  const context = await fixture({ notify })
+  const first = (await context.store.admit(context.schedule.id, INITIAL, 'manual', status))!
+  const state = JSON.parse(await readFile(context.store.statePath, 'utf8'))
+  const runs: ScheduleRun[] = Array.from({ length: SCHEDULE_RUN_LIMIT }, (_, index) => index === 0 ? first : {
+    ...first, id: `${first.id}-${index}`, launchId: `${first.launchId}-${index}`,
+    occurrenceAt: new Date(Date.parse(INITIAL) + index).toISOString(),
+  })
+  state.runs = runs
+  state.runSchedules = Object.fromEntries(runs.map((run) => [run.id, context.schedule]))
+  state.occurrences = Object.fromEntries(runs.map((run) => [occurrenceKey(run.scheduleId, run.occurrenceAt), run.id]))
+  await writeFile(context.store.statePath, JSON.stringify(state))
+  const store = new SchedulerStore(context.directory)
+  await store.initialize()
+  return { ...context, store, first }
 }
 
 async function settle(dispatcher: SchedulerDispatcher) {
@@ -126,7 +144,7 @@ describe('scheduler durable store', () => {
   })
 
   it('retains the newest 200 runs and durable eviction fences across restart', async () => {
-    const { store, schedule, directory } = await fixture()
+    const { store, schedule, directory } = await fixture({ notify: 'never' })
     let first: ScheduleRun | undefined
     for (let index = 0; index < SCHEDULE_RUN_LIMIT + 2; index++) {
       const run = await store.admit(schedule.id, new Date(Date.parse(INITIAL) + index).toISOString(), 'schedule', 'missed')
@@ -152,6 +170,42 @@ describe('scheduler durable store', () => {
     expect(store.allRuns()).toHaveLength(200)
     expect(store.allRuns().every((run) => run.status === 'pending')).toBe(true)
   })
+
+  it('bounds unclaimed outcome retention and keeps admission retryable until a durable claim frees a row', async () => {
+    const { store, schedule, directory, first } = await retainedHistory('always', 'failed')
+    await store.update(schedule.id, { revision: schedule.revision, notify: 'never' })
+    const nextAt = '2026-11-15T00:00:00.000Z'
+    const cursor = store.cursor(schedule.id)
+    const before = await readFile(store.statePath, 'utf8')
+    await expect(store.admit(schedule.id, nextAt, 'schedule', 'pending', nextAt))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(store.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(store.getRun(first.id)).toEqual(first)
+    expect(store.cursor(schedule.id)).toBe(cursor)
+    expect(await readFile(store.statePath, 'utf8')).toBe(before)
+
+    const notification = classifyScheduleNotification(schedule, first, INITIAL)[0]
+    await store.claimNotification(notification.id)
+    expect(await store.admit(schedule.id, nextAt, 'schedule', 'pending', nextAt)).toMatchObject({ occurrenceAt: nextAt })
+    expect(store.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(store.cursor(schedule.id)).toBe(nextAt)
+    expect(() => store.getRun(first.id)).toThrow('not found')
+    const restarted = new SchedulerStore(directory)
+    await restarted.initialize()
+    expect(restarted.notificationReplay().claimed.has(notification.id)).toBe(true)
+    expect(await restarted.admit(schedule.id, first.occurrenceAt, 'manual')).toBeUndefined()
+  })
+
+  it.each([['never', 'failed'], ['attention', 'succeeded']] as const)(
+    'does not block retention for an outcome suppressed by its accepted %s policy', async (notify, status) => {
+      const { store, schedule, first } = await retainedHistory(notify, status)
+      await store.update(schedule.id, { revision: schedule.revision, notify: 'always' })
+      await store.admit(schedule.id, '2026-11-15T00:00:00.000Z', 'manual')
+      expect(store.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
+      expect(() => store.getRun(first.id)).toThrow('not found')
+      expect(store.notificationReplay().claimed.size).toBe(0)
+    },
+  )
 
   it('requires archive, revision agreement, and no in-flight runs before deleting', async () => {
     const { store, schedule } = await fixture()

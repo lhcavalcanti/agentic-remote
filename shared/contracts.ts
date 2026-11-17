@@ -406,6 +406,8 @@ export interface SessionSummary {
   title: string
   updatedAt: string
   status: SessionStatus
+  /** Independent of aggregate running status, which includes background agents. */
+  foregroundTurnActive?: boolean
   isOpen?: boolean
   retention?: SessionRetention
   retentionLastUsedAt?: string

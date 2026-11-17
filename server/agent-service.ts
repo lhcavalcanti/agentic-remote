@@ -12394,12 +12394,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private publicSession(session: SessionDetail): SessionDetail {
     session = this.queuedDispatches.view(session)
-    session = {
-      ...session,
-      foregroundTurnActive: session.status !== 'running' ? false :
-        session.executionMode === 'tmux' || this.externalSessionIds.has(session.id)
-          ? session.foregroundTurnActive
-          : this.activePrompts.has(session.id),
+    if (session.executionMode !== 'tmux' && !this.externalSessionIds.has(session.id)) {
+      session = { ...session, foregroundTurnActive: session.status === 'running' && this.activePrompts.has(session.id) }
+    } else if (session.foregroundTurnActive !== undefined && session.status !== 'running') {
+      session = { ...session, foregroundTurnActive: false }
     }
     const queued = session.queuedPrompts?.[0]
     const retainedQueueState: QueueState | undefined =

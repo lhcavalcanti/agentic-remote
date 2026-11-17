@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type WebSocket from 'ws'
+import { HOST_TELEMETRY_INVALID_CODE, HOST_TELEMETRY_INVALID_CLOSE_CODE } from '../../shared/host-telemetry.js'
 import { HOST_TELEMETRY_MAX_VIEWERS, hostTelemetryError, type HostTelemetryTarget } from './service.js'
 import { HostTelemetrySocket } from './socket.js'
 
@@ -69,7 +70,10 @@ export function registerHostTelemetryRoutes(
       const target = targets.get(request)!
       targets.delete(request)
       try {
-        void Promise.resolve(target.subscribe(output.send, () => output.close()))
+        void Promise.resolve(target.subscribe(output.send, (reason) => {
+          if (reason === HOST_TELEMETRY_INVALID_CODE) output.close(HOST_TELEMETRY_INVALID_CLOSE_CODE, reason)
+          else output.close()
+        }))
           .then((close) => {
             unsubscribe = close
             if (closed) close()

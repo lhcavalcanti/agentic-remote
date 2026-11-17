@@ -3988,7 +3988,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const current = await this.store.readAfterWrites(id)
         this.assertStillIdle(id, queueWasDraining)
         return this.suspendClaimedSession(id, current)
-      })
+      }, { intent: 'teardown' })
       suspended = true
       this.startupTerminalQueues.delete(id)
       this.clearTerminalQueueRetry(id)
@@ -4229,6 +4229,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.queuedDispatches.assertAvailable(id)
     if (!stored.suspended) {
       return stored
+    }
+    if (this.admissions.launchBlocked(id) || stored.launchStopping) {
+      throw queueConflict('The launch is stopping; its runtime cannot resume.')
     }
     // Resuming would start an owner for a record that stays archived.
     this.assertNotRetained(id, 'resuming it', true)

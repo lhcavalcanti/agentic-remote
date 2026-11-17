@@ -40,6 +40,31 @@ function cards({ flag = true, preview = true, active = true } = {}) {
   return render(<PreviewFeaturesContext value={context(flag, preview)}><ScheduleProposalCards active={active} /></PreviewFeaturesContext>)
 }
 describe('schedule confirmation cards', () => {
+  it.each(['edited', 'deleted'] as const)('disables stale facts during refresh and keeps an %s base unapprovable', async (change) => {
+    const pending = scheduleProposalSchema.parse({
+      ...proposal, operation: 'update', scheduleId: base.id, baseRevision: base.revision, payload: { prompt: 'Revised review' },
+    })
+    vi.mocked(listScheduleProposals).mockResolvedValue([pending])
+    const view = cards()
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeEnabled()
+    let finish!: (proposals: typeof pending[]) => void
+    vi.mocked(listScheduleProposals).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    if (change === 'edited') vi.mocked(getSchedule).mockResolvedValue({ ...base, revision: base.revision + 1 })
+    else vi.mocked(getSchedule).mockRejectedValue(new Error('Schedule not found'))
+    try {
+      view.rerender(<PreviewFeaturesContext value={context()}><ScheduleProposalCards active refreshKey={1} /></PreviewFeaturesContext>)
+      expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+      expect(screen.getByRole('status')).toHaveTextContent('Refreshing schedule details')
+      expect(screen.queryByText(/^Computer:/)).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+      expect(resolveScheduleProposal).not.toHaveBeenCalled()
+      await act(async () => { finish([pending]) })
+      expect(await screen.findByRole('alert')).toHaveTextContent(change === 'edited' ? 'Schedule changed since revision 7' : 'Cannot verify')
+      expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled()
+      expect(getSchedule).toHaveBeenCalledTimes(2)
+    } finally { finish([pending]) }
+  })
+
   it.each(['expiry', 'one-off'] as const)('disables approval exactly at the %s boundary without a refresh', async (boundary) => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const at = Date.parse('2026-09-04T16:20:00Z')

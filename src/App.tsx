@@ -7529,7 +7529,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // move the transcript sequence either.
           for (const listener of managerListenersRef.current) listener(event)
           raiseOracleShellNotificationRef.current(event)
-        } else if (event.type === 'schedule-proposals.changed') {
+        } else if (event.type === 'schedule-proposals.changed' || event.type === 'schedules.changed') {
           setScheduleProposalEpoch((current) => current + 1)
         } else if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)

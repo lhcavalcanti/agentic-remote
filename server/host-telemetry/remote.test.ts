@@ -53,6 +53,8 @@ describe('bounded authenticated remote host stream', () => {
   it.each([
     ['malformed JSON', '{'],
     ['an invalid snapshot', JSON.stringify({ type: 'host.snapshot', snapshot: { live: [] } })],
+    ['an unsupported message', JSON.stringify({ type: 'host.future' })],
+    ['a binary frame', Buffer.from('not host telemetry')],
     ['an oversized frame', 'x'.repeat(128 * 1024 + 1)],
   ])('disconnects on %s instead of forwarding untrusted peer data', async (_label, payload) => {
     const { peer, sample, ended } = await connect()
@@ -61,6 +63,29 @@ describe('bounded authenticated remote host stream', () => {
     await closed
     expect(sample).not.toHaveBeenCalled()
     expect(ended).toHaveBeenCalledTimes(1)
+    expect(ended).toHaveBeenCalledWith('HOST_TELEMETRY_INVALID')
+  })
+
+  it('forwards an explicit incompatible live close from an updated node', async () => {
+    const { peer, ended } = await connect()
+    peer.close(4002, 'HOST_TELEMETRY_INVALID')
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1))
+    expect(ended).toHaveBeenCalledWith('HOST_TELEMETRY_INVALID')
+  })
+
+  it('preserves ordinary transport loss without an incompatibility reason', async () => {
+    const { peer, ended } = await connect()
+    peer.terminate()
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1))
+    expect(ended.mock.calls[0][0]).toBeUndefined()
+  })
+
+  it('does not classify a downstream sample consumer failure as invalid node telemetry', async () => {
+    const { peer, sample, ended } = await connect()
+    sample.mockImplementation(() => { throw new Error('Fictional consumer failed') })
+    peer.send(JSON.stringify({ type: 'host.snapshot', snapshot: empty }))
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1))
+    expect(ended.mock.calls[0][0]).toBeUndefined()
   })
 
   it('disconnects a stalled owning computer after 20s without samples', async () => {
@@ -70,5 +95,6 @@ describe('bounded authenticated remote host stream', () => {
     await vi.advanceTimersByTimeAsync(HOST_TELEMETRY_STALE_STREAM_MS)
     await closed
     expect(ended).toHaveBeenCalledTimes(1)
+    expect(ended.mock.calls[0][0]).toBeUndefined()
   })
 })

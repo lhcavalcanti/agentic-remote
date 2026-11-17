@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   HostHistorySchema, HostProcessesSchema, HostSnapshotSchema, HostTelemetryMessageSchema,
+  HOST_TELEMETRY_INVALID_CODE, HOST_TELEMETRY_INVALID_CLOSE_CODE,
   type HostMinuteAggregate, type HostProcesses, type HostSnapshot,
 } from '../../shared/host-telemetry'
 import { request } from '../api'
@@ -9,7 +10,7 @@ const updateRequiredMessage = 'This computer sent invalid host telemetry. Update
 
 function incompatibilityMessage(caught: unknown): string | undefined {
   if (!caught || typeof caught !== 'object') return
-  if ('code' in caught && caught.code === 'HOST_TELEMETRY_INVALID') return updateRequiredMessage
+  if ('code' in caught && caught.code === HOST_TELEMETRY_INVALID_CODE) return updateRequiredMessage
   if ('statusCode' in caught && caught.statusCode === 409) {
     return caught instanceof Error ? caught.message : 'Host monitor is unavailable'
   }
@@ -94,8 +95,9 @@ export function useHostMonitor(computerId: string, active: boolean, processesOpe
             setError(undefined)
           } catch { requireUpdate() }
         }
-        current.onclose = () => {
+        current.onclose = (event) => {
           if (disposed || incompatible.current || socket !== current) return
+          if (event.code === HOST_TELEMETRY_INVALID_CLOSE_CODE) { requireUpdate(); return }
           setError('Live connection lost. Reconnecting…')
           reconnect()
         }

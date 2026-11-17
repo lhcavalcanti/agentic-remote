@@ -118,6 +118,7 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
         <h3>{form.editing ? `Edit ${form.editing.name}` : 'Create schedule'}</h3>
         <ScheduleForm key={form.generation}
           initial={form.initial} editing={form.editing} computers={computers} pending={pending} saveError={error}
+          onClearSaveError={() => setError(undefined)}
           onCancel={() => { changeForm(undefined); setError(undefined) }}
           onSave={async (definition) => {
             if (form.editing) {

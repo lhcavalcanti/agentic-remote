@@ -1239,6 +1239,25 @@ describe('ClaudeAgentService', () => {
       ])
   })
 
+  it('suspends an unknown fenced Claude launch without reopening prompt or queue admissions', async () => {
+    const { directory, service, queryCalls } = await fixture(async function* () {})
+    const created = await service.createSession(directory, false, false, 'claude')
+    const initialQueries = queryCalls.length
+    const accepted = await service.store.acceptIdentifiedPrompt(created.id, 'follower', 'Synthetic follower', true)
+    expect(await service.cancelWithAck(created.id, 1)).toMatchObject({ outcome: 'unknown' })
+    await expect(service.suspendSession(created.id)).resolves.toMatchObject({ suspended: true, launchStopping: true })
+    await expect(service.sendMessage(created.id, 'Must not start', true)).rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.dispatchQueuedPrompt(created.id, accepted.queuedPrompts![0].id, 'Must not start'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.resumeSession(created.id)).rejects.toMatchObject({ statusCode: 409 })
+    expect(service.getSession(created.id)?.suspended).toBe(true)
+    expect(queryCalls).toHaveLength(initialQueries)
+    await service.cancelWithAck(created.id, 1)
+    await expect(service.closeSession(created.id)).resolves.toMatchObject({ closedAt: expect.any(String) })
+    await service.deleteSession(created.id)
+    expect(service.getSession(created.id)).toBeUndefined()
+  })
+
   it('leaves a suspended session where it was when the send is refused', async () => {
     // A refused admission must not change either the transcript or recency.
     const { directory, service } = await fixture(async function* () {})

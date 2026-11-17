@@ -19049,6 +19049,47 @@ describe('App', () => {
     expect(vi.mocked(sendMessage).mock.calls[1][2]).toMatchObject({ content: 'An immediate follow-up', enqueue: false })
   })
 
+  it.each([undefined, true])('offers delivery choices immediately after a terminal queue upsert (steering=%s)', async (supportsSteering) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    const backgroundOnly = {
+      ...session, status: 'running' as const, foregroundTurnActive: false, revision: 10,
+    }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument()
+    const detailReads = vi.mocked(getSession).mock.calls.length
+    // This turn was auto-delivered by the server, not sent by this browser.
+    const delivered = { ...backgroundOnly, revision: 11, foregroundTurnActive: true, queuedCount: 0 }
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({ type: 'session.upserted', session: delivered }),
+    } as MessageEvent))
+    fireEvent.change(textarea, { target: { value: 'A rapid follow-up to the queued turn' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    const steer = screen.getByRole('menuitem', { name: /Steer —/ })
+    expect(steer).toHaveAttribute('aria-disabled', supportsSteering ? 'false' : 'true')
+    if (!supportsSteering) expect(steer).toHaveAccessibleDescription(/Update this computer/)
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(getSession).toHaveBeenCalledTimes(detailReads)
+
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.upserted', session: { ...delivered, revision: 12, foregroundTurnActive: false },
+      }),
+    } as MessageEvent))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      session.computerId, session.id,
+      expect.objectContaining({ content: 'A rapid follow-up to the queued turn', enqueue: false }),
+    ))
+  })
+
   it('clears the local foreground handoff when a follow-up send fails', async () => {
     seedHubSettings({ previewFeatures: { composerRefresh: true } })
     vi.mocked(listComputers).mockResolvedValue([taskComputer])

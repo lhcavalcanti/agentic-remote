@@ -362,7 +362,7 @@ export class ManagerStore {
 
   /** Receives the complete retained proposal snapshot, not an individual changed proposal. */
   appendProposalJournal(proposals: {
-    entry: JournalDraft & { proposalId: string; proposalStatus: string }; createdAt: string
+    entry: JournalDraft & { proposalId: string; proposalStatus: string }; createdAt: string; persistedStatus?: string
   }[]): Promise<JournalEntry[]> {
     return this.serialized(async () => {
       const retained = new Set(proposals.map(({ entry }) => entry.proposalId))
@@ -379,13 +379,14 @@ export class ManagerStore {
         }
       }
       const drafts: JournalDraft[] = []
-      for (const { entry, createdAt } of proposals) {
+      for (const { entry, createdAt, persistedStatus } of proposals) {
         const id = entry.proposalId
         const status = entry.proposalStatus
         if (known.get(id)?.has(status)) continue
-        // Legacy statuses outside the loaded journal window cannot safely be presented as new.
+        // A legacy status already on disk before this process may have been journaled and rotated
+        // away; a transition made since (such as startup expiry) is new and must be journaled.
         if (!known.has(id) && this.legacyProposalCutoff !== undefined &&
-          Date.parse(createdAt) <= this.legacyProposalCutoff) {
+          persistedStatus === status && Date.parse(createdAt) <= this.legacyProposalCutoff) {
           fences.set(id, new Set([status]))
         } else {
           drafts.push(entry)

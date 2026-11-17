@@ -621,7 +621,8 @@ export async function buildApp(
       const store = scheduler.store
       store.on('proposal', () => {
         const proposals = store.proposals()
-        scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals))
+        const persisted = store.persistedProposalStatuses()
+        scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals, persisted))
           .catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
       })
     }
@@ -745,7 +746,8 @@ export async function buildApp(
     if (scheduler) await startupPhases.run('scheduler.start', async () => {
       await scheduler!.start()
       const proposals = scheduler!.store.proposals()
-      scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals))
+      const persisted = scheduler!.store.persistedProposalStatuses()
+      scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals, persisted))
       await scheduleJournal
     })
     cliCanary?.start()

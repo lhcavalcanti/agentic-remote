@@ -29,6 +29,8 @@ import type {
 } from '../shared/contracts'
 import App from './App'
 import { defaultHubFeatureFlags } from '../shared/feature-flags'
+import { scheduleProposalSchema } from '../shared/schedule-proposals'
+import { scheduleSchema } from '../shared/schedules'
 import { SubmissionError } from '../shared/submission-error'
 import {
   applySettingsChanges,
@@ -43,6 +45,9 @@ import {
   checkHubSignIn,
   fetchHubFeatureFlags,
   getManager,
+  getSchedule,
+  listScheduleProposals,
+  resolveScheduleProposal,
   sendManagerMessage,
   activateSession,
   cancelBackgroundTask,
@@ -213,6 +218,9 @@ vi.mock('./api', async (importOriginal) => ({
   checkHubSignIn: vi.fn(async () => undefined),
   fetchHubFeatureFlags: vi.fn(async () => defaultHubFeatureFlags),
   getManager: vi.fn(),
+  getSchedule: vi.fn(),
+  listScheduleProposals: vi.fn(),
+  resolveScheduleProposal: vi.fn(),
   getOracleVoiceCapabilities: vi.fn(async () => ({
     protocol: 2,
     available: false,
@@ -2135,6 +2143,9 @@ describe('App', () => {
     dragHandlers.clear()
     vi.restoreAllMocks()
     vi.clearAllMocks()
+    vi.mocked(getSchedule).mockReset()
+    vi.mocked(listScheduleProposals).mockReset().mockResolvedValue([])
+    vi.mocked(resolveScheduleProposal).mockReset()
     // Restores the factory's default answer; neither call above undoes a
     // test's own Dreamer answer.
     vi.mocked(getDreamer).mockReset()
@@ -2522,6 +2533,48 @@ describe('App', () => {
     vi.mocked(getSession).mockImplementation(async (_computerId, id) => id === secondSession.id ? secondSession : target)
     return target
   }
+
+  it.each(['edited', 'deleted'] as const)('refreshes schedule proposal facts on schedules.changed when the base is %s', async (change) => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-04T16:20:00Z'))
+    vi.mocked(fetchHubFeatureFlags).mockResolvedValueOnce({ ...defaultHubFeatureFlags, scheduler: true })
+    seedHubSettings({ previewFeatures: { schedulerView: true } })
+    vi.mocked(getManager).mockResolvedValue({ available: true, status: 'idle', messages: [], queued: 0, managedSessions: [] })
+    const schedule = scheduleSchema.parse({
+      id: 'existing-review', revision: 1, createdBy: 'user', archived: false,
+      createdAt: '2026-09-04T16:00:00Z', updatedAt: '2026-09-04T16:00:00Z',
+      name: 'Fictional review', prompt: 'Review the guide.',
+      target: { computerId: computer.id, folder: session.cwd, provider: 'copilot' },
+      recurrence: { type: 'daily', time: '09:00' }, timezone: 'America/Los_Angeles',
+      workspace: 'checkout', catchUp: 'skip', overlap: 'skip', maxRuntimeMin: 60, notify: 'attention', enabled: true,
+    })
+    const pending = scheduleProposalSchema.parse({
+      id: 'review-proposal', operation: 'update', scheduleId: schedule.id, baseRevision: 1, payload: { prompt: 'Revised review' },
+      createdBy: 'oracle', status: 'pending', createdAt: '2026-09-04T16:00:00Z', expiresAt: '2026-09-05T16:00:00Z',
+    })
+    vi.mocked(getSchedule).mockResolvedValue(schedule)
+    vi.mocked(listScheduleProposals).mockResolvedValue([pending])
+    window.history.replaceState({}, '', '/?oracle=open')
+    render(<App />)
+    const approvals = await screen.findByRole('region', { name: 'Schedule approvals' })
+    await waitFor(() => expect(within(approvals).getByRole('button', { name: 'Approve' })).toBeEnabled())
+    let finish!: (proposals: typeof pending[]) => void
+    vi.mocked(listScheduleProposals).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    if (change === 'edited') vi.mocked(getSchedule).mockResolvedValue({ ...schedule, revision: 2 })
+    else vi.mocked(getSchedule).mockRejectedValue(new Error('Schedule not found'))
+    const reads = vi.mocked(listScheduleProposals).mock.calls.length
+    try {
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'schedules.changed', revision: 2, scheduleId: schedule.id }),
+      } as MessageEvent))
+      expect(within(approvals).getByRole('button', { name: 'Approve' })).toBeDisabled()
+      expect(listScheduleProposals).toHaveBeenCalledTimes(reads + 1)
+      expect(within(approvals).getByRole('status')).toHaveTextContent('Refreshing schedule details')
+      await act(async () => { finish([pending]) })
+      expect(await within(approvals).findByRole('alert')).toHaveTextContent(change === 'edited' ? 'Schedule changed since revision 1' : 'Cannot verify')
+      expect(within(approvals).getByRole('button', { name: 'Approve' })).toBeDisabled()
+      expect(resolveScheduleProposal).not.toHaveBeenCalled()
+    } finally { finish([pending]) }
+  })
 
   it('badges sessions Oracle started, opens Oracle from the header, and keeps its events out of errors', async () => {
     vi.mocked(getManager).mockResolvedValue({

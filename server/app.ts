@@ -630,6 +630,7 @@ export async function buildApp(
       const store = scheduler.store
       scheduleNotifications = new ScheduleNotificationService(store, {
         admit: notificationCenter ? (event) => notificationCenter!.hub(event) : undefined,
+        admitBatch: notificationCenter ? (events) => notificationCenter!.scheduleNotifications(events) : undefined,
         mutedSessions: () => pushService!.settings().mutedSessions,
         warn: (error) => app.log.error({ err: error }, 'Could not deliver a schedule outcome'),
       })

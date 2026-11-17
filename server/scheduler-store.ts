@@ -5,6 +5,7 @@ import { chmod, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/prom
 import path from 'node:path'
 import { z } from 'zod'
 import { validateRecurrence } from '../shared/schedule-recurrence.js'
+import { classifyScheduleNotification } from './notification-classifier.js'
 import {
   scheduleProposalInputSchema, scheduleProposalSchema,
   type ScheduleProposal, type ScheduleProposalInput, type ScheduleProposalsChanged,
@@ -456,8 +457,12 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       if (existing) return { result: next.runs.find((run) => run.id === existing), scheduleId }
       const retained = next.runs.filter((run) => run.scheduleId === scheduleId)
       if (retained.length >= SCHEDULE_RUN_LIMIT) {
-        const oldest = retained.find((run) => !isInFlight(run))
-        if (!oldest) throw failure('Schedule run capacity reached; resolve in-flight runs first', 409)
+        // A queued notification event is not a durable delivery claim.
+        const claimed = new Set(next.notificationFences)
+        const oldest = retained.find((run) => !isInFlight(run) &&
+          classifyScheduleNotification(next.runSchedules[run.id], run, this.now())
+            .every((notification) => claimed.has(notification.id)))
+        if (!oldest) throw failure('Schedule run capacity reached; resolve in-flight runs or pending outcome notifications first', 409)
         next.runs.splice(next.runs.indexOf(oldest), 1)
         delete next.runSchedules[oldest.id]
       }

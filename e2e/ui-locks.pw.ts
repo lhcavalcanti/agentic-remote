@@ -1134,8 +1134,9 @@ test.describe('browser interaction contracts', () => {
           error: 'This computer returned invalid host telemetry', code: 'HOST_TELEMETRY_INVALID',
         } })
       })
+      // Closing a view can return a phone reader to the open drawer; open it only when it is closed.
       const sessions = page.getByRole('button', { name: 'Open sessions', exact: true })
-      if (await sessions.isVisible()) await sessions.click()
+      if (!await page.locator('.sidebar-scrim').isVisible() && await sessions.isVisible()) await sessions.click()
       await page.getByRole('button', { name: 'Host monitor', exact: true }).click()
       await expect(monitor.getByRole('alert')).toContainText('Update this computer')
       const retry = monitor.getByRole('button', { name: 'Retry', exact: true })

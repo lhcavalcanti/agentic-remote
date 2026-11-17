@@ -10050,6 +10050,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     let status = statusFromEvents(events)
+    let foregroundTurnActive = foregroundTurnOpen(events)
     const queueDispatchAt = this.store.queueDispatchAt(sessionId)
     if (queueDispatchAt) {
       const dispatchTime = Date.parse(queueDispatchAt)
@@ -10062,6 +10063,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
       } else {
         status = 'running'
+        // The accepted terminal handoff can precede its foreground lifecycle log.
+        foregroundTurnActive = true
       }
     }
     const activity = historyMessages
@@ -10103,7 +10106,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       },
       queueDispatchAt,
       observed,
-      foregroundTurnOpen(events),
+      foregroundTurnActive,
     )
     if (!updated || !this.store.isCurrentTranscript(sessionId, observed)) return
     this.eventLogFingerprints.set(sessionId, fingerprint)

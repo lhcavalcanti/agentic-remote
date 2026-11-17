@@ -10642,6 +10642,8 @@ describe('AgentService deletion', () => {
       terminal,
     )
     await service.start()
+    const published: ServerEvent[] = []
+    service.on('event', (event: ServerEvent) => published.push(event))
     await service.store.updateStatus(client.session.sessionId, 'running')
 
     const queued = await service.sendMessage(
@@ -10682,8 +10684,12 @@ describe('AgentService deletion', () => {
     )
     expect(service.store.get(client.session.sessionId)).toMatchObject({
       status: 'running',
+      foregroundTurnActive: true,
       queuedCount: 1,
       queuedPrompts: [{ content: '/usage' }],
+    })
+    expect(published.findLast((event) => event.type === 'session.upserted')).toMatchObject({
+      session: { foregroundTurnActive: true, queuedCount: 1 },
     })
 
     events = JSON.parse(
@@ -10703,6 +10709,7 @@ describe('AgentService deletion', () => {
     expect(terminal.send).toHaveBeenCalledTimes(1)
     expect(service.store.get(client.session.sessionId)).toMatchObject({
       status: 'running',
+      foregroundTurnActive: true,
       queuedCount: 1,
     })
 
@@ -10729,6 +10736,7 @@ describe('AgentService deletion', () => {
     // it reports what it printed and leaves the session idle.
     expect(service.store.get(client.session.sessionId)).toMatchObject({
       status: 'idle',
+      foregroundTurnActive: false,
       queuedCount: 0,
       queuedPrompts: [],
     })

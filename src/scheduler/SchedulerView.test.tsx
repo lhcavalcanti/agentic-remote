@@ -194,6 +194,42 @@ it('sends only changed fields with the original revision, preserves conflicts an
   expect(scheduleError(new SubmissionError('Revision conflict', 409))).toContain('Your draft is preserved')
 })
 
+it('replaces a failed save with the current client validation error before retrying', async () => {
+  let rejectSave = true
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (init?.method === 'PATCH') {
+      if (rejectSave) throw new SubmissionError('Temporary save failure', 503)
+      return { schedule }
+    }
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    return path === '/api/schedules' ? { schedules: [schedule] } : { runs: [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Morning review' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Local draft' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('Temporary save failure')
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save schedule' })).toHaveProperty('disabled', false))
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('name:')
+  expect(screen.queryByText('Temporary save failure')).toBeNull()
+  expect(vi.mocked(request).mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1)
+  rejectSave = false
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Corrected draft' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  await screen.findByRole('button', { name: 'Create schedule' })
+  const saves = vi.mocked(request).mock.calls.filter(([, init]) => init?.method === 'PATCH')
+  expect(saves).toHaveLength(2)
+  expect(JSON.parse(saves[1][1]!.body as string)).toEqual({ name: 'Corrected draft', revision: 1 })
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
 it('keeps unavailable model settings visible rather than silently displaying another value', async () => {
   const initial = { ...definition, target: { ...definition.target, model: 'fictional-model', effort: 'max' as const, context: 'long_context' as const } }
   render(<ScheduleForm initial={initial} computers={[computer]} pending={false} onSave={vi.fn()} onCancel={vi.fn()} />)

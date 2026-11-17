@@ -27,12 +27,13 @@ function recurrencePreset(type: ScheduleRecurrence['type']): ScheduleRecurrence 
   }
 }
 
-export function ScheduleForm({ initial, computers, editing, pending, saveError, onSave, onCancel }: {
+export function ScheduleForm({ initial, computers, editing, pending, saveError, onClearSaveError, onSave, onCancel }: {
   initial?: ScheduleDefinition
   computers: ComputerSummary[]
   editing?: Schedule
   pending: boolean
   saveError?: string
+  onClearSaveError?(): void
   onSave(definition: ScheduleDefinition): Promise<void>
   onCancel(): void
 }) {
@@ -72,6 +73,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
   const contexts: RuntimeModelOption['contextTiers'] = ['default', ...(selectedModel?.contextTiers.filter((context) => context !== 'default') ?? [])]
   return <form noValidate className="schedule-form" onSubmit={async (event) => {
     event.preventDefault()
+    onClearSaveError?.()
     setError(undefined)
     if (!targetPaired) { setStep('Target'); setError('Choose a paired computer before saving this schedule.'); return }
     if (!target.model && (target.effort || target.context === 'long_context')) {

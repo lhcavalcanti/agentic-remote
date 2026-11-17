@@ -127,6 +127,25 @@ describe('read-only skill discovery and settings changes', () => {
     await expect(service.update({ name: 'excluded', enabled: false, confirmed: true, revision: snapshot.revision })).rejects.toThrow('no longer available')
   })
 
+  it.each(['settings.json', 'settings.local.json'])('ignores repository exclusions in %s while retaining user exclusions and repository disables', async (fileName) => {
+    const root = path.join(copilotHome, 'skills')
+    await skill(root, 'personal')
+    const excluded = await skill(root, 'user-excluded')
+    await skill(path.join(repository, '.github', 'skills'), 'repository-disabled')
+    const directory = path.join(repository, '.github', 'copilot')
+    await mkdir(directory, { recursive: true })
+    await writeFile(path.join(directory, fileName), JSON.stringify({
+      disabledSkills: ['repository-disabled'],
+      ignoredSkillsLocations: fileName === 'settings.json' ? [root] : 42,
+    }))
+    await writeFile(path.join(copilotHome, 'settings.json'), JSON.stringify({ ignoredSkillsLocations: [excluded] }))
+    const before = await service.snapshot()
+    expect(before.skills.map((entry) => entry.name).sort()).toEqual(['personal', 'repository-disabled'])
+    expect(before.skills.find((entry) => entry.name === 'repository-disabled')).toMatchObject({ manageable: false, enabled: false })
+    const after = await service.update({ name: 'personal', enabled: false, confirmed: true, revision: before.revision })
+    expect(after.skills.find((entry) => entry.name === 'personal')?.enabled).toBe(false)
+  })
+
   it('matches disabled names in any case and respects trusted repository restrictions', async () => {
     await skill(path.join(copilotHome, 'skills'), 'sample')
     await skill(path.join(repository, '.agents', 'skills'), 'repository-skill')

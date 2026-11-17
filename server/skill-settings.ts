@@ -80,14 +80,14 @@ export function skillFrontmatter(markdown: string): { name: string; description:
   return !frontmatterReason(fields) && fields ? { name: fields.name, description: fields.description } : undefined
 }
 
-function settingsObject(raw: string): Record<string, unknown> {
+function settingsObject(raw: string, arrayKeys = ['disabledSkills', 'skillDirectories', 'ignoredSkillsLocations']): Record<string, unknown> {
   if (!raw) return {}
   let value: unknown
   try { value = parseSkillSettings(raw) } catch (error) {
     throw new SkillSettingsError(error instanceof Error ? error.message : 'CLI settings are not valid JSONC. Edit them manually.')
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SkillSettingsError('CLI settings must be a JSON object.')
-  for (const key of ['disabledSkills', 'skillDirectories', 'ignoredSkillsLocations']) {
+  for (const key of arrayKeys) {
     const entries = Reflect.get(value, key)
     if (entries !== undefined && (!Array.isArray(entries) || entries.length > 10_000 || entries.some((entry) => typeof entry !== 'string'))) {
       throw new SkillSettingsError(`CLI ${key} must be a list of strings.`)
@@ -174,9 +174,8 @@ export class SkillSettingsService {
         try {
           const directory = await realpath(path.join(folder, '.github', 'copilot'))
           if (!isWithin(folder, directory)) throw new Error('Repository settings escape')
-          const repositorySettings = settingsObject(await readBounded(path.join(directory, file), true))
+          const repositorySettings = settingsObject(await readBounded(path.join(directory, file), true), ['disabledSkills'])
           for (const name of (repositorySettings.disabledSkills ?? []) as string[]) repositoryDisabled.add(name.toLowerCase())
-          ignoredLocations.push(...((repositorySettings.ignoredSkillsLocations ?? []) as string[]).map((value) => path.isAbsolute(value) || value.startsWith('~') ? value : path.resolve(folder, value)))
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new SkillSettingsError('Repository CLI settings could not be read safely. Edit them manually before changing skills.')
         }

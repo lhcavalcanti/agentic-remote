@@ -49,7 +49,7 @@ export function NotificationPanel({ notifications, enabled, onClose, onOpen }: {
       </div>
       {notifications.error && <p role="alert" className="error-banner">{notifications.error}</p>}
       {notifications.loading && !notifications.records.length ? <p role="status">Loading notifications…</p> : null}
-      {!groups.length && !notifications.loading && <p className="notification-empty">No notifications {tab === 'All' && !search ? 'yet. You’re all caught up.' : 'match this view.'}</p>}
+      {notifications.loaded && !notifications.error && !groups.length && !notifications.loading && <p className="notification-empty">No notifications {tab === 'All' && !search ? 'yet. You’re all caught up.' : 'match this view.'}</p>}
       <ul className="notification-list">
         {groups.map(({ key, latest, records }) => {
           const Icon = kindIcon(latest)

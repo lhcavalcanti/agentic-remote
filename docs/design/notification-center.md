@@ -54,6 +54,8 @@ No new node capability is required: classification stays at the hub and consumes
 
 ## Client panel preview
 
+Mutation controls reset when the preview is disabled or re-enabled. Each mutation belongs to its enable generation, so a late completion cannot refetch, change errors or settle the busy state of a newer generation. Empty-inbox messages appear only after a successful load with no matching records and no current error; a failed initial load never claims the inbox is caught up.
+
 Scheduled outcomes use the canonical `schedule.run.*` records, with outcome-specific icons and explicit Scheduled labels. At this layer they open a bound session when one exists; otherwise the notification stays available. A later Scheduler view can consume validated same-hub schedule/run links. The runner's notification policy and channel suppression remain unchanged.
 
 `notificationPanel` requires the hub's effective `notificationCenter` flag. Its bell is available in the rail, or the existing drawer footer if the rail preview is off. The badge counts unread, non-dismissed records. The desktop popover and narrow-screen sheet use the existing modal focus/restore contract. Rows group matching records by computer and session, display the latest record and count, and otherwise retain a record's coalescing identity.

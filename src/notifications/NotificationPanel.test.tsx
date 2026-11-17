@@ -48,7 +48,7 @@ it('marks only records in a search read and uses server filters for a scoped tab
   const onOpen = vi.fn()
   render(<NotificationPanel enabled onClose={vi.fn()} onOpen={onOpen} notifications={{
     records: [record('a'), record('b', { kind: 'oracle.message', sessionId: undefined })],
-    mutate, mutating: false, loading: false, error: undefined, unreadCount: 2,
+    mutate, mutating: false, loading: false, loaded: true, error: undefined, unreadCount: 2,
   }} />)
   fireEvent.click(screen.getByRole('tab', { name: 'Oracle' }))
   fireEvent.click(screen.getByRole('button', { name: /Mark all read in Oracle/ }))
@@ -62,20 +62,38 @@ it('marks only records in a search read and uses server filters for a scoped tab
   expect(mutate).toHaveBeenLastCalledWith(['b'], 'dismiss')
 })
 
-it('presents disabled and empty states without inventing records', () => {
+it('presents disabled state and waits for a successful load before claiming an empty inbox', () => {
   const props = { onClose: vi.fn(), onOpen: vi.fn(), notifications: {
-    records: [], mutate: vi.fn(), mutating: false, loading: false, error: undefined, unreadCount: 0,
+    records: [], mutate: vi.fn(), mutating: false, loading: false, loaded: false, error: undefined, unreadCount: 0,
   } }
   const { rerender } = render(<NotificationPanel {...props} enabled={false} />)
   expect(screen.getByText('Notification center is turned off on this hub.')).toBeTruthy()
   rerender(<NotificationPanel {...props} enabled />)
+  expect(screen.queryByText(/You’re all caught up/)).toBeNull()
+  rerender(<NotificationPanel {...props} enabled notifications={{ ...props.notifications, loaded: true }} />)
   expect(screen.getByText(/You’re all caught up/)).toBeTruthy()
+})
+
+it('does not claim an empty inbox when the initial inbox load fails and recovers after success', async () => {
+  vi.mocked(request).mockRejectedValue(new Error('Fictional inbox unavailable'))
+  function Inbox() {
+    const notifications = useNotifications(true)
+    return <NotificationPanel notifications={notifications} enabled onClose={vi.fn()} onOpen={vi.fn()} />
+  }
+  render(<Inbox />)
+  expect((await screen.findByRole('alert')).textContent).toContain('Fictional inbox unavailable')
+  expect(screen.queryByText(/You’re all caught up/)).toBeNull()
+  expect(screen.queryByText(/No notifications/)).toBeNull()
+  vi.mocked(request).mockResolvedValue({ notifications: [] })
+  act(() => publishFeatureEvent({ type: 'hub.connected' }))
+  expect(await screen.findByText(/You’re all caught up/)).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 it('shows scheduled attention records with a human-readable outcome label', () => {
   render(<NotificationPanel enabled onClose={vi.fn()} onOpen={vi.fn()} notifications={{
     records: [record('scheduled', { kind: 'schedule.run.needs-input', title: 'Daily review', sessionId: undefined, url: '/?schedule=review&run=one' })],
-    mutate: vi.fn(), mutating: false, loading: false, error: undefined, unreadCount: 1,
+    mutate: vi.fn(), mutating: false, loading: false, loaded: true, error: undefined, unreadCount: 1,
   }} />)
   expect(screen.getByText('Scheduled · Needs input')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Daily review' })).toBeTruthy()
@@ -85,7 +103,7 @@ it('provides independent item, session-group and all read and dismiss scopes', (
   const mutate = vi.fn()
   render(<NotificationPanel enabled onClose={vi.fn()} onOpen={vi.fn()} notifications={{
     records: [record('old'), record('new', { createdAt: '2026-11-14T18:01:00Z' }), record('other', { sessionId: 'two' })],
-    mutate, mutating: false, loading: false, error: undefined, unreadCount: 3,
+    mutate, mutating: false, loading: false, loaded: true, error: undefined, unreadCount: 3,
   }} />)
   fireEvent.click(screen.getByRole('button', { name: 'Dismiss Record new' }))
   expect(mutate).toHaveBeenLastCalledWith(['new'], 'dismiss')

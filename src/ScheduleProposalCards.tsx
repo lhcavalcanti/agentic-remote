@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 import type { ScheduleProposal } from '../shared/schedule-proposals'
 import type { Schedule } from '../shared/schedules'
+import { nextOccurrences } from '../shared/schedule-recurrence'
 import { getSchedule, listScheduleProposals, resolveScheduleProposal } from './api'
 import { usePreviewFeature } from './preview-features'
 import { proposalChanges, proposalConsequence, proposalSchedule, proposalTiming, proposalUnavailableReason } from './schedule-proposal-presentation'
 import './schedule-proposals.css'
 
-function ProposalFacts({ proposal, base, now }: { proposal: ScheduleProposal; base?: Schedule; now: number }) {
+function ProposalFacts({ proposal, base, now, refreshing }: { proposal: ScheduleProposal; base?: Schedule; now: number; refreshing: boolean }) {
   const schedule = proposalSchedule(proposal, base)
   const operation = { create: 'Create', update: 'Update', enable: 'Enable', disable: 'Disable', 'run-now': 'Run now', archive: 'Archive' }[proposal.operation]
   const title = schedule?.name ?? (proposal.operation === 'create' ? proposal.payload.name : proposal.scheduleId)
+  if (refreshing) return <strong>{operation} “{title}”</strong>
   if (!schedule) return (
     <>
       <strong>{operation} “{title}”</strong>
@@ -50,6 +52,8 @@ export function ScheduleProposalCards({ active, refreshKey = 0 }: { active: bool
   const [busy, setBusy] = useState<string>()
   const [error, setError] = useState<string>()
   const [now, setNow] = useState(() => Date.now())
+  const [facts, setFacts] = useState<{ key: number; ready: boolean }>()
+  const factsReady = facts?.key === refreshKey && facts.ready
   useEffect(() => {
     if (!active || !enabled) return
     let disposed = false
@@ -58,9 +62,15 @@ export function ScheduleProposalCards({ active, refreshKey = 0 }: { active: bool
       const schedules = await Promise.all(ids.map((id) => getSchedule(id).catch(() => undefined)))
       return { next, bases: Object.fromEntries(schedules.filter((schedule): schedule is Schedule => Boolean(schedule)).map((schedule) => [schedule.id, schedule])) }
     }).then(({ next, bases }) => {
-      if (!disposed) { setProposals(next); setBases(bases); setError(undefined); setNow(Date.now()) }
+      if (!disposed) {
+        setProposals(next); setBases(bases); setError(undefined); setNow(Date.now())
+        setFacts({ key: refreshKey, ready: true })
+      }
     }, (caught: unknown) => {
-      if (!disposed) setError(caught instanceof Error ? caught.message : String(caught))
+      if (!disposed) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+        setFacts({ key: refreshKey, ready: false })
+      }
     })
     return () => { disposed = true }
   }, [active, enabled, refreshKey])
@@ -69,7 +79,14 @@ export function ScheduleProposalCards({ active, refreshKey = 0 }: { active: bool
     const refresh = () => setNow(Date.now())
     const boundaries = proposals.flatMap((proposal) => {
       const schedule = proposalSchedule(proposal, proposal.operation === 'create' ? undefined : bases[proposal.scheduleId])
-      return [Date.parse(proposal.expiresAt), ...(schedule?.recurrence.type === 'once' ? [Date.parse(schedule.recurrence.at)] : [])]
+      const next = schedule?.enabled && schedule.recurrence.type !== 'once' &&
+        proposal.operation !== 'archive' && proposal.operation !== 'run-now'
+        ? nextOccurrences(schedule.recurrence, schedule.timezone, new Date(now), 1)[0]?.getTime() : undefined
+      return [
+        Date.parse(proposal.expiresAt),
+        ...(schedule?.recurrence.type === 'once' ? [Date.parse(schedule.recurrence.at)] : []),
+        ...(next === undefined ? [] : [next]),
+      ]
     }).filter((at) => at > now)
     const timer = boundaries.length ? setTimeout(refresh, Math.min(2_147_483_647, Math.max(0, Math.min(...boundaries) - Date.now()))) : undefined
     window.addEventListener('focus', refresh)
@@ -83,6 +100,7 @@ export function ScheduleProposalCards({ active, refreshKey = 0 }: { active: bool
   if (!enabled || !active || (!proposals.length && !error)) return null
   const resolve = async (id: string, approve: boolean) => {
     const proposal = proposals.find((entry) => entry.id === id)
+    if (approve && (!factsReady || !proposal || !proposalSchedule(proposal, proposal.operation === 'create' ? undefined : bases[proposal.scheduleId]))) return
     if (approve && proposal && proposalUnavailableReason(proposal, proposal.operation === 'create' ? undefined : bases[proposal.scheduleId], Date.now())) {
       setNow(Date.now())
       return
@@ -102,11 +120,13 @@ export function ScheduleProposalCards({ active, refreshKey = 0 }: { active: bool
       <p>Nothing changes until you approve. Approval rechecks permissions, limits and the exact revision.</p>
       {error ? <p className="form-error" role="alert">{error}</p> : null}
       {proposals.map((proposal) => {
-        const base = proposal.operation === 'create' ? undefined : bases[proposal.scheduleId]
-        const reason = proposalUnavailableReason(proposal, base, now)
+        const base = proposal.operation === 'create' || !factsReady ? undefined : bases[proposal.scheduleId]
+        const reason = !factsReady
+          ? facts?.key !== refreshKey ? 'Refreshing schedule details before approval.' : 'Cannot verify schedule details. Reload before approving.'
+          : proposalUnavailableReason(proposal, base, now)
         return (
         <article className="manager-confirmation schedule-proposal" key={proposal.id}>
-          <ProposalFacts proposal={proposal} base={base} now={now} />
+          <ProposalFacts proposal={proposal} base={base} now={now} refreshing={!factsReady} />
           <p>Oracle proposal · {proposal.operation} · {proposal.operation === 'create' ? 'New schedule' : `Base revision ${proposal.baseRevision}`}</p>
           <details>
             <summary>Exact payload to approve</summary>

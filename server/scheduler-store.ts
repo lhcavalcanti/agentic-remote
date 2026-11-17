@@ -161,14 +161,35 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       ((launchId !== undefined && run.launchId === launchId) || run.sessionId === sessionId))
   }
 
-  claimNotification(id: string): Promise<boolean> {
+  notificationReplay(): { runs: Array<{ run: ScheduleRun; schedule: Schedule }>; claimed: Set<string> } {
+    return {
+      runs: structuredClone(this.state.runs.map((run) => ({ run, schedule: this.state.runSchedules[run.id] }))),
+      claimed: new Set(this.state.notificationFences),
+    }
+  }
+
+  async claimNotification(id: string): Promise<boolean> {
+    return (await this.claimNotifications([id])).length > 0
+  }
+
+  async claimNotifications(ids: readonly string[]): Promise<string[]> {
+    await this.work
+    if (!this.initialized) throw new Error('Scheduler store is not initialized')
+    if (this.poisoned) throw new Error('Scheduler commit outcome is uncertain; restart to reload durable state')
+    const requested = [...new Set(ids)]
+    if (requested.some((id) => !/^[a-f0-9]{64}$/.test(id))) {
+      throw new Error('Scheduler notification deduplication capacity reached')
+    }
+    const existing = new Set(this.state.notificationFences)
+    if (requested.every((id) => existing.has(id))) return []
     return this.commit((next) => {
-      if (next.notificationFences.includes(id)) return { result: false }
-      if (!/^[a-f0-9]{64}$/.test(id) || next.notificationFences.length >= 100_000) {
+      const fenced = new Set(next.notificationFences)
+      const claimed = requested.filter((id) => !fenced.has(id))
+      if (next.notificationFences.length + claimed.length > 100_000) {
         throw new Error('Scheduler notification deduplication capacity reached')
       }
-      next.notificationFences.push(id)
-      return { result: true }
+      next.notificationFences = next.notificationFences.concat(claimed)
+      return { result: claimed }
     })
   }
   proposal(id: string): ScheduleProposal {

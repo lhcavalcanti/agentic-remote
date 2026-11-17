@@ -179,6 +179,7 @@ export class ManagerStore {
   private journalSeq = 0
   private proposalJournal = new Map<string, Set<string>>()
   private retainedProposals?: Set<string>
+  private legacyProposalCutoff?: number
   private sessions: ManagerRegistry = {}
   private work: Promise<unknown> = Promise.resolve()
 
@@ -240,6 +241,12 @@ export class ManagerStore {
         this.proposalJournal.set(id, new Set(statuses as string[]))
       }
     }
+    // State from before the index existed may have rotated proposal statuses away. Only
+    // proposals created before that loaded window are ambiguous; later ones are always new.
+    const oldest = this.journal[0]
+    this.legacyProposalCutoff = proposalJournal === undefined && oldest && oldest.seq > 1
+      ? Date.parse(oldest.at)
+      : undefined
   }
 
   state(): ManagerState {
@@ -371,15 +378,14 @@ export class ManagerStore {
           known.set(entry.proposalId, statuses)
         }
       }
-      const oldest = this.journal[0]
       const drafts: JournalDraft[] = []
       for (const { entry, createdAt } of proposals) {
         const id = entry.proposalId
         const status = entry.proposalStatus
         if (known.get(id)?.has(status)) continue
-        // Legacy outcomes outside the journal window cannot safely be presented as new.
-        if (!known.has(id) && status !== 'pending' && oldest?.seq > 1 &&
-          Date.parse(createdAt) <= Date.parse(oldest.at)) {
+        // Legacy statuses outside the loaded journal window cannot safely be presented as new.
+        if (!known.has(id) && this.legacyProposalCutoff !== undefined &&
+          Date.parse(createdAt) <= this.legacyProposalCutoff) {
           fences.set(id, new Set([status]))
         } else {
           drafts.push(entry)

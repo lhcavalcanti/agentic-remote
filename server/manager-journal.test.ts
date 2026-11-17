@@ -109,6 +109,7 @@ describe('JournalRecorder', () => {
     await schedules.initialize()
     const proposal = await schedules.propose(proposalInput)
     const rejected = await schedules.rejectProposal(proposal.id)
+    const stillPending = await schedules.propose(proposalInput)
     const journal = JSON.stringify({
       kind: 'status', computerId: 'hub', sessionId: 'other', to: 'idle',
       seq: 40, at: '2026-11-15T00:00:00.000Z',
@@ -118,17 +119,35 @@ describe('JournalRecorder', () => {
     await writeFile(path.join(root, 'manager', 'journal.jsonl'), journal)
     const restarted = new ManagerStore(path.join(root, 'manager'))
     await restarted.initialize()
-    await recordScheduleProposals(restarted, [rejected])
+    await recordScheduleProposals(restarted, [rejected, stillPending])
     expect(restarted.latestJournalSeq()).toBe(40)
     expect(await readFile(path.join(root, 'manager', 'journal.jsonl'), 'utf8')).toBe(journal)
     expect(await readFile(path.join(root, 'manager', 'state.json'), 'utf8')).toBe(stateBefore)
     now = '2026-11-17T00:00:00.000Z'
     const fresh = await schedules.propose(proposalInput)
-    await recordScheduleProposals(restarted, [rejected, fresh])
+    await recordScheduleProposals(restarted, [rejected, stillPending, fresh])
     const freshRejected = await schedules.rejectProposal(fresh.id)
-    await recordScheduleProposals(restarted, [rejected, freshRejected])
-    await recordScheduleProposals(restarted, [rejected, freshRejected])
-    expect(restarted.journalSince(40).map((entry) => entry.proposalStatus)).toEqual(['pending', 'rejected'])
+    const legacyOutcome = await schedules.rejectProposal(stillPending.id)
+    await recordScheduleProposals(restarted, [rejected, legacyOutcome, freshRejected])
+    await recordScheduleProposals(restarted, [rejected, legacyOutcome, freshRejected])
+    expect(restarted.journalSince(40).map((entry) => [entry.proposalId, entry.proposalStatus])).toEqual([
+      [fresh.id, 'pending'], [legacyOutcome.id, 'expired'], [fresh.id, 'rejected'],
+    ])
+  })
+
+  it('journals a new outcome even when rotation overtakes its first recording', async () => {
+    const schedules = new SchedulerStore(root)
+    await schedules.initialize()
+    const manager = new ManagerStore(path.join(root, 'burst-manager'), { journalLimit: 3, journalKeep: 1 })
+    await manager.initialize()
+    const proposal = await schedules.propose(proposalInput)
+    const rejected = await schedules.rejectProposal(proposal.id)
+    for (let index = 0; index < 4; index += 1) {
+      await manager.appendJournal([{ kind: 'status', computerId: 'hub', sessionId: 'other', to: 'idle' }])
+    }
+    const before = manager.latestJournalSeq()
+    await recordScheduleProposals(manager, [rejected])
+    expect(manager.journalSince(before).map((entry) => entry.proposalStatus)).toEqual(['rejected'])
   })
 
   it('retains the old journal and sequence when the pre-rotation proposal fence cannot be saved', async () => {

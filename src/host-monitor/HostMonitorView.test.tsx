@@ -221,6 +221,46 @@ it('stops auxiliary polling until an incompatible stream is manually retried', a
   expect(result.current.error).toBeUndefined()
 })
 
+it.each(['processes', 'history'])('requires manual retry when only %s telemetry is incompatible', async (endpoint) => {
+  vi.useFakeTimers()
+  let incompatible = true
+  const respond = vi.mocked(request).getMockImplementation()!
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (incompatible && path.includes(`/${endpoint}`)) throw Object.assign(
+      new SubmissionError('This computer returned invalid host telemetry', 502), { code: 'HOST_TELEMETRY_INVALID' },
+    )
+    return respond(path, init)
+  })
+  const { result } = renderHook(() => useHostMonitor('studio', true, true, true))
+  await act(async () => {})
+  expect(result.current.error).toContain('Update this computer')
+  expect(result.current.retryRequired).toBe(true)
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(3)
+  incompatible = false
+  await act(async () => { result.current.retry() })
+  expect(request).toHaveBeenCalledTimes(6)
+  expect(result.current.error).toBeUndefined()
+  expect(result.current.retryRequired).toBe(false)
+})
+
+it('does not let a concurrent snapshot clear an incompatible process response', async () => {
+  let resolveSnapshot!: (value: HostSnapshot) => void
+  let rejectProcesses!: (error: Error) => void
+  const initial = new Promise<HostSnapshot>((resolve) => { resolveSnapshot = resolve })
+  const inventory = new Promise((_resolve, reject) => { rejectProcesses = reject })
+  vi.mocked(request).mockImplementation((path) =>
+    path.endsWith('/processes') ? inventory : path.includes('/history') ? Promise.resolve([]) : initial)
+  const { result } = renderHook(() => useHostMonitor('studio', true, true, true))
+  await act(async () => {
+    rejectProcesses(Object.assign(new SubmissionError('Invalid process telemetry', 502), { code: 'HOST_TELEMETRY_INVALID' }))
+    resolveSnapshot(snapshot)
+  })
+  expect(result.current.error).toContain('Update this computer')
+  expect(result.current.retryRequired).toBe(true)
+  expect(Socket.instances).toHaveLength(0)
+})
+
 it('preserves update-required after an invalid frame closes and ignores later frames', async () => {
   vi.useFakeTimers()
   const { result } = renderHook(() => useHostMonitor('studio', true, false, false))

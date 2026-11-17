@@ -371,16 +371,60 @@ it('keeps management usable when recent-run enrichment fails and clears the warn
   expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Morning review')
 })
 
-it('keeps schedule-list failures at the top level', async () => {
+it('does not infer an empty list or deleted linked schedule when loading the list fails', async () => {
+  let listUnavailable = true
   vi.mocked(request).mockImplementation(async (path) => {
     if (path === '/api/schedules/proposals') return { proposals: [] }
-    if (path === '/api/schedules') throw new SubmissionError('Schedule list unavailable', 503)
+    if (path === '/api/schedules') {
+      if (listUnavailable) throw new SubmissionError('Schedule list unavailable', 503)
+      return { schedules: [] }
+    }
     return { runs: [] }
   })
-  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  render(<SchedulerView computers={[computer]} enabled initialScheduleId="unverified" onClose={vi.fn()} onOpenSession={vi.fn()} />)
   expect((await screen.findByRole('alert')).textContent).toContain('Schedule list unavailable')
   expect(screen.queryByRole('button', { name: 'Edit Morning review' })).toBeNull()
   expect(screen.queryByText(/Recent runs are unavailable/)).toBeNull()
+  expect(screen.queryByText(/The linked schedule is no longer available/)).toBeNull()
+  expect(screen.queryByText('No schedules yet. Create a saved prompt to get started.')).toBeNull()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived schedules' }))
+  expect(screen.queryByText('No archived schedules.')).toBeNull()
+  listUnavailable = false
+  fireEvent.click(screen.getByRole('button', { name: 'Reload latest' }))
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  expect(screen.getByText(/The linked schedule is no longer available/)).toBeTruthy()
+  expect(screen.getByText('No archived schedules.')).toBeTruthy()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived schedules' }))
+  expect(screen.getByText('No schedules yet. Create a saved prompt to get started.')).toBeTruthy()
+})
+
+it('clears a failed list action when opening Edit so client validation remains visible', async () => {
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (path === '/api/schedules/review/run') throw new SubmissionError('Run rejected by the fictional target', 409)
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    if (path === '/api/schedules') return { schedules: [schedule] }
+    return init?.method === 'PATCH' ? { schedule } : { runs: [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Run Morning review now' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('Run rejected by the fictional target')
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Edit Morning review' })).toHaveProperty('disabled', false))
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Morning review' }))
+  expect(screen.queryByRole('alert')).toBeNull()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('name:')
+  expect(vi.mocked(request).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Corrected review' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  await waitFor(() => expect(request).toHaveBeenCalledWith('/api/schedules/review', expect.objectContaining({
+    method: 'PATCH', body: JSON.stringify({ name: 'Corrected review', revision: 1 }),
+  })))
+  expect(await screen.findByRole('button', { name: 'Create schedule' })).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 it('ignores aborted recent-run enrichment after a newer refresh', async () => {

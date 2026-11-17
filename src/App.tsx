@@ -12,6 +12,7 @@ import {
 } from 'react'
 import ReaderWorkspace, { READER_WIDTH_MIN } from './ReaderWorkspace'
 import { Composer } from './composer/Composer'
+import { useForegroundHandoff } from './composer/use-foreground-handoff'
 import type { ComposerAttachment } from './composer/types'
 import {
   activeComposerPastes,
@@ -3797,6 +3798,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setShellView('scheduler')
     initialScheduleLink.current = undefined
   }, [schedulerView])
+  const composerRefresh = usePreviewFeature('composerRefresh')
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -5377,9 +5379,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     hasRunningBackgroundAgent(selectedBackgroundTasks)
   const selectedHasActiveBackgroundTasks =
     hasActiveBackgroundTasks(selectedBackgroundTasks)
+  const foregroundHandoff = useForegroundHandoff(
+    selected, selected ? sessionEventSequenceRef.current.get(sessionKey(selected)) || 0 : 0,
+  )
   const selectedForegroundTurnActive = useMemo(
-    () => Boolean(selected && hasForegroundTurn(selected, selectedBackgroundTasks)),
-    [selected, selectedBackgroundTasks],
+    () => foregroundHandoff.active || Boolean(selected && hasForegroundTurn(selected, selectedBackgroundTasks)),
+    [foregroundHandoff.active, selected, selectedBackgroundTasks],
   )
   const selectedQueueAvailable =
     selected?.status === 'running' ||
@@ -10154,6 +10159,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     computersRef.current = reconciled
     setComputers(reconciled)
+    discardUnpairedComputers(forgotten)
     return forgotten
   }
 
@@ -10833,10 +10839,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         sessionsRef.current = upsertSession(sessionsRef.current, updated)
         setSessions((current) => upsertSession(current, updated))
       }
+      if (composerRefresh && !isCommand && !shouldEnqueue && !queuedInstead) {
+        foregroundHandoff.accepted(updated, sessionEventSequenceRef.current.get(liveKey) || 0)
+      }
     } catch (caught) {
       if (!composerMounted.current) {
         return
       }
+      foregroundHandoff.clear()
       const liveKey = followReplacementsRef.current(targetKey)
       if (
         liveKey === targetKey &&
@@ -13029,6 +13039,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     computersRef.current = computersRef.current.filter((computer) => computer.id !== computerId)
     setComputers(computersRef.current)
     forgetComputerKnowledge(computerId)
+    // The removal event may never arrive (socket down), so do its local cleanup here too.
+    discardComputerLocalState(computerId)
     setSessions((current) => current.filter((session) => session.computerId !== computerId))
     setBackgroundTaskSnapshots((current) => Object.fromEntries(
       Object.entries(current).filter(([key]) => !key.startsWith(`${computerId}:`))))
@@ -13071,43 +13083,50 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     )
   }
 
+  /**
+   * Sessions, task caches and browser-held state for computers a snapshot
+   * found unpaired. Shared by every snapshot (connection check, reconnect,
+   * startup), so whichever one wins still cleans up.
+   */
+  function discardUnpairedComputers(forgotten: ReadonlySet<string>) {
+    if (!forgotten.size) return
+    // Only a newer computer event can keep a computer; a newer session event does not re-pair its owner.
+    const keepSession = (session: ManagedSession) => !forgotten.has(session.computerId)
+    const keepTasks = (key: string) => !forgotten.has(key.slice(0, key.indexOf(':')))
+    // Fence older responses even if the same computer is paired again before they finish.
+    const removedAtSequence = nextSessionEventSequence()
+    eventSequenceRef.current = removedAtSequence
+    for (const id of forgotten) computerEventSequenceRef.current.set(id, removedAtSequence)
+    for (const id of forgotten) discardComputerLocalState(id)
+    for (const session of sessionsRef.current) {
+      if (!keepSession(session)) {
+        const key = sessionKey(session)
+        removedSessions.current.add(key)
+        sessionEventSequenceRef.current.set(key, removedAtSequence)
+      }
+    }
+    for (const key of new Set([
+      ...Object.keys(backgroundTaskSnapshotsRef.current),
+      ...backgroundTaskRequestsRef.current.keys(),
+    ])) {
+      if (!keepTasks(key)) {
+        backgroundTaskEventSequenceRef.current.set(key, removedAtSequence)
+        if (backgroundTaskRequestsRef.current.has(key)) queuedBackgroundTaskRefreshesRef.current.add(key)
+      }
+    }
+    sessionsRef.current = sessionsRef.current.filter(keepSession)
+    setSessions((current) => current.filter(keepSession))
+    const tasks = (current: Record<string, BackgroundTaskSnapshot>) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => keepTasks(key)))
+    backgroundTaskSnapshotsRef.current = tasks(backgroundTaskSnapshotsRef.current)
+    setBackgroundTaskSnapshots(tasks)
+  }
+
   async function checkComputerConnections() {
     const generation = ++snapshotGeneration.current
     const startedAtSequence = eventSequenceRef.current
     const loaded = await listComputers()
-    const forgotten = applyComputerSnapshot(loaded, startedAtSequence, generation)
-    if (forgotten.size) {
-      // Only a newer computer event can keep a computer; a newer session event does not re-pair its owner.
-      const keepSession = (session: ManagedSession) => !forgotten.has(session.computerId)
-      const keepTasks = (key: string) => !forgotten.has(key.slice(0, key.indexOf(':')))
-      // Fence older responses even if the same computer is paired again before they finish.
-      const removedAtSequence = nextSessionEventSequence()
-      eventSequenceRef.current = removedAtSequence
-      for (const id of forgotten) computerEventSequenceRef.current.set(id, removedAtSequence)
-      for (const id of forgotten) discardComputerLocalState(id)
-      for (const session of sessionsRef.current) {
-        if (!keepSession(session)) {
-          const key = sessionKey(session)
-          removedSessions.current.add(key)
-          sessionEventSequenceRef.current.set(key, removedAtSequence)
-        }
-      }
-      for (const key of new Set([
-        ...Object.keys(backgroundTaskSnapshotsRef.current),
-        ...backgroundTaskRequestsRef.current.keys(),
-      ])) {
-        if (!keepTasks(key)) {
-          backgroundTaskEventSequenceRef.current.set(key, removedAtSequence)
-          if (backgroundTaskRequestsRef.current.has(key)) queuedBackgroundTaskRefreshesRef.current.add(key)
-        }
-      }
-      sessionsRef.current = sessionsRef.current.filter(keepSession)
-      setSessions((current) => current.filter(keepSession))
-      const tasks = (current: Record<string, BackgroundTaskSnapshot>) =>
-        Object.fromEntries(Object.entries(current).filter(([key]) => keepTasks(key)))
-      backgroundTaskSnapshotsRef.current = tasks(backgroundTaskSnapshotsRef.current)
-      setBackgroundTaskSnapshots(tasks)
-    }
+    applyComputerSnapshot(loaded, startedAtSequence, generation)
     return computersRef.current
   }
 

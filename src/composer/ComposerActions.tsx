@@ -14,6 +14,7 @@ export function ComposerActions({
   selected,
   selectedComputerOnline,
   selectedQueueAvailable,
+  foregroundTurnActive,
   supportsQueuedPromptDispatch,
   recording,
   recordingSeconds,
@@ -42,19 +43,20 @@ export function ComposerActions({
   onRecallSentMessage,
   onCancelSentMessage,
   providerCapability,
+  onUseSentMessage,
 }: Pick<ComposerProps,
-  'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'supportsQueuedPromptDispatch' |
+  'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'foregroundTurnActive' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
   'cancelling' | 'transcribing' | 'uploadingFile' | 'composer' | 'expandedComposer' | 'sending' | 'queueActionId' |
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
   'recordingDuration' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
-  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability'
+  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage'
 >) {
   const refresh = usePreviewFeature('composerRefresh')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyChosen, setHistoryChosen] = useState(false)
-  const busyChoices = refresh && selected.status === 'running' &&
+  const busyChoices = refresh && foregroundTurnActive &&
     !readonlyResourceCommand && !editingQueuedPromptId && !expandedComposer.trim().startsWith('/')
   const sendDisabled = !composer.trim() || sending || transcribing || uploadingFile ||
     (!readonlyResourceCommand && (
@@ -202,7 +204,7 @@ export function ComposerActions({
             ? 'Open the read-only resource view without sending a prompt'
             : editingQueuedPromptId
               ? supportsQueuedPromptDispatch ? 'Send this queued message now' : 'Put this back in the queue'
-              : busyChoices ? 'Choose Steer or Queue' : selected.status === 'running' ? 'Send into the current response' : 'Send immediately'
+              : busyChoices ? 'Choose Steer or Queue' : foregroundTurnActive ? 'Send into the current response' : 'Send immediately'
         }
         type="button"
       >
@@ -236,7 +238,7 @@ export function ComposerActions({
           setHistoryOpen(false)
         }}
         onChoose={(id) => { setHistoryChosen(true); onRecallSentMessage(id) }}
-        onUse={() => setHistoryOpen(false)}
+        onUse={() => { if (onUseSentMessage()) setHistoryOpen(false) }}
       />
     ) : null}
     </>

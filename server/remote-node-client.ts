@@ -126,6 +126,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   private reconnectTimer?: NodeJS.Timeout
   private reconnectDelay = 1_000
   private stopped = false
+  private readonly stoppingLaunches = new Set<string>()
   private _online = false
   private _providers: NodeInfo['providers']
   private _voice: NodeInfo['voice']
@@ -206,7 +207,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     try {
       info = await this.getInfo(AbortSignal.any([signal, AbortSignal.timeout(HOST_TELEMETRY_REMOTE_TIMEOUT_MS)]))
     } catch (error) {
-      if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502)
+      if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
       if (error instanceof RemoteNodeRequestError) throw error
       throw new RemoteNodeTransportError(this.computer.name, error)
     }
@@ -221,12 +222,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       try {
         payload = await this.request(path, { signal }, HOST_TELEMETRY_REMOTE_TIMEOUT_MS, false)
       } catch (error) {
-        if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502)
+        if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
         if (error instanceof RemoteNodeRequestError) throw error
         throw new RemoteNodeTransportError(this.computer.name, error)
       }
       const parsed = schema.safeParse(payload)
-      if (!parsed.success) throw hostTelemetryError('This computer returned invalid host telemetry', 502)
+      if (!parsed.success) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
       return parsed.data
     }
     return {
@@ -805,16 +806,21 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
 
   async cancelWithAck(sessionId: string, timeoutMs: number): Promise<TerminationAcknowledgement> {
     cancellationAckSchema.parse({ timeoutMs })
+    this.stoppingLaunches.add(sessionId)
     try {
-      const acknowledgement = terminationAcknowledgementSchema.parse(await this.request<TerminationAcknowledgement>(
+      const parsed = terminationAcknowledgementSchema.safeParse(await this.request<TerminationAcknowledgement>(
         `/node-api/sessions/${encodeURIComponent(sessionId)}/cancel-with-ack`,
         { method: 'POST', body: JSON.stringify({ timeoutMs }) },
         timeoutMs + 5_000,
       ))
-      if (acknowledgement.sessionId !== sessionId) throw new Error('Mismatched termination acknowledgement')
-      return acknowledgement
+      if (!parsed.success || parsed.data.sessionId !== sessionId) {
+        throw new RemoteNodeRequestError('The owning computer returned invalid termination evidence.', 502)
+      }
+      return parsed.data
     } catch (error) {
-      if (error instanceof RemoteNodeRequestError && error.statusCode === 409) throw error
+      if (error instanceof RemoteNodeRequestError) throw error
+      if (error instanceof SyntaxError) throw new RemoteNodeRequestError('The owning computer returned invalid termination evidence.', 502)
+      if (!(error instanceof TypeError || (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)))) throw error
       return {
         sessionId, outcome: 'unknown', checkedAt: new Date().toISOString(), scope: 'provider-owned',
         reason: 'The owning computer did not confirm termination.',
@@ -970,6 +976,16 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       : 15_000,
     markOnline = true,
   ): Promise<TResult> {
+    const session = /^\/node-api\/sessions\/([^/]+)(?:\/(.*))?$/.exec(path)
+    if (session && init.method && init.method !== 'GET' && this.stoppingLaunches.has(decodeURIComponent(session[1]))) {
+      // Stop intent remains authoritative even if the request/response was lost.
+      // Only reads, metadata-only rename, and further teardown may cross it.
+      const teardown = ['cancel', 'cancel-with-ack', 'close', 'suspend'].includes(session[2] || '')
+      const metadataOrDelete = !session[2] && ['PATCH', 'DELETE'].includes(init.method)
+      if (!teardown && !metadataOrDelete) {
+        throw new RemoteNodeRequestError('The launch is stopping; no work may dispatch until cancellation is resolved.', 409, undefined, false)
+      }
+    }
     const headers = new Headers(init.headers)
     headers.set('authorization', `Bearer ${this.computer.token}`)
     if (init.body != null && !headers.has('content-type')) {

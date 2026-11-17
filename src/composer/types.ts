@@ -33,6 +33,7 @@ export type ComposerProps = {
   selectedRetained: boolean
   selectedQueueHeadIsSteering: boolean
   selectedQueueAvailable: boolean
+  foregroundTurnActive: boolean
   selectedComputerOnline: boolean
   supportsQueuedPromptDispatch: boolean
   providerCapability?: AgentProviderCapability
@@ -97,4 +98,5 @@ export type ComposerProps = {
   sessionActions?: { label: string; onClick: () => void; disabled?: boolean }[]
   onRecallSentMessage: (id: string) => void
   onCancelSentMessage: () => void
+  onUseSentMessage: () => boolean
 }

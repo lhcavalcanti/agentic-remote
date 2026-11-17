@@ -8,6 +8,7 @@ import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
 import { parseFeatureFlag, readHubFeatureFlags } from '../shared/feature-flags.js'
+import type { SchedulerChanged } from '../shared/schedules.js'
 import type {
   HubEvent,
   ManagedSession,
@@ -25,10 +26,11 @@ import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
 import { ManagerAgent } from './manager-agent.js'
-import { JournalRecorder, recordScheduleProposal } from './manager-journal.js'
+import { JournalRecorder, recordScheduleProposals } from './manager-journal.js'
 import { registerManagerRoutes } from './manager-routes.js'
 import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
 import { ManagerStore } from './manager-store.js'
+import { sessionProvenanceProjection } from './session-provenance.js'
 import { ManagerProactiveCoordinator } from './manager-proactive-coordinator.js'
 import { ManagerProactiveInbox } from './manager-proactive-inbox.js'
 import { OracleTaskStore, unfinishedOracleTaskSessions } from './oracle-task-store.js'
@@ -308,8 +310,10 @@ export async function buildApp(
       explicitStatusCode < 600
     ) {
       noteRefusalReason(request, refusalReasonFromError(error, explicitStatusCode))
+      const code = error !== null && typeof error === 'object' ? Reflect.get(error, 'code') : undefined
       return reply.code(explicitStatusCode).send({
         error: error instanceof Error ? error.message : 'Request failed',
+        ...(typeof code === 'string' ? { code } : {}),
         ...(submission ? { submission } : {}),
         ...(explicitUncertainty === undefined
           ? {}
@@ -390,6 +394,7 @@ export async function buildApp(
   let forwardToJournal: ((event: HubEvent) => void) | undefined
   let forwardToSessionProvenance: ((event: HubEvent) => void) | undefined
   let releaseSessionProvenance: (() => void) | undefined
+  let releaseScheduleProvenance: (() => void) | undefined
   let reconcileCachedSessionProvenance: (() => void) | undefined
   const provenanceWrites = new Set<Promise<void>>()
   let forwardToProactive: ((event: HubEvent) => void) | undefined
@@ -641,15 +646,16 @@ export async function buildApp(
       const store = scheduler.store
       scheduleNotifications = new ScheduleNotificationService(store, {
         admit: notificationCenter ? (event) => notificationCenter!.hub(event) : undefined,
+        admitBatch: notificationCenter ? (events) => notificationCenter!.scheduleNotifications(events) : undefined,
         mutedSessions: () => pushService!.settings().mutedSessions,
         warn: (error) => app.log.error({ err: error }, 'Could not deliver a schedule outcome'),
       })
       pushService.attachScheduleNotifications(scheduleNotifications)
       store.on('proposal', () => {
         const proposals = store.proposals()
-        scheduleJournal = scheduleJournal.then(async () => {
-          for (const proposal of proposals) await recordScheduleProposal(managerStore!, proposal)
-        }).catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
+        const persisted = store.persistedProposalStatuses()
+        scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals, persisted))
+          .catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
       })
     }
     if (!managerStoreReady) {
@@ -663,8 +669,12 @@ export async function buildApp(
     }
     if (managerStoreReady && managerStore) {
       const store = managerStore
+      const projection = sessionProvenanceProjection(store, scheduler?.store)
+      const fingerprint = (computerId: string, sessionId: string) => JSON.stringify(
+        projection.project<Pick<ManagedSession, 'computerId' | 'id' | 'provenance'>>({ computerId, id: sessionId }).provenance,
+      )
       const published = new Map<string, string | undefined>()
-      const pending = new Map<string, { session?: ManagedSession; cachedDiscovery?: true; retired: boolean; writes: number; discovering: boolean }>()
+      const pending = new Map<string, { session?: ManagedSession; retired: boolean; writes: number; discovering: boolean }>()
       const tracking = (key: string) => {
         let state = pending.get(key)
         if (!state) {
@@ -689,33 +699,43 @@ export async function buildApp(
         const state = tracking(key)
         const needsPublication = () => !state.retired && published.has(key) &&
           !store.isSessionRetired(computerId, sessionId) &&
-          published.get(key) !== JSON.stringify(store.sessionProvenance(computerId, sessionId))
-        trackProvenanceWork(key, state, store.flush().then(async () => {
+          published.get(key) !== fingerprint(computerId, sessionId)
+        trackProvenanceWork(key, state, store.flush().then(() => {
           if (!needsPublication()) return
-          const beforeRead = state.session
-          // Replaying the cached startup roster must not fan out new node reads.
-          const current = state.cachedDiscovery
-            ? state.session
-            : await manager!.readSession(computerId, sessionId).catch(() => undefined)
+          // Metadata-only publication must never fetch transcripts or wait for a node.
+          const current = manager!.listCachedSessions?.().find((session) =>
+            session.computerId === computerId && session.id === sessionId)
           const latest = state.session
-          let session = current
-          if (latest && (latest !== beforeRead || (current &&
-            (latest.revision === undefined || current.revision === undefined || latest.revision >= current.revision)))) session = latest
+          const session = latest && (!current || latest.revision === undefined || current.revision === undefined ||
+            latest.revision >= current.revision) ? latest : current
           if (!session || !needsPublication()) return
-          published.set(key, JSON.stringify(store.sessionProvenance(computerId, sessionId)))
+          published.set(key, fingerprint(computerId, sessionId))
           manager!.emit('event', { type: 'session.upserted', session, summary: true })
         }))
       }
       releaseSessionProvenance = store.onSessionProvenanceChanged((sessions) => {
         for (const { computerId, sessionId } of sessions) publishAfter(computerId, sessionId)
       })
+      if (scheduler) {
+        const schedules = scheduler.store
+        const refreshScheduleProvenance = ({ scheduleId }: SchedulerChanged) => {
+          for (const session of manager!.listCachedSessions?.() ?? []) {
+            const provenance = store.sessionProvenance(session.computerId, session.id)
+            if (provenance?.origin === 'schedule' && provenance.scheduleId === scheduleId) {
+              publishAfter(session.computerId, session.id)
+            }
+          }
+        }
+        schedules.on('changed', refreshScheduleProvenance)
+        releaseScheduleProvenance = () => { schedules.off('changed', refreshScheduleProvenance) }
+      }
       forwardToSessionProvenance = (event) => {
         if (event.type === 'session.upserted') {
           const { computerId, id } = event.session
           const key = `${computerId}:${id}`
           const state = pending.get(key)
           if (state) { state.session = event.session; state.retired = false }
-          published.set(key, JSON.stringify(store.sessionProvenance(computerId, id)))
+          published.set(key, fingerprint(computerId, id))
           if (store.sessionOrigin(computerId, id)) return
           const discovery = tracking(key)
           if (discovery.discovering) return
@@ -743,9 +763,6 @@ export async function buildApp(
       // Deferred to readiness so a hub that fails to build never starts registry writes.
       reconcileCachedSessionProvenance = () => {
         for (const session of manager!.listCachedSessions?.() ?? []) {
-          if (!store.sessionOrigin(session.computerId, session.id)) {
-            tracking(`${session.computerId}:${session.id}`).cachedDiscovery = true
-          }
           forwardToSessionProvenance!({ type: 'session.upserted', session, summary: true })
         }
       }
@@ -887,7 +904,9 @@ export async function buildApp(
     if (hostAlerts) await startupPhases.run('hostAlerts.start', async () => hostAlerts.start())
     if (scheduler) await startupPhases.run('scheduler.start', async () => {
       await scheduler!.start()
-      for (const proposal of scheduler!.store.proposals()) await recordScheduleProposal(managerStore!, proposal)
+      const proposals = scheduler!.store.proposals()
+      const persisted = scheduler!.store.persistedProposalStatuses()
+      scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals, persisted))
       await scheduleJournal
     })
     if (scheduleNotifications) await startupPhases.run('scheduler.notifications.start', () => scheduleNotifications!.start())
@@ -917,6 +936,7 @@ export async function buildApp(
     if (forwardToJournal) manager?.off('event', forwardToJournal)
     if (forwardToSessionProvenance) manager?.off('event', forwardToSessionProvenance)
     releaseSessionProvenance?.()
+    releaseScheduleProvenance?.()
     await Promise.all(provenanceWrites)
     if (forwardToProactive) manager?.off('event', forwardToProactive)
     if (forwardHubToDreamer) manager?.off('event', forwardHubToDreamer)

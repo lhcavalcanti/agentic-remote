@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { SessionStore } from './session-store.js'
+import type { ChatMessage } from '../shared/contracts.js'
+import { filterSentMessages } from '../src/composer/composer-state.js'
 
 const temporaryDirectories: string[] = []
 
@@ -36,6 +38,49 @@ function lifecycleLines(info: MockInstance<typeof console.info>): unknown[] {
 }
 
 describe('SessionStore', () => {
+  it.each(['sdk', 'terminal'] as const)('keeps the generated recovery marker through %s transcript refresh and reload', async (backend) => {
+    const { directory, store } = await createStore()
+    const before: ChatMessage = {
+      id: 'before', role: 'user', content: 'Keep my original goal', createdAt: '2026-01-01T00:00:00Z',
+    }
+    await store.create({
+      id: 'original', cwd: directory, title: 'Recovery history', status: 'error',
+      updatedAt: before.createdAt, messages: [before],
+    }, { backend, managedOpen: true })
+    const brief = 'Conversation recovery context\nExact app-created recovery brief.'
+    await store.replaceWithRecoveredSession('original', 'recovered', 'provider-error', 1, false, brief)
+    await store.claimRecoverySeed('recovered', brief)
+    if (backend === 'sdk') {
+      await store.beginPrompt('recovered', brief, 'seed-reply', () => true, undefined, { recoverySeedPrompt: brief })
+      expect(store.get('recovered')?.messages.find((message) => message.role === 'user' && message.content === brief))
+        .toMatchObject({ appGenerated: true })
+      await store.finishMessage('recovered', 'seed-reply')
+      await store.updateStatus('recovered', 'idle')
+    }
+    await store.admitRecoverySeed('recovered', brief)
+    expect(store.recoverySeed('recovered')).toBeUndefined()
+    const providerMessages: ChatMessage[] = [
+      { id: 'provider-seed', role: 'user', content: brief, createdAt: '2026-02-01T00:00:00Z', deliveryConfirmed: true },
+      // The exact same text is still a genuine prompt if the user sends it later.
+      { id: 'after', role: 'user', content: brief, createdAt: '2026-02-01T00:01:00Z', deliveryConfirmed: true },
+    ]
+    if (backend === 'sdk') await store.replaceMessages('recovered', providerMessages)
+    else await store.replaceTranscript('recovered', providerMessages, 'idle')
+    expect(store.get('recovered')).not.toHaveProperty('generatedPrompt')
+    expect(filterSentMessages(store.get('recovered')!.messages).map((message) => message.id)).toEqual(['after', 'before'])
+    await store.close()
+    const reopened = new SessionStore(directory)
+    await reopened.initialize()
+    expect(reopened.get('recovered')?.messages.find((message) => message.id === 'provider-seed')?.appGenerated).toBe(true)
+    await reopened.replaceMessages('recovered', [providerMessages[1]])
+    expect(filterSentMessages(reopened.get('recovered')!.messages).map((message) => message.id)).toEqual(['after', 'before'])
+    await reopened.updateStatus('recovered', 'idle')
+    await reopened.replaceWithClearedSession('recovered', 'cleared')
+    await reopened.replaceMessages('cleared', [providerMessages[1]])
+    expect(reopened.get('cleared')?.messages[0].appGenerated).toBeUndefined()
+    await reopened.close()
+  })
+
   describe('prompt delivery confirmation', () => {
     it('does not confirm a provider-start refusal and persists only the acknowledged turn', async () => {
       const { directory, store } = await createStore()
@@ -1695,11 +1740,14 @@ describe('SessionStore', () => {
       false,
       undefined,
       undefined,
+      undefined,
+      false,
     )
 
     expect(updated).toMatchObject({
       status: 'running',
       activity: 'Sent to terminal',
+      foregroundTurnActive: true,
     })
     expect(updated!.revision).toBeGreaterThan(before?.revision || 0)
   })

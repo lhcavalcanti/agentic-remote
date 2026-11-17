@@ -5,6 +5,7 @@ import { chmod, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/prom
 import path from 'node:path'
 import { z } from 'zod'
 import { validateRecurrence } from '../shared/schedule-recurrence.js'
+import { classifyScheduleNotification } from './notification-classifier.js'
 import {
   scheduleProposalInputSchema, scheduleProposalSchema,
   type ScheduleProposal, type ScheduleProposalInput, type ScheduleProposalsChanged,
@@ -54,6 +55,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   private work: Promise<unknown> = Promise.resolve()
   private loading?: Promise<void>
   private initialized = false
+  private loadedProposalStatuses = new Map<string, ScheduleProposal['status']>()
   private poisoned = false
   private directoryIdentity?: { dev: number; ino: number }
 
@@ -113,6 +115,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       await unlink(staging)
     }
     await this.persist(this.state)
+    this.loadedProposalStatuses = new Map(this.state.proposals.map((proposal) => [proposal.id, proposal.status]))
     this.initialized = true
   }
 
@@ -156,19 +159,42 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   }
 
   proposals(): ScheduleProposal[] { return structuredClone(this.state.proposals) }
+  /** Proposal statuses as read from disk, before this process changed any (e.g. startup expiry). */
+  persistedProposalStatuses(): ReadonlyMap<string, ScheduleProposal['status']> { return new Map(this.loadedProposalStatuses) }
   ownsSession(computerId: string, sessionId: string, launchId?: string): boolean {
     return this.state.runs.some((run) => run.computerId === computerId &&
       ((launchId !== undefined && run.launchId === launchId) || run.sessionId === sessionId))
   }
 
-  claimNotification(id: string): Promise<boolean> {
+  notificationReplay(): { runs: Array<{ run: ScheduleRun; schedule: Schedule }>; claimed: Set<string> } {
+    return {
+      runs: structuredClone(this.state.runs.map((run) => ({ run, schedule: this.state.runSchedules[run.id] }))),
+      claimed: new Set(this.state.notificationFences),
+    }
+  }
+
+  async claimNotification(id: string): Promise<boolean> {
+    return (await this.claimNotifications([id])).length > 0
+  }
+
+  async claimNotifications(ids: readonly string[]): Promise<string[]> {
+    await this.work
+    if (!this.initialized) throw new Error('Scheduler store is not initialized')
+    if (this.poisoned) throw new Error('Scheduler commit outcome is uncertain; restart to reload durable state')
+    const requested = [...new Set(ids)]
+    if (requested.some((id) => !/^[a-f0-9]{64}$/.test(id))) {
+      throw new Error('Scheduler notification deduplication capacity reached')
+    }
+    const existing = new Set(this.state.notificationFences)
+    if (requested.every((id) => existing.has(id))) return []
     return this.commit((next) => {
-      if (next.notificationFences.includes(id)) return { result: false }
-      if (!/^[a-f0-9]{64}$/.test(id) || next.notificationFences.length >= 100_000) {
+      const fenced = new Set(next.notificationFences)
+      const claimed = requested.filter((id) => !fenced.has(id))
+      if (next.notificationFences.length + claimed.length > 100_000) {
         throw new Error('Scheduler notification deduplication capacity reached')
       }
-      next.notificationFences.push(id)
-      return { result: true }
+      next.notificationFences = next.notificationFences.concat(claimed)
+      return { result: claimed }
     })
   }
   proposal(id: string): ScheduleProposal {
@@ -431,8 +457,12 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       if (existing) return { result: next.runs.find((run) => run.id === existing), scheduleId }
       const retained = next.runs.filter((run) => run.scheduleId === scheduleId)
       if (retained.length >= SCHEDULE_RUN_LIMIT) {
-        const oldest = retained.find((run) => !isInFlight(run))
-        if (!oldest) throw failure('Schedule run capacity reached; resolve in-flight runs first', 409)
+        // A queued notification event is not a durable delivery claim.
+        const claimed = new Set(next.notificationFences)
+        const oldest = retained.find((run) => !isInFlight(run) &&
+          classifyScheduleNotification(next.runSchedules[run.id], run, this.now())
+            .every((notification) => claimed.has(notification.id)))
+        if (!oldest) throw failure('Schedule run capacity reached; resolve in-flight runs or pending outcome notifications first', 409)
         next.runs.splice(next.runs.indexOf(oldest), 1)
         delete next.runSchedules[oldest.id]
       }
@@ -471,6 +501,51 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     })
   }
 
+  applyOverlap(id: string): Promise<ScheduleRun[]> {
+    return this.commit((next) => {
+      const position = next.runs.findIndex((run) => run.id === id)
+      if (position < 0) throw failure('Schedule run not found', 404)
+      const run = next.runs[position]
+      const stopping: ScheduleRun[] = []
+      // Overlap can update several runs; invalidate the whole schedule.
+      const change = { result: stopping, scheduleId: run.scheduleId, runIds: [] as string[] }
+      if (run.status !== 'pending') return change
+      const previous = next.runs.slice(0, position).filter((other) =>
+        other.scheduleId === run.scheduleId && isInFlight(other))
+      if (!previous.length) return change
+      const policy = next.runSchedules[id].overlap
+      const endedAt = this.now()
+      if (policy === 'skip') {
+        next.runs[position] = scheduleRunSchema.parse({
+          ...run, status: 'missed', endedAt, error: 'Skipped because another run is in flight',
+        })
+        change.runIds.push(run.id)
+      } else if (policy === 'replace') {
+        const schedule = next.schedules.find((entry) => entry.id === run.scheduleId)
+        // Archive/disable and replacement stop intent share one commit ordering.
+        // Same eligibility as admission: a manual run of a disabled schedule may still replace.
+        if (!schedule || schedule.archived || (run.trigger !== 'manual' && !schedule.enabled)) {
+          const reason = !schedule ? 'deleted' : schedule.archived ? 'archived' : 'disabled'
+          next.runs[position] = scheduleRunSchema.parse({
+            ...run, status: 'stopped', endedAt, error: `Schedule was ${reason} before replacement overlap`,
+          })
+          change.runIds.push(run.id)
+          return change
+        }
+        for (const other of previous) {
+          const updated = scheduleRunSchema.parse({
+            ...other, status: other.status === 'pending' ? 'stopped' : 'stopping',
+            ...(other.status === 'pending' ? { endedAt } : {}),
+          })
+          next.runs[next.runs.indexOf(other)] = updated
+          change.runIds.push(updated.id)
+          if (updated.status === 'stopping') stopping.push(updated)
+        }
+      }
+      return change
+    })
+  }
+
   beginLaunch(id: string, startedAt: string): Promise<ScheduleRun> {
     return this.commit((next) => {
       const position = next.runs.findIndex((run) => run.id === id)
@@ -492,19 +567,25 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
 
   async flush(): Promise<void> { await this.work }
 
-  private commit<T>(mutate: (next: State) => { result: T; scheduleId?: string; runId?: string; proposalId?: string }): Promise<T> {
+  private commit<T>(mutate: (next: State) => { result: T; scheduleId?: string; runId?: string; runIds?: string[]; proposalId?: string }): Promise<T> {
     const task = this.work.then(async () => {
       if (!this.initialized) throw new Error('Scheduler store is not initialized')
       if (this.poisoned) throw new Error('Scheduler commit outcome is uncertain; restart to reload durable state')
       const next = structuredClone(this.state)
-      const { result, scheduleId, runId, proposalId } = mutate(next)
+      const { result, scheduleId, runId, runIds, proposalId } = mutate(next)
       next.runs.forEach(deferUnboundWorktree)
       if (JSON.stringify(next) !== JSON.stringify(this.state)) {
         const visible = JSON.stringify([next.schedules, next.runs]) !== JSON.stringify([this.state.schedules, this.state.runs])
         next.revision += 1
         await this.persist(next)
         this.state = next
-        if (visible && scheduleId) this.emit('changed', { type: 'schedules.changed', revision: next.revision, scheduleId, ...(runId ? { runId } : {}) })
+        if (visible && scheduleId) {
+          const affected = [...new Set([...(runIds ?? []), ...(runId ? [runId] : [])])]
+          this.emit('changed', {
+            type: 'schedules.changed', revision: next.revision, scheduleId,
+            ...(runId ? { runId } : {}), ...(affected.length ? { runIds: affected } : {}),
+          })
+        }
         if (proposalId) this.emit('proposal', { type: 'schedule-proposals.changed', revision: next.revision, proposalId })
       }
       return structuredClone(result)

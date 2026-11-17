@@ -25,7 +25,12 @@ async function readBounded(file: string, missing = false): Promise<string> {
       const bytes = Buffer.alloc(MAX_FILE_BYTES + 1)
       const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0)
       if (bytesRead > MAX_FILE_BYTES) throw new SkillSettingsError('Skill settings contain an oversized file.')
-      return bytes.subarray(0, bytesRead).toString('utf8')
+      try {
+        // Keep a leading BOM so a safe edit cannot silently remove its bytes.
+        return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(0, bytesRead))
+      } catch {
+        throw new SkillSettingsError('CLI settings could not be read safely: invalid UTF-8. Edit the file manually before changing skills.')
+      }
     } finally { await handle.close() }
   } catch (error) {
     if (missing && (error as NodeJS.ErrnoException).code === 'ENOENT') return ''
@@ -75,14 +80,14 @@ export function skillFrontmatter(markdown: string): { name: string; description:
   return !frontmatterReason(fields) && fields ? { name: fields.name, description: fields.description } : undefined
 }
 
-function settingsObject(raw: string): Record<string, unknown> {
+function settingsObject(raw: string, arrayKeys = ['disabledSkills', 'skillDirectories', 'ignoredSkillsLocations']): Record<string, unknown> {
   if (!raw) return {}
   let value: unknown
   try { value = parseSkillSettings(raw) } catch (error) {
     throw new SkillSettingsError(error instanceof Error ? error.message : 'CLI settings are not valid JSONC. Edit them manually.')
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new SkillSettingsError('CLI settings must be a JSON object.')
-  for (const key of ['disabledSkills', 'skillDirectories', 'ignoredSkillsLocations']) {
+  for (const key of arrayKeys) {
     const entries = Reflect.get(value, key)
     if (entries !== undefined && (!Array.isArray(entries) || entries.length > 10_000 || entries.some((entry) => typeof entry !== 'string'))) {
       throw new SkillSettingsError(`CLI ${key} must be a list of strings.`)
@@ -123,7 +128,10 @@ export class SkillSettingsService {
 
   async snapshot(): Promise<SkillSettingsSnapshot> {
     let raw: string
-    try { raw = await readBounded(this.file, true) } catch { throw new SkillSettingsError('CLI settings could not be read safely.') }
+    try { raw = await readBounded(this.file, true) } catch (error) {
+      if (error instanceof SkillSettingsError) throw error
+      throw new SkillSettingsError('CLI settings could not be read safely.')
+    }
     const settings = settingsObject(raw)
     const disabled = new Set(((settings.disabledSkills ?? []) as string[]).map((name) => name.toLowerCase()))
     const repositoryDisabled = new Set<string>()
@@ -166,9 +174,8 @@ export class SkillSettingsService {
         try {
           const directory = await realpath(path.join(folder, '.github', 'copilot'))
           if (!isWithin(folder, directory)) throw new Error('Repository settings escape')
-          const repositorySettings = settingsObject(await readBounded(path.join(directory, file), true))
+          const repositorySettings = settingsObject(await readBounded(path.join(directory, file), true), ['disabledSkills'])
           for (const name of (repositorySettings.disabledSkills ?? []) as string[]) repositoryDisabled.add(name.toLowerCase())
-          ignoredLocations.push(...((repositorySettings.ignoredSkillsLocations ?? []) as string[]).map((value) => path.isAbsolute(value) || value.startsWith('~') ? value : path.resolve(folder, value)))
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new SkillSettingsError('Repository CLI settings could not be read safely. Edit them manually before changing skills.')
         }
@@ -315,10 +322,12 @@ export class SkillSettingsService {
     const raw = await readBounded(this.file, true)
     if (revision(raw) !== input.revision) throw new SkillSettingsError('CLI settings changed. Refresh and confirm again.')
     const settings = settingsObject(raw)
-    const disabled = new Set(((settings.disabledSkills ?? []) as string[]).filter((name) => name.toLowerCase() !== target.name.toLowerCase()))
-    if (!input.enabled) disabled.add(target.name)
+    const names = (settings.disabledSkills ?? []) as string[]
+    const isTarget = (name: string) => name.toLowerCase() === target.name.toLowerCase()
+    const disabled = input.enabled ? names.filter((name) => !isTarget(name))
+      : names.some(isTarget) ? names : [...names, target.name]
     let serialized: string
-    try { serialized = replaceDisabledSkills(raw, [...disabled].sort()) }
+    try { serialized = replaceDisabledSkills(raw, disabled) }
     catch (error) { throw new SkillSettingsError(error instanceof Error ? error.message : 'Edit disabledSkills manually.') }
     await mkdir(this.copilotHome, { recursive: true, mode: 0o700 })
     const staged = path.join(this.copilotHome, `.settings-${randomUUID()}.json`)

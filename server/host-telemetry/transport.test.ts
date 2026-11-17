@@ -75,6 +75,26 @@ describe('host viewer lifetimes and scan admission', () => {
     expect(() => service.subscribe(vi.fn(), vi.fn())).toThrow('stopped')
   })
 
+  it('ends an incompatible local subscription with a reason and releases its viewer', () => {
+    const { service, sampler } = make()
+    let publish!: (snapshot: HostSnapshot) => void
+    const unsubscribe = vi.fn()
+    vi.spyOn(sampler, 'subscribe').mockImplementation((listener) => {
+      publish = listener
+      return unsubscribe
+    })
+    const sample = vi.fn()
+    const ended = vi.fn()
+    const close = service.subscribe(sample, ended)
+    publish({ ...empty, live: null } as unknown as HostSnapshot)
+    expect(sample).toHaveBeenCalledTimes(1)
+    expect(ended).toHaveBeenCalledExactlyOnceWith('HOST_TELEMETRY_INVALID')
+    expect(sampler.status().viewers).toBe(0)
+    expect(unsubscribe).toHaveBeenCalledOnce()
+    close()
+    expect(ended).toHaveBeenCalledOnce()
+  })
+
   it('admits scans only on demand and at most once per 5s, including with viewers', async () => {
     const { service, scan } = make()
     service.start()
@@ -337,6 +357,60 @@ describe('gated hub and authenticated node host transport', () => {
     await expect(node.app.injectWS('/node-api/host/live')).rejects.toThrow('401')
   })
 
+  it.each([
+    ['malformed JSON', '{'],
+    ['an invalid snapshot', JSON.stringify({ type: 'host.snapshot', snapshot: { live: [] } })],
+    ['a binary frame', Buffer.from('invalid host frame')],
+    ['an oversized frame', 'x'.repeat(128 * 1024 + 1)],
+  ])('maps an invalid remote live frame (%s) to a distinct browser close', async (_label, payload) => {
+    const node = await make('node-fictional', { role: 'node' })
+    const hub = await make('hub-fictional')
+    const prefix = await pair(hub, node)
+    let remote!: WebSocket
+    node.app.websocketServer.on('connection', (peer, request) => {
+      if (request.url === '/node-api/host/live') remote = peer
+    })
+    const live = connect(await listen(hub), `${prefix}/live`)
+    await live.sample
+    const closed = once(live.socket, 'close')
+    remote.send(payload)
+    const [code, reason] = await closed
+    expect(code).toBe(4002)
+    expect(reason.toString()).toBe('HOST_TELEMETRY_INVALID')
+    await vi.waitFor(() => expect(node.hostTelemetry!.sampler.status().viewers).toBe(0))
+  })
+
+  it.each([false, true])('preserves remote close classification through the hub (incompatible: %s)', async (incompatible) => {
+    const node = await make('node-fictional', { role: 'node' })
+    const hub = await make('hub-fictional')
+    const prefix = await pair(hub, node)
+    let remote!: WebSocket
+    node.app.websocketServer.on('connection', (peer, request) => {
+      if (request.url === '/node-api/host/live') remote = peer
+    })
+    const live = connect(await listen(hub), `${prefix}/live`)
+    await live.sample
+    const closed = once(live.socket, 'close')
+    if (incompatible) remote.close(4002, 'HOST_TELEMETRY_INVALID')
+    else remote.terminate()
+    const [code, reason] = await closed
+    expect(code).toBe(incompatible ? 4002 : 1011)
+    expect(reason.toString()).toBe(incompatible ? 'HOST_TELEMETRY_INVALID' : 'Host monitoring ended')
+    await vi.waitFor(() => expect(node.hostTelemetry!.sampler.status().viewers).toBe(0))
+  })
+
+  it('signals an invalid local initial snapshot through the live route', async () => {
+    const hub = await make('hub-fictional')
+    const base = await listen(hub)
+    vi.spyOn(hub.hostTelemetry!.sampler, 'snapshot').mockReturnValue({ ...empty, live: null } as unknown as HostSnapshot)
+    const socket = new WebSocket(base.replace('http:', 'ws:') + `/api/computers/${hub.identity.info.id}/host/live`)
+    sockets.push(socket)
+    const [code, reason] = await once(socket, 'close')
+    expect(code).toBe(4002)
+    expect(reason.toString()).toBe('HOST_TELEMETRY_INVALID')
+    expect(hub.hostTelemetry!.sampler.status().viewers).toBe(0)
+  })
+
   it('lets Oracle read local and remote hosts through ComputerManager without live subscriptions', async () => {
     const node = await make('node-fictional', { role: 'node' })
     const hub = await make('hub-fictional')
@@ -375,6 +449,13 @@ describe('gated hub and authenticated node host transport', () => {
       const response = await hub.app.inject({ url: prefix + suffix })
       expect(response.statusCode).toBe(statusCode)
       expect(response.json().error).toMatch(message)
+      if (statusCode === 502) {
+        expect(response.json()).toEqual({
+          error: 'This computer returned invalid host telemetry', code: 'HOST_TELEMETRY_INVALID',
+        })
+      } else {
+        expect(response.json()).not.toHaveProperty('code')
+      }
       expect(hub.manager!.listComputers().find((computer) => computer.id === node.identity.info.id)?.online).toBe(true)
     }
   })

@@ -163,6 +163,7 @@ describe('SessionLauncher', () => {
       message: failure.message,
     })
     await expect(result).rejects.toBeInstanceOf(SessionLaunchPreparationError)
+    await expect(result).rejects.not.toHaveProperty('uncertainDelivery', false)
     expect(host.createSession).toHaveBeenCalledTimes(1)
     expect(host.sendMessage).not.toHaveBeenCalled()
   })
@@ -219,7 +220,9 @@ describe('SessionLauncher', () => {
     ['provenance', undefined],
   ])('refuses missing or invalid %s before creating anything (%s)', async (field, value) => {
     const input = { ...launchInput(), [field]: value } as SessionLaunchInput<Provenance>
-    await expect(launcher.createSession(input)).rejects.toThrow(field)
+    const result = launcher.createSession(input)
+    await expect(result).rejects.toThrow(field)
+    await expect(result).rejects.toMatchObject({ statusCode: 400, uncertainDelivery: false })
     expect(host.createSession).not.toHaveBeenCalled()
     expect(recordProvenance).not.toHaveBeenCalled()
   })
@@ -365,6 +368,13 @@ describe('SessionLauncher owning-computer routing', () => {
   afterEach(() => {
     manager.stop()
     vi.restoreAllMocks()
+  })
+
+  it('marks a missing-computer guard as certain before either owner receives a creation request', async () => {
+    await expect(manager.createSession('missing-computer', { cwd: '/projects/app' }))
+      .rejects.toMatchObject({ statusCode: 400, uncertainDelivery: false })
+    expect(local.createSession).not.toHaveBeenCalled()
+    expect(RemoteNodeClient.prototype.createSession).not.toHaveBeenCalled()
   })
 
   const creationCases = ['hub', 'worker'].flatMap((computerId) =>

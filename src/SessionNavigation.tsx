@@ -25,6 +25,7 @@ import type {
   ManagedSession,
 } from '../shared/contracts'
 import { hasActiveBackgroundTasks } from '../shared/background-tasks'
+import { CLOSED_SESSION_RETENTION_DAYS } from '../shared/closed-sessions'
 import {
   computerTone,
   executionModeName,
@@ -288,7 +289,6 @@ function SortableSessionItem({
             </small>
           </span>
         </button>
-        <SessionOriginRunLink provenance={session.provenance} onOpenRun={onOpenScheduleRun} />
         {runningBackgroundTasks > 0 ? (
           <button
             aria-label={`View background tasks for ${session.title}`}
@@ -301,6 +301,7 @@ function SortableSessionItem({
             Tasks
           </button>
         ) : null}
+        <SessionOriginRunLink provenance={session.provenance} onOpenRun={onOpenScheduleRun} />
       </div>
       <div className="session-item__controls">
         <button
@@ -612,29 +613,49 @@ export function SessionNavigation({
             </select>
             <ChevronDown aria-hidden="true" size={13} />
           </label>
-          {onRefresh ? (
+          <div className="session-list__actions">
+            {onRefresh ? (
+              <button
+                aria-busy={refreshState === 'refreshing'}
+                aria-label={refreshState === 'stale'
+                  ? 'Retry refreshing sessions and Oracle'
+                  : 'Refresh sessions and Oracle'}
+                className="icon-button session-list__refresh"
+                disabled={refreshState === 'refreshing'}
+                onClick={onRefresh}
+                title="Reload sessions, Oracle and review state"
+                type="button"
+              >
+                <RefreshCw aria-hidden="true" size={15} />
+              </button>
+            ) : null}
+            {onOpenRecentlyClosed ? (
+              <button
+                aria-label={recentlyClosedCount
+                  ? `Recently closed, ${recentlyClosedCount} session${recentlyClosedCount === 1 ? '' : 's'}`
+                  : 'Recently closed'}
+                className="icon-button session-list__recently-closed"
+                onClick={onOpenRecentlyClosed}
+                title={`Reopen a session closed in the last ${CLOSED_SESSION_RETENTION_DAYS} days`}
+                type="button"
+              >
+                <History aria-hidden="true" size={15} />
+                {recentlyClosedCount ? (
+                  <span aria-hidden="true" className="session-list__recently-closed-count">
+                    {recentlyClosedCount > 99 ? '99+' : recentlyClosedCount}
+                  </span>
+                ) : null}
+              </button>
+            ) : null}
             <button
-              aria-busy={refreshState === 'refreshing'}
-              aria-label={refreshState === 'stale'
-                ? 'Retry refreshing sessions and Oracle'
-                : 'Refresh sessions and Oracle'}
-              className="icon-button session-list__refresh"
-              disabled={refreshState === 'refreshing'}
-              onClick={onRefresh}
-              title="Reload sessions, Oracle and review state"
+              aria-label="New session"
+              className="icon-button session-list__new"
+              onClick={onNewSession}
               type="button"
             >
-              <RefreshCw aria-hidden="true" size={15} />
+              <Plus aria-hidden="true" size={17} />
             </button>
-          ) : null}
-          <button
-            aria-label="New session"
-            className="icon-button session-list__new"
-            onClick={onNewSession}
-            type="button"
-          >
-            <Plus aria-hidden="true" size={17} />
-          </button>
+          </div>
         </div>
         <div className="session-search">
           <Search aria-hidden="true" size={15} />
@@ -813,24 +834,6 @@ export function SessionNavigation({
             ))}
           </div>
         </SortableContext>
-        {onOpenRecentlyClosed ? (
-          <button
-            aria-label={recentlyClosedCount
-              ? `Recently closed, ${recentlyClosedCount} session${recentlyClosedCount === 1 ? '' : 's'}`
-              : 'Recently closed'}
-            className="session-list__recently-closed"
-            onClick={onOpenRecentlyClosed}
-            type="button"
-          >
-            <History aria-hidden="true" size={15} />
-            <span className="session-list__recently-closed-label">Recently closed</span>
-            {recentlyClosedCount ? (
-              <span aria-hidden="true" className="session-list__recently-closed-count">
-                {recentlyClosedCount}
-              </span>
-            ) : null}
-          </button>
-        ) : null}
       </div>
     </nav>
   )

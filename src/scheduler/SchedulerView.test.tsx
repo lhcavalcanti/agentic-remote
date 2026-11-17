@@ -27,6 +27,80 @@ beforeEach(() => {
     path === '/api/schedules/proposals' ? { proposals: [] } : path === '/api/schedules' ? { schedules: [schedule] } : path.includes('/runs') ? { runs: [] } : { schedule })
 })
 
+async function startDelayedEditReload() {
+  const other = { ...schedule, id: 'other', name: 'Other review' }
+  let resolveReload!: (value: { schedule: Schedule }) => void
+  let rejectReload!: (error: Error) => void
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (init?.method === 'PATCH') throw new SubmissionError('Temporary save failure', 503)
+    if (path === '/api/schedules/review') {
+      return new Promise<{ schedule: Schedule }>((resolve, reject) => {
+        resolveReload = resolve
+        rejectReload = reject
+      })
+    }
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    return path === '/api/schedules' ? { schedules: [schedule, other] } : { runs: [] }
+  })
+  const onClose = vi.fn()
+  render(<SchedulerView computers={[computer]} enabled onClose={onClose} onOpenSession={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Morning review' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Original local draft' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  await screen.findByRole('alert')
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel edit' })).toHaveProperty('disabled', false))
+  fireEvent.click(screen.getByRole('button', { name: 'Reload latest (replace draft)' }))
+  await waitFor(() => expect(resolveReload).toBeTypeOf('function'))
+  return { resolveReload, rejectReload, onClose }
+}
+
+it.each(['new', 'other', 'same'] as const)('does not replace a newer %s form with a late edit reload', async (replacement) => {
+  const { resolveReload } = await startDelayedEditReload()
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }))
+  fireEvent.click(screen.getByRole('button', { name: replacement === 'new' ? 'Create schedule' : replacement === 'other' ? 'Edit Other review' : 'Edit Morning review' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Newer draft' } })
+  fireEvent.change(screen.getByRole('textbox', { name: 'Prompt' }), { target: { value: 'Newer draft prompt' } })
+  await act(async () => { resolveReload({ schedule: { ...schedule, name: 'Late server version', revision: 2 } }) })
+  expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Newer draft')
+  expect(screen.getByRole('textbox', { name: 'Prompt' })).toHaveProperty('value', 'Newer draft prompt')
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it('does not reopen a canceled form when its edit reload completes', async () => {
+  const { resolveReload } = await startDelayedEditReload()
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }))
+  await act(async () => { resolveReload({ schedule: { ...schedule, name: 'Late server version', revision: 2 } }) })
+  expect(screen.getByRole('button', { name: 'Create schedule' })).toBeTruthy()
+  expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull()
+})
+
+it('does not attach a stale reload failure to a newer draft', async () => {
+  const { rejectReload } = await startDelayedEditReload()
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Create schedule' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Newer draft' } })
+  await act(async () => { rejectReload(new Error('Old reload failed')) })
+  expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Newer draft')
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
+it('ignores an edit reload after the view requests close, before the parent unmounts it', async () => {
+  const { resolveReload, onClose } = await startDelayedEditReload()
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+  expect(onClose).toHaveBeenCalledOnce()
+  await act(async () => { resolveReload({ schedule: { ...schedule, name: 'Late server version', revision: 2 } }) })
+  expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Original local draft')
+})
+
+it('replaces the still-open draft when Reload latest returns the same schedule revision', async () => {
+  const { resolveReload } = await startDelayedEditReload()
+  await act(async () => { resolveReload({ schedule }) })
+  expect(await screen.findByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Morning review')
+  expect(screen.queryByRole('alert')).toBeNull()
+})
+
 it('defaults to Ask, previews five occurrences and requires explicit Allow-all confirmation', async () => {
   const onSave = vi.fn().mockResolvedValue(undefined)
   render(<ScheduleForm initial={definition} computers={[computer]} pending={false} onSave={onSave} onCancel={vi.fn()} />)
@@ -118,6 +192,42 @@ it('sends only changed fields with the original revision, preserves conflicts an
   fireEvent.click(screen.getByRole('button', { name: 'Reload latest (replace draft)' }))
   await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Changed remotely'))
   expect(scheduleError(new SubmissionError('Revision conflict', 409))).toContain('Your draft is preserved')
+})
+
+it('replaces a failed save with the current client validation error before retrying', async () => {
+  let rejectSave = true
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (init?.method === 'PATCH') {
+      if (rejectSave) throw new SubmissionError('Temporary save failure', 503)
+      return { schedule }
+    }
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    return path === '/api/schedules' ? { schedules: [schedule] } : { runs: [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Morning review' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Local draft' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('Temporary save failure')
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save schedule' })).toHaveProperty('disabled', false))
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('name:')
+  expect(screen.queryByText('Temporary save failure')).toBeNull()
+  expect(vi.mocked(request).mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1)
+  rejectSave = false
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Corrected draft' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  await screen.findByRole('button', { name: 'Create schedule' })
+  const saves = vi.mocked(request).mock.calls.filter(([, init]) => init?.method === 'PATCH')
+  expect(saves).toHaveLength(2)
+  expect(JSON.parse(saves[1][1]!.body as string)).toEqual({ name: 'Corrected draft', revision: 1 })
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 it('keeps unavailable model settings visible rather than silently displaying another value', async () => {
@@ -297,16 +407,60 @@ it('keeps management usable when recent-run enrichment fails and clears the warn
   expect(screen.getByRole('textbox', { name: 'Name' })).toHaveProperty('value', 'Morning review')
 })
 
-it('keeps schedule-list failures at the top level', async () => {
+it('does not infer an empty list or deleted linked schedule when loading the list fails', async () => {
+  let listUnavailable = true
   vi.mocked(request).mockImplementation(async (path) => {
     if (path === '/api/schedules/proposals') return { proposals: [] }
-    if (path === '/api/schedules') throw new SubmissionError('Schedule list unavailable', 503)
+    if (path === '/api/schedules') {
+      if (listUnavailable) throw new SubmissionError('Schedule list unavailable', 503)
+      return { schedules: [] }
+    }
     return { runs: [] }
   })
-  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  render(<SchedulerView computers={[computer]} enabled initialScheduleId="unverified" onClose={vi.fn()} onOpenSession={vi.fn()} />)
   expect((await screen.findByRole('alert')).textContent).toContain('Schedule list unavailable')
   expect(screen.queryByRole('button', { name: 'Edit Morning review' })).toBeNull()
   expect(screen.queryByText(/Recent runs are unavailable/)).toBeNull()
+  expect(screen.queryByText(/The linked schedule is no longer available/)).toBeNull()
+  expect(screen.queryByText('No schedules yet. Create a saved prompt to get started.')).toBeNull()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived schedules' }))
+  expect(screen.queryByText('No archived schedules.')).toBeNull()
+  listUnavailable = false
+  fireEvent.click(screen.getByRole('button', { name: 'Reload latest' }))
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+  expect(screen.getByText(/The linked schedule is no longer available/)).toBeTruthy()
+  expect(screen.getByText('No archived schedules.')).toBeTruthy()
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Show archived schedules' }))
+  expect(screen.getByText('No schedules yet. Create a saved prompt to get started.')).toBeTruthy()
+})
+
+it('clears a failed list action when opening Edit so client validation remains visible', async () => {
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (path === '/api/schedules/review/run') throw new SubmissionError('Run rejected by the fictional target', 409)
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    if (path === '/api/schedules') return { schedules: [schedule] }
+    return init?.method === 'PATCH' ? { schedule } : { runs: [] }
+  })
+  render(<SchedulerView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Run Morning review now' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('Run rejected by the fictional target')
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Edit Morning review' })).toHaveProperty('disabled', false))
+  fireEvent.click(screen.getByRole('button', { name: 'Edit Morning review' }))
+  expect(screen.queryByRole('alert')).toBeNull()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('name:')
+  expect(vi.mocked(request).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+  fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Corrected review' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  await waitFor(() => expect(request).toHaveBeenCalledWith('/api/schedules/review', expect.objectContaining({
+    method: 'PATCH', body: JSON.stringify({ name: 'Corrected review', revision: 1 }),
+  })))
+  expect(await screen.findByRole('button', { name: 'Create schedule' })).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
 })
 
 it('ignores aborted recent-run enrichment after a newer refresh', async () => {

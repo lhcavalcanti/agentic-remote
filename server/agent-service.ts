@@ -103,7 +103,7 @@ import {
   type TerminalQueueOutcome,
 } from './session-store.js'
 import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
-import { LaunchCreations, awaitTermination } from './launch-identity.js'
+import { LaunchCreations, awaitTermination, withSessionCreateBoundary } from './launch-identity.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
@@ -3460,7 +3460,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     mode?: AgentMode,
     launchId?: string,
   ): Promise<SessionDetail> {
-    return this.launchCreations.run(this.store, launchId, async () => {
+    return this.launchCreations.run(this.store, launchId, () => withSessionCreateBoundary(async (beginCreate) => {
       if (provider !== 'copilot') {
         throw new Error(`Provider ${provider} is not handled by Copilot`)
       }
@@ -3473,15 +3473,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         reasoningEffort,
         contextTier,
       )
-      return this.publicSession(await this.runSessionCreation(() => terminalBacked
-        ? this.createTerminalSession(
+      return this.publicSession(await this.runSessionCreation(() => {
+        beginCreate()
+        return terminalBacked
+          ? this.createTerminalSession(
             cwd,
             allowAllPermissions,
             runtime || mode ? { ...runtime, ...(mode ? { mode } : {}) } : undefined,
             launchId,
           )
-        : this.createSdkSession(cwd, allowAllPermissions, runtime, mode, launchId)))
-    })
+          : this.createSdkSession(cwd, allowAllPermissions, runtime, mode, launchId)
+      }))
+    }))
   }
 
   private async createSdkSession(
@@ -3994,7 +3997,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const current = await this.store.readAfterWrites(id)
         this.assertStillIdle(id, queueWasDraining)
         return this.suspendClaimedSession(id, current)
-      })
+      }, { intent: 'teardown' })
       suspended = true
       this.startupTerminalQueues.delete(id)
       this.clearTerminalQueueRetry(id)
@@ -4235,6 +4238,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.queuedDispatches.assertAvailable(id)
     if (!stored.suspended) {
       return stored
+    }
+    if (this.admissions.launchBlocked(id) || stored.launchStopping) {
+      throw queueConflict('The launch is stopping; its runtime cannot resume.')
     }
     // Resuming would start an owner for a record that stays archived.
     this.assertNotRetained(id, 'resuming it', true)
@@ -4976,6 +4982,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (replaceTerminalDraft || acknowledgedFailure) {
           throw Object.assign(queueConflict('Identified delivery cannot replace a draft or acknowledge another prompt.'), { uncertainDelivery: false })
         }
+        const receipt = this.store.get(sessionId)
+        if (this.admissions.launchBlocked(sessionId) &&
+            receipt?.promptReceipts?.some((entry) => entry.deliveryId === deliveryId)) return this.publicSession(receipt)
         return await this.admissions.run(sessionId, async () => {
           // A retry reads the durable receipt even after cancellation or retention.
           const existing = this.store.get(sessionId)
@@ -7746,6 +7755,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (stopped) this.publish(await this.store.confirmLaunchTermination(sessionId))
       return stopped
     }, async () => {
+      this.admissions.blockLaunch(sessionId)
       await this.store.readAfterWrites(sessionId)
       const fenced = await this.store.stopLaunchWork(sessionId)
       this.sdkDrainRequested.delete(sessionId)
@@ -10046,6 +10056,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     let status = statusFromEvents(events)
+    let foregroundTurnActive = foregroundTurnOpen(events)
     const queueDispatchAt = this.store.queueDispatchAt(sessionId)
     if (queueDispatchAt) {
       const dispatchTime = Date.parse(queueDispatchAt)
@@ -10058,6 +10069,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
       } else {
         status = 'running'
+        // The accepted terminal handoff can precede its foreground lifecycle log.
+        foregroundTurnActive = true
       }
     }
     const activity = historyMessages
@@ -10099,6 +10112,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       },
       queueDispatchAt,
       observed,
+      foregroundTurnActive,
     )
     if (!updated || !this.store.isCurrentTranscript(sessionId, observed)) return
     this.eventLogFingerprints.set(sessionId, fingerprint)
@@ -11434,6 +11448,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     promptId: string,
     content: string,
   ): Promise<QueuedPromptDispatchResult> {
+    if (this.admissions.launchBlocked(sessionId)) throw queueConflict('The launch is stopping; no queued work can dispatch.')
     if (this.stopped || this.deletingSessions.has(sessionId)) {
       throw queueConflict('The session is no longer available.')
     }
@@ -12391,6 +12406,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private publicSession(session: SessionDetail): SessionDetail {
     session = this.queuedDispatches.view(session)
+    if (session.executionMode !== 'tmux' && !this.externalSessionIds.has(session.id)) {
+      session = { ...session, foregroundTurnActive: session.status === 'running' && this.activePrompts.has(session.id) }
+    } else if (session.foregroundTurnActive !== undefined && session.status !== 'running') {
+      session = { ...session, foregroundTurnActive: false }
+    }
     const queued = session.queuedPrompts?.[0]
     const retainedQueueState: QueueState | undefined =
       queued && (session.interruption || session.archivedAt)

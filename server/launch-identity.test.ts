@@ -11,7 +11,7 @@ import type { SessionDetail } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import { AgentService, type CopilotClientLike } from './agent-service.js'
 import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
-import { awaitTermination, LaunchCreations } from './launch-identity.js'
+import { awaitTermination, LaunchCreations, withSessionCreateBoundary } from './launch-identity.js'
 import { SessionStore } from './session-store.js'
 import { ProviderSessionService } from './provider-session-service.js'
 import type { SessionService } from './session-service.js'
@@ -65,6 +65,40 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
+})
+
+describe('session create certainty boundary', () => {
+  it('marks frozen preparation errors certain without mutating the original error', async () => {
+    const cause = Object.freeze(new Error('Preparation failed'))
+    await expect(withSessionCreateBoundary(async () => { throw cause }))
+      .rejects.toMatchObject({ message: cause.message, cause, statusCode: 400, uncertainDelivery: false })
+    expect(cause).not.toHaveProperty('uncertainDelivery')
+  })
+
+  it('preserves transient preparation status for the retry window', async () => {
+    const cause = Object.assign(new Error('Preparation temporarily unavailable'), { statusCode: 503 })
+    await expect(withSessionCreateBoundary(async () => { throw cause }))
+      .rejects.toMatchObject({ statusCode: 503, uncertainDelivery: false })
+  })
+
+  it('preserves post-boundary errors rather than guessing certainty from their name', async () => {
+    const cause = Object.assign(new Error('Creation response is uncertain'), { name: 'RuntimeConfigurationError', statusCode: 400 })
+    await expect(withSessionCreateBoundary(async (beginCreate) => { beginCreate(); throw cause })).rejects.toBe(cause)
+    expect(cause).toHaveProperty('uncertainDelivery', true)
+  })
+
+  it('keeps frozen post-create errors explicitly uncertain across HTTP status defaults', async () => {
+    const cause = Object.freeze(Object.assign(new Error('Creation result is unknown'), { statusCode: 400 }))
+    await expect(withSessionCreateBoundary(async (beginCreate) => { beginCreate(); throw cause }))
+      .rejects.toMatchObject({ cause, statusCode: 400, uncertainDelivery: true })
+    expect(cause).not.toHaveProperty('uncertainDelivery')
+  })
+
+  it('preserves a delegated owner proof that creation never began', async () => {
+    const cause = Object.assign(new Error('The owner refused before creation'), { statusCode: 400, uncertainDelivery: false })
+    await expect(withSessionCreateBoundary(async (beginCreate) => { beginCreate(); throw cause })).rejects.toBe(cause)
+    expect(cause).toHaveProperty('uncertainDelivery', false)
+  })
 })
 
 describe('durable launch identity', () => {
@@ -395,6 +429,29 @@ describe('durable launch identity', () => {
 })
 
 describe('termination acknowledgement', () => {
+  it.each(['copilot', 'claude'] as const)('blocks %s queue admissions after a refused fence write until a durable retry', async (provider) => {
+    const { store } = await storeAt()
+    await store.create({ ...session(), launchId: 'run' })
+    const accepted = await store.acceptIdentifiedPrompt('session', 'waiting', 'Synthetic follower', true)
+    const service = provider === 'copilot'
+      ? new AgentService(store, {} as CopilotClientLike)
+      : new ClaudeAgentService(store, '/bin/true', {} as ClaudeSdk)
+    if (service instanceof AgentService) {
+      vi.spyOn(service, 'listBackgroundTasks').mockResolvedValue({ supported: false, tasks: [], runningCount: 0 })
+    }
+    vi.spyOn(store, 'stopLaunchWork').mockRejectedValueOnce(new Error('Synthetic refused fence'))
+    await expect(service.cancelWithAck('session', 1)).rejects.toThrow('Synthetic refused fence')
+    await expect(service.sendMessage('session', 'Must not start', true, undefined, false, 'new'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.dispatchQueuedPrompt('session', accepted.queuedPrompts![0].id, 'Must not start'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.sendMessage('session', 'Existing receipt only', true, undefined, false, 'waiting'))
+      .resolves.toMatchObject({ promptReceipts: [{ deliveryId: 'waiting', state: 'queued' }] })
+    expect(store.get('session')?.queuedPrompts).toHaveLength(1)
+    await expect(service.cancelWithAck('session', 1)).resolves.toMatchObject({ outcome: 'unknown' })
+    expect(store.get('session')).toMatchObject({ launchStopping: true, queuedPrompts: [] })
+  })
+
   it.each(['copilot', 'claude'] as const)('commits the %s fence before starting the provider timeout and rejects failed fence writes', async (provider) => {
     const { store, location } = await storeAt()
     await store.create({ ...session(), launchId: 'run' })
@@ -555,6 +612,90 @@ async function runtime(role: 'hub' | 'node', root?: string) {
 }
 
 describe('owning-computer launch transport', () => {
+  it('keeps both ends blocked when cancellation times out during the node fence write', async () => {
+    const hub = await runtime('hub')
+    const node = await runtime('node')
+    await node.app.listen({ host: '127.0.0.1', port: 0 })
+    const port = (node.app.server.address() as AddressInfo).port
+    const computerId = node.identity.info.id
+    await hub.manager!.registerComputer({ baseUrl: `http://127.0.0.1:${port}`, token: node.identity.token })
+    await vi.waitFor(() => expect(hub.manager!.listComputers().find((computer) => computer.id === computerId)
+      ?.providers?.find((provider) => provider.id === 'claude')?.supportsLaunchIdentity).toBe(true))
+    const created = await hub.manager!.createSession(computerId, { cwd: node.location, provider: 'claude', launchId: 'run' })
+    await node.service.store.update(created.id, (stored) => { stored.status = 'running' })
+    await hub.manager!.sendMessage(computerId, created.id, { content: 'Synthetic follower', enqueue: true, deliveryId: 'follower' })
+    let release = () => {}
+    let entered = () => {}
+    const waiting = new Promise<void>((resolve) => { entered = resolve })
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const persistFence = node.service.store.stopLaunchWork.bind(node.service.store)
+    vi.spyOn(node.service.store, 'stopLaunchWork').mockImplementationOnce(async (id) => {
+      entered()
+      await gate
+      return persistFence(id)
+    })
+    const timeout = new AbortController()
+    const fetch = globalThis.fetch
+    let response: Promise<Response> | undefined
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (!String(input).endsWith('/cancel-with-ack')) return fetch(input, init)
+      response = fetch(input, init)
+      return Promise.race([response, new Promise<Response>((_resolve, reject) => {
+        timeout.signal.addEventListener('abort', () => reject(timeout.signal.reason), { once: true })
+      })])
+    })
+    try {
+      const cancellation = hub.manager!.cancelWithAck(computerId, created.id, 1)
+      await waiting
+      timeout.abort(new DOMException('Synthetic transport timeout', 'TimeoutError'))
+      await expect(cancellation).resolves.toMatchObject({ outcome: 'unknown' })
+      await node.service.store.update(created.id, (stored) => { stored.status = 'idle' })
+      await expect(node.service.sendMessage(created.id, 'No resumed work', true)).rejects.toMatchObject({ statusCode: 409 })
+      await expect(hub.manager!.sendMessage(computerId, created.id, { content: 'No remote work', enqueue: true }))
+        .rejects.toMatchObject({ statusCode: 409 })
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(node.prompts).toEqual([])
+      expect(node.service.store.get(created.id)?.queuedPrompts).toHaveLength(1)
+    } finally {
+      timeout.abort()
+      release()
+      fetchSpy.mockRestore()
+      await response?.then((received) => received.body?.cancel())
+    }
+    await vi.waitFor(() => expect(node.service.store.get(created.id)).toMatchObject({ launchStopping: true, queuedPrompts: [] }))
+    expect(node.prompts).toEqual([])
+  })
+
+  it('returns a hub HTTP failure for a node fence-write failure and never drains its queued follower', async () => {
+    const hub = await runtime('hub')
+    const node = await runtime('node')
+    await node.app.listen({ host: '127.0.0.1', port: 0 })
+    const port = (node.app.server.address() as AddressInfo).port
+    await hub.manager!.registerComputer({ baseUrl: `http://127.0.0.1:${port}`, token: node.identity.token })
+    const computerId = node.identity.info.id
+    await vi.waitFor(() => expect(hub.manager!.listComputers().find((computer) => computer.id === computerId)
+      ?.providers?.find((provider) => provider.id === 'claude')?.supportsLaunchIdentity).toBe(true))
+    const created = await hub.manager!.createSession(computerId, { cwd: node.location, provider: 'claude', launchId: 'run' })
+    await node.service.store.update(created.id, (stored) => { stored.status = 'running' })
+    await hub.manager!.sendMessage(computerId, created.id, { content: 'Synthetic queued follower', enqueue: true, deliveryId: 'follower' })
+    const fence = vi.spyOn(node.service.store, 'stopLaunchWork').mockRejectedValueOnce(new Error('Synthetic fence write failed'))
+    const response = await hub.app.inject({
+      method: 'POST', url: `/api/computers/${computerId}/sessions/${created.id}/cancel-with-ack`, payload: { timeoutMs: 1 },
+      headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' },
+    })
+    expect(response.statusCode).toBe(500)
+    await node.service.store.update(created.id, (stored) => { stored.status = 'idle' })
+    await expect(node.service.sendMessage(created.id, 'No resumed work', true, undefined, false, 'new'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(node.prompts).toEqual([])
+    expect(node.service.store.get(created.id)?.queuedPrompts).toHaveLength(1)
+    fence.mockRestore()
+    await expect(hub.manager!.cancelWithAck(computerId, created.id, 1)).resolves.toMatchObject({ outcome: 'unknown' })
+    expect(node.service.store.get(created.id)?.queuedPrompts).toEqual([])
+    expect(node.prompts).toEqual([])
+  })
+
   it('reconciles hub-local creation and acceptance after lost responses and a restart', async () => {
     const hub = await runtime('hub')
     const computerId = hub.identity.info.id

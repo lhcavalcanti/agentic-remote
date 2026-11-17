@@ -49,11 +49,13 @@ export function NotificationPanel({ notifications, enabled, onClose, onOpen }: {
       </div>
       {notifications.error && <p role="alert" className="error-banner">{notifications.error}</p>}
       {notifications.loading && !notifications.records.length ? <p role="status">Loading notifications…</p> : null}
-      {!groups.length && !notifications.loading && <p className="notification-empty">No notifications {tab === 'All' && !search ? 'yet. You’re all caught up.' : 'match this view.'}</p>}
+      {notifications.loaded && !notifications.error && !groups.length && !notifications.loading && <p className="notification-empty">No notifications {tab === 'All' && !search ? 'yet. You’re all caught up.' : 'match this view.'}</p>}
       <ul className="notification-list">
         {groups.map(({ key, latest, records }) => {
           const Icon = kindIcon(latest)
           const unread = records.some((record) => !record.readAt)
+          const sessionGroup = !!latest.computerId && !!latest.sessionId && records.every((record) =>
+            record.computerId === latest.computerId && record.sessionId === latest.sessionId)
           return <li key={key} className="notification-row" data-unread={unread} data-severity={latest.severity}>
             <Icon size={20} aria-hidden="true" />
             <div className="notification-row__body">
@@ -71,13 +73,13 @@ export function NotificationPanel({ notifications, enabled, onClose, onOpen }: {
                   onClick={() => void mutate([latest.id], 'dismiss')}><Trash2 size={16} /></button>
               </div>
               {records.length > 1 && <details className="notification-group">
-                <summary>Session notifications ({records.length})</summary>
-                <div className="notification-row__actions">
+                <summary>{sessionGroup ? 'Session notifications' : 'Notifications'} ({records.length})</summary>
+                {sessionGroup && <div className="notification-row__actions">
                   <button type="button" className="secondary-button" disabled={mutating || !unread}
                     onClick={() => void mutate(records.map((record) => record.id), 'read')}>Mark session read</button>
                   <button type="button" className="secondary-button" disabled={mutating}
                     onClick={() => void mutate(records.map((record) => record.id), 'dismiss')}>Dismiss session</button>
-                </div>
+                </div>}
                 <ul>{records.filter((record) => record.id !== latest.id).map((record) => <li key={record.id}>
                   <button type="button" className="notification-link" onClick={() => {
                     void mutate([record.id], 'read'); onOpen(record)

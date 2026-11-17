@@ -1,5 +1,8 @@
 import { performance } from 'node:perf_hooks'
-import type { HostProcesses, HostSnapshot, HostMinuteAggregate } from '../../shared/host-telemetry.js'
+import {
+  HOST_TELEMETRY_INVALID_CODE, HostSnapshotSchema,
+  type HostProcesses, type HostSnapshot, type HostMinuteAggregate, type HostTelemetryEndReason,
+} from '../../shared/host-telemetry.js'
 import { scanProcesses, type ProcessScanContext } from './processes.js'
 import { HostTelemetrySampler } from './sampler.js'
 
@@ -10,11 +13,11 @@ export interface HostTelemetryTarget {
   snapshot(): HostSnapshot | Promise<HostSnapshot>
   history(): HostMinuteAggregate[] | Promise<HostMinuteAggregate[]>
   processes(): Promise<HostProcesses>
-  subscribe(sample: (snapshot: HostSnapshot) => void, ended: () => void): (() => void) | Promise<() => void>
+  subscribe(sample: (snapshot: HostSnapshot) => void, ended: (reason?: HostTelemetryEndReason) => void): (() => void) | Promise<() => void>
 }
 
-export function hostTelemetryError(message: string, statusCode: number): Error & { statusCode: number } {
-  return Object.assign(new Error(message), { statusCode })
+export function hostTelemetryError(message: string, statusCode: number, code?: string): Error & { statusCode: number; code?: string } {
+  return Object.assign(new Error(message), { statusCode, ...(code === undefined ? {} : { code }) })
 }
 
 /** One instance per owning computer, never constructed with the feature off. */
@@ -49,25 +52,31 @@ export class HostTelemetryService implements HostTelemetryTarget {
     return this.sampler.history()
   }
 
-  subscribe(sample: (snapshot: HostSnapshot) => void, ended: () => void): () => void {
+  subscribe(sample: (snapshot: HostSnapshot) => void, ended: (reason?: HostTelemetryEndReason) => void): () => void {
     if (this.stopped) throw hostTelemetryError('Host monitoring stopped', 503)
     if (this.viewers.size >= HOST_TELEMETRY_MAX_VIEWERS) {
       throw hostTelemetryError('Too many host monitor viewers', 429)
     }
     let active = true
-    const unsubscribe = this.sampler.subscribe(sample)
-    const close = () => {
+    const unsubscribe = this.sampler.subscribe(emit)
+    const close = (reason?: HostTelemetryEndReason) => {
       if (!active) return
       active = false
       unsubscribe()
       this.viewers.delete(close)
       this.sampler.setViewers(this.viewers.size)
-      ended()
+      ended(reason)
+    }
+    function emit(snapshot: HostSnapshot) {
+      if (!active) return
+      const parsed = HostSnapshotSchema.safeParse(snapshot)
+      if (!parsed.success) { close(HOST_TELEMETRY_INVALID_CODE); return }
+      sample(parsed.data)
     }
     this.viewers.add(close)
     this.sampler.setViewers(this.viewers.size)
     try {
-      sample(this.snapshot())
+      emit(this.snapshot())
     } catch (error) {
       close()
       throw error

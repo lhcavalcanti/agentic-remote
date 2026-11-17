@@ -11,7 +11,7 @@ afterEach(cleanup)
 
 const props = (): ComponentProps<typeof ComposerActions> => ({
   selected: { id: 'one', computerId: 'studio', computerName: 'Studio', status: 'running' } as ComponentProps<typeof ComposerActions>['selected'],
-  selectedComputerOnline: true, selectedQueueAvailable: true, supportsQueuedPromptDispatch: true,
+  selectedComputerOnline: true, selectedQueueAvailable: true, foregroundTurnActive: true, supportsQueuedPromptDispatch: true,
   recording: false, recordingSeconds: 0, askingAside: false, sideQuestionPending: false,
   cancelling: false, transcribing: false, uploadingFile: false, composer: 'Draft', expandedComposer: 'Draft',
   sending: false, queuedEditUnconfirmed: false, recordingDuration: String,
@@ -20,9 +20,25 @@ const props = (): ComponentProps<typeof ComposerActions> => ({
   onOpenRuntime: vi.fn(), sessionActions: [{ label: 'Skills', onClick: vi.fn() }],
   onRecallSentMessage: vi.fn(), onCancelSentMessage: vi.fn(),
   providerCapability: { id: 'copilot', name: 'Copilot', available: true, terminalBacked: true, supportsSteering: true },
+  onUseSentMessage: vi.fn(() => true),
 })
 
 describe('refreshed composer actions', () => {
+  it.each([undefined, false, true])('sends a new prompt directly when only background work remains (steering: %s)', (supportsSteering) => {
+    const callbacks = {
+      ...props(), foregroundTurnActive: false,
+      providerCapability: { ...props().providerCapability!, supportsSteering },
+    }
+    render(<ComposerActions {...callbacks} />)
+    const send = screen.getByRole('button', { name: 'Send message' })
+    expect(send).toBeEnabled()
+    expect(send).toHaveAttribute('title', 'Send immediately')
+    expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument()
+    fireEvent.click(send)
+    expect(callbacks.onSubmitMessage).toHaveBeenCalledExactlyOnceWith()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
   it('sends an expanded multiline slash command without offering delivery choices', () => {
     const callbacks = {
       ...props(),
@@ -36,6 +52,20 @@ describe('refreshed composer actions', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
+  it.each([false, true])('closes history only after committing Use message (saved=%s)', (saved) => {
+    const callbacks = props()
+    callbacks.selected = { ...callbacks.selected, messages: [{
+      id: 'sent', role: 'user', content: 'A chosen prompt', deliveryConfirmed: true, createdAt: '2026-11-14T12:00:00Z',
+    }] }
+    callbacks.onUseSentMessage = vi.fn(() => saved)
+    render(<ComposerActions {...callbacks} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    fireEvent.click(screen.getByRole('option'))
+    fireEvent.click(screen.getByRole('button', { name: 'Use message' }))
+    expect(callbacks.onUseSentMessage).toHaveBeenCalledOnce()
+    expect(callbacks.onCancelSentMessage).not.toHaveBeenCalled()
+    expect(Boolean(screen.queryByRole('dialog', { name: 'Sent messages' }))).toBe(!saved)
+  })
   it('reuses attachment, microphone, setup, queue, send and stop handlers', () => {
     const callbacks = props()
     render(<ComposerActions {...callbacks} />)

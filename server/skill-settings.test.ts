@@ -127,6 +127,25 @@ describe('read-only skill discovery and settings changes', () => {
     await expect(service.update({ name: 'excluded', enabled: false, confirmed: true, revision: snapshot.revision })).rejects.toThrow('no longer available')
   })
 
+  it.each(['settings.json', 'settings.local.json'])('ignores repository exclusions in %s while retaining user exclusions and repository disables', async (fileName) => {
+    const root = path.join(copilotHome, 'skills')
+    await skill(root, 'personal')
+    const excluded = await skill(root, 'user-excluded')
+    await skill(path.join(repository, '.github', 'skills'), 'repository-disabled')
+    const directory = path.join(repository, '.github', 'copilot')
+    await mkdir(directory, { recursive: true })
+    await writeFile(path.join(directory, fileName), JSON.stringify({
+      disabledSkills: ['repository-disabled'],
+      ignoredSkillsLocations: fileName === 'settings.json' ? [root] : 42,
+    }))
+    await writeFile(path.join(copilotHome, 'settings.json'), JSON.stringify({ ignoredSkillsLocations: [excluded] }))
+    const before = await service.snapshot()
+    expect(before.skills.map((entry) => entry.name).sort()).toEqual(['personal', 'repository-disabled'])
+    expect(before.skills.find((entry) => entry.name === 'repository-disabled')).toMatchObject({ manageable: false, enabled: false })
+    const after = await service.update({ name: 'personal', enabled: false, confirmed: true, revision: before.revision })
+    expect(after.skills.find((entry) => entry.name === 'personal')?.enabled).toBe(false)
+  })
+
   it('matches disabled names in any case and respects trusted repository restrictions', async () => {
     await skill(path.join(copilotHome, 'skills'), 'sample')
     await skill(path.join(repository, '.agents', 'skills'), 'repository-skill')
@@ -206,6 +225,43 @@ describe('read-only skill discovery and settings changes', () => {
     expect(await readFile(path.join(copilotHome, 'settings.json'), 'utf8')).toBe(raw)
   })
 
+  it('refuses invalid UTF-8 toggles without replacing unrelated bytes', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    const bytes = Buffer.concat([Buffer.from('{"retained":"'), Buffer.from([0xff]), Buffer.from('","disabledSkills":[]}')])
+    // A previous valid snapshot can have the same decoded text as a lossy read.
+    await writeFile(file, bytes.toString('utf8'))
+    const before = await service.snapshot()
+    await writeFile(file, bytes)
+    await expect(service.update({
+      name: 'sample', enabled: false, confirmed: true, revision: before.revision,
+    })).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/invalid UTF-8/) })
+    expect(await readFile(file)).toEqual(bytes)
+    expect((await readdir(copilotHome)).filter((name) => name.startsWith('.settings-'))).toEqual([])
+  })
+
+  it('reports invalid UTF-8 settings as unreadable without changing their bytes', async () => {
+    const file = path.join(copilotHome, 'settings.json')
+    const bytes = Buffer.concat([Buffer.from('{"retained":"'), Buffer.from([0xc3]), Buffer.from('"}')])
+    await writeFile(file, bytes)
+    await expect(service.snapshot()).rejects.toMatchObject({
+      statusCode: 409, message: expect.stringMatching(/read safely.*invalid UTF-8/),
+    })
+    expect(await readFile(file)).toEqual(bytes)
+  })
+
+  it.each([false, true])('preserves valid non-ASCII UTF-8 and a leading BOM (%s) through both toggles', async (bom) => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    const raw = `${bom ? '\uFEFF' : ''}{\n  // Café 東京 🧪\n  "retained": "João e\u0301 �",\n  "disabledSkills": []\n}\n`
+    await writeFile(file, raw)
+    const before = await service.snapshot()
+    const disabled = await service.update({ name: 'sample', enabled: false, confirmed: true, revision: before.revision })
+    expect(await readFile(file)).toEqual(Buffer.from(raw.replace('"disabledSkills": []', '"disabledSkills": ["sample"]')))
+    await service.update({ name: 'sample', enabled: true, confirmed: true, revision: disabled.revision })
+    expect(await readFile(file)).toEqual(Buffer.from(raw))
+  })
+
   it.each([
     '{\n  // retain this explanation\n  "theme": "https://example.test/a//b",\n  "disabledSkills": [], // retain this too\n}\n',
     '{"nested":{"disabledSkills":["untouched"],},"disabledSkills":[],}',
@@ -234,6 +290,31 @@ describe('read-only skill discovery and settings changes', () => {
     const enabled = await service.update({ name: 'sample', enabled: true, confirmed: true, revision: disabled.revision })
     expect(enabled.skills[0].enabled).toBe(true)
     expect(await readFile(file, 'utf8')).toContain('/* keep entry explanation */')
+  })
+
+  it('disables only the requested name while preserving unrelated duplicates, spelling and order', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    const raw = '{"disabledSkills":["z\\u0065bra", /* retain */ "dup", "dup", "Alpha"],"retained":true}'
+    await writeFile(file, raw)
+    const before = await service.snapshot()
+    const after = await service.update({ name: 'sample', enabled: false, confirmed: true, revision: before.revision })
+    const expected = Buffer.from(raw.replace('"Alpha"]', '"Alpha", "sample"]'))
+    expect(await readFile(file)).toEqual(expected)
+    expect(after.skills[0].enabled).toBe(false)
+    await service.update({ name: 'sample', enabled: false, confirmed: true, revision: after.revision })
+    expect(await readFile(file)).toEqual(expected)
+  })
+
+  it('enables only the requested name, removing its case variants without deduplicating other entries', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    const raw = '{"disabledSkills":["z\\u0065bra",/* retain first */"SAMPLE", "dup",/* retain second */"sample", "dup", "Alpha"],"retained":true}'
+    await writeFile(file, raw)
+    const before = await service.snapshot()
+    const after = await service.update({ name: 'sample', enabled: true, confirmed: true, revision: before.revision })
+    expect(await readFile(file)).toEqual(Buffer.from(raw.replace('"SAMPLE",', '').replace('"sample",', '')))
+    expect(after.skills[0].enabled).toBe(true)
   })
 
   it('refuses writes with ambiguous duplicate keys', async () => {

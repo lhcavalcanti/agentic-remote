@@ -4,6 +4,9 @@ export const HOST_TELEMETRY_CAPABILITY_VERSION = 1
 export const HOST_TELEMETRY_LIVE_WINDOW_MS = 60_000
 export const HOST_TELEMETRY_MAX_LIVE_SAMPLES = 61
 export const HOST_TELEMETRY_MAX_MINUTES = 24 * 60
+export const HOST_TELEMETRY_INVALID_CODE = 'HOST_TELEMETRY_INVALID'
+export const HOST_TELEMETRY_INVALID_CLOSE_CODE = 4002
+export type HostTelemetryEndReason = typeof HOST_TELEMETRY_INVALID_CODE
 
 const nonnegative = z.number().nonnegative()
 const timestamp = z.iso.datetime({ offset: true })

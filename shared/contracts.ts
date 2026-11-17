@@ -107,6 +107,8 @@ export interface ChatMessage {
   deliveryConfirmed?: boolean
   /** Locally retained user echoes, unlike records read from the provider's transcript. */
   deliveryState?: 'pending' | 'refused' | 'uncertain'
+  /** App-owned context/control input, not a prompt authored by the user. */
+  appGenerated?: boolean
   streaming?: boolean
   activityStatus?: ActivityStatus
   activityKind?: ActivityKind
@@ -405,6 +407,8 @@ export interface SessionSummary {
   title: string
   updatedAt: string
   status: SessionStatus
+  /** Independent of aggregate running status, which includes background agents. */
+  foregroundTurnActive?: boolean
   isOpen?: boolean
   retention?: SessionRetention
   retentionLastUsedAt?: string

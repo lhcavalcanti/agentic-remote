@@ -73,6 +73,16 @@ function emptyState(): NotificationState {
   return { version: 1, revision: 0, records: [], seen: {}, cursors: {} }
 }
 
+function durableState(state: NotificationState): string {
+  const cursors = Object.keys(state.cursors).sort().map((key) => [
+    key,
+    Object.fromEntries(Object.entries(state.cursors[key])
+      .filter(([name]) => name !== 'touchedAt' && name !== 'revision')
+      .sort(([left], [right]) => left.localeCompare(right))),
+  ])
+  return JSON.stringify({ ...state, cursors })
+}
+
 export function matchesNotification(record: NotificationRecord, filter: NotificationFilter): boolean {
   return !record.dismissedAt &&
     (filter.unread === undefined || Boolean(!record.readAt) === filter.unread) &&
@@ -83,8 +93,8 @@ export function matchesNotification(record: NotificationRecord, filter: Notifica
 }
 
 /**
- * Single hub writer. State is published only after an owner-only atomic
- * replace, including classifier cursors and identity-only eviction tombstones.
+ * Single hub writer. Records and semantic cursor changes require an atomic
+ * replace; observation watermarks may advance in memory between commits.
  */
 export class NotificationStore extends EventEmitter<{
   changed: [event: NotificationsChanged]
@@ -166,14 +176,16 @@ export class NotificationStore extends EventEmitter<{
   /** Classifies and admits in the same serialized durable transaction. */
   ingest(classify: (cursors: NotificationCursors) => NotificationRecord[]): Promise<void> {
     return this.commit((next) => {
+      let seenCount = Object.keys(next.seen).length
       for (const candidate of classify(next.cursors)) {
         const record = recordSchema.parse(candidate) as NotificationRecord
         if (next.seen[record.id] || Date.parse(record.createdAt) < this.now() - NOTIFICATION_RETENTION_MS) continue
-        if (Object.keys(next.seen).length >= DEDUPE_LIMIT) {
+        if (seenCount >= DEDUPE_LIMIT) {
           // Never evict a live dedupe fence to accept a replay as new.
           throw new Error('Notification deduplication capacity reached')
         }
         next.seen[record.id] = record.createdAt
+        seenCount += 1
         next.records.push(record)
       }
     })
@@ -258,7 +270,12 @@ export class NotificationStore extends EventEmitter<{
       this.prune(next)
       mutate(next)
       this.prune(next)
-      if (JSON.stringify(next) === JSON.stringify(this.state)) return
+      if (durableState(next) === durableState(this.state)) {
+        // Keep live revision fences and LRU observations without an fsync for
+        // every streamed word. The next semantic commit checkpoints them too.
+        this.state = next
+        return
+      }
       const changed = JSON.stringify(next.records) !== JSON.stringify(this.state.records)
       if (changed) next.revision += 1
       await this.persist(next)

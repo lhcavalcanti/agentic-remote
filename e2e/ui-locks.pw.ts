@@ -70,6 +70,53 @@ for (const action of ['Approve', 'Reject'] as const) {
 for (const viewport of uiViewports) {
   test.describe(`origin presentation ${viewport.name}`, () => {
     test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    test('separates scheduled run and task hit areas for short and long titles', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'session-origin-tasks-short')!.setup(page)
+      try {
+        const nav = page.getByRole('navigation', { name: 'Sessions', exact: true })
+        const row = nav.locator('.session-item__body--task-status:has(> .session-origin-run-link)')
+        const measure = () => row.evaluate((element) => {
+          const task = element.querySelector<HTMLElement>('.session-item__tasks')!.getBoundingClientRect()
+          const run = element.querySelector<HTMLElement>('.session-origin-run-link')!.getBoundingClientRect()
+          return {
+            taskBottom: task.bottom, runTop: run.top,
+            taskWidth: task.width, taskHeight: task.height, runWidth: run.width, runHeight: run.height,
+            rowHeight: element.closest('.session-item')!.getBoundingClientRect().height,
+          }
+        })
+        const short = await measure()
+        expect(short.taskBottom).toBeLessThanOrEqual(short.runTop)
+        const value = fixture.state.sessions[0]
+        value.title = 'Review the complete field guide and the scheduled recovery checklist'
+        value.revision = (value.revision ?? 0) + 1
+        fixture.emit({ type: 'session.upserted', session: value })
+        await expect(row.locator('.session-item__text > strong')).toHaveText(value.title)
+        const long = await measure()
+        expect(long.taskBottom).toBeLessThanOrEqual(long.runTop)
+        expect(long.rowHeight).toBeCloseTo(short.rowHeight, 0)
+        for (const bounds of [short, long]) {
+          expect(bounds.taskWidth).toBeGreaterThanOrEqual(40)
+          expect(bounds.taskHeight).toBeGreaterThanOrEqual(40)
+          expect(bounds.runWidth).toBeGreaterThanOrEqual(40)
+          expect(bounds.runHeight).toBeGreaterThanOrEqual(40)
+        }
+        await test.info().attach(`scheduled-row-hit-areas-${viewport.name}`, {
+          body: JSON.stringify({ viewport: viewport.name, short, long }), contentType: 'application/json',
+        })
+        await row.locator('.session-item__tasks').click()
+        const tasks = page.getByRole('dialog', { name: /^Background tasks/ })
+        await expect(tasks).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(tasks).toBeHidden()
+        const openSessions = page.getByRole('button', { name: 'Open sessions', exact: true })
+        if (await openSessions.isVisible()) await openSessions.click()
+        await expect(nav).toBeVisible()
+        await row.getByRole('link', { name: 'View run from schedule Morning field guide review' }).click()
+        await expect(page.getByRole('dialog', { name: 'Scheduler', exact: true })).toBeVisible()
+        expect(fixture.requests.filter((request) => request.method !== 'GET' && request.path.startsWith('/api/schedules'))).toEqual([])
+        await assertNoHorizontalOverflow(page)
+      } finally { fixture.assertHealthy() }
+    })
     test('distinguishes all origins and reads the recorded run without launching work', async ({ page, baseURL }) => {
       const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'session-origins')!.setup(page)
       try {
@@ -1071,6 +1118,40 @@ test.describe('browser interaction contracts', () => {
     await expect(scheduler.getByRole('alert')).toContainText('A non-archived schedule already has this name')
     await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Daily workspace review')
   })
+
+  for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' || entry.name === 'phone')) {
+    test(`retries incompatible host telemetry only on request at ${viewport.name}`, async ({ page, baseURL }, testInfo) => {
+      await page.setViewportSize(viewport.viewport)
+      await open(page, baseURL, 'host-monitor')
+      const monitor = page.getByRole('dialog', { name: 'Host monitor', exact: true })
+      await monitor.getByRole('button', { name: 'Close', exact: true }).click()
+      let incompatible = true
+      let invalidReads = 0
+      await page.route('**/api/computers/fixture-studio/host', async (route) => {
+        if (!incompatible) { await route.fallback(); return }
+        invalidReads++
+        await route.fulfill({ status: 502, json: {
+          error: 'This computer returned invalid host telemetry', code: 'HOST_TELEMETRY_INVALID',
+        } })
+      })
+      // Closing a view can return a phone reader to the open drawer; open it only when it is closed.
+      const sessions = page.getByRole('button', { name: 'Open sessions', exact: true })
+      if (!await page.locator('.sidebar-scrim').isVisible() && await sessions.isVisible()) await sessions.click()
+      await page.getByRole('button', { name: 'Host monitor', exact: true }).click()
+      await expect(monitor.getByRole('alert')).toContainText('Update this computer')
+      const retry = monitor.getByRole('button', { name: 'Retry', exact: true })
+      await expect(retry).toBeVisible()
+      expect(await retry.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(40)
+      await assertNoHorizontalOverflow(page)
+      await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-host-incompatible.png`), animations: 'disabled' })
+      expect(invalidReads).toBe(1)
+      incompatible = false
+      await retry.click()
+      await expect(monitor).toContainText('fixture-studio-fictional')
+      await expect(monitor.getByRole('alert')).toHaveCount(0)
+      await expect(retry).toHaveCount(0)
+    })
+  }
 
   test('announces unread counts, opens notifications and dismisses a single grouped item in one batch', async ({ page, baseURL }) => {
     await open(page, baseURL, 'notification-panel')

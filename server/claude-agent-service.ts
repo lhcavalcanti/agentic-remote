@@ -54,7 +54,7 @@ import {
   type QueuedPromptReservation, type TranscriptObservation,
 } from './session-store.js'
 import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
-import { LaunchCreations, awaitTermination } from './launch-identity.js'
+import { LaunchCreations, awaitTermination, withSessionCreateBoundary } from './launch-identity.js'
 import {
   acceptanceReceipt,
   explicitlyRefused,
@@ -531,7 +531,7 @@ export class ClaudeAgentService
     mode?: AgentMode,
     launchId?: string,
   ): Promise<SessionDetail> {
-    return this.launchCreations.run(this.store, launchId, async () => {
+    return this.launchCreations.run(this.store, launchId, () => withSessionCreateBoundary(async (beginCreate) => {
       if (provider !== 'claude') {
         throw new Error(`Provider ${provider} is not handled by Claude Agent`)
       }
@@ -562,6 +562,7 @@ export class ClaudeAgentService
       if (defaultModel && !defaultModel.contextTiers.includes(tier)) {
         throw new Error('Selected context tier is not supported by this model')
       }
+      beginCreate()
       const session = await this.store.create(
         {
           id,
@@ -585,7 +586,7 @@ export class ClaudeAgentService
       )
       this.publish(session)
       return session
-    })
+    }))
   }
 
   uploadFile(
@@ -895,6 +896,9 @@ export class ClaudeAgentService
     if (!stored.suspended) {
       return stored
     }
+    if (this.admissions.launchBlocked(id) || stored.launchStopping) {
+      throw queueConflict('The launch is stopping; its runtime cannot resume.')
+    }
     this.assertNotRetained(id, 'resuming it', true)
     const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
     if (hasQueue) {
@@ -1062,6 +1066,9 @@ export class ClaudeAgentService
       if (replaceTerminalDraft || acknowledgesFailure) {
         throw Object.assign(queueConflict('Identified delivery cannot replace a draft or acknowledge another prompt.'), { uncertainDelivery: false })
       }
+      const receipt = this.store.get(sessionId)
+      if (this.admissions.launchBlocked(sessionId) &&
+          receipt?.promptReceipts?.some((entry) => entry.deliveryId === deliveryId)) return receipt
       try {
         return await this.admissions.run(sessionId, async () => {
           if (this.stopped || this.deletingSessions.has(sessionId)) throw queueConflict('The session service is stopping.')
@@ -1563,6 +1570,7 @@ export class ClaudeAgentService
     // Iterator teardown proves foreground quiescence, not the fate of background
     // tasks. This adapter does not consume their membership/termination signals.
     }, async () => false, async () => {
+      this.admissions.blockLaunch(sessionId)
       await this.store.readAfterWrites(sessionId)
       this.publish(await this.store.stopLaunchWork(sessionId))
       this.drainRequested.delete(sessionId)
@@ -2598,6 +2606,7 @@ export class ClaudeAgentService
     promptId: string,
     content: string,
   ): Promise<QueuedPromptDispatchResult> {
+    if (this.admissions.launchBlocked(sessionId)) throw queueConflict('The launch is stopping; no queued work can dispatch.')
     if (this.stopped || this.deletingSessions.has(sessionId)) {
       throw queueConflict('The session is no longer available.')
     }

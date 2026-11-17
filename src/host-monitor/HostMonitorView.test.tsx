@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { hostMetricNames, type HostSnapshot } from '../../shared/host-telemetry'
+import { SubmissionError } from '../../shared/submission-error'
 import { request } from '../api'
 import { HostMonitorView } from './HostMonitorView'
 import { useHostMonitor } from './use-host-monitor'
@@ -11,7 +12,7 @@ vi.mock('../api', () => ({ request: vi.fn() }))
 class Socket {
   static instances: Socket[] = []
   onmessage?: (event: { data: string }) => void
-  onclose?: () => void
+  onclose?: (event: { code: number; reason?: string }) => void
   onerror?: () => void
   close = vi.fn()
   readonly url: string
@@ -70,6 +71,54 @@ it('renders current and trended 1, 5 and 15 minute load', async () => {
   for (const minutes of [1, 5, 15]) expect(screen.getByRole('img', { name: `Load · ${minutes} min trend` }).querySelector('path')?.getAttribute('d')).toMatch(/^M/)
 })
 
+it.each([true, false])('selects arriving computers, preferring the local hub when present (%s)', async (includeHub) => {
+  const node = { ...computer, id: 'build', name: 'Build node', isLocal: false }
+  const props = { enabled: true, onClose: vi.fn(), onOpenSession: vi.fn() }
+  const { rerender } = render(<HostMonitorView {...props} computers={[]} />)
+  expect(screen.getByText('No computer is selected.')).toBeTruthy()
+  expect(request).not.toHaveBeenCalled()
+  rerender(<HostMonitorView {...props} computers={includeHub ? [node, computer] : [node]} />)
+  await screen.findByText('18.0%')
+  const selected = includeHub ? computer.id : node.id
+  expect(screen.getByRole('combobox', { name: 'Computer' })).toHaveProperty('value', selected)
+  expect(request).toHaveBeenCalledWith(`/api/computers/${selected}/host`, expect.anything())
+  expect(screen.queryByText('No computer is selected.')).toBeNull()
+})
+
+it.each([true, false])('replaces a removed selection with the local hub or first computer (%s)', async (includeHub) => {
+  const removed = { ...computer, id: 'removed', name: 'Removed node', isLocal: false }
+  const first = { ...computer, id: 'first', name: 'First node', isLocal: false }
+  const props = { enabled: true, onClose: vi.fn(), onOpenSession: vi.fn() }
+  const { rerender } = render(<HostMonitorView {...props} computers={[removed]} />)
+  await screen.findByText('18.0%')
+  const remaining = includeHub ? [first, computer] : [first]
+  rerender(<HostMonitorView {...props} computers={remaining} />)
+  const selected = includeHub ? computer.id : first.id
+  await waitFor(() => expect(request).toHaveBeenCalledWith(`/api/computers/${selected}/host`, expect.anything()))
+  expect(screen.getByRole('combobox', { name: 'Computer' })).toHaveProperty('value', selected)
+  expect(Socket.instances[0].close).toHaveBeenCalledOnce()
+  rerender(<HostMonitorView {...props} computers={[...remaining, removed]} />)
+  expect(screen.getByRole('combobox', { name: 'Computer' })).toHaveProperty('value', selected)
+  rerender(<HostMonitorView {...props} computers={[]} />)
+  expect(screen.getByText('No computer is selected.')).toBeTruthy()
+  rerender(<HostMonitorView {...props} computers={[removed]} />)
+  await waitFor(() => expect(Socket.instances.at(-1)?.url).toContain('/removed/host/live'))
+})
+
+it('preserves a user-selected node when the computer list changes', async () => {
+  const node = { ...computer, id: 'build', name: 'Build node', isLocal: false }
+  const props = { enabled: true, onClose: vi.fn(), onOpenSession: vi.fn() }
+  const { rerender } = render(<HostMonitorView {...props} computers={[computer, node]} />)
+  await screen.findByText('18.0%')
+  fireEvent.change(screen.getByRole('combobox', { name: 'Computer' }), { target: { value: node.id } })
+  await waitFor(() => expect(Socket.instances.at(-1)?.url).toContain('/build/host/live'))
+  const socketCount = Socket.instances.length
+  rerender(<HostMonitorView {...props} computers={[{ ...node, name: 'Renamed build node' }, computer]} />)
+  expect(screen.getByRole('combobox', { name: 'Computer' })).toHaveProperty('value', node.id)
+  expect(Socket.instances).toHaveLength(socketCount)
+  expect(Socket.instances.at(-1)?.close).not.toHaveBeenCalled()
+})
+
 it('retries failed initial snapshots with backoff and cancels retries when closed', async () => {
   vi.useFakeTimers()
   vi.mocked(request).mockRejectedValueOnce(new Error('503 unavailable')).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(snapshot)
@@ -86,10 +135,130 @@ it('retries failed initial snapshots with backoff and cancels retries when close
   expect(request).toHaveBeenCalledTimes(3)
   expect(result.current.error).toBeUndefined()
   expect(Socket.instances).toHaveLength(1)
-  act(() => Socket.instances[0].onclose?.())
+  act(() => Socket.instances[0].onclose?.({ code: 1006 }))
   unmount()
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
   expect(request).toHaveBeenCalledTimes(3)
+})
+
+it.each([
+  [502, 'HOST_TELEMETRY_INVALID'],
+  [409, undefined],
+] as const)('requires a manual retry for incompatible telemetry (%s, %s)', async (status, code) => {
+  vi.useFakeTimers()
+  vi.mocked(request).mockRejectedValue(Object.assign(new SubmissionError(
+    status === 409 ? 'Update this computer (Studio) to use host monitoring.' : 'This computer returned invalid host telemetry',
+    status,
+  ), { code }))
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  expect(result.current.error).toContain('Update this computer')
+  if (status === 409) expect(result.current.error).toBe('Update this computer (Studio) to use host monitoring.')
+  expect(result.current.retryRequired).toBe(true)
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(1)
+  expect(Socket.instances).toHaveLength(0)
+  act(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  act(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    document.dispatchEvent(new Event('visibilitychange'))
+  })
+  expect(request).toHaveBeenCalledTimes(1)
+  vi.mocked(request).mockResolvedValue(snapshot)
+  await act(async () => { result.current.retry() })
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(result.current.error).toBeUndefined()
+  expect(result.current.retryRequired).toBe(false)
+  expect(Socket.instances).toHaveLength(1)
+})
+
+it.each([
+  [502, undefined],
+  [503, undefined],
+  [502, 'OTHER_GATEWAY_ERROR'],
+] as const)('keeps automatic retries for transient gateway errors (%s, %s)', async (status, code) => {
+  vi.useFakeTimers()
+  const error = Object.assign(new SubmissionError('Temporarily unavailable', status), { code })
+  vi.mocked(request).mockRejectedValueOnce(error).mockRejectedValueOnce(error).mockResolvedValue(snapshot)
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  await act(async () => { await vi.advanceTimersByTimeAsync(999) })
+  expect(request).toHaveBeenCalledTimes(1)
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(request).toHaveBeenCalledTimes(2)
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(request).toHaveBeenCalledTimes(3)
+  expect(result.current.error).toBeUndefined()
+  expect(Socket.instances).toHaveLength(1)
+})
+
+it('offers a working Retry control after the hub rejects invalid node telemetry', async () => {
+  vi.mocked(request).mockRejectedValueOnce(Object.assign(
+    new SubmissionError('This computer returned invalid host telemetry', 502), { code: 'HOST_TELEMETRY_INVALID' },
+  ))
+  render(<HostMonitorView computers={[computer]} enabled onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  expect((await screen.findByRole('alert')).textContent).toContain('Update this computer')
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+  await screen.findByText('18.0%')
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+  expect(request).toHaveBeenCalledTimes(2)
+})
+
+it('stops auxiliary polling until an incompatible stream is manually retried', async () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useHostMonitor('studio', true, true, true))
+  await act(async () => {})
+  expect(request).toHaveBeenCalledTimes(3)
+  act(() => Socket.instances[0].onmessage?.({ data: '{"type":"unsupported"}' }))
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(3)
+  await act(async () => { result.current.retry() })
+  expect(request).toHaveBeenCalledTimes(6)
+  expect(result.current.error).toBeUndefined()
+})
+
+it.each(['processes', 'history'])('requires manual retry when only %s telemetry is incompatible', async (endpoint) => {
+  vi.useFakeTimers()
+  let incompatible = true
+  const respond = vi.mocked(request).getMockImplementation()!
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (incompatible && path.includes(`/${endpoint}`)) throw Object.assign(
+      new SubmissionError('This computer returned invalid host telemetry', 502), { code: 'HOST_TELEMETRY_INVALID' },
+    )
+    return respond(path, init)
+  })
+  const { result } = renderHook(() => useHostMonitor('studio', true, true, true))
+  await act(async () => {})
+  expect(result.current.error).toContain('Update this computer')
+  expect(result.current.retryRequired).toBe(true)
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(3)
+  incompatible = false
+  await act(async () => { result.current.retry() })
+  expect(request).toHaveBeenCalledTimes(6)
+  expect(result.current.error).toBeUndefined()
+  expect(result.current.retryRequired).toBe(false)
+})
+
+it('does not let a concurrent snapshot clear an incompatible process response', async () => {
+  let resolveSnapshot!: (value: HostSnapshot) => void
+  let rejectProcesses!: (error: Error) => void
+  const initial = new Promise<HostSnapshot>((resolve) => { resolveSnapshot = resolve })
+  const inventory = new Promise((_resolve, reject) => { rejectProcesses = reject })
+  vi.mocked(request).mockImplementation((path) =>
+    path.endsWith('/processes') ? inventory : path.includes('/history') ? Promise.resolve([]) : initial)
+  const { result } = renderHook(() => useHostMonitor('studio', true, true, true))
+  await act(async () => {
+    rejectProcesses(Object.assign(new SubmissionError('Invalid process telemetry', 502), { code: 'HOST_TELEMETRY_INVALID' }))
+    resolveSnapshot(snapshot)
+  })
+  expect(result.current.error).toContain('Update this computer')
+  expect(result.current.retryRequired).toBe(true)
+  expect(Socket.instances).toHaveLength(0)
 })
 
 it('preserves update-required after an invalid frame closes and ignores later frames', async () => {
@@ -98,7 +267,7 @@ it('preserves update-required after an invalid frame closes and ignores later fr
   await act(async () => {})
   act(() => {
     Socket.instances[0].onmessage?.({ data: '{"type":"unsupported"}' })
-    Socket.instances[0].onclose?.()
+    Socket.instances[0].onclose?.({ code: 1006 })
     Socket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'host.snapshot', snapshot }) })
   })
   expect(result.current.error).toContain('Update this computer')
@@ -117,6 +286,36 @@ it('does not retry an incompatible initial snapshot', async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
   expect(request).toHaveBeenCalledTimes(1)
   expect(Socket.instances).toHaveLength(0)
+})
+
+it('requires a manual retry after an incompatible live close', async () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  act(() => Socket.instances[0].onclose?.({ code: 4002, reason: 'HOST_TELEMETRY_INVALID' }))
+  expect(result.current.error).toContain('Update this computer')
+  expect(result.current.retryRequired).toBe(true)
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(1)
+  await act(async () => { result.current.retry() })
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(Socket.instances).toHaveLength(2)
+  expect(result.current.error).toBeUndefined()
+})
+
+it.each([1000, 1006, 1011])('keeps reconnecting after an ordinary live close (%s)', async (code) => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  act(() => Socket.instances[0].onclose?.({ code }))
+  expect(result.current.error).toContain('Reconnecting')
+  expect(result.current.retryRequired).toBe(false)
+  await act(async () => { await vi.advanceTimersByTimeAsync(999) })
+  expect(request).toHaveBeenCalledTimes(1)
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(Socket.instances).toHaveLength(2)
+  expect(result.current.error).toBeUndefined()
 })
 
 it('freezes only the presentation while the stream remains subscribed', async () => {

@@ -25,6 +25,7 @@ import {
   removeQueuedPrompt,
   removeManagerFile,
   readKnowledgeFile,
+  request,
   sendMessage,
   sendTestPushNotification,
   transcribeAudio,
@@ -171,6 +172,24 @@ describe('API request headers', () => {
       statusCode: 502,
       message: 'The gateway could not reach Agentic Remote (502). Check the hub service and tunnel, then retry.',
     })
+  })
+
+  it.each([
+    ['HOST_TELEMETRY_INVALID', 'HOST_TELEMETRY_INVALID'],
+    [undefined, undefined],
+    [502, undefined],
+    [null, undefined],
+  ])('preserves only string error codes from HTTP responses (%j)', async (code, expectedCode) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'This computer returned invalid host telemetry', code, uncertainDelivery: false,
+    }, { status: 502 })))
+    const failure = request('/api/computers/studio/host')
+    await expect(failure).rejects.toMatchObject({
+      statusCode: 502, message: 'This computer returned invalid host telemetry', uncertainDelivery: false,
+      ...(expectedCode === undefined ? {} : { code: expectedCode }),
+    })
+    // A missing or non-string server code leaves no `code` property at all.
+    if (expectedCode === undefined) await expect(failure).rejects.not.toHaveProperty('code')
   })
 
   it('bounds the initial hub snapshot instead of loading forever', async () => {

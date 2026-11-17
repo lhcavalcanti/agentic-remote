@@ -39,6 +39,13 @@ function session(change: Partial<ManagedSession> = {}): ManagedSession {
   }
 }
 const permission: PendingPermission = { requestId: 'p', title: 'Approve command?', kind: 'shell', options: [] }
+const folderTrustPermission: PendingPermission = {
+  requestId: 'folder-trust', title: 'Trust folder for this session: /fictional/repo',
+  kind: 'terminal', choiceCount: 3, options: [
+    { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+    { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+  ],
+}
 
 afterEach(async () => {
   await Promise.all(dispatchers.splice(0).map((dispatcher) => dispatcher.stop()))
@@ -156,6 +163,7 @@ describe('schedule runner', () => {
       observeSession: vi.fn(async () => session()),
       reconcileLaunch: vi.fn(async () => undefined),
       cancelWithAck: vi.fn(),
+      trustFolder: vi.fn(async () => false),
     }
     await new SessionScheduleLauncher(f.host, f.store, f.registry, primitives).launch(f.run, f.schedule)
     expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -234,12 +242,111 @@ describe('schedule runner', () => {
     expect(f.host.createSession).not.toHaveBeenCalled()
   })
 
-  it.each(['model', 'effort'])('fails invalid %s definitively before creation', async (field) => {
+  it.each([
+    ['model', true], ['model', false], ['effort', true], ['effort', false], ['context', true], ['context', false],
+  ] as const)('fails an authoritative unsupported %s selection before creation with local=%s', async (field, isLocal) => {
     const f = await fixture({ target: {
-      computerId: 'hub', folder: '/fictional/repo', provider: 'claude',
-      model: field === 'model' ? 'missing' : 'fictional-model', effort: 'max',
+      computerId: isLocal ? 'hub' : 'worker', folder: '/fictional/repo', provider: 'claude',
+      model: field === 'model' ? 'missing' : 'fictional-model',
+      ...(field === 'effort' ? { effort: 'max' } : {}),
+      ...(field === 'context' ? { context: 'long_context' } : {}),
     } })
-    await expect(f.runner.launch(f.run, f.schedule)).rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
+    const [computer] = f.host.listComputers()
+    f.host.listComputers = () => [{ ...computer, isLocal }]
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    const reason = field === 'model' ? 'Selected model is not available'
+      : field === 'effort' ? 'Selected reasoning effort is not supported by this model'
+        : 'Selected context tier is not supported by this model'
+    expect(f.store.getRun(f.run.id).error).toBe(reason)
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.store.getRun(f.run.id).rootPromptReceipt).toBeUndefined()
+  })
+
+  it.each([
+    ['local SDK failure', true, new Error('Catalog query failed')],
+    ['local timeout', true, Object.assign(new Error('Catalog timed out'), { name: 'TimeoutError' })],
+    ['local 503', true, Object.assign(new Error('Catalog unavailable'), { statusCode: 503 })],
+    ['local throttling', true, Object.assign(new Error('Catalog throttled'), { status: 429 })],
+    ['remote SDK failure', false, new Error('Remote catalog query failed')],
+  ] as const)('retries Claude catalog lookup without accepting a prompt twice: %s', async (_label, isLocal, error) => {
+    const f = await fixture({ target: {
+      computerId: isLocal ? 'hub' : 'worker', folder: '/fictional/repo',
+      provider: 'claude', model: 'fictional-model',
+    } })
+    const [computer] = f.host.listComputers()
+    f.host.listComputers = () => [{ ...computer, isLocal }]
+    const ownerStore = new SessionStore(path.join(f.directory, 'claude-catalog-owner'))
+    await ownerStore.initialize()
+    const models = vi.fn(async () => [{
+      value: 'fictional-model', displayName: 'Fictional model', description: 'Fictional catalog',
+      supportedEffortLevels: ['high'],
+    }])
+    const owner = new ClaudeAgentService(ownerStore, '/bin/true', {
+      query: (() => Object.assign((async function* () { yield* [] })(), { supportedModels: models })) as unknown as ClaudeSdk['query'],
+      deleteSession: vi.fn(), getSessionInfo: vi.fn(), renameSession: vi.fn(),
+    }, async () => ({ loggedIn: true }))
+    let now = Date.now()
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner, { now: () => now })
+    dispatchers.push(dispatcher)
+    try {
+      await owner.providerRuntimeOptions('claude')
+      models.mockRejectedValueOnce(error).mockRejectedValueOnce(error)
+      vi.mocked(f.host.providerRuntimeOptions).mockImplementation((_computer, provider) => owner.providerRuntimeOptions(provider))
+      await dispatcher.start()
+      await vi.waitFor(() => {
+        expect(f.host.providerRuntimeOptions).toHaveBeenCalledTimes(1)
+        expect(f.store.getRun(f.run.id).status).toBe('pending')
+      })
+      const deadline = f.store.getRun(f.run.id).retryUntil
+      expect(Date.parse(deadline!)).toBeGreaterThan(now)
+      now += 60_000
+      await dispatcher.tick()
+      await vi.waitFor(() => {
+        expect(f.host.providerRuntimeOptions).toHaveBeenCalledTimes(2)
+        expect(f.store.getRun(f.run.id).status).toBe('pending')
+      })
+      expect(f.store.getRun(f.run.id)).toMatchObject({ launchId: f.run.launchId, retryUntil: deadline })
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(f.store.getRun(f.run.id).rootPromptAcceptance).toBeUndefined()
+      expect(f.host.createSession).not.toHaveBeenCalled()
+      expect(f.host.sendMessage).not.toHaveBeenCalled()
+      now += 1
+      await dispatcher.tick()
+      await vi.waitFor(() => expect(f.store.getRun(f.run.id).rootPromptReceipt).toBe(f.receipt.promptId))
+      f.receipt.outcome = 'succeeded'
+      await dispatcher.tick()
+      expect(f.store.getRun(f.run.id)).toMatchObject({
+        status: 'succeeded', launchId: f.run.launchId, rootPromptAcceptance: f.receipt,
+      })
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(f.store.allRuns()).toHaveLength(1)
+      expect(models).toHaveBeenCalledTimes(4)
+      expect(f.host.createSession).toHaveBeenCalledOnce()
+      expect(f.host.sendMessage).toHaveBeenCalledOnce()
+    } finally {
+      await dispatcher.stop()
+      await owner.stop()
+      await ownerStore.close()
+    }
+  })
+
+  it.each([
+    ['statusCode', 403], ['status', 422],
+  ] as const)('fails an explicit catalog refusal reported through %s=%s', async (field, status) => {
+    const f = await fixture({ target: {
+      computerId: 'hub', folder: '/fictional/repo', provider: 'claude', model: 'fictional-model',
+    } })
+    vi.mocked(f.host.providerRuntimeOptions).mockRejectedValue(Object.assign(new Error('The owner refused catalog access'), { [field]: status }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    expect(f.store.getRun(f.run.id).error).toBe('The owner refused catalog access')
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
     expect(f.host.createSession).not.toHaveBeenCalled()
   })
 
@@ -269,13 +376,96 @@ describe('schedule runner', () => {
   it('settles an owner runtime-validation refusal without reserving an uncertain launch slot', async () => {
     const f = await fixture()
     vi.mocked(f.host.createSession).mockRejectedValue(Object.assign(new Error('Selected model is not available'), {
-      name: 'RuntimeConfigurationError', statusCode: 400,
+      name: 'RuntimeConfigurationError', statusCode: 400, uncertainDelivery: false,
     }))
     const dispatcher = new SchedulerDispatcher(f.store, f.runner)
     dispatchers.push(dispatcher)
     await dispatcher.start()
     await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
     expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+  })
+
+  it.each(['copilot', 'claude'] as const)('fails a definitive %s owner directory check before creation and releases its slot', async (provider) => {
+    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider } })
+    const folder = path.join(f.directory, 'vanished-folder')
+    await mkdir(folder)
+    const ownerStore = new SessionStore(path.join(f.directory, 'directory-owner'))
+    await ownerStore.initialize()
+    const sdkCreate = vi.fn()
+    const owner = provider === 'copilot'
+      ? new AgentService(ownerStore, { createSession: sdkCreate, stop: vi.fn(async () => []) } as unknown as CopilotClientLike)
+      : new ClaudeAgentService(ownerStore, '/bin/true', {
+          query: (() => Object.assign((async function* () { yield* [] })(), { supportedModels: async () => [] })) as unknown as ClaudeSdk['query'],
+          deleteSession: vi.fn(), getSessionInfo: vi.fn(), renameSession: vi.fn(),
+        }, async () => ({ loggedIn: true }))
+    const createStored = vi.spyOn(ownerStore, 'create')
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    try {
+      if (provider === 'claude') await owner.providerRuntimeOptions('claude')
+      vi.mocked(f.host.validateSessionDirectory).mockImplementation(async () => {
+        await rm(folder, { recursive: true })
+        return folder
+      })
+      vi.mocked(f.host.createSession).mockImplementation(async (computerId, input) => ({
+        ...await owner.createSession(input.cwd, false, false, provider, input.model, input.reasoningEffort,
+          input.contextTier, input.mode, input.launchId), computerId, computerName: 'Fictional studio',
+      }))
+      await dispatcher.start()
+      await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+      expect(f.store.getRun(f.run.id).error).toContain(`Folder does not exist: ${folder}`)
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(sdkCreate).not.toHaveBeenCalled()
+      expect(createStored).not.toHaveBeenCalled()
+      expect(ownerStore.reconcileLaunch(f.run.launchId)).toBeUndefined()
+      expect(f.host.sendMessage).not.toHaveBeenCalled()
+    } finally { await dispatcher.stop(); await owner.stop(); await ownerStore.close() }
+  })
+
+  it('settles a certain pre-create refusal even when it has no HTTP status', async () => {
+    const f = await fixture()
+    vi.mocked(f.host.createSession).mockRejectedValue(Object.assign(new Error('Owner rejected creation before allocating a session'), {
+      uncertainDelivery: false,
+    }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    expect(f.store.getRun(f.run.id).error).toBe('Owner rejected creation before allocating a session')
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+  })
+
+  it.each([false, true])('keeps an unknown SDK creation result reserved after the owner create boundary with remote=%s', async (remote) => {
+    const f = await fixture()
+    const ownerStore = new SessionStore(path.join(f.directory, 'uncertain-owner'))
+    await ownerStore.initialize()
+    const sdkCreate = vi.fn(async () => { throw Object.assign(new Error('SDK creation result is unknown'), { statusCode: 400 }) })
+    const owner = new AgentService(ownerStore, { createSession: sdkCreate, stop: vi.fn(async () => []) } as unknown as CopilotClientLike)
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    try {
+      vi.mocked(f.host.validateSessionDirectory).mockResolvedValue(f.directory)
+      vi.mocked(f.host.createSession).mockImplementation(async (computerId, input) => {
+        try {
+          return {
+            ...await owner.createSession(input.cwd, false, false, 'copilot', undefined, undefined, undefined, input.mode, input.launchId),
+            computerId, computerName: 'Fictional studio',
+          }
+        } catch (error) {
+          if (!remote) throw error
+          throw new RemoteNodeRequestError((error as Error).message,
+            (error as Error & { statusCode: number }).statusCode, undefined, deliveryUncertaintyFromError(error))
+        }
+      })
+      await dispatcher.start()
+      await vi.waitFor(() => expect(sdkCreate).toHaveBeenCalledOnce())
+      await dispatcher.tick()
+      expect(f.store.getRun(f.run.id).status).toBe('launching')
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(true)
+      expect(f.store.getRun(f.run.id).rootPromptAcceptance).toBeUndefined()
+      expect(f.host.sendMessage).not.toHaveBeenCalled()
+      expect(sdkCreate).toHaveBeenCalledOnce()
+    } finally { await dispatcher.stop(); await owner.stop(); await ownerStore.close() }
   })
 
   it.each(['empty-local', 'transport-local', 'timeout-local', 'empty-remote'] as const)(
@@ -467,6 +657,26 @@ describe('schedule runner', () => {
     expect(f.host.replyUserInput).not.toHaveBeenCalled()
   })
 
+  it.each([
+    [false, true, 'running'], [true, true, 'terminated'],
+    [false, false, 'needs-input'], [true, false, 'needs-input'],
+  ] as const)('gates recovered questions only while actionable (accepted=%s stale=%s)', async (accepted, stale, state) => {
+    const f = await fixture()
+    f.setLaunch({
+      launchId: f.run.launchId, sessionId: 'session-one',
+      receipts: accepted ? [{ ...f.receipt, outcome: 'succeeded' }] : [],
+    })
+    f.setDetail({
+      status: 'idle', pendingUserInput: { requestId: 'recovered-question', question: 'Choose?', choices: [], allowFreeform: true, stale },
+    })
+    const result = await f.runner.reconcile(f.run)
+    expect(result.state).toBe(state)
+    if (accepted && stale) expect(result.outcome).toBe('succeeded')
+    expect(f.host.sendMessage).toHaveBeenCalledTimes(!accepted && stale ? 1 : 0)
+    expect(f.host.replyUserInput).not.toHaveBeenCalled()
+    expect(f.host.replyPermission).not.toHaveBeenCalled()
+  })
+
   it('retains a pre-delivery folder-trust question as needs-input instead of inferring success from idle', async () => {
     const f = await fixture()
     f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [], sessionStatus: 'idle' })
@@ -477,6 +687,40 @@ describe('schedule runner', () => {
     f.setDetail({ pendingPermission: undefined })
     expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'running' })
     expect(f.host.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([false, true])('applies accepted auto folder trust during recovery with an accepted root=%s', async (accepted) => {
+    const f = await fixture({ target: {
+      computerId: 'hub', folder: '/fictional/repo', provider: 'copilot', folderTrust: 'auto-approve',
+    } })
+    await f.store.changeRun(f.run.id, { status: 'launching', startedAt: at })
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: accepted ? [f.receipt] : [] })
+    f.setDetail({ status: 'waiting', pendingPermission: folderTrustPermission })
+    vi.mocked(f.host.replyPermission).mockImplementation(async () => {
+      f.setDetail({ status: accepted ? 'running' : 'idle', pendingPermission: undefined })
+      return session()
+    })
+    if (accepted) await f.store.update(f.schedule.id, { revision: 1, target: { ...f.schedule.target, folderTrust: 'ask' } })
+    expect(await f.runner.reconcile(f.store.getRun(f.run.id))).toMatchObject({
+      state: 'running', rootPromptReceipt: f.receipt.promptId,
+    })
+    expect(f.host.replyPermission).toHaveBeenCalledExactlyOnceWith('hub', 'session-one', 'folder-trust', { optionId: 'terminal:allow' })
+    expect(f.host.sendMessage).toHaveBeenCalledTimes(accepted ? 0 : 1)
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.host.replyUserInput).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['ask', folderTrustPermission],
+    ['auto-approve', { ...folderTrustPermission, title: 'Trust folder for this session: /other/folder' }],
+    ['auto-approve', permission],
+  ] as const)('leaves unapproved or non-folder recovery permissions pending under %s', async (folderTrust, pendingPermission) => {
+    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider: 'copilot', folderTrust } })
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [] })
+    f.setDetail({ status: 'waiting', pendingPermission })
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'needs-input' })
+    expect(f.host.replyPermission).not.toHaveBeenCalled()
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
   })
 
   it('reattaches after restart and resumes only idempotent root acceptance after a creation-only crash', async () => {

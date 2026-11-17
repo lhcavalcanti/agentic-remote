@@ -42,6 +42,7 @@ export const uiSceneNames = [
   'composer-delivery-unavailable',
   'session-origins',
   'session-origin-tasks',
+  'session-origin-tasks-short',
   'session-origin-run',
   'session-subagents',
   'session-list',
@@ -96,7 +97,8 @@ export function createUIScenes(
       const state = createWorkspaceFixtureState()
       const hostStatus = name === 'oracle-panel' && options.oracleHostStatus
         ? await oracleHostStatusFixture() : undefined
-      const origins = name === 'session-origins' || name === 'session-origin-tasks' || name === 'session-origin-run' || name === 'session-subagents'
+      const originTasks = name === 'session-origin-tasks' || name === 'session-origin-tasks-short'
+      const origins = name === 'session-origins' || originTasks || name === 'session-origin-run' || name === 'session-subagents'
       if (origins) {
         state.settings = {
           revision: 1, values: { previewFeatures: { composerRefresh: true, schedulerView: true, desktopRail: true } },
@@ -109,7 +111,8 @@ export function createUIScenes(
         state.sessions[1].provenance = { origin: 'user' }
         state.sessions[2].provenance = { origin: 'manager' }
         state.sessions[3].provenance = { origin: 'discovered' }
-        if (name === 'session-origin-tasks') state.sessions[0].title = 'Review the complete field guide and the scheduled recovery checklist'
+        if (originTasks) state.sessions[0].title = name === 'session-origin-tasks-short'
+          ? 'Daily review' : 'Review the complete field guide and the scheduled recovery checklist'
       }
       if (name === 'composer-family-claude' || name === 'composer-family-openai') {
         const family = name === 'composer-family-claude' ? 'claude' : 'gpt'
@@ -225,7 +228,7 @@ export function createUIScenes(
             runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals,
           }
           : origins ? { schedules: structuredClone(provenanceSchedules), runs: structuredClone(provenanceRuns) } : undefined,
-        taskSnapshots: name === 'session-subagents' || name === 'session-origin-tasks' ? {
+        taskSnapshots: name === 'session-subagents' || originTasks ? {
           [`fixture-studio:${SELECTED_SESSION_ID}`]: {
             supported: true, runningCount: 1, tasks: [
               { id: 'fixture-sync-agent', type: 'agent', description: 'Review recovery paths', status: 'running', executionMode: 'sync', startedAt: FIXTURE_NOW, canCancel: false },
@@ -268,13 +271,13 @@ export function createUIScenes(
         await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Focus this review on the recovery checklist.')
         await page.getByRole('button', { name: 'Send message', exact: true }).click()
         await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
-      } else if (name === 'session-origins' || name === 'session-origin-tasks') {
+      } else if (name === 'session-origins' || originTasks) {
         await openSessions(page)
         const nav = page.getByRole('navigation', { name: 'Sessions', exact: true })
         await expect(nav.getByRole('img', { name: 'Started by schedule Morning field guide review' })).toBeVisible()
         await expect(nav.getByRole('img', { name: 'Started by Oracle' })).toBeVisible()
         await expect(nav.getByRole('img', { name: 'Found on this computer' })).toBeVisible()
-        if (name === 'session-origin-tasks') {
+        if (originTasks) {
           const row = nav.locator('.session-item__body--task-status:has(> .session-origin-run-link)')
           await expect(row).toBeVisible()
           const clearance = await row.evaluate((element) => {

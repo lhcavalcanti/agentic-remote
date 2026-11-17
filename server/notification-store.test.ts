@@ -3,7 +3,8 @@ import { chmod, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'n
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { NotificationRecord } from '../shared/notification-center.js'
-import { notificationIdentity } from './notification-classifier.js'
+import type { ManagedSession } from '../shared/contracts.js'
+import { classifyHubNotification, notificationIdentity } from './notification-classifier.js'
 import { NOTIFICATION_LIMIT, NOTIFICATION_RETENTION_MS, NotificationStore } from './notification-store.js'
 
 const directories: string[] = []
@@ -157,5 +158,57 @@ describe('NotificationStore', () => {
     await store.markRead(record(1).id)
     expect(changed).toHaveBeenCalledTimes(before)
     expect(changed.mock.calls.at(-1)?.[0]).toMatchObject({ type: 'notifications.changed', unreadCount: 1 })
+  })
+
+  it('does not rewrite streaming cursors for observation times, revisions or LRU order alone', async () => {
+    const { directory, store } = await setup()
+    const stamp = new Date(now).toISOString()
+    const active: ManagedSession = {
+      id: 'one', computerId: 'computer', computerName: 'Worker', cwd: '/project', title: 'Review',
+      status: 'running', revision: 1, updatedAt: stamp, isOpen: true,
+      messages: [{ id: 'root-one', role: 'user', content: 'Review', createdAt: stamp }],
+    }
+    const other = { ...active, id: 'two', messages: [{ ...active.messages[0], id: 'root-two' }] }
+    for (const session of [active, other]) {
+      await store.ingest((cursors) => classifyHubNotification({ type: 'session.upserted', session }, cursors, stamp))
+    }
+    const computer = { id: 'computer', name: 'Worker', online: true, isLocal: false }
+    await store.ingest((cursors) => classifyHubNotification({ type: 'computer.updated', computer }, cursors, stamp))
+    const persistedBefore = await readFile(store.statePath, 'utf8')
+    const persist = vi.spyOn(store as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+    for (let index = 0; index < 12; index += 1) {
+      const session = index % 2 ? active : other
+      const time = new Date(now + (index + 1) * 750).toISOString()
+      await store.ingest((cursors) => [
+        ...classifyHubNotification({ type: 'session.upserted', session: {
+          ...session, revision: index + 2, updatedAt: time,
+          messages: [...session.messages, { id: 'reply', role: 'assistant', content: `Word ${index}`, createdAt: time }],
+        } }, cursors, time),
+        ...classifyHubNotification({ type: 'computer.updated', computer }, cursors, time),
+      ])
+    }
+    // The latest revision still fences stale snapshots in memory without I/O.
+    await store.ingest((cursors) => classifyHubNotification({
+      type: 'session.upserted', session: { ...active, revision: 2, status: 'idle' },
+    }, cursors, stamp))
+    expect(await store.list()).toEqual([])
+    expect(persist).not.toHaveBeenCalled()
+    expect(await readFile(store.statePath, 'utf8')).toBe(persistedBefore)
+
+    await store.ingest((cursors) => classifyHubNotification({
+      type: 'session.upserted', session: { ...active, revision: 50, status: 'idle' },
+    }, cursors, stamp))
+    expect(persist).toHaveBeenCalledOnce()
+    const durable = JSON.parse(await readFile(store.statePath, 'utf8'))
+    expect(durable.records).toEqual([expect.objectContaining({ kind: 'session.completed', sessionId: 'one' })])
+    expect(durable.cursors[JSON.stringify(['session', 'computer', 'one'])].revision).toBe(50)
+    await store.markRead(durable.records[0].id)
+    const restarted = new NotificationStore(directory, { now: () => now })
+    await restarted.initialize()
+    await restarted.ingest((cursors) => classifyHubNotification({
+      type: 'session.upserted', session: { ...active, revision: 49 },
+    }, cursors, stamp))
+    expect(await restarted.unreadCount()).toBe(0)
+    expect(await restarted.list()).toHaveLength(1)
   })
 })

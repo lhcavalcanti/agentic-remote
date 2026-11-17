@@ -23,7 +23,7 @@ export type ScheduleLauncherHost = SessionLauncherHost & Pick<ComputerManager,
   'listComputers' | 'validateSessionDirectory' | 'listBackgroundTasks' | 'providerRuntimeOptions'
   | 'allocateScheduleWorktree' | 'readScheduleWorktree' | 'cleanupScheduleWorktree'>
 type LaunchPrimitives = Pick<SessionLauncher<ScheduleProvenance>,
-  'createSession' | 'deliverPrompt' | 'observeSession' | 'reconcileLaunch' | 'cancelWithAck'>
+  'createSession' | 'deliverPrompt' | 'observeSession' | 'reconcileLaunch' | 'cancelWithAck' | 'trustFolder'>
 
 export async function recordScheduleProvenance(
   store: ManagerStore, session: ManagedSession, provenance: ScheduleProvenance,
@@ -96,20 +96,28 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     try {
       const { model, effort, context } = schedule.target
       if (schedule.target.provider === 'copilot' && !model && (effort || context)) {
-        throw new Error('A model is required when setting effort or context')
+        throw new ScheduleLaunchRefusedError('A model is required when setting effort or context')
       }
       if (model || context === 'long_context') {
-        const options = await this.host.providerRuntimeOptions(run.computerId, schedule.target.provider)
+        const options = await this.host.providerRuntimeOptions(run.computerId, schedule.target.provider).catch((error: unknown) => {
+          if (error instanceof ScheduleLaunchRefusedError) throw error
+          const status = error && typeof error === 'object'
+            ? Number('statusCode' in error ? error.statusCode : 'status' in error ? error.status : undefined) : undefined
+          if (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+            throw new ScheduleLaunchRefusedError(error instanceof Error ? error.message : 'The owner refused runtime catalog access')
+          }
+          throw new ScheduleTargetUnavailableError('Runtime models are temporarily unavailable. Try again.')
+        })
         if (!model) {
           if (!options.models.some((entry) => entry.contextTiers.includes('long_context'))) {
-            throw new Error('Long context is not supported by this provider on this computer')
+            throw new ScheduleLaunchRefusedError('Long context is not supported by this provider on this computer')
           }
-          throw new Error('Select an explicit model to validate long-context support on this computer')
+          throw new ScheduleLaunchRefusedError('Select an explicit model to validate long-context support on this computer')
         }
         const selected = options.models.find((entry) => entry.id === model)
-        if (!selected) throw new Error('Selected model is not available')
-        if (effort && !selected.reasoningEfforts.includes(effort)) throw new Error('Selected reasoning effort is not supported by this model')
-        if (context && !selected.contextTiers.includes(context)) throw new Error('Selected context tier is not supported by this model')
+        if (!selected) throw new ScheduleLaunchRefusedError('Selected model is not available')
+        if (effort && !selected.reasoningEfforts.includes(effort)) throw new ScheduleLaunchRefusedError('Selected reasoning effort is not supported by this model')
+        if (context && !selected.contextTiers.includes(context)) throw new ScheduleLaunchRefusedError('Selected context tier is not supported by this model')
       }
       folder = await this.host.validateSessionDirectory(run.computerId, schedule.target.folder)
       if (schedule.workspace === 'worktree') {
@@ -128,6 +136,7 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
           ...owned, state: 'deferred', reason: 'Workspace preparation did not complete; retained for retry or manual review',
         } })
       }
+      if (error instanceof ScheduleLaunchRefusedError || error instanceof ScheduleTargetUnavailableError) throw error
       const status = error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : undefined
       if (error instanceof RemoteNodeTransportError || (status !== undefined && status >= 500) ||
           (!computer.isLocal && !(status !== undefined && status >= 400 && status < 500))) {
@@ -146,13 +155,12 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     }).catch((error: unknown) => {
       const status = error && typeof error === 'object' && 'statusCode' in error ? Number(error.statusCode) : undefined
       const uncertainty = deliveryUncertaintyFromError(error)
-      const prelaunch = uncertainty === false ||
-        (uncertainty !== true && error instanceof Error && error.name === 'RuntimeConfigurationError')
+      const prelaunch = uncertainty === false
       if (prelaunch && status !== undefined && (status >= 500 || status === 408 || status === 429)) {
         throw new ScheduleTargetUnavailableError('Runtime models are temporarily unavailable. Try again.')
       }
-      if (prelaunch && status !== undefined && status >= 400 && status < 500 && error instanceof Error) {
-        throw new ScheduleLaunchRefusedError(error.message)
+      if (prelaunch) {
+        throw new ScheduleLaunchRefusedError(error instanceof Error ? error.message : 'The owner refused session creation')
       }
       throw error
     })
@@ -210,12 +218,19 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
       return this.terminal(run, { ...details, state: 'terminated', outcome: 'stopped' })
     }
     if (launch.deleted) return { ...details, state: 'unknown', error: 'Launch session was deleted without termination acknowledgement' }
-    const session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
+    let session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
     if (session.id !== launch.sessionId || session.computerId !== run.computerId) {
       return { ...details, state: 'unknown', error: 'Mismatched session evidence' }
     }
     await recordScheduleProvenance(this.registry, session, provenance(run, schedule))
     if (run.status === 'stopping' || launch.stopping) return { ...details, state: 'stopping' }
+    if (schedule.target.folderTrust === 'auto-approve' && session.pendingPermission && !session.pendingPermission.stale &&
+        await this.sessions.trustFolder({ session, folderTrust: 'auto-approve' })) {
+      session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
+      if (session.id !== launch.sessionId || session.computerId !== run.computerId) {
+        return { ...details, state: 'unknown', error: 'Mismatched session evidence' }
+      }
+    }
     if (this.needsInput(session)) return { ...details, state: 'needs-input' }
     if (!receipt) {
       // A positive owner binding permits idempotent root acceptance after a
@@ -245,7 +260,8 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
   }
 
   private needsInput(session: ManagedSession): boolean {
-    return Boolean((session.pendingPermission && !session.pendingPermission.stale) || session.pendingUserInput)
+    return Boolean((session.pendingPermission && !session.pendingPermission.stale) ||
+      (session.pendingUserInput && !session.pendingUserInput.stale))
   }
 
   private async terminal(run: ScheduleRun, result: ScheduleReconciliation, fenced = true): Promise<ScheduleReconciliation> {

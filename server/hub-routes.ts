@@ -416,7 +416,7 @@ export async function registerHubRoutes(
   scheduler?: SchedulerStore,
   scheduleNotifications?: ScheduleNotificationService,
   isScheduledSession?: (session: ManagedSession) => boolean,
-  provenance?: Pick<ManagerStore, 'sessionProvenance'> & Partial<Pick<ManagerStore, 'recordUserSession'>>,
+  provenance?: Pick<ManagerStore, 'sessionProvenance'> & Partial<Pick<ManagerStore, 'recordUserSession' | 'recordSessionReplacement'>>,
 ): Promise<void> {
   const projection = sessionProvenanceProjection(provenance, scheduler)
   app.addHook('preSerialization', async (_request, _reply, payload) => projection.reply(payload))
@@ -937,6 +937,12 @@ export async function registerHubRoutes(
       }
       await Promise.all([
         carryMetadata(
+          () => session.id !== sessionId
+            ? provenance?.recordSessionReplacement?.(computerId, sessionId, session.id)
+            : undefined,
+          `${completed}, but its session origin could not be saved.`,
+        ),
+        carryMetadata(
           () => carryKnowledge?.(sessionId, session),
           `${completed}, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.`,
         ),
@@ -1303,7 +1309,7 @@ export async function registerHubRoutes(
       presence?.remove(socket)
     })
   })
-  let broadcasts: Promise<unknown> = Promise.resolve()
+  const broadcasts = new Map<string, { computerId?: string; promise: Promise<void> }>()
   const broadcast = (event: HubEvent) => {
     const outgoing = projection.reply(scheduler && event.type === 'session.upserted'
       ? { ...event, session: sessionForClient(event.session) } : event)
@@ -1312,13 +1318,33 @@ export async function registerHubRoutes(
       return
     }
     const admitted = notifications.admission(event)
-    // Keep metadata and session publications in their original order while
-    // admission delays a signal the native producer may announce.
-    broadcasts = broadcasts.then(async () => {
-      await admitted
-      publications.broadcast(outgoing)
-    }).catch((error: unknown) => {
-      app.log.error({ err: error }, 'Could not persist the notification for a hub event')
+    const computerId = event.type === 'session.upserted' ? event.session.computerId
+      : event.type === 'computer.updated' ? event.computer.id : 'computerId' in event ? event.computerId : undefined
+    const sessionId = event.type === 'session.upserted' ? event.session.id : 'sessionId' in event ? event.sessionId : undefined
+    const computerKey = JSON.stringify(['computer', computerId])
+    const key = sessionId ? JSON.stringify(['session', computerId, sessionId])
+      : event.type === 'computer.updated' || event.type === 'computer.removed' ? computerKey
+        : event.type.startsWith('manager.') ? 'oracle' : event.type
+    const previous = [broadcasts.get(key)?.promise, computerId ? broadcasts.get(computerKey)?.promise : undefined]
+    if (event.type === 'computer.removed') {
+      previous.push(...[...broadcasts.values()].filter((entry) => entry.computerId === computerId).map((entry) => entry.promise))
+    } else if (event.type === 'session.order.updated') {
+      previous.push(...[...broadcasts.values()].filter((entry) => entry.computerId !== undefined).map((entry) => entry.promise))
+    }
+    // Preserve each session's metadata/transcript order and computer retirement
+    // barriers, without letting one passive detail read stall unrelated streams.
+    const entry = {
+      computerId,
+      promise: Promise.all(previous).then(async () => {
+        await admitted
+        publications.broadcast(outgoing)
+      }).catch((error: unknown) => {
+        app.log.error({ err: error }, 'Could not persist the notification for a hub event')
+      }),
+    }
+    broadcasts.set(key, entry)
+    void entry.promise.then(() => {
+      if (broadcasts.get(key) === entry) broadcasts.delete(key)
     })
   }
   manager.on('event', broadcast)
@@ -1443,6 +1469,6 @@ export async function registerHubRoutes(
     // Drain in-flight order work so a closing app leaves no write behind it.
     await seeding
     await orderWork
-    await broadcasts
+    await Promise.all([...broadcasts.values()].map((entry) => entry.promise))
   })
 }

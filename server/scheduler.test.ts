@@ -3,11 +3,12 @@ import { chmod, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from '
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ScheduleCreate, ScheduleRun } from '../shared/schedules.js'
+import { classifyScheduleNotification } from './notification-classifier.js'
 import {
   NoopScheduleLauncher, SchedulerDispatcher, ScheduleTargetUnavailableError,
   SCHEDULER_LATE_MS, type ScheduleLauncher, type ScheduleReconciliation, type ScheduleStopAcknowledgement,
 } from './scheduler-dispatcher.js'
-import { holdsSlot, SchedulerStore, SCHEDULE_RUN_LIMIT } from './scheduler-store.js'
+import { holdsSlot, occurrenceKey, SchedulerStore, SCHEDULE_RUN_LIMIT } from './scheduler-store.js'
 
 const INITIAL = '2026-11-14T08:00:00.000Z'
 const directories: string[] = []
@@ -43,7 +44,7 @@ class FakeLauncher implements ScheduleLauncher {
   })
 }
 
-async function fixture(options: Parameters<typeof createInput>[0] = {}, online = () => true) {
+async function fixture(options: Parameters<typeof createInput>[0] = {}, online: (computerId: string) => boolean = () => true) {
   const directory = await root()
   const store = new SchedulerStore(directory)
   await store.initialize()
@@ -52,6 +53,23 @@ async function fixture(options: Parameters<typeof createInput>[0] = {}, online =
   const dispatcher = new SchedulerDispatcher(store, launcher, { targetOnline: online })
   dispatchers.push(dispatcher)
   return { directory, store, schedule, launcher, dispatcher }
+}
+
+async function retainedHistory(notify: ScheduleCreate['notify'], status: 'failed' | 'succeeded') {
+  const context = await fixture({ notify })
+  const first = (await context.store.admit(context.schedule.id, INITIAL, 'manual', status))!
+  const state = JSON.parse(await readFile(context.store.statePath, 'utf8'))
+  const runs: ScheduleRun[] = Array.from({ length: SCHEDULE_RUN_LIMIT }, (_, index) => index === 0 ? first : {
+    ...first, id: `${first.id}-${index}`, launchId: `${first.launchId}-${index}`,
+    occurrenceAt: new Date(Date.parse(INITIAL) + index).toISOString(),
+  })
+  state.runs = runs
+  state.runSchedules = Object.fromEntries(runs.map((run) => [run.id, context.schedule]))
+  state.occurrences = Object.fromEntries(runs.map((run) => [occurrenceKey(run.scheduleId, run.occurrenceAt), run.id]))
+  await writeFile(context.store.statePath, JSON.stringify(state))
+  const store = new SchedulerStore(context.directory)
+  await store.initialize()
+  return { ...context, store, first }
 }
 
 async function settle(dispatcher: SchedulerDispatcher) {
@@ -126,7 +144,7 @@ describe('scheduler durable store', () => {
   })
 
   it('retains the newest 200 runs and durable eviction fences across restart', async () => {
-    const { store, schedule, directory } = await fixture()
+    const { store, schedule, directory } = await fixture({ notify: 'never' })
     let first: ScheduleRun | undefined
     for (let index = 0; index < SCHEDULE_RUN_LIMIT + 2; index++) {
       const run = await store.admit(schedule.id, new Date(Date.parse(INITIAL) + index).toISOString(), 'schedule', 'missed')
@@ -152,6 +170,42 @@ describe('scheduler durable store', () => {
     expect(store.allRuns()).toHaveLength(200)
     expect(store.allRuns().every((run) => run.status === 'pending')).toBe(true)
   })
+
+  it('bounds unclaimed outcome retention and keeps admission retryable until a durable claim frees a row', async () => {
+    const { store, schedule, directory, first } = await retainedHistory('always', 'failed')
+    await store.update(schedule.id, { revision: schedule.revision, notify: 'never' })
+    const nextAt = '2026-11-15T00:00:00.000Z'
+    const cursor = store.cursor(schedule.id)
+    const before = await readFile(store.statePath, 'utf8')
+    await expect(store.admit(schedule.id, nextAt, 'schedule', 'pending', nextAt))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(store.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(store.getRun(first.id)).toEqual(first)
+    expect(store.cursor(schedule.id)).toBe(cursor)
+    expect(await readFile(store.statePath, 'utf8')).toBe(before)
+
+    const notification = classifyScheduleNotification(schedule, first, INITIAL)[0]
+    await store.claimNotification(notification.id)
+    expect(await store.admit(schedule.id, nextAt, 'schedule', 'pending', nextAt)).toMatchObject({ occurrenceAt: nextAt })
+    expect(store.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(store.cursor(schedule.id)).toBe(nextAt)
+    expect(() => store.getRun(first.id)).toThrow('not found')
+    const restarted = new SchedulerStore(directory)
+    await restarted.initialize()
+    expect(restarted.notificationReplay().claimed.has(notification.id)).toBe(true)
+    expect(await restarted.admit(schedule.id, first.occurrenceAt, 'manual')).toBeUndefined()
+  })
+
+  it.each([['never', 'failed'], ['attention', 'succeeded']] as const)(
+    'does not block retention for an outcome suppressed by its accepted %s policy', async (notify, status) => {
+      const { store, schedule, first } = await retainedHistory(notify, status)
+      await store.update(schedule.id, { revision: schedule.revision, notify: 'always' })
+      await store.admit(schedule.id, '2026-11-15T00:00:00.000Z', 'manual')
+      expect(store.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
+      expect(() => store.getRun(first.id)).toThrow('not found')
+      expect(store.notificationReplay().claimed.size).toBe(0)
+    },
+  )
 
   it('requires archive, revision agreement, and no in-flight runs before deleting', async () => {
     const { store, schedule } = await fixture()
@@ -517,6 +571,124 @@ describe('hub schedule dispatcher', () => {
     expect(store.getRun(replacement.id).status).toBe('running')
   })
 
+  it.each(['archived'] as const)('leaves live work untouched when %s commits after replacement admission before overlap', async (state) => {
+    const { dispatcher, store, launcher, schedule } = await fixture({ overlap: 'replace' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    let mutation: Promise<unknown> | undefined
+    const admit = store.admit.bind(store)
+    vi.spyOn(store, 'admit').mockImplementationOnce(async (...args) => {
+      const replacement = await admit(...args)
+      mutation = state === 'archived'
+        ? store.setArchived(schedule.id, 1, true)
+        : store.update(schedule.id, { revision: 1, enabled: false })
+      return replacement
+    })
+    const replacement = await dispatcher.runNow(schedule.id)
+    await mutation
+    await settle(dispatcher)
+    expect(store.getRun(live.id).status).toBe('running')
+    expect(store.getRun(replacement.id)).toMatchObject({
+      status: 'stopped', error: `Schedule was ${state} before replacement overlap`, endedAt: expect.any(String),
+    })
+    expect(launcher.stop).not.toHaveBeenCalled()
+    expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
+  it.each(['archived'] as const)('does not resume replacement cancellation after restart when the schedule is %s', async (state) => {
+    const { dispatcher, store, launcher, schedule, directory } = await fixture({ overlap: 'replace' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    await dispatcher.stop()
+    const replacement = (await store.admit(schedule.id, '2026-11-14T08:00:00.001Z', 'manual'))!
+    if (state === 'archived') await store.setArchived(schedule.id, 1, true)
+    else await store.update(schedule.id, { revision: 1, enabled: false })
+    const recovered = new SchedulerStore(directory)
+    const restarted = new SchedulerDispatcher(recovered, launcher)
+    dispatchers.push(restarted)
+    await restarted.start()
+    await settle(restarted)
+    expect(recovered.getRun(live.id).status).toBe('running')
+    expect(recovered.getRun(replacement.id)).toMatchObject({
+      status: 'stopped', error: `Schedule was ${state} before replacement overlap`,
+    })
+    expect(launcher.stop).not.toHaveBeenCalled()
+    expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
+  it('lets a manual replacement still replace when the schedule is disabled before overlap', async () => {
+    const { dispatcher, store, launcher, schedule } = await fixture({ overlap: 'replace' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    let mutation: Promise<unknown> | undefined
+    const admit = store.admit.bind(store)
+    vi.spyOn(store, 'admit').mockImplementationOnce(async (...args) => {
+      const replacement = await admit(...args)
+      mutation = store.update(schedule.id, { revision: 1, enabled: false })
+      return replacement
+    })
+    const replacement = await dispatcher.runNow(schedule.id)
+    await mutation
+    await settle(dispatcher)
+    // Admission accepts manual runs of a disabled schedule, so overlap treats them alike.
+    expect(store.getRun(live.id).status).not.toBe('running')
+    expect(launcher.stop).toHaveBeenCalled()
+    expect(store.getRun(replacement.id).error ?? '').not.toContain('before replacement overlap')
+  })
+
+  it('persists replacement stop intent before a later archive and retries that intent after restart', async () => {
+    const { dispatcher, store, launcher, schedule, directory } = await fixture({ overlap: 'replace' })
+    launcher.stop.mockResolvedValue({ outcome: 'unknown' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    const replacement = await dispatcher.runNow(schedule.id)
+    const saved = JSON.parse(await readFile(store.statePath, 'utf8'))
+    expect(saved.runs).toContainEqual(expect.objectContaining({ id: live.id, status: 'stopping' }))
+    expect(store.getRun(replacement.id).status).toBe('pending')
+    expect(launcher.stop).toHaveBeenCalledOnce()
+    await dispatcher.stop()
+    await store.setArchived(schedule.id, 1, true)
+    const recovered = new SchedulerStore(directory)
+    const restarted = new SchedulerDispatcher(recovered, launcher)
+    dispatchers.push(restarted)
+    await restarted.start()
+    await settle(restarted)
+    expect(recovered.getRun(live.id).status).toBe('stopping')
+    expect(recovered.getRun(replacement.id)).toMatchObject({
+      status: 'stopped', error: 'Schedule was archived before replacement overlap',
+    })
+    expect(launcher.stop.mock.calls.length).toBeGreaterThan(1)
+    expect(launcher.stop.mock.calls.every(([run]) => run.id === live.id)).toBe(true)
+    expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
+  it('leaves every run unchanged when the replacement overlap transaction cannot persist', async () => {
+    const { store, launcher, schedule, directory } = await fixture({ overlap: 'replace' })
+    const live = (await store.admit(schedule.id, '2026-11-14T08:00:00.001Z', 'manual'))!
+    await store.changeRun(live.id, { status: 'running' })
+    const queued = (await store.admit(schedule.id, '2026-11-14T08:00:00.002Z', 'manual'))!
+    const replacement = (await store.admit(schedule.id, '2026-11-14T08:00:00.003Z', 'manual'))!
+    const persist = vi.spyOn(store as unknown as { persist(): Promise<void> }, 'persist')
+      .mockRejectedValueOnce(new Error('Synthetic overlap write failure'))
+    await expect(store.applyOverlap(replacement.id)).rejects.toThrow('Synthetic overlap write failure')
+    expect(store.allRuns().map((run) => run.status)).toEqual(['running', 'pending', 'pending'])
+    expect(launcher.stop).not.toHaveBeenCalled()
+    persist.mockRestore()
+    const recovered = new SchedulerStore(directory)
+    await recovered.initialize()
+    expect(recovered.getRun(live.id).status).toBe('running')
+    expect(recovered.getRun(queued.id).status).toBe('pending')
+    expect(recovered.getRun(replacement.id).status).toBe('pending')
+    const stopping = await recovered.applyOverlap(replacement.id)
+    expect(stopping.map((run) => run.id)).toEqual([live.id])
+    expect(recovered.getRun(queued.id).status).toBe('stopped')
+    expect(recovered.getRun(replacement.id).status).toBe('pending')
+  })
+
   it('enforces global concurrency, counting launching and needs-input slots', async () => {
     const { dispatcher, store, launcher, schedule } = await fixture()
     const second = await store.create(createInput({ name: 'Second' }))
@@ -682,6 +854,57 @@ describe('hub schedule dispatcher', () => {
     expect(launcher.launch.mock.calls.at(-1)).toEqual([
       expect.objectContaining({ id: queued.id }), expect.objectContaining({ target: expect.objectContaining({ computerId: 'studio' }) }),
     ])
+  })
+
+  it.each(['completed', 'missed'] as const)('keeps target-edited runs FIFO across restart until the offline predecessor is %s', async (outcome) => {
+    let studioOnline = false
+    const targetOnline = (computerId: string) => computerId !== 'studio' || studioOnline
+    const { dispatcher, store, launcher, schedule, directory } = await fixture({ overlap: 'queue' }, targetOnline)
+    await dispatcher.start()
+    const older = await dispatcher.runNow(schedule.id)
+    await store.update(schedule.id, {
+      revision: 1, target: { computerId: 'other', folder: '/other/project', provider: 'claude' },
+    })
+    const newer = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    expect(store.getRun(older.id)).toMatchObject({ status: 'pending', retryUntil: '2026-11-14T08:10:00.000Z' })
+    expect(store.getRun(newer.id).status).toBe('pending')
+    expect(launcher.launch).not.toHaveBeenCalled()
+    const independent = await store.create(createInput({
+      name: 'Independent', target: { computerId: 'other', folder: '/independent', provider: 'copilot' },
+    }))
+    const unrelated = await dispatcher.runNow(independent.id)
+    await settle(dispatcher)
+    expect(store.getRun(unrelated.id).status).toBe('running')
+    expect(store.allRuns().filter(holdsSlot)).toHaveLength(1)
+    await dispatcher.stop()
+    const recovered = new SchedulerStore(directory)
+    const restarted = new SchedulerDispatcher(recovered, launcher, { targetOnline })
+    dispatchers.push(restarted)
+    await restarted.start()
+    await settle(restarted)
+    expect(recovered.getRun(older.id).status).toBe('pending')
+    expect(recovered.getRun(newer.id).status).toBe('pending')
+    if (outcome === 'completed') {
+      studioOnline = true
+      await settle(restarted)
+      expect(recovered.getRun(older.id).status).toBe('running')
+      expect(recovered.getRun(newer.id).status).toBe('pending')
+      launcher.states.set(older.launchId, { state: 'terminated', outcome: 'succeeded' })
+    } else {
+      vi.setSystemTime(new Date(Date.parse(INITIAL) + SCHEDULER_LATE_MS))
+      await settle(restarted)
+      expect(recovered.getRun(older.id).status).toBe('pending')
+      expect(recovered.getRun(newer.id).status).toBe('pending')
+      vi.setSystemTime(new Date(Date.now() + 1))
+    }
+    await settle(restarted)
+    expect(recovered.getRun(older.id).status).toBe(outcome === 'completed' ? 'succeeded' : 'missed')
+    expect(recovered.getRun(newer.id)).toMatchObject({ status: 'running', computerId: 'other' })
+    expect(launcher.launch.mock.calls.map(([run]) => run.id)).toEqual(
+      outcome === 'completed' ? [unrelated.id, older.id, newer.id] : [unrelated.id, newer.id],
+    )
+    expect(recovered.allRuns().filter(holdsSlot)).toHaveLength(2)
   })
 
   it('does not create sessions with the no-op runner', async () => {

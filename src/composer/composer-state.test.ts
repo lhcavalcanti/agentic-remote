@@ -50,6 +50,24 @@ describe('sent message filtering', () => {
     id, content, role: 'user', deliveryConfirmed: true,
     createdAt: `2026-11-${id.padStart(2, '0')}T12:00:00Z`, ...overrides,
   })
+  it('omits generated recovery/control turns but keeps real prompts before and after recovery', () => {
+    const before = turn('1', 'Original user goal', { deliveryConfirmed: undefined })
+    const brief = turn('2', 'Conversation recovery context', { appGenerated: true })
+    const after = turn('3', 'Continue with the user task', { deliveryConfirmed: undefined })
+    expect(filterSentMessages([before, brief, after]).map((message) => message.id)).toEqual(['3', '1'])
+    expect(filterSentMessages([brief], '', [{
+      deliveryId: 'seed', sessionId: 'recovered', promptId: brief.id, userMessageId: brief.id,
+      acceptedAt: brief.createdAt, state: 'delivered',
+    }])).toEqual([])
+  })
+  it('does not guess that an unmarked legacy or transcript prompt is generated from its text', () => {
+    const prompt = turn('1', 'Conversation recovery context\nA genuine user can write the same header.', {
+      deliveryConfirmed: undefined,
+    })
+    expect(filterSentMessages([prompt])).toEqual([prompt])
+    expect(filterSentMessages([{ ...prompt, deliveryConfirmed: true }], '', [], { status: 'running' }))
+      .toEqual([{ ...prompt, deliveryConfirmed: true }])
+  })
   it.each(['idle', 'running', 'error'] as const)('keeps a legacy turn with a provider reply while %s', (status) => {
     const user = turn('1', 'A pre-upgrade prompt', { deliveryConfirmed: undefined })
     const reply = turn('2', 'The provider answered this turn.', { role: 'assistant', deliveryConfirmed: undefined })

@@ -209,16 +209,7 @@ export class SchedulerDispatcher {
   }
 
   private async overlap(run: ScheduleRun): Promise<void> {
-    const policy = this.store.scheduleForRun(run.id).overlap
-    const runs = this.store.allRuns()
-    const previous = runs.slice(0, runs.findIndex((entry) => entry.id === run.id)).filter((other) =>
-      other.id !== run.id && other.scheduleId === run.scheduleId && isInFlight(other))
-    if (!previous.length) return
-    if (policy === 'skip') {
-      await this.finish(run, 'missed', 'Skipped because another run is in flight')
-    } else if (policy === 'replace') {
-      for (const other of previous) await this.requestStop(other)
-    }
+    for (const other of await this.store.applyOverlap(run.id)) await this.requestStop(other)
   }
 
   private async drain(): Promise<void> {
@@ -239,9 +230,13 @@ export class SchedulerDispatcher {
         await this.unavailable(run, 'Target computer is offline')
         continue
       }
-      if (this.store.allRuns().filter(holdsSlot).length >= SCHEDULER_CONCURRENCY ||
-          this.store.allRuns().some((other) => other.id !== run.id &&
-            other.scheduleId === run.scheduleId && holdsSlot(other))) continue
+      const runs = this.store.allRuns()
+      const position = runs.findIndex((entry) => entry.id === run.id)
+      // Persisted admission order stays FIFO across target edits and restart,
+      // even when an earlier pending run does not hold a concurrency slot.
+      if (runs.filter(holdsSlot).length >= SCHEDULER_CONCURRENCY ||
+          runs.some((other, index) => other.id !== run.id && other.scheduleId === run.scheduleId &&
+            (holdsSlot(other) || (other.status === 'pending' && index < position)))) continue
       const launching = await this.store.beginLaunch(run.id, this.at())
       if (launching.status !== 'launching') continue
       // The write above is the uncertainty boundary. Never call launch twice

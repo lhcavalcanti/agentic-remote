@@ -18,15 +18,19 @@ interface Seen {
 const TASK_LIMIT = 400
 
 /** Replayed at startup as well as after each durable proposal transition. */
-export async function recordScheduleProposal(store: ManagerStore, proposal: ScheduleProposal): Promise<void> {
-  if (store.journalSince(0).some((entry) =>
-    entry.proposalId === proposal.id && entry.proposalStatus === proposal.status)) return
-  await store.appendJournal([{
-    kind: 'schedule-proposal', computerId: 'hub', sessionId: proposal.id,
-    title: scheduleProposalSummary(proposal),
-    proposalId: proposal.id, proposalOperation: proposal.operation, proposalStatus: proposal.status,
-    ...(proposal.error ? { to: proposal.error } : {}),
-  }])
+export async function recordScheduleProposals(
+  store: ManagerStore, proposals: ScheduleProposal[], persisted?: ReadonlyMap<string, string>,
+): Promise<void> {
+  await store.appendProposalJournal(proposals.map((proposal) => ({
+    createdAt: proposal.createdAt,
+    persistedStatus: persisted?.get(proposal.id),
+    entry: {
+      kind: 'schedule-proposal', computerId: 'hub', sessionId: proposal.id,
+      title: scheduleProposalSummary(proposal),
+      proposalId: proposal.id, proposalOperation: proposal.operation, proposalStatus: proposal.status,
+      ...(proposal.error ? { to: proposal.error } : {}),
+    },
+  })))
 }
 
 export interface JournalRecorderOptions {

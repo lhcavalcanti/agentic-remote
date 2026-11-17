@@ -12,6 +12,7 @@ import {
 } from 'react'
 import ReaderWorkspace, { READER_WIDTH_MIN } from './ReaderWorkspace'
 import { Composer } from './composer/Composer'
+import { useForegroundHandoff } from './composer/use-foreground-handoff'
 import type { ComposerAttachment } from './composer/types'
 import {
   activeComposerPastes,
@@ -243,6 +244,7 @@ import type {
 } from '../shared/contracts'
 import {
   hasActiveBackgroundTasks,
+  hasForegroundTurn,
   hasRunningBackgroundAgent,
 } from '../shared/background-tasks'
 import { terminalSendOptions } from '../shared/send-policy'
@@ -3799,6 +3801,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setShellView('scheduler')
     initialScheduleLink.current = undefined
   }, [schedulerView])
+  const composerRefresh = usePreviewFeature('composerRefresh')
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -4121,6 +4124,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // Sessions somebody said outright are gone, as opposed to ones a list did
   // not mention. Absence and removal are different things.
   const removedSessions = useRef(new Set<string>())
+  // Tombstones that exist only because their computer was unpaired; pairing it again lifts them.
+  const unpairedTombstones = useRef(new Map<string, Set<string>>())
   // Of those, the ones closed to reopen: coming back lifts their removal.
   const closedSessionKeys = useRef(new Set<string>())
   // One reorder at a time for a session, so a second drag does not take its
@@ -4591,6 +4596,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const recordingStreamRef = useRef<MediaStream | undefined>(undefined)
   const recordingChunksRef = useRef<Blob[]>([])
   const recordingSessionRef = useRef<ManagedSession | undefined>(undefined)
+  const recordingIntakeSequenceRef = useRef(0)
   const recordingTimerRef = useRef<number | undefined>(undefined)
   const recordingStartedAtRef = useRef(0)
   const discardRecordingRef = useRef(false)
@@ -5379,6 +5385,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     hasRunningBackgroundAgent(selectedBackgroundTasks)
   const selectedHasActiveBackgroundTasks =
     hasActiveBackgroundTasks(selectedBackgroundTasks)
+  const foregroundHandoff = useForegroundHandoff(
+    selected, selected ? sessionEventSequenceRef.current.get(sessionKey(selected)) || 0 : 0,
+  )
+  const selectedForegroundTurnActive = useMemo(
+    () => foregroundHandoff.active || Boolean(selected && hasForegroundTurn(selected, selectedBackgroundTasks)),
+    [foregroundHandoff.active, selected, selectedBackgroundTasks],
+  )
   const selectedQueueAvailable =
     selected?.status === 'running' ||
     (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
@@ -7375,8 +7388,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       // A replacement selected while the refresh was in flight is missing
       // from the snapshot by definition, and dropping it would jump the
       // reader to an unrelated session.
+      // Removed while this refresh ran (for example, its computer was found
+      // unpaired by the snapshot above): it is gone, not newly changed.
+      const selectedRemovedSinceRefresh = Boolean(selectedAtRefresh &&
+        removedSessions.current.has(sessionKey(selectedAtRefresh)) &&
+        changedSinceRefresh(sessionKey(selectedAtRefresh)))
       const selectedStillExists =
-        selectedAtRefresh &&
+        selectedAtRefresh && !selectedRemovedSinceRefresh &&
         (snapshotSessions.some(
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
         ) ||
@@ -7431,6 +7449,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // The archived record was deleted and its removal event never
           // arrived here; the list and the detail now agree it is gone.
           removedSessions.current.add(goneKey)
+          claimTombstone(goneKey)
           setSessions((current) => current.filter((session) => sessionKey(session) !== goneKey))
           if (selectedRef.current && sessionKey(selectedRef.current) === goneKey) {
             setSelectedKey(
@@ -7561,7 +7580,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // move the transcript sequence either.
           for (const listener of managerListenersRef.current) listener(event)
           raiseOracleShellNotificationRef.current(event)
-        } else if (event.type === 'schedule-proposals.changed') {
+        } else if (event.type === 'schedule-proposals.changed' || event.type === 'schedules.changed') {
           setScheduleProposalEpoch((current) => current + 1)
         } else if (event.type === 'schedule.run.notification') {
           raiseScheduleShellNotificationRef.current(event.notification)
@@ -7616,6 +7635,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // is not what settles it, and a delayed clear response must not put
           // it back.
           removedSessions.current.add(removedKey)
+          claimTombstone(removedKey)
           if (event.closed) {
             closedSessionKeys.current.add(removedKey)
             void recentlyClosedRef.current.refresh()
@@ -7723,6 +7743,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // The hub filters retired clients before publishing this event.
           // A new pairing may be announced by another tab without a refresh.
           forgottenComputers.current.delete(event.computer.id)
+          liftUnpairedTombstones(event.computer.id)
           eventSequenceRef.current = nextSessionEventSequence()
           // Only the computer record is newer, not its sessions. A paired node
           // going offline is an ordinary update, and treating it as reason to
@@ -7739,20 +7760,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             event.computerId,
             eventSequenceRef.current,
           )
-          // Its sessions go with it, so nothing held for them can ever be
-          // settled again. Left behind, the text of a prompt that failed
-          // stayed in this browser's storage for good.
-          for (const key of Object.keys(restoredDraftStamps.current)) {
-            if (key.slice(0, key.indexOf(':')) === event.computerId) {
-              forgetRestoredDraft(key)
-              handledFailures.current.delete(key)
-              restoredFailures.current.delete(key)
-              unshownFailures.current.delete(key)
-            }
-          }
-          for (const key of acceptedSubmissionTokens.current.keys()) {
-            if (key.startsWith(`${event.computerId}:`)) acceptedSubmissionTokens.current.delete(key)
-          }
+          discardComputerLocalState(event.computerId)
           computersRef.current = computersRef.current.filter(
             (computer) => computer.id !== event.computerId,
           )
@@ -7761,35 +7769,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // computer that has been unpaired, so a tab still listing one would
           // offer a document it can no longer fetch.
           forgetComputerKnowledge(event.computerId)
-          setSideQuestions(withoutSideQuestions((key) => key.startsWith(`${event.computerId}:`)))
-          // Nothing on a computer that has gone is still on its way.
-          for (const key of [...pendingReplacements.current]) {
-            if (key.slice(0, key.indexOf(':')) === event.computerId) {
-              pendingReplacements.current.delete(key)
-              settleAttachmentTargetWaiters(key, undefined)
-            }
-          }
           for (const session of sessionsRef.current) {
-            if (session.computerId === event.computerId) {
-              removedSessions.current.add(sessionKey(session))
-              submissionAnchors.current.delete(sessionKey(session))
-            }
+            if (session.computerId === event.computerId) tombstoneUnpairedSession(event.computerId, sessionKey(session))
           }
           setSessions((current) =>
             current.filter((session) => session.computerId !== event.computerId),
           )
           setBackgroundTaskSnapshots((current) =>
-            Object.fromEntries(
-              Object.entries(current).filter(
-                ([key]) => !key.startsWith(`${event.computerId}:`),
-              ),
-            ),
-          )
-          updateComposerDrafts(
-            Object.keys(composerDraftsRef.current).filter(
-              (key) => key.startsWith(`${event.computerId}:`),
-            ),
-            (current) =>
             Object.fromEntries(
               Object.entries(current).filter(
                 ([key]) => !key.startsWith(`${event.computerId}:`),
@@ -8491,7 +8477,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return false
     }
     const userTurns = selected.messages
-      .filter((message) => message.role === 'user' && message.content.trim())
+      .filter((message) => message.role === 'user' && !message.appGenerated && message.content.trim())
     const messages = userTurns.map((message) => message.content)
     if (messages.length === 0) {
       return false
@@ -8573,6 +8559,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const targetKey = followsLineage
       ? followReplacementsRef.current(rawTargetKey)
       : rawTargetKey
+    // A transcription or upload can finish after its session (or computer) is gone.
+    if (removedSessions.current.has(targetKey)) return
     updateComposerDrafts([targetKey], (current) => {
       const existing = durableComposerDraft(
         targetKey,
@@ -10163,6 +10151,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     )
     for (const computer of accepted) {
       forgottenComputers.current.delete(computer.id)
+      liftUnpairedTombstones(computer.id)
     }
     const listedIds = new Set(loaded.map((computer) => computer.id))
     const knownIds = new Set([
@@ -10187,6 +10176,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     computersRef.current = reconciled
     setComputers(reconciled)
+    discardUnpairedComputers(forgotten)
     return forgotten
   }
 
@@ -10866,10 +10856,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         sessionsRef.current = upsertSession(sessionsRef.current, updated)
         setSessions((current) => upsertSession(current, updated))
       }
+      if (composerRefresh && !isCommand && !shouldEnqueue && !queuedInstead) {
+        foregroundHandoff.accepted(updated, sessionEventSequenceRef.current.get(liveKey) || 0)
+      }
     } catch (caught) {
       if (!composerMounted.current) {
         return
       }
+      foregroundHandoff.clear()
       const liveKey = followReplacementsRef.current(targetKey)
       if (
         liveKey === targetKey &&
@@ -10971,11 +10965,17 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
   }
 
+  /** Unpairing discards a computer's drafts, even if it is paired again before queued work runs. */
+  function unpairedSince(computerId: string, intakeSequence: number) {
+    return (computerEventSequenceRef.current.get(computerId) || 0) > intakeSequence
+  }
+
   async function transcribeFile(
     file: File,
     targetSession: ManagedSession | undefined = selected,
+    intakeSequence = eventSequenceRef.current,
   ) {
-    if (!targetSession) {
+    if (!targetSession || unpairedSince(targetSession.computerId, intakeSequence)) {
       return
     }
     const targetKey = sessionKey(targetSession)
@@ -10983,6 +10983,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setError(undefined)
     try {
       const result = await transcribeAudio(file)
+      if (unpairedSince(targetSession.computerId, intakeSequence)) return
       appendComposerForKey(targetKey, result.transcript)
       if (
         selectedRef.current &&
@@ -11047,6 +11048,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       mediaRecorderRef.current = recorder
       recordingChunksRef.current = []
       recordingSessionRef.current = selected
+      recordingIntakeSequenceRef.current = eventSequenceRef.current
       discardRecordingRef.current = false
       recorder.addEventListener('dataavailable', (event) => {
         if (event.data.size > 0) {
@@ -11068,8 +11070,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         const file = new File(chunks, `recording.${extension}`, {
           type: mimeType,
         })
+        const intakeSequence = recordingIntakeSequenceRef.current
         const releaseIntake = holdAttachmentIntake()
-        void queueAttachmentWork(() => transcribeFile(file, targetSession))
+        void queueAttachmentWork(() => transcribeFile(file, targetSession, intakeSequence))
           .then(releaseIntake, releaseIntake)
       })
       recorder.addEventListener('error', () => {
@@ -11180,7 +11183,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       { message: string; retryable: boolean }
     >(),
     releaseIntake?: () => void,
+    intakeSequence = eventSequenceRef.current,
   ) {
+    if (unpairedSince(targetSession.computerId, intakeSequence)) return
     const targetKey = sessionKey(targetSession)
     const liveKey = followReplacementsRef.current(targetKey)
     const lineageAvailable =
@@ -11191,6 +11196,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     if (!liveTarget && files.some((file) => !isAudioFile(file))) {
       liveTarget = await waitForAttachmentTarget(targetSession)
+      if (unpairedSince(targetSession.computerId, intakeSequence)) return
     }
     if (!liveTarget && files.some((file) => !isAudioFile(file))) {
       clipboardPasteBatchesRef.current.delete(liveKey)
@@ -11253,7 +11259,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             !removedSessions.current.has(targetKey) ||
             followReplacementsRef.current(targetKey) !== targetKey
           ) {
-            await transcribeFile(item.file, targetSession)
+            await transcribeFile(item.file, targetSession, intakeSequence)
           }
         } finally {
           for (const key of new Set([
@@ -11312,6 +11318,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       setError('Stop recording before attaching files.')
       return Promise.resolve()
     }
+    const intakeSequence = eventSequenceRef.current
     if (deduplicateClipboard) {
       const ownerKey = followReplacementsRef.current(sessionKey(targetSession))
       const now = Date.now()
@@ -11381,6 +11388,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               targetSession,
               preflightErrors,
               releaseIntake,
+              intakeSequence,
             )
           }
         } finally {
@@ -11395,7 +11403,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     const releaseIntake = holdAttachmentIntake()
     const work = queueAttachmentWork(() =>
-      processAttachedFiles(files, targetSession, undefined, releaseIntake),
+      processAttachedFiles(files, targetSession, undefined, releaseIntake, intakeSequence),
     )
     void work.then(releaseIntake, releaseIntake)
     return work
@@ -12778,6 +12786,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         closedSessionKeys.current.add(closedKey)
       }
       removedSessions.current.add(closedKey)
+      claimTombstone(closedKey)
       forgetAttachments(closedKey)
       updateComposerDrafts([closedKey], (current) => {
         const { [closedKey]: _removed, ...remaining } = current
@@ -13050,6 +13059,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
 
   function computerAdded(computer: ComputerSummary) {
     forgottenComputers.current.delete(computer.id)
+    liftUnpairedTombstones(computer.id)
     eventSequenceRef.current = nextSessionEventSequence()
     computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
     computersRef.current = upsertComputer(computersRef.current, computer)
@@ -13062,47 +13072,114 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     computersRef.current = computersRef.current.filter((computer) => computer.id !== computerId)
     setComputers(computersRef.current)
     forgetComputerKnowledge(computerId)
-    setSessions((current) => current.filter((session) => session.computerId !== computerId))
-    setBackgroundTaskSnapshots((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => !key.startsWith(`${computerId}:`))))
+    // The removal event may never arrive (socket down), so fence late responses
+    // and drop browser-held state here exactly as a snapshot removal does.
+    discardUnpairedComputers(new Set([computerId]))
+  }
+
+
+  /**
+   * Browser-held state for a computer that is no longer paired: its sessions
+   * go with it, so nothing held for them can ever be settled again. Left
+   * behind, the text of a prompt that failed stayed in this browser's storage
+   * for good, and side answers stayed on screen. Shared by the removal event
+   * and a connection check that finds the computer unpaired.
+   */
+  function discardComputerLocalState(computerId: string) {
+    const owned = (key: string) => key.startsWith(`${computerId}:`)
+    for (const key of Object.keys(restoredDraftStamps.current)) {
+      if (owned(key)) {
+        forgetRestoredDraft(key)
+        handledFailures.current.delete(key)
+        restoredFailures.current.delete(key)
+        unshownFailures.current.delete(key)
+      }
+    }
+    for (const key of acceptedSubmissionTokens.current.keys()) {
+      if (owned(key)) acceptedSubmissionTokens.current.delete(key)
+    }
+    setSideQuestions(withoutSideQuestions(owned))
+    // Nothing on a computer that has gone is still on its way.
+    for (const key of [...pendingReplacements.current]) {
+      if (owned(key)) {
+        pendingReplacements.current.delete(key)
+        settleAttachmentTargetWaiters(key, undefined)
+      }
+    }
+    for (const session of sessionsRef.current) {
+      if (session.computerId === computerId) {
+        submissionAnchors.current.delete(sessionKey(session))
+        forgetAttachments(sessionKey(session))
+      }
+    }
+    updateComposerDrafts(
+      Object.keys(composerDraftsRef.current).filter(owned),
+      (current) => Object.fromEntries(Object.entries(current).filter(([key]) => !owned(key))),
+    )
+  }
+
+  /**
+   * Sessions, task caches and browser-held state for computers a snapshot
+   * found unpaired. Shared by every snapshot (connection check, reconnect,
+   * startup), so whichever one wins still cleans up.
+   */
+  function tombstoneUnpairedSession(computerId: string, key: string) {
+    if (removedSessions.current.has(key)) return
+    removedSessions.current.add(key)
+    const keys = unpairedTombstones.current.get(computerId) ?? new Set<string>()
+    keys.add(key)
+    unpairedTombstones.current.set(computerId, keys)
+  }
+
+  /** A deletion or close owns the tombstone from now on, so pairing again does not lift it. */
+  function claimTombstone(key: string) {
+    unpairedTombstones.current.get(key.slice(0, key.indexOf(':')))?.delete(key)
+  }
+
+  function liftUnpairedTombstones(computerId: string) {
+    for (const key of unpairedTombstones.current.get(computerId) ?? []) removedSessions.current.delete(key)
+    unpairedTombstones.current.delete(computerId)
+  }
+
+  function discardUnpairedComputers(forgotten: ReadonlySet<string>) {
+    if (!forgotten.size) return
+    // Only a newer computer event can keep a computer; a newer session event does not re-pair its owner.
+    const keepSession = (session: ManagedSession) => !forgotten.has(session.computerId)
+    const keepTasks = (key: string) => !forgotten.has(key.slice(0, key.indexOf(':')))
+    // Fence older responses even if the same computer is paired again before they finish.
+    const removedAtSequence = nextSessionEventSequence()
+    eventSequenceRef.current = removedAtSequence
+    for (const id of forgotten) computerEventSequenceRef.current.set(id, removedAtSequence)
+    for (const id of forgotten) discardComputerLocalState(id)
+    for (const session of sessionsRef.current) {
+      if (!keepSession(session)) {
+        const key = sessionKey(session)
+        tombstoneUnpairedSession(session.computerId, key)
+        sessionEventSequenceRef.current.set(key, removedAtSequence)
+      }
+    }
+    for (const key of new Set([
+      ...Object.keys(backgroundTaskSnapshotsRef.current),
+      ...backgroundTaskRequestsRef.current.keys(),
+    ])) {
+      if (!keepTasks(key)) {
+        backgroundTaskEventSequenceRef.current.set(key, removedAtSequence)
+        if (backgroundTaskRequestsRef.current.has(key)) queuedBackgroundTaskRefreshesRef.current.add(key)
+      }
+    }
+    sessionsRef.current = sessionsRef.current.filter(keepSession)
+    setSessions((current) => current.filter(keepSession))
+    const tasks = (current: Record<string, BackgroundTaskSnapshot>) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => keepTasks(key)))
+    backgroundTaskSnapshotsRef.current = tasks(backgroundTaskSnapshotsRef.current)
+    setBackgroundTaskSnapshots(tasks)
   }
 
   async function checkComputerConnections() {
     const generation = ++snapshotGeneration.current
     const startedAtSequence = eventSequenceRef.current
     const loaded = await listComputers()
-    const forgotten = applyComputerSnapshot(loaded, startedAtSequence, generation)
-    if (forgotten.size) {
-      // Only a newer computer event can keep a computer; a newer session event does not re-pair its owner.
-      const keepSession = (session: ManagedSession) => !forgotten.has(session.computerId)
-      const keepTasks = (key: string) => !forgotten.has(key.slice(0, key.indexOf(':')))
-      // Fence older responses even if the same computer is paired again before they finish.
-      const removedAtSequence = nextSessionEventSequence()
-      eventSequenceRef.current = removedAtSequence
-      for (const id of forgotten) computerEventSequenceRef.current.set(id, removedAtSequence)
-      for (const session of sessionsRef.current) {
-        if (!keepSession(session)) {
-          const key = sessionKey(session)
-          removedSessions.current.add(key)
-          sessionEventSequenceRef.current.set(key, removedAtSequence)
-        }
-      }
-      for (const key of new Set([
-        ...Object.keys(backgroundTaskSnapshotsRef.current),
-        ...backgroundTaskRequestsRef.current.keys(),
-      ])) {
-        if (!keepTasks(key)) {
-          backgroundTaskEventSequenceRef.current.set(key, removedAtSequence)
-          if (backgroundTaskRequestsRef.current.has(key)) queuedBackgroundTaskRefreshesRef.current.add(key)
-        }
-      }
-      sessionsRef.current = sessionsRef.current.filter(keepSession)
-      setSessions((current) => current.filter(keepSession))
-      const tasks = (current: Record<string, BackgroundTaskSnapshot>) =>
-        Object.fromEntries(Object.entries(current).filter(([key]) => keepTasks(key)))
-      backgroundTaskSnapshotsRef.current = tasks(backgroundTaskSnapshotsRef.current)
-      setBackgroundTaskSnapshots(tasks)
-    }
+    applyComputerSnapshot(loaded, startedAtSequence, generation)
     return computersRef.current
   }
 
@@ -14057,6 +14134,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             selectedRetained={selectedRetained}
             selectedQueueHeadIsSteering={selectedQueueHeadIsSteering}
             selectedQueueAvailable={selectedQueueAvailable}
+            foregroundTurnActive={selectedForegroundTurnActive}
             selectedComputerOnline={selectedComputerOnline}
             supportsQueuedPromptDispatch={selectedProviderCapability?.supportsQueuedPromptDispatch === true}
             providerCapability={selectedProviderCapability}
@@ -14154,6 +14232,15 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
             onOpenRuntime={() => setRuntimeOpen(true)}
             onRecallSentMessage={(id) => { navigateMessageHistory(-1, true, id) }}
+            onUseSentMessage={() => {
+              if (!selectedKey || !composerDraftsRef.current[selectedKey]) return false
+              const history = composerHistoryRef.current[selectedKey]
+              if (!history || history.index >= history.messages.length) return false
+              // Invalidate the parked preview before serializing the visible draft.
+              const committed = updateComposerDrafts([selectedKey], (current) => ({ ...current }), true)
+              if (committed) focusComposer(selectedKey)
+              return committed
+            }}
             onCancelSentMessage={() => {
               if (!selectedKey) return
               const history = composerHistoryRef.current[selectedKey]

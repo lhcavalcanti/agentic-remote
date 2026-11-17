@@ -499,7 +499,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       const run = next.runs[position]
       const stopping: ScheduleRun[] = []
       // Overlap can update several runs; invalidate the whole schedule.
-      const change = { result: stopping, scheduleId: run.scheduleId }
+      const change = { result: stopping, scheduleId: run.scheduleId, runIds: [] as string[] }
       if (run.status !== 'pending') return change
       const previous = next.runs.slice(0, position).filter((other) =>
         other.scheduleId === run.scheduleId && isInFlight(other))
@@ -510,6 +510,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
         next.runs[position] = scheduleRunSchema.parse({
           ...run, status: 'missed', endedAt, error: 'Skipped because another run is in flight',
         })
+        change.runIds.push(run.id)
       } else if (policy === 'replace') {
         const schedule = next.schedules.find((entry) => entry.id === run.scheduleId)
         // Archive/disable and replacement stop intent share one commit ordering.
@@ -519,6 +520,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
           next.runs[position] = scheduleRunSchema.parse({
             ...run, status: 'stopped', endedAt, error: `Schedule was ${reason} before replacement overlap`,
           })
+          change.runIds.push(run.id)
           return change
         }
         for (const other of previous) {
@@ -527,6 +529,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
             ...(other.status === 'pending' ? { endedAt } : {}),
           })
           next.runs[next.runs.indexOf(other)] = updated
+          change.runIds.push(updated.id)
           if (updated.status === 'stopping') stopping.push(updated)
         }
       }
@@ -555,19 +558,25 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
 
   async flush(): Promise<void> { await this.work }
 
-  private commit<T>(mutate: (next: State) => { result: T; scheduleId?: string; runId?: string; proposalId?: string }): Promise<T> {
+  private commit<T>(mutate: (next: State) => { result: T; scheduleId?: string; runId?: string; runIds?: string[]; proposalId?: string }): Promise<T> {
     const task = this.work.then(async () => {
       if (!this.initialized) throw new Error('Scheduler store is not initialized')
       if (this.poisoned) throw new Error('Scheduler commit outcome is uncertain; restart to reload durable state')
       const next = structuredClone(this.state)
-      const { result, scheduleId, runId, proposalId } = mutate(next)
+      const { result, scheduleId, runId, runIds, proposalId } = mutate(next)
       next.runs.forEach(deferUnboundWorktree)
       if (JSON.stringify(next) !== JSON.stringify(this.state)) {
         const visible = JSON.stringify([next.schedules, next.runs]) !== JSON.stringify([this.state.schedules, this.state.runs])
         next.revision += 1
         await this.persist(next)
         this.state = next
-        if (visible && scheduleId) this.emit('changed', { type: 'schedules.changed', revision: next.revision, scheduleId, ...(runId ? { runId } : {}) })
+        if (visible && scheduleId) {
+          const affected = [...new Set([...(runIds ?? []), ...(runId ? [runId] : [])])]
+          this.emit('changed', {
+            type: 'schedules.changed', revision: next.revision, scheduleId,
+            ...(runId ? { runId } : {}), ...(affected.length ? { runIds: affected } : {}),
+          })
+        }
         if (proposalId) this.emit('proposal', { type: 'schedule-proposals.changed', revision: next.revision, proposalId })
       }
       return structuredClone(result)

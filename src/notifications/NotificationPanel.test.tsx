@@ -118,6 +118,46 @@ it('provides independent item, session-group and all read and dismiss scopes', (
   expect(mutate.mock.lastCall?.[0]).toEqual(expect.arrayContaining(['new', 'old', 'other']))
 })
 
+it.each([
+  ['oracle.message', 'studio', undefined],
+  ['host.alert', 'studio', undefined],
+  ['computer.offline', 'studio', undefined],
+  ['schedule.run.failed', 'studio', undefined],
+  ['session.completed', undefined, 'one'],
+] as const)('limits repeated non-session %s records to item actions (computer: %s, session: %s)', (kind, computerId, sessionId) => {
+  const mutate = vi.fn()
+  const group = { kind, computerId, sessionId, coalesceKey: 'same-fictional-event' }
+  const { container } = render(<NotificationPanel enabled onClose={vi.fn()} onOpen={vi.fn()} notifications={{
+    records: [record('old', group), record('new', { ...group, createdAt: '2026-11-14T18:01:00Z' })],
+    mutate, mutating: false, loading: false, loaded: true, error: undefined, unreadCount: 2,
+  }} />)
+  const summary = container.querySelector('summary')!
+  fireEvent.click(summary)
+  expect(screen.queryByRole('button', { name: 'Mark session read' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Dismiss session' })).toBeNull()
+  expect(summary.textContent).toBe('Notifications (2)')
+  fireEvent.click(screen.getByRole('button', { name: 'Mark Record old read' }))
+  expect(mutate).toHaveBeenLastCalledWith(['old'], 'read')
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss Record old' }))
+  expect(mutate).toHaveBeenLastCalledWith(['old'], 'dismiss')
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss Record new' }))
+  expect(mutate).toHaveBeenLastCalledWith(['new'], 'dismiss')
+})
+
+it('retains session actions for scheduled records bound to the same computer and session', () => {
+  const mutate = vi.fn()
+  render(<NotificationPanel enabled onClose={vi.fn()} onOpen={vi.fn()} notifications={{
+    records: [record('old', { kind: 'schedule.run.succeeded' }),
+      record('new', { kind: 'schedule.run.failed', createdAt: '2026-11-14T18:01:00Z' })],
+    mutate, mutating: false, loading: false, loaded: true, error: undefined, unreadCount: 2,
+  }} />)
+  fireEvent.click(screen.getByText('Session notifications (2)'))
+  fireEvent.click(screen.getByRole('button', { name: 'Mark session read' }))
+  expect(mutate).toHaveBeenLastCalledWith(['new', 'old'], 'read')
+  fireEvent.click(screen.getByRole('button', { name: 'Dismiss session' }))
+  expect(mutate).toHaveBeenLastCalledWith(['new', 'old'], 'dismiss')
+})
+
 it('sends one bounded request for a large read or dismiss action', async () => {
   vi.mocked(request).mockResolvedValue({ notifications: [record('one')] })
   const { result } = renderHook(() => useNotifications(true))

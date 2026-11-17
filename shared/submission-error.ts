@@ -60,7 +60,8 @@ export function httpDeliveryUncertain(
 
 export class SubmissionError extends Error {
   readonly statusCode: number
-  readonly code?: string
+  // Declared, not initialized: errors without a server code carry no `code` property.
+  declare readonly code?: string
   readonly submission?: SubmissionReceipt
   readonly uncertainDelivery: boolean
   readonly terminalDraftConflict: boolean
@@ -78,7 +79,7 @@ export class SubmissionError extends Error {
     super(message, options)
     this.name = 'SubmissionError'
     this.statusCode = statusCode
-    this.code = options?.code
+    if (options?.code !== undefined) Object.defineProperty(this, 'code', { value: options.code, enumerable: true })
     this.submission = submission
     this.uncertainDelivery = options?.uncertainDelivery ?? submission?.accepted === true
     this.terminalDraftConflict = options?.terminalDraftConflict === true

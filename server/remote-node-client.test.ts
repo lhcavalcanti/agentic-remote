@@ -46,7 +46,7 @@ describe('host telemetry request safety', () => {
       headers: { 'content-type': 'application/json' },
     }))
     await expect(client('http://fixture.invalid').hostTelemetryTarget()).rejects.toMatchObject({
-      statusCode: 502, message: 'This computer returned invalid host telemetry',
+      statusCode: 502, message: 'This computer returned invalid host telemetry', code: 'HOST_TELEMETRY_INVALID',
     })
   })
 
@@ -80,7 +80,7 @@ describe('host telemetry request safety', () => {
     const target = await client('http://fixture.invalid').hostTelemetryTarget()
     for (const read of [target.snapshot, target.history, target.processes]) {
       fetch.mockResolvedValueOnce(Response.json({ unexpected: 'fictional' }))
-      await expect(read()).rejects.toMatchObject({ statusCode: 502 })
+      await expect(read()).rejects.toMatchObject({ statusCode: 502, code: 'HOST_TELEMETRY_INVALID' })
     }
   })
 
@@ -89,7 +89,9 @@ describe('host telemetry request safety', () => {
     const owner = client('http://fixture.invalid')
     const target = await owner.hostTelemetryTarget()
     fetch.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'http://elsewhere.invalid' } }))
-    await expect(target.snapshot()).rejects.toMatchObject({ statusCode: 502 })
+    const redirected = target.snapshot()
+    await expect(redirected).rejects.toMatchObject({ statusCode: 502 })
+    await expect(redirected).rejects.not.toHaveProperty('code')
     expect(fetch).toHaveBeenCalledTimes(2)
     const init = fetch.mock.calls[1][1]!
     expect(init.redirect).toBe('manual')
@@ -102,11 +104,15 @@ describe('host telemetry request safety', () => {
   it('maps connection failures and sampler request timeouts to a retryable computer-unavailable state', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new TypeError('Synthetic disconnect'))
     const owner = client('http://fixture.invalid')
-    await expect(owner.hostTelemetryTarget()).rejects.toMatchObject({ statusCode: 503 })
+    const disconnected = owner.hostTelemetryTarget()
+    await expect(disconnected).rejects.toMatchObject({ statusCode: 503 })
+    await expect(disconnected).rejects.not.toHaveProperty('code')
     fetch.mockResolvedValueOnce(Response.json(info))
     const target = await owner.hostTelemetryTarget()
     fetch.mockRejectedValueOnce(new DOMException('Synthetic timeout', 'TimeoutError'))
-    await expect(target.snapshot()).rejects.toMatchObject({ statusCode: 503 })
+    const timedOut = target.snapshot()
+    await expect(timedOut).rejects.toMatchObject({ statusCode: 503 })
+    await expect(timedOut).rejects.not.toHaveProperty('code')
     owner.stop()
   })
 })

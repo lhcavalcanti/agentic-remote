@@ -44,7 +44,7 @@ import { NodeIdentityStore } from './node-identity.js'
 import { normalizeNodeUrl, RemoteNodeClient } from './remote-node-client.js'
 import { RemoteNodeRequestError } from './remote-node-errors.js'
 import { launchIdentitySchema, cancellationAckSchema, type TerminationAcknowledgement } from '../shared/launch-identity.js'
-import { updateComputerForLaunchIdentity } from './launch-identity.js'
+import { updateComputerForLaunchIdentity, withSessionCreateBoundary } from './launch-identity.js'
 import { updateComputerForScheduleWorktrees, type ScheduleWorktreeInput } from '../shared/schedule-worktrees.js'
 import type { ScheduleWorktreeService } from './schedule-worktrees.js'
 import type { SessionService } from './session-service.js'
@@ -641,24 +641,27 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     input: CreateSessionInput,
   ): Promise<ManagedSession> {
-    const computer = this.requireComputer(computerId)
-    const provider = input.provider || 'copilot'
-    const capability = computer.providers?.find(
-      (candidate) => candidate.id === provider,
-    )
-    if (input.launchId !== undefined) {
-      launchIdentitySchema.parse(input.launchId)
-      if (!capability?.supportsLaunchIdentity) throw updateComputerForLaunchIdentity()
-    }
-    if (!capability?.available) {
-      throw new Error(
-        capability?.unavailableReason ||
-          `${provider === 'claude' ? 'Claude Agent' : 'GitHub Copilot'} is not available on ${computer.name}`,
+    return withSessionCreateBoundary(async (beginCreate) => {
+      const computer = this.requireComputer(computerId)
+      const provider = input.provider || 'copilot'
+      const capability = computer.providers?.find(
+        (candidate) => candidate.id === provider,
       )
-    }
-    const session =
-      computerId === this.identity.info.id
-        ? await this.localService.createSession(
+      if (input.launchId !== undefined) {
+        launchIdentitySchema.parse(input.launchId)
+        if (!capability?.supportsLaunchIdentity) throw updateComputerForLaunchIdentity()
+      }
+      if (!capability?.available) {
+        throw new Error(
+          capability?.unavailableReason ||
+            `${provider === 'claude' ? 'Claude Agent' : 'GitHub Copilot'} is not available on ${computer.name}`,
+        )
+      }
+      const client = computerId === this.identity.info.id ? undefined : this.requireClient(computerId)
+      beginCreate()
+      const session = client
+        ? await client.createSession(input)
+        : await this.localService.createSession(
             input.cwd,
             input.terminalBacked,
             input.allowAllPermissions,
@@ -669,8 +672,8 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.mode,
             ...(input.launchId !== undefined ? [input.launchId] : []),
           )
-        : await this.requireClient(computerId).createSession(input)
-    return managedSession(session, computer)
+      return managedSession(session, computer)
+    })
   }
 
   async providerRuntimeOptions(

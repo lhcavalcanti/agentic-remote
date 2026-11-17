@@ -43,6 +43,7 @@ export function ComposerActions({
   onRecallSentMessage,
   onCancelSentMessage,
   providerCapability,
+  onUseSentMessage,
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'foregroundTurnActive' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
@@ -50,7 +51,7 @@ export function ComposerActions({
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
   'recordingDuration' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
-  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability'
+  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage'
 >) {
   const refresh = usePreviewFeature('composerRefresh')
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -237,7 +238,7 @@ export function ComposerActions({
           setHistoryOpen(false)
         }}
         onChoose={(id) => { setHistoryChosen(true); onRecallSentMessage(id) }}
-        onUse={() => setHistoryOpen(false)}
+        onUse={() => { if (onUseSentMessage()) setHistoryOpen(false) }}
       />
     ) : null}
     </>

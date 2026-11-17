@@ -19000,6 +19000,85 @@ describe('App', () => {
     expect(screen.queryByRole('menu', { name: 'Message delivery' })).not.toBeInTheDocument()
   })
 
+  it.each([undefined, true])('offers delivery choices for a rapid second Send before polling (steering=%s)', async (supportsSteering) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const backgroundOnly = {
+      ...session, status: 'running' as const, revision: 10,
+      foregroundTurnActive: supportsSteering === undefined ? undefined : false,
+    }
+    const accepted = { ...backgroundOnly, revision: 11 }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    vi.mocked(sendMessage).mockResolvedValueOnce(accepted).mockResolvedValueOnce({ ...accepted, revision: 13 })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.change(textarea, { target: { value: 'Start a foreground turn' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+    fireEvent.change(textarea, { target: { value: 'An immediate follow-up' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled())
+    const detailReads = vi.mocked(getSession).mock.calls.length
+    // The hub may publish the same accepted revision before polling the CLI.
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({ type: 'session.upserted', session: accepted }),
+    } as MessageEvent))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    const steer = screen.getByRole('menuitem', { name: /Steer —/ })
+    expect(steer).toHaveAttribute('aria-disabled', supportsSteering ? 'false' : 'true')
+    if (!supportsSteering) expect(steer).toHaveAccessibleDescription(/Update this computer/)
+    expect(getSession).toHaveBeenCalledTimes(detailReads)
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({ type: 'session.upserted', session: { ...accepted, revision: 12 } }),
+    } as MessageEvent))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(sendMessage).mock.calls[1][2]).toMatchObject({ content: 'An immediate follow-up', enqueue: false })
+  })
+
+  it('clears the local foreground handoff when a follow-up send fails', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const backgroundOnly = { ...session, status: 'running' as const, foregroundTurnActive: false, revision: 10 }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    vi.mocked(sendMessage).mockResolvedValueOnce({ ...backgroundOnly, revision: 11 })
+      .mockRejectedValueOnce(new Error('Steer request failed'))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Start foreground work' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+    fireEvent.change(textarea, { target: { value: 'Keep this failed follow-up' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Steer —/ }))
+    await screen.findAllByText('Steer request failed')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    expect(textarea).toHaveValue('Keep this failed follow-up')
+    expect(sendMessage).toHaveBeenCalledTimes(2)
+  })
+
   it('previews searched sent messages without sending and restores the parked collapsed-paste draft on cancel', async () => {
     seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const sentSession = {

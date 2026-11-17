@@ -54,6 +54,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   private work: Promise<unknown> = Promise.resolve()
   private loading?: Promise<void>
   private initialized = false
+  private loadedProposalStatuses = new Map<string, ScheduleProposal['status']>()
   private poisoned = false
   private directoryIdentity?: { dev: number; ino: number }
 
@@ -113,6 +114,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       await unlink(staging)
     }
     await this.persist(this.state)
+    this.loadedProposalStatuses = new Map(this.state.proposals.map((proposal) => [proposal.id, proposal.status]))
     this.initialized = true
   }
 
@@ -156,6 +158,8 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   }
 
   proposals(): ScheduleProposal[] { return structuredClone(this.state.proposals) }
+  /** Proposal statuses as read from disk, before this process changed any (e.g. startup expiry). */
+  persistedProposalStatuses(): ReadonlyMap<string, ScheduleProposal['status']> { return new Map(this.loadedProposalStatuses) }
   ownsSession(computerId: string, sessionId: string, launchId?: string): boolean {
     return this.state.runs.some((run) => run.computerId === computerId &&
       ((launchId !== undefined && run.launchId === launchId) || run.sessionId === sessionId))

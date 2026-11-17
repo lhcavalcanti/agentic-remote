@@ -298,7 +298,8 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       } else if (policy === 'replace') {
         const schedule = next.schedules.find((entry) => entry.id === run.scheduleId)
         // Archive/disable and replacement stop intent share one commit ordering.
-        if (!schedule || schedule.archived || !schedule.enabled) {
+        // Same eligibility as admission: a manual run of a disabled schedule may still replace.
+        if (!schedule || schedule.archived || (run.trigger !== 'manual' && !schedule.enabled)) {
           const reason = !schedule ? 'deleted' : schedule.archived ? 'archived' : 'disabled'
           next.runs[position] = scheduleRunSchema.parse({
             ...run, status: 'stopped', endedAt, error: `Schedule was ${reason} before replacement overlap`,

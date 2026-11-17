@@ -495,7 +495,7 @@ describe('hub schedule dispatcher', () => {
     expect(store.getRun(replacement.id).status).toBe('running')
   })
 
-  it.each(['archived', 'disabled'] as const)('leaves live work untouched when %s commits after replacement admission before overlap', async (state) => {
+  it.each(['archived'] as const)('leaves live work untouched when %s commits after replacement admission before overlap', async (state) => {
     const { dispatcher, store, launcher, schedule } = await fixture({ overlap: 'replace' })
     await dispatcher.start()
     const live = await dispatcher.runNow(schedule.id)
@@ -520,7 +520,7 @@ describe('hub schedule dispatcher', () => {
     expect(launcher.launch).toHaveBeenCalledOnce()
   })
 
-  it.each(['archived', 'disabled'] as const)('does not resume replacement cancellation after restart when the schedule is %s', async (state) => {
+  it.each(['archived'] as const)('does not resume replacement cancellation after restart when the schedule is %s', async (state) => {
     const { dispatcher, store, launcher, schedule, directory } = await fixture({ overlap: 'replace' })
     await dispatcher.start()
     const live = await dispatcher.runNow(schedule.id)
@@ -540,6 +540,27 @@ describe('hub schedule dispatcher', () => {
     })
     expect(launcher.stop).not.toHaveBeenCalled()
     expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
+  it('lets a manual replacement still replace when the schedule is disabled before overlap', async () => {
+    const { dispatcher, store, launcher, schedule } = await fixture({ overlap: 'replace' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    let mutation: Promise<unknown> | undefined
+    const admit = store.admit.bind(store)
+    vi.spyOn(store, 'admit').mockImplementationOnce(async (...args) => {
+      const replacement = await admit(...args)
+      mutation = store.update(schedule.id, { revision: 1, enabled: false })
+      return replacement
+    })
+    const replacement = await dispatcher.runNow(schedule.id)
+    await mutation
+    await settle(dispatcher)
+    // Admission accepts manual runs of a disabled schedule, so overlap treats them alike.
+    expect(store.getRun(live.id).status).not.toBe('running')
+    expect(launcher.stop).toHaveBeenCalled()
+    expect(store.getRun(replacement.id).error ?? '').not.toContain('before replacement overlap')
   })
 
   it('persists replacement stop intent before a later archive and retries that intent after restart', async () => {

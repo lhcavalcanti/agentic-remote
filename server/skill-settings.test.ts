@@ -206,6 +206,43 @@ describe('read-only skill discovery and settings changes', () => {
     expect(await readFile(path.join(copilotHome, 'settings.json'), 'utf8')).toBe(raw)
   })
 
+  it('refuses invalid UTF-8 toggles without replacing unrelated bytes', async () => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    const bytes = Buffer.concat([Buffer.from('{"retained":"'), Buffer.from([0xff]), Buffer.from('","disabledSkills":[]}')])
+    // A previous valid snapshot can have the same decoded text as a lossy read.
+    await writeFile(file, bytes.toString('utf8'))
+    const before = await service.snapshot()
+    await writeFile(file, bytes)
+    await expect(service.update({
+      name: 'sample', enabled: false, confirmed: true, revision: before.revision,
+    })).rejects.toMatchObject({ statusCode: 409, message: expect.stringMatching(/invalid UTF-8/) })
+    expect(await readFile(file)).toEqual(bytes)
+    expect((await readdir(copilotHome)).filter((name) => name.startsWith('.settings-'))).toEqual([])
+  })
+
+  it('reports invalid UTF-8 settings as unreadable without changing their bytes', async () => {
+    const file = path.join(copilotHome, 'settings.json')
+    const bytes = Buffer.concat([Buffer.from('{"retained":"'), Buffer.from([0xc3]), Buffer.from('"}')])
+    await writeFile(file, bytes)
+    await expect(service.snapshot()).rejects.toMatchObject({
+      statusCode: 409, message: expect.stringMatching(/read safely.*invalid UTF-8/),
+    })
+    expect(await readFile(file)).toEqual(bytes)
+  })
+
+  it.each([false, true])('preserves valid non-ASCII UTF-8 and a leading BOM (%s) through both toggles', async (bom) => {
+    await skill(path.join(copilotHome, 'skills'), 'sample')
+    const file = path.join(copilotHome, 'settings.json')
+    const raw = `${bom ? '\uFEFF' : ''}{\n  // Café 東京 🧪\n  "retained": "João e\u0301 �",\n  "disabledSkills": []\n}\n`
+    await writeFile(file, raw)
+    const before = await service.snapshot()
+    const disabled = await service.update({ name: 'sample', enabled: false, confirmed: true, revision: before.revision })
+    expect(await readFile(file)).toEqual(Buffer.from(raw.replace('"disabledSkills": []', '"disabledSkills": ["sample"]')))
+    await service.update({ name: 'sample', enabled: true, confirmed: true, revision: disabled.revision })
+    expect(await readFile(file)).toEqual(Buffer.from(raw))
+  })
+
   it.each([
     '{\n  // retain this explanation\n  "theme": "https://example.test/a//b",\n  "disabledSkills": [], // retain this too\n}\n',
     '{"nested":{"disabledSkills":["untouched"],},"disabledSkills":[],}',

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { BackgroundTaskSnapshot } from './contracts.js'
 import {
   hasActiveBackgroundTasks,
+  hasForegroundTurn,
   hasRunningBackgroundAgent,
 } from './background-tasks.js'
 
@@ -27,6 +28,26 @@ function snapshot(
 }
 
 describe('running background agent detection', () => {
+  it('distinguishes aggregate background work from an actual foreground turn', () => {
+    const session = { status: 'running' as const, messages: [] }
+    const background = snapshot('agent', 'background')
+    expect(hasForegroundTurn({ ...session, foregroundTurnActive: false }, background)).toBe(false)
+    expect(hasForegroundTurn({ ...session, foregroundTurnActive: true }, background)).toBe(true)
+    expect(hasForegroundTurn({ status: 'idle', messages: [] }, background)).toBe(false)
+  })
+
+  it('keeps legacy background-only sessions directly sendable without guessing steering support', () => {
+    const session = { status: 'running' as const, messages: [] }
+    expect(hasForegroundTurn(session, snapshot('agent', 'background'))).toBe(false)
+    expect(hasForegroundTurn(session, snapshot('shell', 'background'))).toBe(false)
+    expect(hasForegroundTurn(session)).toBe(true)
+    expect(hasForegroundTurn(session, snapshot('agent', 'sync'))).toBe(true)
+    expect(hasForegroundTurn({
+      ...session,
+      messages: [{ id: 'foreground', role: 'assistant', content: '', streaming: true, createdAt: '2026-09-07T20:00:00Z' }],
+    }, snapshot('agent', 'background'))).toBe(true)
+  })
+
   it('includes background agents without treating shells or sync work as turns', () => {
     expect(hasRunningBackgroundAgent(snapshot('agent', 'background'))).toBe(
       true,

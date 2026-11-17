@@ -2836,10 +2836,12 @@ export class SessionStore {
       }
       if (stored.queueDispatchAt !== dispatch.startedAt) return
       if (outcome.kind === 'accepted' && outcome.startedTurn) {
+        stored.foregroundTurnActive = true
         if (stored.status === 'running') stored.activity = 'Sent queued prompt'
         return
       }
       stored.queueDispatchAt = undefined
+      stored.foregroundTurnActive = false
       stored.status = stored.pendingPermission || stored.pendingUserInput ? 'waiting' : 'idle'
       stored.activity = stored.pendingPermission?.title || stored.pendingUserInput?.question
     })
@@ -3165,6 +3167,7 @@ export class SessionStore {
     return this.mutate(sessionId, (session) => {
       session.queueDispatchAt = dispatchedAt
       session.status = 'running'
+      session.foregroundTurnActive = true
       session.activity = activity
       grantTerminalRecovery(session)
     })
@@ -3191,6 +3194,7 @@ export class SessionStore {
       }
       session.queueDispatchAt = undefined
       session.status = 'idle'
+      session.foregroundTurnActive = false
     })
   }
 

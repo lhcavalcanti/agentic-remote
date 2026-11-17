@@ -1,11 +1,37 @@
 import { launchIdentitySchema, type TerminationAcknowledgement } from '../shared/launch-identity.js'
 import type { SessionDetail } from '../shared/contracts.js'
 import type { SessionStore } from './session-store.js'
+import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 
 export function updateComputerForLaunchIdentity(): Error {
   return Object.assign(new Error('Update this computer to use launch identity and termination acknowledgement.'), {
     statusCode: 409, uncertainDelivery: false,
   })
+}
+
+/** Only the owner of the actual create boundary may prove preparation side-effect-free. */
+export async function withSessionCreateBoundary<T>(
+  operation: (beginCreate: () => void) => Promise<T>,
+): Promise<T> {
+  let attempted = false
+  try {
+    return await operation(() => { attempted = true })
+  } catch (cause) {
+    if (attempted && deliveryUncertaintyFromError(cause) !== undefined) throw cause
+    if (attempted && cause instanceof Error && Object.isExtensible(cause) && !Object.hasOwn(cause, 'uncertainDelivery')) {
+      Object.defineProperty(cause, 'uncertainDelivery', { value: true, enumerable: true, configurable: true, writable: true })
+      throw cause
+    }
+    const error = new Error(cause instanceof Error ? cause.message : String(cause), { cause })
+    error.name = cause instanceof Error ? cause.name : 'Error'
+    const rawStatus = cause && typeof cause === 'object'
+      ? 'statusCode' in cause ? cause.statusCode : 'status' in cause ? cause.status : undefined : undefined
+    const status = typeof rawStatus === 'number' ? rawStatus : typeof rawStatus === 'string' ? Number(rawStatus) : NaN
+    throw Object.assign(error, {
+      statusCode: Number.isInteger(status) && status >= 400 && status < 600 ? status : attempted ? 500 : 400,
+      uncertainDelivery: attempted,
+    })
+  }
 }
 
 export class LaunchCreations {

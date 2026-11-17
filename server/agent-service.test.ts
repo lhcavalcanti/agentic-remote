@@ -2544,6 +2544,37 @@ describe('AgentService deletion', () => {
       ])
   })
 
+  it.each(['stopped', 'unknown'] as const)('suspends a fenced SDK launch after %s cancellation without reopening work', async (outcome) => {
+    const directory = path.resolve(`.launch-suspend-test-${randomUUID()}`)
+    await mkdir(directory, { mode: 0o700 })
+    directories.push(directory)
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const events = outcome === 'stopped' ? [{
+      id: 'idle', type: 'session.idle', timestamp: new Date().toISOString(), parentId: null, data: {},
+    } as SessionEvent] : []
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client, async () => [], async () => undefined, async () => events,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const accepted = await service.store.acceptIdentifiedPrompt(created.id, 'follower', 'Synthetic follower', true)
+    expect(await service.cancelWithAck(created.id, 10)).toMatchObject({ outcome })
+    await expect(service.suspendSession(created.id)).resolves.toMatchObject({ suspended: true, launchStopping: true })
+    expect(client.session.disconnectCount).toBe(1)
+    await expect(service.sendMessage(created.id, 'Must not start', true)).rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.dispatchQueuedPrompt(created.id, accepted.queuedPrompts![0].id, 'Must not start'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.resumeSession(created.id)).rejects.toMatchObject({ statusCode: 409 })
+    expect(service.getSession(created.id)?.suspended).toBe(true)
+    expect(client.resumedSessionIds).toEqual([])
+    await service.cancelWithAck(created.id, 1)
+    await expect(service.closeSession(created.id)).resolves.toMatchObject({ closedAt: expect.any(String) })
+    await service.deleteSession(created.id)
+    expect(service.getSession(created.id)).toBeUndefined()
+  })
+
   it('serializes concurrent repeated suspension without tearing down twice', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-concurrent-'))
     directories.push(directory)

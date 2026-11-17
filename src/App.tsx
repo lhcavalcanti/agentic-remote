@@ -14187,6 +14187,15 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
             onOpenRuntime={() => setRuntimeOpen(true)}
             onRecallSentMessage={(id) => { navigateMessageHistory(-1, true, id) }}
+            onUseSentMessage={() => {
+              if (!selectedKey || !composerDraftsRef.current[selectedKey]) return false
+              const history = composerHistoryRef.current[selectedKey]
+              if (!history || history.index >= history.messages.length) return false
+              // Invalidate the parked preview before serializing the visible draft.
+              const committed = updateComposerDrafts([selectedKey], (current) => ({ ...current }), true)
+              if (committed) focusComposer(selectedKey)
+              return committed
+            }}
             onCancelSentMessage={() => {
               if (!selectedKey) return
               const history = composerHistoryRef.current[selectedKey]

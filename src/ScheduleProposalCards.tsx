@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ScheduleProposal } from '../shared/schedule-proposals'
 import type { Schedule } from '../shared/schedules'
+import { nextOccurrences } from '../shared/schedule-recurrence'
 import { getSchedule, listScheduleProposals, resolveScheduleProposal } from './api'
 import { usePreviewFeature } from './preview-features'
 import { proposalChanges, proposalConsequence, proposalSchedule, proposalTiming, proposalUnavailableReason } from './schedule-proposal-presentation'
@@ -78,7 +79,14 @@ export function ScheduleProposalCards({ active, refreshKey = 0 }: { active: bool
     const refresh = () => setNow(Date.now())
     const boundaries = proposals.flatMap((proposal) => {
       const schedule = proposalSchedule(proposal, proposal.operation === 'create' ? undefined : bases[proposal.scheduleId])
-      return [Date.parse(proposal.expiresAt), ...(schedule?.recurrence.type === 'once' ? [Date.parse(schedule.recurrence.at)] : [])]
+      const next = schedule?.enabled && schedule.recurrence.type !== 'once' &&
+        proposal.operation !== 'archive' && proposal.operation !== 'run-now'
+        ? nextOccurrences(schedule.recurrence, schedule.timezone, new Date(now), 1)[0]?.getTime() : undefined
+      return [
+        Date.parse(proposal.expiresAt),
+        ...(schedule?.recurrence.type === 'once' ? [Date.parse(schedule.recurrence.at)] : []),
+        ...(next === undefined ? [] : [next]),
+      ]
     }).filter((at) => at > now)
     const timer = boundaries.length ? setTimeout(refresh, Math.min(2_147_483_647, Math.max(0, Math.min(...boundaries) - Date.now()))) : undefined
     window.addEventListener('focus', refresh)

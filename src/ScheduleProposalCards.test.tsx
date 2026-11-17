@@ -40,6 +40,23 @@ function cards({ flag = true, preview = true, active = true } = {}) {
   return render(<PreviewFeaturesContext value={context(flag, preview)}><ScheduleProposalCards active={active} /></PreviewFeaturesContext>)
 }
 describe('schedule confirmation cards', () => {
+  it.each([
+    ['daily', 'Daily', 'Sat, Sep 5'], ['weekdays', 'Weekdays', 'Mon, Sep 7'],
+  ] as const)('advances the next %s occurrence while the approval stays open', async (type, label, nextDay) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const at = Date.parse('2026-09-04T15:59:59Z')
+    vi.mocked(Date.now).mockReturnValue(at)
+    vi.mocked(listScheduleProposals).mockResolvedValue([scheduleProposalSchema.parse({
+      ...proposal, payload: { ...proposal.payload, recurrence: { type, time: '09:00' } },
+    })])
+    await act(async () => { cards() })
+    expect(screen.getByText(`${label} at 9:00 AM PT · next Fri, Sep 4, 9:00 AM PDT`)).toBeVisible()
+    vi.mocked(Date.now).mockReturnValue(at + 1000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(screen.getByText(`${label} at 9:00 AM PT · next ${nextDay}, 9:00 AM PDT`)).toBeVisible()
+    expect(listScheduleProposals).toHaveBeenCalledOnce()
+  })
+
   it.each(['edited', 'deleted'] as const)('disables stale facts during refresh and keeps an %s base unapprovable', async (change) => {
     const pending = scheduleProposalSchema.parse({
       ...proposal, operation: 'update', scheduleId: base.id, baseRevision: base.revision, payload: { prompt: 'Revised review' },

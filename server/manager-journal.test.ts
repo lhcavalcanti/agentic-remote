@@ -117,22 +117,46 @@ describe('JournalRecorder', () => {
     await store.updateState((state) => { state.acknowledgedJournalSeq = 39 })
     const stateBefore = await readFile(path.join(root, 'manager', 'state.json'), 'utf8')
     await writeFile(path.join(root, 'manager', 'journal.jsonl'), journal)
+    const reloaded = new SchedulerStore(root, { now: () => Date.parse(now) })
+    await reloaded.initialize()
+    const persisted = reloaded.persistedProposalStatuses()
     const restarted = new ManagerStore(path.join(root, 'manager'))
     await restarted.initialize()
-    await recordScheduleProposals(restarted, [rejected, stillPending])
+    await recordScheduleProposals(restarted, [rejected, stillPending], persisted)
     expect(restarted.latestJournalSeq()).toBe(40)
     expect(await readFile(path.join(root, 'manager', 'journal.jsonl'), 'utf8')).toBe(journal)
     expect(await readFile(path.join(root, 'manager', 'state.json'), 'utf8')).toBe(stateBefore)
     now = '2026-11-17T00:00:00.000Z'
-    const fresh = await schedules.propose(proposalInput)
-    await recordScheduleProposals(restarted, [rejected, stillPending, fresh])
-    const freshRejected = await schedules.rejectProposal(fresh.id)
-    const legacyOutcome = await schedules.rejectProposal(stillPending.id)
-    await recordScheduleProposals(restarted, [rejected, legacyOutcome, freshRejected])
-    await recordScheduleProposals(restarted, [rejected, legacyOutcome, freshRejected])
+    const fresh = await reloaded.propose(proposalInput)
+    await recordScheduleProposals(restarted, [rejected, stillPending, fresh], persisted)
+    const freshRejected = await reloaded.rejectProposal(fresh.id)
+    const legacyOutcome = await reloaded.rejectProposal(stillPending.id)
+    await recordScheduleProposals(restarted, [rejected, legacyOutcome, freshRejected], persisted)
+    await recordScheduleProposals(restarted, [rejected, legacyOutcome, freshRejected], persisted)
     expect(restarted.journalSince(40).map((entry) => [entry.proposalId, entry.proposalStatus])).toEqual([
       [fresh.id, 'pending'], [legacyOutcome.id, 'expired'], [fresh.id, 'rejected'],
     ])
+  })
+
+  it('journals a legacy pending proposal that expires during scheduler startup exactly once', async () => {
+    let now = '2026-11-14T00:00:00.000Z'
+    const schedules = new SchedulerStore(root, { now: () => Date.parse(now) })
+    await schedules.initialize()
+    const pending = await schedules.propose(proposalInput)
+    await writeFile(path.join(root, 'manager', 'journal.jsonl'), JSON.stringify({
+      kind: 'status', computerId: 'hub', sessionId: 'other', to: 'idle', seq: 40, at: '2026-11-15T00:00:00.000Z',
+    }) + '\n')
+    now = '2026-11-17T00:00:00.000Z'
+    const restartedSchedules = new SchedulerStore(root, { now: () => Date.parse(now) })
+    await restartedSchedules.initialize()
+    const persisted = restartedSchedules.persistedProposalStatuses()
+    await restartedSchedules.expireProposals()
+    expect(restartedSchedules.proposals().map((proposal) => proposal.status)).toEqual(['expired'])
+    const restarted = new ManagerStore(path.join(root, 'manager'))
+    await restarted.initialize()
+    await recordScheduleProposals(restarted, restartedSchedules.proposals(), persisted)
+    await recordScheduleProposals(restarted, restartedSchedules.proposals(), persisted)
+    expect(restarted.journalSince(40).map((entry) => [entry.proposalId, entry.proposalStatus])).toEqual([[pending.id, 'expired']])
   })
 
   it('journals a new outcome even when rotation overtakes its first recording', async () => {

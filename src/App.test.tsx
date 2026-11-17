@@ -18667,6 +18667,70 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('')
   })
 
+  it.each(['settings', 'event'] as const)('lifts unpairing tombstones when the computer is paired again (%s removal)', async (via) => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote-repaired', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote repaired chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    vi.mocked(transcribeAudio).mockResolvedValue({ transcript: 'Fresh transcript', durationSeconds: 1 })
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote repaired chat'))
+    if (via === 'settings') {
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+      vi.mocked(removeComputer).mockResolvedValue(undefined)
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` }))
+      await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(secondComputer.id))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    } else {
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }) } as MessageEvent)
+      })
+    }
+    await waitFor(() => expect(screen.queryByText('Remote repaired chat')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote repaired chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote repaired chat'))
+    fireEvent.change(screen.getByLabelText('File attachment'), { target: { files: [new File(['data'], 'voice.webm', { type: 'audio/webm' })] } })
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Fresh transcript'))
+  })
+
+  it('drops a transcription started before unpairing even when the computer is paired again first', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote-late-voice', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote late voice chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    let finish!: () => void
+    vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+      finish = () => resolve({ transcript: 'Stale transcript', durationSeconds: 1 })
+    }))
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote late voice chat'))
+    fireEvent.change(screen.getByLabelText('File attachment'), { target: { files: [new File(['data'], 'voice.webm', { type: 'audio/webm' })] } })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }) } as MessageEvent)
+    })
+    await waitFor(() => expect(screen.queryByText('Remote late voice chat')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await act(async () => { finish() })
+    fireEvent.click((await screen.findAllByText('Remote late voice chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote late voice chat'))
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+  })
+
   it('does not let a send that settles after a local removal recreate the removed session', async () => {
     seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote-send', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote send chat' }

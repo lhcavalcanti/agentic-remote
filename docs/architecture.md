@@ -49,7 +49,7 @@ State, transcript, journal, registry, and the agent's Markdown memory live in
 service's discovery before they exist. See
 [docs/design/session-manager.md](design/session-manager.md).
 
-Proposal journal deduplication survives journal rotation in the owner-only `manager/proposal-journal.json` index. Rotation checkpoints already-persisted statuses before removing them; proposal snapshots prune the index to retained proposal IDs. Older terminal outcomes without a marker are not replayed as fresh when they predate the retained journal window. Loading existing state does not rewrite it.
+Proposal journal deduplication survives journal rotation in the owner-only `manager/proposal-journal.json` index. Rotation checkpoints already-persisted statuses before removing them; proposal snapshots prune the index to retained proposal IDs. When existing state has no index and an already-rotated journal, statuses of proposals created before that loaded window are recorded as journaled rather than replayed as fresh; proposals created later always journal their statuses. Loading existing state does not rewrite it.
 
 ### Oracle Conversation speech path
 

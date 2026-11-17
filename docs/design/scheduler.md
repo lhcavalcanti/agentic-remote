@@ -151,6 +151,8 @@ The current reader accepts legacy runs without full receipts or worktree records
 
 ## Client UI preview
 
+Reload latest is bound to the opened form instance, not just its schedule ID. Canceling, opening another form (including the same schedule), disabling or closing the view invalidates old reload results and errors. A valid reload explicitly replaces that form even when the schedule revision is unchanged.
+
 Changing the target computer clears its computer-bound worktree root as well as model overrides; the new owner resolves its own allowed root. Effort or long context requires an explicit model even when the catalog is unavailable. Default context is not an override and is saved as an unset context. Without a model, effort/context remain resettable: controls offer defaults plus any saved invalid value labeled “needs a model”, not guessed capabilities. A successfully loaded catalog validates model availability and capability compatibility, including an empty catalog. Loading or failed catalogs instead show a non-blocking verification note and allow other schedule edits; launch-time validation remains authoritative. Context options reuse the New session/runtime `contextSizeLabel` formatter to show token capacities, or Automatic when the catalog provides no limit.
 
 Recent runs are optional enrichment: a failed recent-run request leaves schedule management available, shows a quiet availability notice beside the list, and labels last-result chips as unavailable rather than claiming there were no runs. Successful refreshes clear the notice; only schedule-list failures use the top-level error. Aborted refreshes cannot publish either data or enrichment errors.

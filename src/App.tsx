@@ -240,6 +240,7 @@ import type {
 } from '../shared/contracts'
 import {
   hasActiveBackgroundTasks,
+  hasForegroundTurn,
   hasRunningBackgroundAgent,
 } from '../shared/background-tasks'
 import { terminalSendOptions } from '../shared/send-policy'
@@ -5374,6 +5375,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     hasRunningBackgroundAgent(selectedBackgroundTasks)
   const selectedHasActiveBackgroundTasks =
     hasActiveBackgroundTasks(selectedBackgroundTasks)
+  const selectedForegroundTurnActive = useMemo(
+    () => Boolean(selected && hasForegroundTurn(selected, selectedBackgroundTasks)),
+    [selected, selectedBackgroundTasks],
+  )
   const selectedQueueAvailable =
     selected?.status === 'running' ||
     (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
@@ -13966,6 +13971,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             selectedRetained={selectedRetained}
             selectedQueueHeadIsSteering={selectedQueueHeadIsSteering}
             selectedQueueAvailable={selectedQueueAvailable}
+            foregroundTurnActive={selectedForegroundTurnActive}
             selectedComputerOnline={selectedComputerOnline}
             supportsQueuedPromptDispatch={selectedProviderCapability?.supportsQueuedPromptDispatch === true}
             providerCapability={selectedProviderCapability}

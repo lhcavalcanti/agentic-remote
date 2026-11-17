@@ -895,6 +895,9 @@ export class ClaudeAgentService
     if (!stored.suspended) {
       return stored
     }
+    if (this.admissions.launchBlocked(id) || stored.launchStopping) {
+      throw queueConflict('The launch is stopping; its runtime cannot resume.')
+    }
     this.assertNotRetained(id, 'resuming it', true)
     const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
     if (hasQueue) {

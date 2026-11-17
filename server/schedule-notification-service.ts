@@ -8,7 +8,12 @@ import type { SchedulerStore } from './scheduler-store.js'
 export class ScheduleNotificationService extends EventEmitter<{ event: [event: ScheduleRunNotification] }> {
   private work: Promise<unknown> = Promise.resolve()
   private readonly changed = (event: SchedulerChanged) => {
-    if (event.runId) this.enqueue(this.store.scheduleForRun(event.runId), this.store.getRun(event.runId))
+    const ids = new Set([...(event.runIds ?? []), ...(event.runId ? [event.runId] : [])])
+    if (!ids.size) return
+    const muted = new Set(this.options.mutedSessions())
+    const notifications = [...ids].flatMap((id) =>
+      this.notifications(this.store.scheduleForRun(id), this.store.getRun(id), muted))
+    if (notifications.length) this.queue(() => this.deliver(notifications))
   }
   constructor(
     private readonly store: SchedulerStore,
@@ -38,10 +43,6 @@ export class ScheduleNotificationService extends EventEmitter<{ event: [event: S
     await this.flush()
   }
   async flush(): Promise<void> { await this.work }
-  private enqueue(schedule: Schedule, run: ScheduleRun): void {
-    const events = this.notifications(schedule, run)
-    if (events.length) this.queue(() => this.deliver(events))
-  }
   private notifications(schedule: Schedule, run: ScheduleRun, muted?: ReadonlySet<string>): ScheduleRunNotification[] {
     const now = new Date((this.options.now ?? Date.now)()).toISOString()
     return classifyScheduleNotification(schedule, run, now).map((notification) => {

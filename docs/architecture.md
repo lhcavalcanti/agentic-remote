@@ -51,6 +51,8 @@ service's discovery before they exist. See
 
 Proposal journal deduplication survives journal rotation in the owner-only `manager/proposal-journal.json` index. Rotation checkpoints already-persisted statuses before removing them; proposal snapshots prune the index to retained proposal IDs. Older terminal outcomes without a marker are not replayed as fresh when they predate the retained journal window. Loading existing state does not rewrite it.
 
+Scheduler change events retain the single-run `runId` and include `runIds` for every run affected by an atomic overlap decision. Scheduled-run notifications classify those committed snapshots together, then batch durable admission and exactly-once claims before any channel delivery.
+
 ### Oracle Conversation speech path
 
 Conversation mode is an optional extension of the hub-owned Oracle

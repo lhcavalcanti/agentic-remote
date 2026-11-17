@@ -68,6 +68,29 @@ async function run(notify: 'never' | 'always') {
 }
 
 describe('hub schedule notification integration', () => {
+  it.each(['skip', 'replace'] as const)('delivers %s overlap outcomes from the real dispatcher exactly once', async (overlap) => {
+    await hub()
+    const scheduler = runtime.scheduler!
+    const schedule = await scheduler.store.create({
+      name: 'Fictional overlap review', prompt: 'Review the fictional guide.',
+      target: { computerId: 'offline-studio', folder: '/fictional/repo', provider: 'copilot' },
+      recurrence: { type: 'daily', time: '09:00' }, timezone: 'UTC', notify: 'always', overlap,
+    })
+    const first = await scheduler.runNow(schedule.id)
+    const next = await scheduler.runNow(schedule.id)
+    await runtime.scheduleNotifications!.flush()
+    await runtime.notificationCenter!.flush()
+    const outcome = overlap === 'skip' ? next : first
+    const kind = overlap === 'skip' ? 'schedule.run.missed' : 'schedule.run.interrupted'
+    expect(scheduler.store.getRun(outcome.id).status).toBe(overlap === 'skip' ? 'missed' : 'stopped')
+    expect(await runtime.notificationCenter!.store.list()).toMatchObject([{ kind }])
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+    await runtime.scheduleNotifications!.start()
+    await runtime.notificationCenter!.flush()
+    expect(await runtime.notificationCenter!.store.list()).toHaveLength(1)
+    expect(sender).toHaveBeenCalledOnce()
+  })
+
   it.each([true, false])('keeps fast clear-replacement alerts suppressed before journal flush with Oracle enabled=%s', async (oracleEnabled) => {
     const identity = new NodeIdentityStore(directory)
     await identity.initialize()

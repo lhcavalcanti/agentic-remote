@@ -234,12 +234,111 @@ describe('schedule runner', () => {
     expect(f.host.createSession).not.toHaveBeenCalled()
   })
 
-  it.each(['model', 'effort'])('fails invalid %s definitively before creation', async (field) => {
+  it.each([
+    ['model', true], ['model', false], ['effort', true], ['effort', false], ['context', true], ['context', false],
+  ] as const)('fails an authoritative unsupported %s selection before creation with local=%s', async (field, isLocal) => {
     const f = await fixture({ target: {
-      computerId: 'hub', folder: '/fictional/repo', provider: 'claude',
-      model: field === 'model' ? 'missing' : 'fictional-model', effort: 'max',
+      computerId: isLocal ? 'hub' : 'worker', folder: '/fictional/repo', provider: 'claude',
+      model: field === 'model' ? 'missing' : 'fictional-model',
+      ...(field === 'effort' ? { effort: 'max' } : {}),
+      ...(field === 'context' ? { context: 'long_context' } : {}),
     } })
-    await expect(f.runner.launch(f.run, f.schedule)).rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
+    const [computer] = f.host.listComputers()
+    f.host.listComputers = () => [{ ...computer, isLocal }]
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    const reason = field === 'model' ? 'Selected model is not available'
+      : field === 'effort' ? 'Selected reasoning effort is not supported by this model'
+        : 'Selected context tier is not supported by this model'
+    expect(f.store.getRun(f.run.id).error).toBe(reason)
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.store.getRun(f.run.id).rootPromptReceipt).toBeUndefined()
+  })
+
+  it.each([
+    ['local SDK failure', true, new Error('Catalog query failed')],
+    ['local timeout', true, Object.assign(new Error('Catalog timed out'), { name: 'TimeoutError' })],
+    ['local 503', true, Object.assign(new Error('Catalog unavailable'), { statusCode: 503 })],
+    ['local throttling', true, Object.assign(new Error('Catalog throttled'), { status: 429 })],
+    ['remote SDK failure', false, new Error('Remote catalog query failed')],
+  ] as const)('retries Claude catalog lookup without accepting a prompt twice: %s', async (_label, isLocal, error) => {
+    const f = await fixture({ target: {
+      computerId: isLocal ? 'hub' : 'worker', folder: '/fictional/repo',
+      provider: 'claude', model: 'fictional-model',
+    } })
+    const [computer] = f.host.listComputers()
+    f.host.listComputers = () => [{ ...computer, isLocal }]
+    const ownerStore = new SessionStore(path.join(f.directory, 'claude-catalog-owner'))
+    await ownerStore.initialize()
+    const models = vi.fn(async () => [{
+      value: 'fictional-model', displayName: 'Fictional model', description: 'Fictional catalog',
+      supportedEffortLevels: ['high'],
+    }])
+    const owner = new ClaudeAgentService(ownerStore, '/bin/true', {
+      query: (() => Object.assign((async function* () { yield* [] })(), { supportedModels: models })) as unknown as ClaudeSdk['query'],
+      deleteSession: vi.fn(), getSessionInfo: vi.fn(), renameSession: vi.fn(),
+    }, async () => ({ loggedIn: true }))
+    let now = Date.now()
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner, { now: () => now })
+    dispatchers.push(dispatcher)
+    try {
+      await owner.providerRuntimeOptions('claude')
+      models.mockRejectedValueOnce(error).mockRejectedValueOnce(error)
+      vi.mocked(f.host.providerRuntimeOptions).mockImplementation((_computer, provider) => owner.providerRuntimeOptions(provider))
+      await dispatcher.start()
+      await vi.waitFor(() => {
+        expect(f.host.providerRuntimeOptions).toHaveBeenCalledTimes(1)
+        expect(f.store.getRun(f.run.id).status).toBe('pending')
+      })
+      const deadline = f.store.getRun(f.run.id).retryUntil
+      expect(Date.parse(deadline!)).toBeGreaterThan(now)
+      now += 60_000
+      await dispatcher.tick()
+      await vi.waitFor(() => {
+        expect(f.host.providerRuntimeOptions).toHaveBeenCalledTimes(2)
+        expect(f.store.getRun(f.run.id).status).toBe('pending')
+      })
+      expect(f.store.getRun(f.run.id)).toMatchObject({ launchId: f.run.launchId, retryUntil: deadline })
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(f.store.getRun(f.run.id).rootPromptAcceptance).toBeUndefined()
+      expect(f.host.createSession).not.toHaveBeenCalled()
+      expect(f.host.sendMessage).not.toHaveBeenCalled()
+      now += 1
+      await dispatcher.tick()
+      await vi.waitFor(() => expect(f.store.getRun(f.run.id).rootPromptReceipt).toBe(f.receipt.promptId))
+      f.receipt.outcome = 'succeeded'
+      await dispatcher.tick()
+      expect(f.store.getRun(f.run.id)).toMatchObject({
+        status: 'succeeded', launchId: f.run.launchId, rootPromptAcceptance: f.receipt,
+      })
+      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(f.store.allRuns()).toHaveLength(1)
+      expect(models).toHaveBeenCalledTimes(4)
+      expect(f.host.createSession).toHaveBeenCalledOnce()
+      expect(f.host.sendMessage).toHaveBeenCalledOnce()
+    } finally {
+      await dispatcher.stop()
+      await owner.stop()
+      await ownerStore.close()
+    }
+  })
+
+  it.each([
+    ['statusCode', 403], ['status', 422],
+  ] as const)('fails an explicit catalog refusal reported through %s=%s', async (field, status) => {
+    const f = await fixture({ target: {
+      computerId: 'hub', folder: '/fictional/repo', provider: 'claude', model: 'fictional-model',
+    } })
+    vi.mocked(f.host.providerRuntimeOptions).mockRejectedValue(Object.assign(new Error('The owner refused catalog access'), { [field]: status }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
+    expect(f.store.getRun(f.run.id).error).toBe('The owner refused catalog access')
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
     expect(f.host.createSession).not.toHaveBeenCalled()
   })
 

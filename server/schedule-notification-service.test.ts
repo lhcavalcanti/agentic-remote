@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PushSubscription, RequestOptions } from 'web-push'
@@ -89,6 +89,117 @@ async function run(policy: Schedule['notify'] = 'always') {
 }
 
 describe('canonical schedule notifications across channels', () => {
+  it.each([4000, 3997, 0])('replays 4000 retained runs with %s existing fences using bounded durable work', async (fencedCount) => {
+    await service.stop()
+    const seed = await schedules.create(input())
+    const state = JSON.parse(await readFile(schedules.statePath, 'utf8'))
+    state.schedules = Array.from({ length: 20 }, (_, index) => ({ ...seed, id: `schedule-${index}`, name: `Review ${index}` }))
+    state.cursors = Object.fromEntries(state.schedules.map((schedule: Schedule) => [schedule.id, seed.createdAt]))
+    state.runs = Array.from({ length: 4000 }, (_, index) => ({
+      id: `run-${index}`, scheduleId: `schedule-${Math.floor(index / 200)}`,
+      launchId: `launch-${index}`, computerId: seed.target.computerId, sessionId: `session-${index}`,
+      occurrenceAt: new Date(now - index * 1000).toISOString(), trigger: 'manual', status: 'failed',
+      endedAt: new Date(now).toISOString(),
+    }))
+    state.runSchedules = Object.fromEntries(state.runs.map((run: { id: string; scheduleId: string }, index: number) =>
+      [run.id, state.schedules[Math.floor(index / 200)]]))
+    state.occurrences = Object.fromEntries(state.runs.map((run: { id: string; scheduleId: string; occurrenceAt: string }) =>
+      [JSON.stringify([run.scheduleId, run.occurrenceAt]), run.id]))
+    state.notificationFences = state.runs.slice(0, fencedCount).map((run: { id: string; scheduleId: string }) =>
+      notificationIdentity('schedule.run.failed', run.scheduleId, run.id, 'failed'))
+    await writeFile(schedules.statePath, JSON.stringify(state))
+    const restored = new SchedulerStore(directory, { now: () => now })
+    await restored.initialize()
+    const warn = vi.fn()
+    const admitBatch = vi.fn((batch: ScheduleRunNotification[]) => center.scheduleNotifications(batch))
+    const replay = new ScheduleNotificationService(restored, { admitBatch, mutedSessions: () => [], now: () => now, warn })
+    const announced = vi.fn()
+    replay.on('event', announced)
+    const persist = vi.spyOn(restored as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+    const notificationPersist = vi.spyOn(records as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+    const clone = globalThis.structuredClone
+    let largeClones = 0
+    const cloning = vi.spyOn(globalThis, 'structuredClone').mockImplementation((value, options) => {
+      if (value && typeof value === 'object' && 'runs' in value &&
+          Array.isArray(value.runs) && value.runs.length === 4000) {
+        largeClones += 1
+        if (largeClones > 2) throw new Error('Per-run scheduler replay cloning is unbounded')
+      }
+      return clone(value, options)
+    })
+    try {
+      await replay.start()
+      expect(largeClones).toBeLessThanOrEqual(2)
+      const expected = 4000 - fencedCount
+      expect(persist).toHaveBeenCalledTimes(expected ? 1 : 0)
+      expect(notificationPersist).toHaveBeenCalledTimes(expected ? 1 : 0)
+      expect(admitBatch).toHaveBeenCalledTimes(expected ? 1 : 0)
+      expect(announced).toHaveBeenCalledTimes(expected)
+      expect(warn).not.toHaveBeenCalled()
+      if (expected) {
+        const event = announced.mock.calls[0][0]
+        expect(center.hub(event)).toBe(center.admission(event))
+      }
+      await replay.start()
+      expect(announced).toHaveBeenCalledTimes(expected)
+      expect(persist).toHaveBeenCalledTimes(expected ? 1 : 0)
+      expect(notificationPersist).toHaveBeenCalledTimes(expected ? 1 : 0)
+    } finally {
+      cloning.mockRestore()
+      persist.mockRestore()
+      notificationPersist.mockRestore()
+      await replay.stop()
+    }
+  }, 15_000)
+
+  it.each(['admission', 'claim'] as const)('does not deliver replay outcomes before a successful durable %s batch', async (failure) => {
+    await service.stop()
+    const { schedule, run: first } = await run()
+    const second = (await schedules.admit(schedule.id, new Date(now + 1).toISOString(), 'manual'))!
+    await schedules.changeRun(first.id, { status: 'failed' })
+    await schedules.changeRun(second.id, { status: 'failed' })
+    const admitBatch = vi.fn((batch: ScheduleRunNotification[]) => center.scheduleNotifications(batch))
+    const persist = vi.spyOn(schedules as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+    if (failure === 'admission') admitBatch.mockRejectedValueOnce(new Error('Admission failed'))
+    else persist.mockRejectedValueOnce(new Error('Claim write failed'))
+    const warn = vi.fn()
+    const replay = new ScheduleNotificationService(schedules, { admitBatch, mutedSessions: () => [], now: () => now, warn })
+    const announced = vi.fn()
+    replay.on('event', announced)
+    try {
+      await replay.start()
+      expect(announced).not.toHaveBeenCalled()
+      expect(schedules.notificationReplay().claimed.size).toBe(0)
+      expect(warn).toHaveBeenCalledOnce()
+      const existing = (await records.list())[0]
+      if (existing) { await records.markRead(existing.id); await records.dismiss(existing.id) }
+      await replay.start()
+      expect(announced).toHaveBeenCalledTimes(2)
+      expect(schedules.notificationReplay().claimed.size).toBe(2)
+      if (existing) expect((await records.list()).some((record) => record.id === existing.id)).toBe(false)
+      await replay.start()
+      expect(announced).toHaveBeenCalledTimes(2)
+      const restored = new SchedulerStore(directory, { now: () => now })
+      await restored.initialize()
+      expect(restored.notificationReplay().claimed.size).toBe(2)
+    } finally { persist.mockRestore(); await replay.stop() }
+  })
+
+  it('claims overlapping replay batches atomically and skips already-fenced claims without writing', async () => {
+    const ids = ['one', 'two', 'three'].map((id) => notificationIdentity('schedule.run.failed', id))
+    const persist = vi.spyOn(schedules as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+    try {
+      const claims = await Promise.all([
+        schedules.claimNotifications(ids.slice(0, 2)), schedules.claimNotifications(ids.slice(1)),
+      ])
+      expect(claims.flat().sort()).toEqual([...ids].sort())
+      expect(persist).toHaveBeenCalledTimes(2)
+      expect(await schedules.claimNotifications(ids)).toEqual([])
+      expect(await schedules.claimNotification(ids[0])).toBe(false)
+      expect(persist).toHaveBeenCalledTimes(2)
+    } finally { persist.mockRestore() }
+  })
+
   it.each(['succeeded', 'needs-input'] as const)('does not report stale launch errors on recovered %s outcomes', async (outcome) => {
     const { run: admitted } = await run()
     await schedules.changeRun(admitted.id, {

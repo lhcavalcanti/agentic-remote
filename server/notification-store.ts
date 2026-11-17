@@ -176,14 +176,16 @@ export class NotificationStore extends EventEmitter<{
   /** Classifies and admits in the same serialized durable transaction. */
   ingest(classify: (cursors: NotificationCursors) => NotificationRecord[]): Promise<void> {
     return this.commit((next) => {
+      let seenCount = Object.keys(next.seen).length
       for (const candidate of classify(next.cursors)) {
         const record = recordSchema.parse(candidate) as NotificationRecord
         if (next.seen[record.id] || Date.parse(record.createdAt) < this.now() - NOTIFICATION_RETENTION_MS) continue
-        if (Object.keys(next.seen).length >= DEDUPE_LIMIT) {
+        if (seenCount >= DEDUPE_LIMIT) {
           // Never evict a live dedupe fence to accept a replay as new.
           throw new Error('Notification deduplication capacity reached')
         }
         next.seen[record.id] = record.createdAt
+        seenCount += 1
         next.records.push(record)
       }
     })

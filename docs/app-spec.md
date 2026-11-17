@@ -81,9 +81,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   of its rows and counts unless a hub-owned Hidden visibility toggle, off by
   default, shows them; hiding is not filtering, so Clear filters leaves it
   alone. A hidden session MUST stay listed and counted while it needs you.
-  Listed hidden sessions MUST carry a **Hidden** tag. The toggle MUST show the
-  hidden count, and MAY be omitted while nothing is hidden and it is off.
-  Discovery MUST NOT unhide a session.
+  Listed hidden sessions MUST carry a **Hidden** tag. Their rows MUST also be
+  visibly marked apart from suspended and ordinary rows, not by colour alone.
+  The toggle MUST show the hidden count, and MAY be omitted while nothing is
+  hidden and it is off. Discovery MUST NOT unhide a session.
 - Session ordering MUST be explicit. Custom order remains the backward-
   compatible default; Recent activity, Attention first, and Name views MAY
   reorder the displayed sessions within each computer without rewriting the

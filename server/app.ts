@@ -24,7 +24,7 @@ import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
 import { ManagerAgent } from './manager-agent.js'
-import { JournalRecorder, recordScheduleProposal } from './manager-journal.js'
+import { JournalRecorder, recordScheduleProposals } from './manager-journal.js'
 import { registerManagerRoutes } from './manager-routes.js'
 import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
 import { ManagerStore } from './manager-store.js'
@@ -620,10 +620,8 @@ export async function buildApp(
       })
       const store = scheduler.store
       store.on('proposal', () => {
-        const proposals = store.proposals()
-        scheduleJournal = scheduleJournal.then(async () => {
-          for (const proposal of proposals) await recordScheduleProposal(managerStore!, proposal)
-        }).catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
+        scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, store.proposals()))
+          .catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
       })
     }
     if (notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
@@ -745,7 +743,7 @@ export async function buildApp(
     if (hostAlerts) await startupPhases.run('hostAlerts.start', async () => hostAlerts.start())
     if (scheduler) await startupPhases.run('scheduler.start', async () => {
       await scheduler!.start()
-      for (const proposal of scheduler!.store.proposals()) await recordScheduleProposal(managerStore!, proposal)
+      scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, scheduler!.store.proposals()))
       await scheduleJournal
     })
     cliCanary?.start()

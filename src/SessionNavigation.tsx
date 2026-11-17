@@ -289,7 +289,6 @@ function SortableSessionItem({
             </small>
           </span>
         </button>
-        <SessionOriginRunLink provenance={session.provenance} onOpenRun={onOpenScheduleRun} />
         {runningBackgroundTasks > 0 ? (
           <button
             aria-label={`View background tasks for ${session.title}`}
@@ -302,6 +301,7 @@ function SortableSessionItem({
             Tasks
           </button>
         ) : null}
+        <SessionOriginRunLink provenance={session.provenance} onOpenRun={onOpenScheduleRun} />
       </div>
       <div className="session-item__controls">
         <button

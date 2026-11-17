@@ -2343,15 +2343,40 @@ button {
   background: var(--panel-soft);
 }
 
-.session-item__body > .session-origin-run-link {
-  position: absolute;
-  right: 0;
-  bottom: -6px;
+.session-item__body:has(> .session-origin-run-link) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px;
+  grid-template-rows: minmax(40px, auto) minmax(40px, auto);
+  row-gap: 2px;
+  min-height: 82px;
 }
 
-.session-item__body:has(> .session-origin-run-link) .session-item__where,
-.session-item__body:not(.session-item__body--task-status):has(> .session-origin-run-link) .session-item__text > strong {
-  padding-right: 40px;
+.session-item__body:has(> .session-origin-run-link) > .session-item__open {
+  display: grid;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-content: center;
+}
+
+.session-item__body > .session-origin-run-link {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: end;
+  justify-self: end;
+}
+
+.session-item__body:has(> .session-origin-run-link) > .session-item__tasks {
+  position: static;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+  min-height: 40px;
+}
+
+.session-item__body:has(> .session-origin-run-link) .session-item__badges,
+.session-item__body:has(> .session-origin-run-link) .session-item__text > strong {
+  padding-right: 0;
 }
 
 .subagent-count {

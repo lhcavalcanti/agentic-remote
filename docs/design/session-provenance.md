@@ -24,7 +24,7 @@ Notification delivery metadata remains separate. A scheduled admission may alrea
 
 A run link requires both Composer refresh and the effective Scheduler view preview, including its hub flag. It uses the scheduler's canonical root-page `schedule`/`run` link, opens the existing Scheduler view, and selects the recorded run history. The same URL works in another tab or as a bookmark. Opening it never starts, retries, stops, or modifies a schedule or session; missing or expired history uses the Scheduler view's existing unavailable states.
 
-Session rows and the conversation header share that navigation. Rows retain the Tasks button's larger title clearance when Tasks and a schedule-run link are both present. The desktop rail reuses the same session row component. Notification rows, run-history entries, and host-process links use their own purpose-specific components; their existing session navigation reaches the same provenance-aware header without adding new badge surfaces.
+Session rows and the conversation header share that navigation. Scheduled rows reserve separate 40px action slots for Tasks and the run link, with a stable minimum height for one-line and long titles. The title occupies its own column; neither action overlays the other or the session-opening button. The desktop rail reuses the same session row component. Notification rows, run-history entries, and host-process links use their own purpose-specific components; their existing session navigation reaches the same provenance-aware header without adding new badge surfaces.
 
 ## Runtime subagents
 

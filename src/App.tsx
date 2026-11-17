@@ -12,6 +12,7 @@ import {
 } from 'react'
 import ReaderWorkspace, { READER_WIDTH_MIN } from './ReaderWorkspace'
 import { Composer } from './composer/Composer'
+import { useForegroundHandoff } from './composer/use-foreground-handoff'
 import type { ComposerAttachment } from './composer/types'
 import {
   activeComposerPastes,
@@ -3784,6 +3785,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const notificationPanel = usePreviewFeature('notificationPanel')
   const notifications = useNotifications(notificationPanel)
   const [shellView, setShellView] = useState<string>()
+  const composerRefresh = usePreviewFeature('composerRefresh')
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -5362,9 +5364,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     hasRunningBackgroundAgent(selectedBackgroundTasks)
   const selectedHasActiveBackgroundTasks =
     hasActiveBackgroundTasks(selectedBackgroundTasks)
+  const foregroundHandoff = useForegroundHandoff(
+    selected, selected ? sessionEventSequenceRef.current.get(sessionKey(selected)) || 0 : 0,
+  )
   const selectedForegroundTurnActive = useMemo(
-    () => Boolean(selected && hasForegroundTurn(selected, selectedBackgroundTasks)),
-    [selected, selectedBackgroundTasks],
+    () => foregroundHandoff.active || Boolean(selected && hasForegroundTurn(selected, selectedBackgroundTasks)),
+    [foregroundHandoff.active, selected, selectedBackgroundTasks],
   )
   const selectedQueueAvailable =
     selected?.status === 'running' ||
@@ -10847,10 +10852,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         sessionsRef.current = upsertSession(sessionsRef.current, updated)
         setSessions((current) => upsertSession(current, updated))
       }
+      if (composerRefresh && !isCommand && !shouldEnqueue && !queuedInstead) {
+        foregroundHandoff.accepted(updated, sessionEventSequenceRef.current.get(liveKey) || 0)
+      }
     } catch (caught) {
       if (!composerMounted.current) {
         return
       }
+      foregroundHandoff.clear()
       const liveKey = followReplacementsRef.current(targetKey)
       if (
         liveKey === targetKey &&

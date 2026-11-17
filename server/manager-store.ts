@@ -216,6 +216,9 @@ export class ManagerStore {
   private conversationLines = 0
   private journal: JournalEntry[] = []
   private journalSeq = 0
+  private proposalJournal = new Map<string, Set<string>>()
+  private retainedProposals?: Set<string>
+  private legacyProposalCutoff?: number
   private sessions: ManagerRegistry = {}
   private committedSessions: ManagerRegistry = {}
   private readonly provenanceListeners = new Set<ProvenanceListener>()
@@ -260,6 +263,31 @@ export class ManagerStore {
     this.journal = (await this.readLines<JournalEntry>('journal.jsonl'))
       .filter((entry) => Number.isInteger(entry?.seq))
     this.journalSeq = this.journal.reduce((highest, entry) => Math.max(highest, entry.seq), 0)
+    let proposalJournal: unknown
+    try {
+      proposalJournal = JSON.parse(await readFile(path.join(this.directory, 'proposal-journal.json'), 'utf8'))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    this.proposalJournal = new Map()
+    if (proposalJournal !== undefined) {
+      if (!proposalJournal || typeof proposalJournal !== 'object' || Array.isArray(proposalJournal) ||
+        Reflect.get(proposalJournal, 'version') !== 1) throw new Error('Invalid Oracle proposal journal index')
+      const proposals: unknown = Reflect.get(proposalJournal, 'proposals')
+      if (!proposals || typeof proposals !== 'object' || Array.isArray(proposals)) throw new Error('Invalid Oracle proposal journal index')
+      for (const [id, statuses] of Object.entries(proposals)) {
+        if (!Array.isArray(statuses) || !statuses.every((status: unknown) => typeof status === 'string')) {
+          throw new Error('Invalid Oracle proposal journal index')
+        }
+        this.proposalJournal.set(id, new Set(statuses as string[]))
+      }
+    }
+    // State from before the index existed may have rotated proposal statuses away. Only
+    // proposals created before that loaded window are ambiguous; later ones are always new.
+    const oldest = this.journal[0]
+    this.legacyProposalCutoff = proposalJournal === undefined && oldest && oldest.seq > 1
+      ? Date.parse(oldest.at)
+      : undefined
   }
 
   /** Origin metadata does not require opening Oracle's conversation or uploads. */
@@ -428,19 +456,90 @@ export class ManagerStore {
 
   appendJournal(drafts: JournalDraft[]): Promise<JournalEntry[]> {
     if (!drafts.length) return Promise.resolve([])
+    return this.serialized(() => this.writeJournal(drafts))
+  }
+
+  /** Receives the complete retained proposal snapshot, not an individual changed proposal. */
+  appendProposalJournal(proposals: {
+    entry: JournalDraft & { proposalId: string; proposalStatus: string }; createdAt: string
+  }[]): Promise<JournalEntry[]> {
+    return this.serialized(async () => {
+      const retained = new Set(proposals.map(({ entry }) => entry.proposalId))
+      this.retainedProposals = retained
+      const fences = new Map([...this.proposalJournal]
+        .filter(([id]) => retained.has(id))
+        .map(([id, statuses]) => [id, new Set(statuses)]))
+      const known = new Map([...fences].map(([id, statuses]) => [id, new Set(statuses)]))
+      for (const entry of this.journal) {
+        if (entry.proposalId && entry.proposalStatus) {
+          const statuses = known.get(entry.proposalId) ?? new Set<string>()
+          statuses.add(entry.proposalStatus)
+          known.set(entry.proposalId, statuses)
+        }
+      }
+      const drafts: JournalDraft[] = []
+      for (const { entry, createdAt } of proposals) {
+        const id = entry.proposalId
+        const status = entry.proposalStatus
+        if (known.get(id)?.has(status)) continue
+        // Legacy statuses outside the loaded journal window cannot safely be presented as new.
+        if (!known.has(id) && this.legacyProposalCutoff !== undefined &&
+          Date.parse(createdAt) <= this.legacyProposalCutoff) {
+          fences.set(id, new Set([status]))
+        } else {
+          drafts.push(entry)
+        }
+        const statuses = known.get(id) ?? new Set<string>()
+        statuses.add(status)
+        known.set(id, statuses)
+      }
+      await this.writeProposalJournal(fences)
+      const entries: JournalEntry[] = []
+      const batchSize = Math.max(1, this.journalKeep)
+      for (let offset = 0; offset < drafts.length; offset += batchSize) {
+        entries.push(...await this.writeJournal(drafts.slice(offset, offset + batchSize)))
+      }
+      return entries
+    })
+  }
+
+  private async writeProposalJournal(next: Map<string, Set<string>>): Promise<void> {
+    const data = (proposals: Map<string, Set<string>>) => ({
+      version: 1, proposals: Object.fromEntries([...proposals].map(([id, statuses]) => [id, [...statuses]])),
+    })
+    if (JSON.stringify(data(next)) === JSON.stringify(data(this.proposalJournal))) return
+    await this.writeJson('proposal-journal.json', data(next))
+    this.proposalJournal = next
+  }
+
+  private async writeJournal(drafts: JournalDraft[]): Promise<JournalEntry[]> {
+    if (!drafts.length) return []
     const at = this.now().toISOString()
-    const entries = drafts.map((draft) => ({ ...draft, seq: ++this.journalSeq, at }))
-    this.journal.push(...entries)
-    const rotate = this.journal.length > this.journalLimit
-    if (rotate) this.journal = this.journal.slice(-this.journalKeep)
+    let seq = this.journalSeq
+    const entries = drafts.map((draft) => ({ ...draft, seq: ++seq, at }))
+    const appended = [...this.journal, ...entries]
+    const rotate = appended.length > this.journalLimit
+    const journal = rotate ? appended.slice(-this.journalKeep) : appended
+    if (rotate) {
+      const fences = new Map([...this.proposalJournal].map(([id, statuses]) => [id, new Set(statuses)]))
+      // Checkpoint persisted proposal statuses before rotation can remove their only durable record.
+      for (const entry of this.journal) {
+        if (!entry.proposalId || !entry.proposalStatus ||
+          (this.retainedProposals && !this.retainedProposals.has(entry.proposalId))) continue
+        const statuses = fences.get(entry.proposalId) ?? new Set<string>()
+        statuses.add(entry.proposalStatus)
+        fences.set(entry.proposalId, statuses)
+      }
+      await this.writeProposalJournal(fences)
+    }
     const content = rotate
-      ? this.journal.map((entry) => JSON.stringify(entry)).join('\n') + '\n'
+      ? journal.map((entry) => JSON.stringify(entry)).join('\n') + '\n'
       : entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n'
-    return this.serialized(() =>
-      rotate
-        ? this.writeAtomic('journal.jsonl', content)
-        : appendFile(path.join(this.directory, 'journal.jsonl'), content, 'utf8'),
-    ).then(() => entries.map((entry) => ({ ...entry })))
+    if (rotate) await this.writeAtomic('journal.jsonl', content)
+    else await appendFile(path.join(this.directory, 'journal.jsonl'), content, 'utf8')
+    this.journal = journal
+    this.journalSeq = seq
+    return entries.map((entry) => ({ ...entry }))
   }
 
   journalSince(seq: number): JournalEntry[] {

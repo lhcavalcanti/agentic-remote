@@ -8553,6 +8553,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const targetKey = followsLineage
       ? followReplacementsRef.current(rawTargetKey)
       : rawTargetKey
+    // A transcription or upload can finish after its session (or computer) is gone.
+    if (removedSessions.current.has(targetKey)) return
     updateComposerDrafts([targetKey], (current) => {
       const existing = durableComposerDraft(
         targetKey,
@@ -13047,12 +13049,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     computersRef.current = computersRef.current.filter((computer) => computer.id !== computerId)
     setComputers(computersRef.current)
     forgetComputerKnowledge(computerId)
-    // The removal event may never arrive (socket down), so do its local cleanup here too.
-    discardComputerLocalState(computerId)
-    setSessions((current) => current.filter((session) => session.computerId !== computerId))
-    setBackgroundTaskSnapshots((current) => Object.fromEntries(
-      Object.entries(current).filter(([key]) => !key.startsWith(`${computerId}:`))))
+    // The removal event may never arrive (socket down), so fence late responses
+    // and drop browser-held state here exactly as a snapshot removal does.
+    discardUnpairedComputers(new Set([computerId]))
   }
+
 
   /**
    * Browser-held state for a computer that is no longer paired: its sessions
@@ -13083,7 +13084,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       }
     }
     for (const session of sessionsRef.current) {
-      if (session.computerId === computerId) submissionAnchors.current.delete(sessionKey(session))
+      if (session.computerId === computerId) {
+        submissionAnchors.current.delete(sessionKey(session))
+        forgetAttachments(sessionKey(session))
+      }
     }
     updateComposerDrafts(
       Object.keys(composerDraftsRef.current).filter(owned),

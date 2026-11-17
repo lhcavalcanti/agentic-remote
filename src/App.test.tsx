@@ -19079,7 +19079,7 @@ describe('App', () => {
     expect(sendMessage).toHaveBeenCalledTimes(2)
   })
 
-  it('previews searched sent messages without sending and restores the parked collapsed-paste draft on cancel', async () => {
+  it.each(['Cancel', 'Escape'])('previews searched sent messages and restores the parked draft on %s', async (cancel) => {
     seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const sentSession = {
       ...session,
@@ -19105,13 +19105,51 @@ describe('App', () => {
     expect(textarea).toHaveValue('Searchable full history text')
     expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')['computer-1:session-1'])
       .toMatchObject({ text: '[Paste #1 - 21 lines]', pastes: [{ content: pasted }] })
-    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
+    if (cancel === 'Escape') fireEvent.keyDown(within(picker).getByRole('combobox'), { key: 'Escape' })
+    else fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
     expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
     expect(sendMessage).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
       'computer-1', 'session-1', expect.objectContaining({ content: pasted }),
     ))
+  })
+
+  it.each([false, true])('commits Use message as the durable draft without resurrecting its predecessor (reload=%s)', async (reload) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const chosen = 'Chosen sent-message text'
+    const historySession = {
+      ...session, messages: [{
+        id: 'chosen', role: 'user' as const, content: chosen, createdAt: '2026-11-14T12:00:00Z',
+      }],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+    const first = render(<App />)
+    let textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Previous draft must not return' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    const picker = screen.getByRole('dialog', { name: 'Sent messages' })
+    fireEvent.click(within(picker).getByRole('option'))
+    fireEvent.click(within(picker).getByRole('button', { name: 'Use message' }))
+    expect(screen.queryByRole('dialog', { name: 'Sent messages' })).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')['computer-1:session-1'])
+      .toMatchObject({ text: chosen, pastes: [] })
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts') || '{}')['computer-1:session-1']).toBe(chosen)
+    if (reload) {
+      first.unmount()
+      render(<App />)
+      textarea = await screen.findByLabelText('Message')
+    }
+    expect(textarea).toHaveValue(chosen)
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1', 'session-1', expect.objectContaining({ content: chosen }),
+    ))
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')['computer-1:session-1'])
+      .toBeUndefined()
+    expect(textarea).not.toHaveValue('Previous draft must not return')
   })
 
   it('omits an automatic recovery brief from sent-message search and ArrowUp recall', async () => {

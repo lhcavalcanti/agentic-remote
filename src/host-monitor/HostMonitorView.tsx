@@ -14,13 +14,15 @@ export function HostMonitorView({ computers, enabled, onClose, onOpenSession }: 
   onOpenSession(computerId: string, sessionId: string): void
 }) {
   const [selected, setSelected] = useState(computers.find((computer) => computer.isLocal)?.id ?? computers[0]?.id ?? '')
-  const computer = computers.find((entry) => entry.id === selected)
+  const computer = computers.find((entry) => entry.id === selected) ?? computers.find((entry) => entry.isLocal) ?? computers[0]
+  const selectedId = computer?.id ?? ''
+  if (selected !== selectedId) setSelected(selectedId)
   const [hostnames, setHostnames] = useState<Record<string, string>>({})
   const reportHostname = useCallback((id: string, name: string) =>
     setHostnames((names) => names[id] === name ? names : { ...names, [id]: name }), [])
   return <DialogFrame title="Host monitor" eyebrow="Computers" onClose={onClose} className="host-monitor">
     {!enabled ? <p className="dialog-message">Host monitor is turned off on this hub.</p> : <>
-      <label className="field">Computer<select className="dialog-select" value={selected} onChange={(event) => setSelected(event.target.value)}>
+      <label className="field">Computer<select className="dialog-select" value={selectedId} onChange={(event) => setSelected(event.target.value)}>
         {computers.map((entry) => <option value={entry.id} key={entry.id}>
           {hostnames[entry.id] ?? entry.name} · {entry.isLocal ? 'Hub' : 'Node'}{entry.online ? '' : ' · Offline'}
         </option>)}
@@ -83,7 +85,9 @@ function HostComputerView({ computer, onHostname, onOpenSession }: {
       }}>{paused ? <Play size={16} /> : <Pause size={16} />}{paused ? 'Resume' : 'Pause'}</button>
     </div>
     {info?.isWsl && <p className="host-notice">WSL VM, not the Windows host{info.wslDistro ? ` · ${info.wslDistro}` : ''}</p>}
-    {monitor.error && <p className="host-notice" role="alert">{monitor.error}</p>}
+    {monitor.error && <p className="host-notice" role="alert">{monitor.error}{monitor.retryRequired && <>
+      {' '}<button type="button" className="secondary-button" onClick={monitor.retry}>Retry</button>
+    </>}</p>}
     <div role="tablist" aria-label="Host monitor views" className="host-tabs">
       {(['Overview', 'Processes'] as const).map((name) => <button type="button" key={name} role="tab" aria-selected={tab === name} onClick={() => setTab(name)}>{name}</button>)}
     </div>

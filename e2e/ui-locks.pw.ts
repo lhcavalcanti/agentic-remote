@@ -960,6 +960,39 @@ test.describe('browser interaction contracts', () => {
     await expect(scheduler.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue('Daily workspace review')
   })
 
+  for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' || entry.name === 'phone')) {
+    test(`retries incompatible host telemetry only on request at ${viewport.name}`, async ({ page, baseURL }, testInfo) => {
+      await page.setViewportSize(viewport.viewport)
+      await open(page, baseURL, 'host-monitor')
+      const monitor = page.getByRole('dialog', { name: 'Host monitor', exact: true })
+      await monitor.getByRole('button', { name: 'Close', exact: true }).click()
+      let incompatible = true
+      let invalidReads = 0
+      await page.route('**/api/computers/fixture-studio/host', async (route) => {
+        if (!incompatible) { await route.fallback(); return }
+        invalidReads++
+        await route.fulfill({ status: 502, json: {
+          error: 'This computer returned invalid host telemetry', code: 'HOST_TELEMETRY_INVALID',
+        } })
+      })
+      const sessions = page.getByRole('button', { name: 'Open sessions', exact: true })
+      if (await sessions.isVisible()) await sessions.click()
+      await page.getByRole('button', { name: 'Host monitor', exact: true }).click()
+      await expect(monitor.getByRole('alert')).toContainText('Update this computer')
+      const retry = monitor.getByRole('button', { name: 'Retry', exact: true })
+      await expect(retry).toBeVisible()
+      expect(await retry.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(40)
+      await assertNoHorizontalOverflow(page)
+      await page.screenshot({ path: testInfo.outputPath(`${viewport.name}-host-incompatible.png`), animations: 'disabled' })
+      expect(invalidReads).toBe(1)
+      incompatible = false
+      await retry.click()
+      await expect(monitor).toContainText('fixture-studio-fictional')
+      await expect(monitor.getByRole('alert')).toHaveCount(0)
+      await expect(retry).toHaveCount(0)
+    })
+  }
+
   test('announces unread counts, opens notifications and dismisses a single grouped item in one batch', async ({ page, baseURL }) => {
     await open(page, baseURL, 'notification-panel')
     const panel = page.getByRole('dialog', { name: 'Notifications', exact: true })

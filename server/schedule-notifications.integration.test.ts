@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
+import type { ScheduleRun } from '../shared/schedules.js'
 import { buildApp } from './app.js'
 import { PushNotificationService } from './push-notification-service.js'
 import { ComputerManager } from './computer-manager.js'
@@ -14,6 +15,8 @@ import { JournalRecorder } from './manager-journal.js'
 import { ManagerStore } from './manager-store.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { recordScheduleProvenance } from './schedule-launcher.js'
+import { classifyScheduleNotification } from './notification-classifier.js'
+import { occurrenceKey, SchedulerStore, SCHEDULE_RUN_LIMIT } from './scheduler-store.js'
 
 const headers = { host: 'localhost', origin: 'http://localhost' }
 let directory: string
@@ -68,6 +71,59 @@ async function run(notify: 'never' | 'always') {
 }
 
 describe('hub schedule notification integration', () => {
+  it.each([false, true])('preserves an unclaimed full-history outcome through startup admission, including failed replay=%s', async (failReplay) => {
+    const seedNow = Date.now() - 24 * 60 * 60_000
+    const dueAt = new Date(Date.now() - 60_000).toISOString()
+    const seed = new SchedulerStore(directory, { now: () => seedNow })
+    await seed.initialize()
+    const schedule = await seed.create({
+      name: 'Fictional retained review', prompt: 'Review the fictional guide.',
+      target: { computerId: 'offline-studio', folder: '/fictional/repo', provider: 'copilot' },
+      recurrence: { type: 'once', at: dueAt }, timezone: 'UTC', notify: 'always',
+    })
+    const retained: ScheduleRun[] = Array.from({ length: SCHEDULE_RUN_LIMIT }, (_, index) => ({
+      id: `retained-${index}`, scheduleId: schedule.id, launchId: `retained-launch-${index}`,
+      computerId: schedule.target.computerId, occurrenceAt: new Date(seedNow + index).toISOString(),
+      trigger: 'manual', status: 'failed', endedAt: new Date(seedNow + index).toISOString(),
+    }))
+    const notifications = retained.map((run) => classifyScheduleNotification(schedule, run, dueAt)[0])
+    const state = JSON.parse(await readFile(seed.statePath, 'utf8'))
+    state.runs = retained
+    state.runSchedules = Object.fromEntries(retained.map((run) => [run.id, schedule]))
+    state.occurrences = Object.fromEntries(retained.map((run) =>
+      [occurrenceKey(run.scheduleId, run.occurrenceAt), run.id]))
+    state.notificationFences = notifications.slice(1).map((notification) => notification.id)
+    await writeFile(seed.statePath, JSON.stringify(state))
+    const push = new PushNotificationService(directory, sender)
+    await push.initialize()
+    await push.subscribe({ endpoint: 'https://push.example.test/fictional', keys: { p256dh: 'public', auth: 'auth' } })
+    const admission = vi.spyOn(NotificationCenterService.prototype, 'scheduleNotifications')
+    if (failReplay) admission.mockRejectedValueOnce(new Error('Synthetic notification admission failure'))
+
+    await hub()
+    await runtime.scheduleNotifications!.flush()
+    await runtime.notificationCenter!.flush()
+    const runs = runtime.scheduler!.store.allRuns()
+    expect(runs).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(runs.some((run) => run.occurrenceAt === dueAt && run.trigger === 'schedule')).toBe(true)
+    expect(runs.some((run) => run.id === retained[0].id)).toBe(true)
+    expect(runs.some((run) => run.id === retained[1].id)).toBe(false)
+    expect((await runtime.notificationCenter!.store.list()).filter((record) => record.id === notifications[0].id))
+      .toHaveLength(failReplay ? 0 : 1)
+    if (failReplay) expect(sender).not.toHaveBeenCalled()
+    else await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+    admission.mockRestore()
+    for (let restart = 0; restart < (failReplay ? 2 : 1); restart++) {
+      await runtime.app.close()
+      await hub()
+      await runtime.scheduleNotifications!.flush()
+      await runtime.notificationCenter!.flush()
+      expect((await runtime.notificationCenter!.store.list()).filter((record) => record.id === notifications[0].id)).toHaveLength(1)
+      await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+      expect(runtime.scheduler!.store.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
+    }
+  })
+
   it.each(['skip', 'replace'] as const)('delivers %s overlap outcomes from the real dispatcher exactly once', async (overlap) => {
     await hub()
     const scheduler = runtime.scheduler!

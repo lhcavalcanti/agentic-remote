@@ -4121,6 +4121,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // Sessions somebody said outright are gone, as opposed to ones a list did
   // not mention. Absence and removal are different things.
   const removedSessions = useRef(new Set<string>())
+  // Tombstones that exist only because their computer was unpaired; pairing it again lifts them.
+  const unpairedTombstones = useRef(new Map<string, Set<string>>())
   // Of those, the ones closed to reopen: coming back lifts their removal.
   const closedSessionKeys = useRef(new Set<string>())
   // One reorder at a time for a session, so a second drag does not take its
@@ -7443,6 +7445,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // The archived record was deleted and its removal event never
           // arrived here; the list and the detail now agree it is gone.
           removedSessions.current.add(goneKey)
+          claimTombstone(goneKey)
           setSessions((current) => current.filter((session) => sessionKey(session) !== goneKey))
           if (selectedRef.current && sessionKey(selectedRef.current) === goneKey) {
             setSelectedKey(
@@ -7628,6 +7631,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // is not what settles it, and a delayed clear response must not put
           // it back.
           removedSessions.current.add(removedKey)
+          claimTombstone(removedKey)
           if (event.closed) {
             closedSessionKeys.current.add(removedKey)
             void recentlyClosedRef.current.refresh()
@@ -7735,6 +7739,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // The hub filters retired clients before publishing this event.
           // A new pairing may be announced by another tab without a refresh.
           forgottenComputers.current.delete(event.computer.id)
+          liftUnpairedTombstones(event.computer.id)
           eventSequenceRef.current = nextSessionEventSequence()
           // Only the computer record is newer, not its sessions. A paired node
           // going offline is an ordinary update, and treating it as reason to
@@ -7761,7 +7766,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // offer a document it can no longer fetch.
           forgetComputerKnowledge(event.computerId)
           for (const session of sessionsRef.current) {
-            if (session.computerId === event.computerId) removedSessions.current.add(sessionKey(session))
+            if (session.computerId === event.computerId) tombstoneUnpairedSession(event.computerId, sessionKey(session))
           }
           setSessions((current) =>
             current.filter((session) => session.computerId !== event.computerId),
@@ -10142,6 +10147,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     )
     for (const computer of accepted) {
       forgottenComputers.current.delete(computer.id)
+      liftUnpairedTombstones(computer.id)
     }
     const listedIds = new Set(loaded.map((computer) => computer.id))
     const knownIds = new Set([
@@ -10963,10 +10969,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return
     }
     const targetKey = sessionKey(targetSession)
+    const startedAtSequence = eventSequenceRef.current
     setTranscribing(true)
     setError(undefined)
     try {
       const result = await transcribeAudio(file)
+      // Unpairing discards the session's drafts even if the computer is paired again before this returns.
+      if ((computerEventSequenceRef.current.get(targetSession.computerId) || 0) > startedAtSequence) return
       appendComposerForKey(targetKey, result.transcript)
       if (
         selectedRef.current &&
@@ -12762,6 +12771,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         closedSessionKeys.current.add(closedKey)
       }
       removedSessions.current.add(closedKey)
+      claimTombstone(closedKey)
       forgetAttachments(closedKey)
       updateComposerDrafts([closedKey], (current) => {
         const { [closedKey]: _removed, ...remaining } = current
@@ -13034,6 +13044,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
 
   function computerAdded(computer: ComputerSummary) {
     forgottenComputers.current.delete(computer.id)
+    liftUnpairedTombstones(computer.id)
     eventSequenceRef.current = nextSessionEventSequence()
     computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
     computersRef.current = upsertComputer(computersRef.current, computer)
@@ -13097,6 +13108,24 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
    * found unpaired. Shared by every snapshot (connection check, reconnect,
    * startup), so whichever one wins still cleans up.
    */
+  function tombstoneUnpairedSession(computerId: string, key: string) {
+    if (removedSessions.current.has(key)) return
+    removedSessions.current.add(key)
+    const keys = unpairedTombstones.current.get(computerId) ?? new Set<string>()
+    keys.add(key)
+    unpairedTombstones.current.set(computerId, keys)
+  }
+
+  /** A deletion or close owns the tombstone from now on, so pairing again does not lift it. */
+  function claimTombstone(key: string) {
+    unpairedTombstones.current.get(key.slice(0, key.indexOf(':')))?.delete(key)
+  }
+
+  function liftUnpairedTombstones(computerId: string) {
+    for (const key of unpairedTombstones.current.get(computerId) ?? []) removedSessions.current.delete(key)
+    unpairedTombstones.current.delete(computerId)
+  }
+
   function discardUnpairedComputers(forgotten: ReadonlySet<string>) {
     if (!forgotten.size) return
     // Only a newer computer event can keep a computer; a newer session event does not re-pair its owner.
@@ -13110,7 +13139,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     for (const session of sessionsRef.current) {
       if (!keepSession(session)) {
         const key = sessionKey(session)
-        removedSessions.current.add(key)
+        tombstoneUnpairedSession(session.computerId, key)
         sessionEventSequenceRef.current.set(key, removedAtSequence)
       }
     }

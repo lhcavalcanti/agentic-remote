@@ -1729,7 +1729,6 @@ describe('SessionStore', () => {
       '2026-07-22T00:00:02.000Z',
       'Sent to terminal',
     )
-    await store.update('session-1', (session) => { session.foregroundTurnActive = true })
 
     const updated = await store.replaceTranscript(
       'session-1',

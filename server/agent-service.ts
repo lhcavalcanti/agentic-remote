@@ -103,7 +103,7 @@ import {
   type TerminalQueueOutcome,
 } from './session-store.js'
 import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
-import { LaunchCreations, awaitTermination } from './launch-identity.js'
+import { LaunchCreations, awaitTermination, withSessionCreateBoundary } from './launch-identity.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
@@ -3460,7 +3460,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     mode?: AgentMode,
     launchId?: string,
   ): Promise<SessionDetail> {
-    return this.launchCreations.run(this.store, launchId, async () => {
+    return this.launchCreations.run(this.store, launchId, () => withSessionCreateBoundary(async (beginCreate) => {
       if (provider !== 'copilot') {
         throw new Error(`Provider ${provider} is not handled by Copilot`)
       }
@@ -3473,15 +3473,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         reasoningEffort,
         contextTier,
       )
-      return this.publicSession(await this.runSessionCreation(() => terminalBacked
-        ? this.createTerminalSession(
+      return this.publicSession(await this.runSessionCreation(() => {
+        beginCreate()
+        return terminalBacked
+          ? this.createTerminalSession(
             cwd,
             allowAllPermissions,
             runtime || mode ? { ...runtime, ...(mode ? { mode } : {}) } : undefined,
             launchId,
           )
-        : this.createSdkSession(cwd, allowAllPermissions, runtime, mode, launchId)))
-    })
+          : this.createSdkSession(cwd, allowAllPermissions, runtime, mode, launchId)
+      }))
+    }))
   }
 
   private async createSdkSession(
@@ -10053,6 +10056,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     let status = statusFromEvents(events)
+    let foregroundTurnActive = foregroundTurnOpen(events)
     const queueDispatchAt = this.store.queueDispatchAt(sessionId)
     if (queueDispatchAt) {
       const dispatchTime = Date.parse(queueDispatchAt)
@@ -10065,6 +10069,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
       } else {
         status = 'running'
+        // The accepted terminal handoff can precede its foreground lifecycle log.
+        foregroundTurnActive = true
       }
     }
     const activity = historyMessages
@@ -10106,7 +10112,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       },
       queueDispatchAt,
       observed,
-      foregroundTurnOpen(events),
+      foregroundTurnActive,
     )
     if (!updated || !this.store.isCurrentTranscript(sessionId, observed)) return
     this.eventLogFingerprints.set(sessionId, fingerprint)

@@ -190,16 +190,7 @@ export class SchedulerDispatcher {
   }
 
   private async overlap(run: ScheduleRun): Promise<void> {
-    const policy = this.store.scheduleForRun(run.id).overlap
-    const runs = this.store.allRuns()
-    const previous = runs.slice(0, runs.findIndex((entry) => entry.id === run.id)).filter((other) =>
-      other.id !== run.id && other.scheduleId === run.scheduleId && isInFlight(other))
-    if (!previous.length) return
-    if (policy === 'skip') {
-      await this.finish(run, 'missed', 'Skipped because another run is in flight')
-    } else if (policy === 'replace') {
-      for (const other of previous) await this.requestStop(other)
-    }
+    for (const other of await this.store.applyOverlap(run.id)) await this.requestStop(other)
   }
 
   private async drain(): Promise<void> {

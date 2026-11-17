@@ -33,6 +33,7 @@ export type ComposerProps = {
   selectedRetained: boolean
   selectedQueueHeadIsSteering: boolean
   selectedQueueAvailable: boolean
+  foregroundTurnActive: boolean
   selectedComputerOnline: boolean
   supportsQueuedPromptDispatch: boolean
   providerCapability?: AgentProviderCapability

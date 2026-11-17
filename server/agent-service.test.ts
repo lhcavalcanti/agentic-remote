@@ -445,6 +445,7 @@ describe('AgentService launch identity', () => {
     await service.sendMessage(created.id, 'Exactly once', true, undefined, false, 'root-delivery')
     await service.sendMessage(created.id, 'Exactly once', true, undefined, false, 'root-delivery')
     await vi.waitFor(() => expect(client.session.sentPrompts).toEqual(['Exactly once']))
+    expect(service.getSession(created.id)?.foregroundTurnActive).toBe(true)
     expect((await service.reconcileLaunch('root-run'))?.receipts[0]).toMatchObject({
       deliveryId: 'root-delivery', rootTurnId: expect.any(String),
     })
@@ -453,6 +454,7 @@ describe('AgentService launch identity', () => {
       .toMatchObject({ state: 'delivered', outcome: 'succeeded' }))
     await vi.waitFor(() => expect(service.getSession(created.id)?.messages.find((message) => message.role === 'user'))
       .toMatchObject({ content: 'Exactly once', deliveryConfirmed: true }))
+    await vi.waitFor(() => expect(service.getSession(created.id)?.foregroundTurnActive).toBe(false))
   })
 })
 
@@ -3975,8 +3977,45 @@ describe('AgentService deletion', () => {
         }),
       ],
     })
+
     expect(service.store.get(client.session.sessionId)?.status).toBe('idle')
     await service.stop()
+  })
+
+  it.each([false, true])('exposes foreground activity independently from running background agents (foreground=%s)', async (foreground) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-foreground-projection-'))
+    directories.push(directory)
+    const events = [
+      { type: 'assistant.turn_start', id: 'root-start', timestamp: '2026-09-07T20:00:00Z', data: {} },
+      {
+        type: 'subagent.started', id: 'agent-start', agentId: 'background-agent',
+        timestamp: '2026-09-07T20:00:01Z',
+        data: { toolCallId: 'background-call', agentType: 'explore', description: 'Continuing background work' },
+      },
+      ...(!foreground ? [{
+        type: 'assistant.turn_end', id: 'root-end', timestamp: '2026-09-07T20:00:02Z', data: {},
+      }] : []),
+    ] as SessionEvent[]
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store, new FakeCopilotClient(), async () => [], async () => undefined, async () => events,
+    )
+    await store.initialize()
+    await store.create({
+      id: 'foreground-projection', cwd: directory, title: 'Foreground check', status: 'idle',
+      updatedAt: '2026-09-07T20:00:00Z', isOpen: true, messages: [],
+    }, { backend: 'terminal', managedOpen: true })
+    service['externalSessionIds'].add('foreground-projection')
+    try {
+      await service['takeInTranscript'](
+        'foreground-projection', store.observeTranscript('foreground-projection'), 'events-v1', {},
+      )
+      expect(service.getSession('foreground-projection')).toMatchObject({
+        status: 'running', foregroundTurnActive: foreground,
+      })
+    } finally {
+      await service.stop()
+    }
   })
 
   it('refuses to cancel a task projected from a terminal session', async () => {

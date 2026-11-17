@@ -10100,6 +10100,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       },
       queueDispatchAt,
       observed,
+      foregroundTurnOpen(events),
     )
     if (!updated || !this.store.isCurrentTranscript(sessionId, observed)) return
     this.eventLogFingerprints.set(sessionId, fingerprint)
@@ -12393,6 +12394,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   private publicSession(session: SessionDetail): SessionDetail {
     session = this.queuedDispatches.view(session)
+    session = {
+      ...session,
+      foregroundTurnActive: session.status !== 'running' ? false :
+        session.executionMode === 'tmux' || this.externalSessionIds.has(session.id)
+          ? session.foregroundTurnActive
+          : this.activePrompts.has(session.id),
+    }
     const queued = session.queuedPrompts?.[0]
     const retainedQueueState: QueueState | undefined =
       queued && (session.interruption || session.archivedAt)

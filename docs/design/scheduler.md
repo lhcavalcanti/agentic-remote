@@ -169,6 +169,10 @@ Each proposal and observed outcome is recorded in the manager journal, including
 
 With Interface › Preview features › Scheduler enabled and the authoritative hub flag on, the Oracle panel renders pending confirmation cards. Before expanding anything, each card shows the operation, human recurrence and timezone, the next run from the shared recurrence engine, and labeled computer, folder, permissions, folder trust and workspace facts. Creates include a prompt preview; updates show changed fields as before → after, while enable/disable/Run now/archive explain their consequences. Allow-all displays the explicit warning “Runs tools without asking”. Before-state is read only at the proposal's exact base revision; a missing or stale revision disables approval rather than displaying a misleading diff. The immutable JSON stays under “Exact payload to approve”, with expiry and Approve/Reject actions bound only to the proposal ID. Socket changes and reconnects refresh the pending list. The Interface › Scheduler setting permits allow-all proposals, defaults off, and never approves a proposal itself.
 
+Schedule-definition and proposal invalidations both refetch pending proposals and their base schedules. Facts from a previous refresh epoch are hidden and approval is disabled with an explanation until the new lookup finishes. Edited or deleted bases remain unapprovable; the server's revision check remains the final authority.
+
+Open recurring cards recompute at the next occurrence boundary as well as expiry, one-off-time and foreground boundaries. Their displayed next run therefore remains a future occurrence without refetching unchanged schedule definitions.
+
 ## Canonical run notifications
 
 The canonical classifier resolves `notify` from the immutable definition accepted for the run, not today's edited schedule. A run outcome produces one stable identity from schedule ID, run ID and outcome. Needs-input is an attention outcome; a stopped run uses the interrupted kind. Pending, launching, running and stopping are not outcomes.

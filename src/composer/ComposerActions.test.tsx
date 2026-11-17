@@ -19,9 +19,24 @@ const props = (): ComponentProps<typeof ComposerActions> => ({
   onOpenAttachmentInput: vi.fn(), onStartRecording: vi.fn(), onSubmitMessage: vi.fn(),
   onOpenRuntime: vi.fn(), sessionActions: [{ label: 'Skills', onClick: vi.fn() }],
   onRecallSentMessage: vi.fn(), onCancelSentMessage: vi.fn(),
+  onUseSentMessage: vi.fn(() => true),
 })
 
 describe('refreshed composer actions', () => {
+  it.each([false, true])('closes history only after committing Use message (saved=%s)', (saved) => {
+    const callbacks = props()
+    callbacks.selected = { ...callbacks.selected, messages: [{
+      id: 'sent', role: 'user', content: 'A chosen prompt', deliveryConfirmed: true, createdAt: '2026-11-14T12:00:00Z',
+    }] }
+    callbacks.onUseSentMessage = vi.fn(() => saved)
+    render(<ComposerActions {...callbacks} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    fireEvent.click(screen.getByRole('option'))
+    fireEvent.click(screen.getByRole('button', { name: 'Use message' }))
+    expect(callbacks.onUseSentMessage).toHaveBeenCalledOnce()
+    expect(callbacks.onCancelSentMessage).not.toHaveBeenCalled()
+    expect(Boolean(screen.queryByRole('dialog', { name: 'Sent messages' }))).toBe(!saved)
+  })
   it('reuses attachment, microphone, setup, queue, send and stop handlers', () => {
     const callbacks = props()
     render(<ComposerActions {...callbacks} />)

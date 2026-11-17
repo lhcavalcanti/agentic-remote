@@ -98,4 +98,5 @@ export type ComposerProps = {
   sessionActions?: { label: string; onClick: () => void; disabled?: boolean }[]
   onRecallSentMessage: (id: string) => void
   onCancelSentMessage: () => void
+  onUseSentMessage: () => boolean
 }

@@ -495,6 +495,124 @@ describe('hub schedule dispatcher', () => {
     expect(store.getRun(replacement.id).status).toBe('running')
   })
 
+  it.each(['archived'] as const)('leaves live work untouched when %s commits after replacement admission before overlap', async (state) => {
+    const { dispatcher, store, launcher, schedule } = await fixture({ overlap: 'replace' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    let mutation: Promise<unknown> | undefined
+    const admit = store.admit.bind(store)
+    vi.spyOn(store, 'admit').mockImplementationOnce(async (...args) => {
+      const replacement = await admit(...args)
+      mutation = state === 'archived'
+        ? store.setArchived(schedule.id, 1, true)
+        : store.update(schedule.id, { revision: 1, enabled: false })
+      return replacement
+    })
+    const replacement = await dispatcher.runNow(schedule.id)
+    await mutation
+    await settle(dispatcher)
+    expect(store.getRun(live.id).status).toBe('running')
+    expect(store.getRun(replacement.id)).toMatchObject({
+      status: 'stopped', error: `Schedule was ${state} before replacement overlap`, endedAt: expect.any(String),
+    })
+    expect(launcher.stop).not.toHaveBeenCalled()
+    expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
+  it.each(['archived'] as const)('does not resume replacement cancellation after restart when the schedule is %s', async (state) => {
+    const { dispatcher, store, launcher, schedule, directory } = await fixture({ overlap: 'replace' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    await dispatcher.stop()
+    const replacement = (await store.admit(schedule.id, '2026-11-14T08:00:00.001Z', 'manual'))!
+    if (state === 'archived') await store.setArchived(schedule.id, 1, true)
+    else await store.update(schedule.id, { revision: 1, enabled: false })
+    const recovered = new SchedulerStore(directory)
+    const restarted = new SchedulerDispatcher(recovered, launcher)
+    dispatchers.push(restarted)
+    await restarted.start()
+    await settle(restarted)
+    expect(recovered.getRun(live.id).status).toBe('running')
+    expect(recovered.getRun(replacement.id)).toMatchObject({
+      status: 'stopped', error: `Schedule was ${state} before replacement overlap`,
+    })
+    expect(launcher.stop).not.toHaveBeenCalled()
+    expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
+  it('lets a manual replacement still replace when the schedule is disabled before overlap', async () => {
+    const { dispatcher, store, launcher, schedule } = await fixture({ overlap: 'replace' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    let mutation: Promise<unknown> | undefined
+    const admit = store.admit.bind(store)
+    vi.spyOn(store, 'admit').mockImplementationOnce(async (...args) => {
+      const replacement = await admit(...args)
+      mutation = store.update(schedule.id, { revision: 1, enabled: false })
+      return replacement
+    })
+    const replacement = await dispatcher.runNow(schedule.id)
+    await mutation
+    await settle(dispatcher)
+    // Admission accepts manual runs of a disabled schedule, so overlap treats them alike.
+    expect(store.getRun(live.id).status).not.toBe('running')
+    expect(launcher.stop).toHaveBeenCalled()
+    expect(store.getRun(replacement.id).error ?? '').not.toContain('before replacement overlap')
+  })
+
+  it('persists replacement stop intent before a later archive and retries that intent after restart', async () => {
+    const { dispatcher, store, launcher, schedule, directory } = await fixture({ overlap: 'replace' })
+    launcher.stop.mockResolvedValue({ outcome: 'unknown' })
+    await dispatcher.start()
+    const live = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    const replacement = await dispatcher.runNow(schedule.id)
+    const saved = JSON.parse(await readFile(store.statePath, 'utf8'))
+    expect(saved.runs).toContainEqual(expect.objectContaining({ id: live.id, status: 'stopping' }))
+    expect(store.getRun(replacement.id).status).toBe('pending')
+    expect(launcher.stop).toHaveBeenCalledOnce()
+    await dispatcher.stop()
+    await store.setArchived(schedule.id, 1, true)
+    const recovered = new SchedulerStore(directory)
+    const restarted = new SchedulerDispatcher(recovered, launcher)
+    dispatchers.push(restarted)
+    await restarted.start()
+    await settle(restarted)
+    expect(recovered.getRun(live.id).status).toBe('stopping')
+    expect(recovered.getRun(replacement.id)).toMatchObject({
+      status: 'stopped', error: 'Schedule was archived before replacement overlap',
+    })
+    expect(launcher.stop.mock.calls.length).toBeGreaterThan(1)
+    expect(launcher.stop.mock.calls.every(([run]) => run.id === live.id)).toBe(true)
+    expect(launcher.launch).toHaveBeenCalledOnce()
+  })
+
+  it('leaves every run unchanged when the replacement overlap transaction cannot persist', async () => {
+    const { store, launcher, schedule, directory } = await fixture({ overlap: 'replace' })
+    const live = (await store.admit(schedule.id, '2026-11-14T08:00:00.001Z', 'manual'))!
+    await store.changeRun(live.id, { status: 'running' })
+    const queued = (await store.admit(schedule.id, '2026-11-14T08:00:00.002Z', 'manual'))!
+    const replacement = (await store.admit(schedule.id, '2026-11-14T08:00:00.003Z', 'manual'))!
+    const persist = vi.spyOn(store as unknown as { persist(): Promise<void> }, 'persist')
+      .mockRejectedValueOnce(new Error('Synthetic overlap write failure'))
+    await expect(store.applyOverlap(replacement.id)).rejects.toThrow('Synthetic overlap write failure')
+    expect(store.allRuns().map((run) => run.status)).toEqual(['running', 'pending', 'pending'])
+    expect(launcher.stop).not.toHaveBeenCalled()
+    persist.mockRestore()
+    const recovered = new SchedulerStore(directory)
+    await recovered.initialize()
+    expect(recovered.getRun(live.id).status).toBe('running')
+    expect(recovered.getRun(queued.id).status).toBe('pending')
+    expect(recovered.getRun(replacement.id).status).toBe('pending')
+    const stopping = await recovered.applyOverlap(replacement.id)
+    expect(stopping.map((run) => run.id)).toEqual([live.id])
+    expect(recovered.getRun(queued.id).status).toBe('stopped')
+    expect(recovered.getRun(replacement.id).status).toBe('pending')
+  })
+
   it('enforces global concurrency, counting launching and needs-input slots', async () => {
     const { dispatcher, store, launcher, schedule } = await fixture()
     const second = await store.create(createInput({ name: 'Second' }))

@@ -80,6 +80,7 @@ async function responseError(
         error?: string
         message?: string
         statusCode?: number
+        code?: unknown
         submission?: unknown
         terminalDraftConflict?: unknown
         uncertainDelivery?: unknown
@@ -95,6 +96,7 @@ async function responseError(
       : `Request failed (${response.status})`
   const submission = parseSubmissionReceipt(payload?.submission)
   const options = {
+    code: typeof payload?.code === 'string' ? payload.code : undefined,
     terminalDraftConflict: payload?.terminalDraftConflict === true,
     uncertainDelivery: httpDeliveryUncertain(
       response.status,
@@ -108,7 +110,7 @@ async function responseError(
   }
   // Fastify's built-in envelope carries a numeric `statusCode`, a generic
   // `error` label, and the real reason in `message`; the app's own handler
-  // sends only `{ error }`. Do not key off `statusText`, which is empty over
+  // sends `{ error }` with optional metadata. `statusText` can be empty over
   // HTTP/2. A 5xx `message` is the raw exception and must not reach the UI.
   const isDefaultEnvelope =
     typeof payload.statusCode === 'number' &&

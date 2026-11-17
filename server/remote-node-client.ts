@@ -174,7 +174,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     try {
       info = await this.getInfo(AbortSignal.any([signal, AbortSignal.timeout(HOST_TELEMETRY_REMOTE_TIMEOUT_MS)]))
     } catch (error) {
-      if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502)
+      if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
       if (error instanceof RemoteNodeRequestError) throw error
       throw new RemoteNodeTransportError(this.computer.name, error)
     }
@@ -189,12 +189,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       try {
         payload = await this.request(path, { signal }, HOST_TELEMETRY_REMOTE_TIMEOUT_MS, false)
       } catch (error) {
-        if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502)
+        if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
         if (error instanceof RemoteNodeRequestError) throw error
         throw new RemoteNodeTransportError(this.computer.name, error)
       }
       const parsed = schema.safeParse(payload)
-      if (!parsed.success) throw hostTelemetryError('This computer returned invalid host telemetry', 502)
+      if (!parsed.success) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
       return parsed.data
     }
     return {

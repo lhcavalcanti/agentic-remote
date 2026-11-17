@@ -18634,6 +18634,101 @@ describe('App', () => {
     expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Live remote chat')
   })
 
+  it('does not let a transcription that finishes after a local removal recreate the removed draft', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote-voice', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote voice chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    let finish!: () => void
+    vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+      finish = () => resolve({ transcript: 'Late transcript', durationSeconds: 1 })
+    }))
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote voice chat'))
+    fireEvent.change(screen.getByLabelText('File attachment'), { target: { files: [new File(['data'], 'voice.webm', { type: 'audio/webm' })] } })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(secondComputer.id))
+    await act(async () => { finish() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote voice chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote voice chat'))
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+  })
+
+  it('does not let a send that settles after a local removal recreate the removed session', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote-send', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote send chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    let finish!: () => void
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => {
+      finish = () => resolve({ ...remoteSession, title: 'Late send response' })
+    }))
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote send chat'))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Pending prompt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(secondComputer.id))
+    await act(async () => { finish() })
+    expect(screen.queryByText('Late send response')).not.toBeInTheDocument()
+    expect(screen.queryByText('Remote send chat')).not.toBeInTheDocument()
+  })
+
+  it('does not refill task state from a read that settles after a local removal', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote = { ...secondComputer, providers: taskComputer.providers }
+    const remoteSession = { ...session, id: 'remote-task-removed', computerId: remote.id, computerName: remote.name, title: 'Remote removed task chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    let finishOld!: (value: BackgroundTaskSnapshot) => void
+    vi.mocked(listBackgroundTasks)
+      .mockReturnValueOnce(new Promise((resolve) => { finishOld = resolve }))
+      .mockResolvedValue({ supported: true, runningCount: 0, tasks: [] })
+    render(<App />)
+    await screen.findAllByText('Remote removed task chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${remote.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(remote.id))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await act(async () => { finishOld({
+      supported: true, runningCount: 1,
+      tasks: [{ id: 'stale-removed-task', type: 'shell', description: 'Stale removed response', status: 'running', startedAt: session.updatedAt, canCancel: false }],
+    }) })
+    expect(screen.queryByRole('button', { name: 'View background tasks for Remote removed task chat' })).not.toBeInTheDocument()
+  })
+
   it('does not refill removed task state from an old response after the computer is re-paired', async () => {
     seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remote = { ...secondComputer, providers: taskComputer.providers }

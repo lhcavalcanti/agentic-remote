@@ -152,6 +152,7 @@ export interface SchedulerChanged {
   revision: number
   scheduleId: string
   runId?: string
+  runIds?: string[]
 }
 
 export type ScheduleCreate = z.input<typeof scheduleCreateSchema>

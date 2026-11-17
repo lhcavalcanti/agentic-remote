@@ -57,6 +57,30 @@ async function app(role: 'hub' | 'node' = 'hub', realRunner = false) {
 }
 
 describe('scheduler hub API', () => {
+  it('journals each proposal transition in order while an earlier journal batch is blocked', async () => {
+    await app()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const append = ManagerStore.prototype.appendProposalJournal
+    const blocked = vi.spyOn(ManagerStore.prototype, 'appendProposalJournal').mockImplementation(async function (this: ManagerStore, proposals) {
+      await gate
+      return append.call(this, proposals)
+    })
+    try {
+      const store = runtime.scheduler!.store
+      await store.propose({ operation: 'create', payload: input() as never })
+      await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+      const proposal = await store.propose({ operation: 'create', payload: { ...input(), name: 'Fictional second review' } as never })
+      await store.rejectProposal(proposal.id)
+      release()
+      await runtime.app.close()
+      const reopened = new ManagerStore(path.join(directory, 'manager'))
+      await reopened.initialize()
+      expect(reopened.journalSince(0).filter((entry) => entry.proposalId === proposal.id)
+        .map((entry) => entry.proposalStatus)).toEqual(['pending', 'rejected'])
+    } finally { release(); blocked.mockRestore() }
+  })
+
   it('installs the real runner with Oracle off and records root receipts and schedule provenance', async () => {
     const server = await app('hub', true)
     const computerId = runtime.identity.info.id

@@ -90,8 +90,9 @@ function inbox(socket: WebSocket) {
   const waiters: (() => void)[] = []
   socket.on('message', (data) => {
     const event = JSON.parse(data.toString()) as HubWireEvent
-    // Ordering preference events are sent alongside and are not under test.
-    if (event.type === 'session.order.updated') return
+    // Ordering preference events and metadata-only origin corrections are sent
+    // alongside and are not under test.
+    if (event.type === 'session.order.updated' || (event.type === 'session.upserted' && event.summary)) return
     events.push(event)
     for (const waiter of waiters.splice(0)) waiter()
   })
@@ -147,6 +148,11 @@ describe('/api/events session patches', () => {
       const received = inbox(socket)
       manager.emit('event', { type: 'session.upserted', session: session(['a']) })
       await received.next(1)
+      // Recording the new session's origin sends one metadata-only patch.
+      const [, correction] = await received.next(2)
+      expect(correction).toMatchObject({
+        type: 'session.patched', session: { provenance: { origin: 'discovered' } }, patch: { keep: 1, messages: [] },
+      })
       socket.send('not json')
       socket.send(JSON.stringify({ type: 'session.resync', computerId: 'hub', sessionId: 'one', padding: 'x'.repeat(2_000) }))
       socket.send(JSON.stringify({ type: 'session.resync', computerId: 7, sessionId: 'one' }))
@@ -154,10 +160,12 @@ describe('/api/events session patches', () => {
       socket.send(Buffer.from([1, 2, 3]), { binary: true })
       socket.send(JSON.stringify({ type: 'session.resync', computerId: 'hub', sessionId: 'unknown' }))
       socket.send(JSON.stringify({ type: 'session.resync', computerId: 'hub', sessionId: 'one' }))
-      const events = await received.next(2)
-      expect(events[1]).toEqual({ type: 'session.upserted', session: session(['a']), patchVersion: 1 })
+      const events = await received.next(3)
+      expect(events[2]).toEqual({
+        type: 'session.upserted', session: { ...session(['a']), provenance: { origin: 'discovered' } }, patchVersion: 2,
+      })
       await new Promise((resolve) => setTimeout(resolve, 100))
-      expect(received.events).toHaveLength(2)
+      expect(received.events).toHaveLength(3)
     } finally {
       socket.terminate()
     }

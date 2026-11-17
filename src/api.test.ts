@@ -183,10 +183,13 @@ describe('API request headers', () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({
       error: 'This computer returned invalid host telemetry', code, uncertainDelivery: false,
     }, { status: 502 })))
-    await expect(request('/api/computers/studio/host')).rejects.toMatchObject({
-      statusCode: 502, message: 'This computer returned invalid host telemetry',
-      code: expectedCode, uncertainDelivery: false,
+    const failure = request('/api/computers/studio/host')
+    await expect(failure).rejects.toMatchObject({
+      statusCode: 502, message: 'This computer returned invalid host telemetry', uncertainDelivery: false,
+      ...(expectedCode === undefined ? {} : { code: expectedCode }),
     })
+    // A missing or non-string server code leaves no `code` property at all.
+    if (expectedCode === undefined) await expect(failure).rejects.not.toHaveProperty('code')
   })
 
   it('bounds the initial hub snapshot instead of loading forever', async () => {

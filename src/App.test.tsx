@@ -19125,14 +19125,25 @@ describe('App', () => {
   ])('gates busy preview delivery for $provider steering=$supportsSteering', async ({ provider, supportsSteering, reason }) => {
     seedHubSettings({ previewFeatures: { composerRefresh: true } })
     vi.mocked(listComputers).mockResolvedValue([{
-      ...computer,
-      providers: computer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
     }])
-    const busy = { ...session, provider, status: 'running' as const }
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const busy = { ...session, provider, status: 'running' as const, foregroundTurnActive: true }
     vi.mocked(listSessions).mockResolvedValue([busy])
     vi.mocked(getSession).mockResolvedValue(busy)
     render(<App />)
     fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Guide or queue this review' } })
+    if (provider === 'copilot') {
+      await waitFor(() => expect(screen.getByRole('button', { name: 'View background tasks' }))
+        .toHaveTextContent('1 background task running'))
+    }
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     expect(sendMessage).not.toHaveBeenCalled()
     const steer = screen.getByRole('menuitem', { name: /Steer —/ })
@@ -19148,6 +19159,41 @@ describe('App', () => {
     await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
       'computer-1', 'session-1', expect.objectContaining({ content: 'Guide or queue this review', enqueue: Boolean(reason) }),
     ))
+  })
+
+  it.each([
+    { supportsSteering: undefined, foregroundTurnActive: undefined },
+    { supportsSteering: true, foregroundTurnActive: false },
+  ])('sends directly during background-only work (steering=$supportsSteering, foreground=$foregroundTurnActive)', async ({
+    supportsSteering, foregroundTurnActive,
+  }) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const backgroundOnly = { ...session, status: 'running' as const, foregroundTurnActive }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledWith(session.computerId, session.id))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.change(textarea, { target: { value: 'Start a separate foreground prompt' } })
+    const send = screen.getByRole('button', { name: 'Send message' })
+    expect(send).toBeEnabled()
+    fireEvent.click(send)
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      session.computerId, session.id, expect.objectContaining({ content: 'Start a separate foreground prompt', enqueue: false }),
+    ))
+    expect(screen.queryByRole('menu', { name: 'Message delivery' })).not.toBeInTheDocument()
   })
 
   it('keeps Enter immediate delivery instead of opening the busy preview menu', async () => {

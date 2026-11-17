@@ -5,6 +5,7 @@ import {
   defaultNotificationKindPreference,
   type NotificationKindPreferences,
   type NotificationRecord,
+  type ScheduleRunNotification,
 } from '../shared/notification-center.js'
 import {
   classifyHubNotification,
@@ -95,6 +96,18 @@ export class NotificationCenterService implements NotificationRecorder {
       .filter((record) => this.inApp(record))))
     this.admissions.set(event, admitted)
     return admitted
+  }
+
+  scheduleNotifications(events: readonly ScheduleRunNotification[]): Promise<void> {
+    const previous = events.flatMap((event) => this.admissions.get(event) ?? [])
+    const pending = events.filter((event) => !this.admissions.has(event))
+    if (!pending.length) return Promise.all(previous).then(() => undefined)
+    const snapshots = structuredClone(pending)
+    const admitted = this.enqueue(() => this.store.ingest((cursors) =>
+      snapshots.flatMap((event) => classifyHubNotification(event, cursors, this.now()))
+        .filter((record) => this.inApp(record))))
+    for (const event of pending) this.admissions.set(event, admitted)
+    return Promise.all([...previous, admitted]).then(() => undefined)
   }
 
   host(computer: ComputerSummary, snapshot: HostSnapshot | undefined): Promise<void> {

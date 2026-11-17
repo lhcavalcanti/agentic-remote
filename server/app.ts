@@ -620,7 +620,8 @@ export async function buildApp(
       })
       const store = scheduler.store
       store.on('proposal', () => {
-        scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, store.proposals()))
+        const proposals = store.proposals()
+        scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals))
           .catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
       })
     }
@@ -743,7 +744,8 @@ export async function buildApp(
     if (hostAlerts) await startupPhases.run('hostAlerts.start', async () => hostAlerts.start())
     if (scheduler) await startupPhases.run('scheduler.start', async () => {
       await scheduler!.start()
-      scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, scheduler!.store.proposals()))
+      const proposals = scheduler!.store.proposals()
+      scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals))
       await scheduleJournal
     })
     cliCanary?.start()

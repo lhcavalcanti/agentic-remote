@@ -12,7 +12,7 @@ vi.mock('../api', () => ({ request: vi.fn() }))
 class Socket {
   static instances: Socket[] = []
   onmessage?: (event: { data: string }) => void
-  onclose?: () => void
+  onclose?: (event: { code: number; reason?: string }) => void
   onerror?: () => void
   close = vi.fn()
   readonly url: string
@@ -135,7 +135,7 @@ it('retries failed initial snapshots with backoff and cancels retries when close
   expect(request).toHaveBeenCalledTimes(3)
   expect(result.current.error).toBeUndefined()
   expect(Socket.instances).toHaveLength(1)
-  act(() => Socket.instances[0].onclose?.())
+  act(() => Socket.instances[0].onclose?.({ code: 1006 }))
   unmount()
   await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
   expect(request).toHaveBeenCalledTimes(3)
@@ -267,7 +267,7 @@ it('preserves update-required after an invalid frame closes and ignores later fr
   await act(async () => {})
   act(() => {
     Socket.instances[0].onmessage?.({ data: '{"type":"unsupported"}' })
-    Socket.instances[0].onclose?.()
+    Socket.instances[0].onclose?.({ code: 1006 })
     Socket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'host.snapshot', snapshot }) })
   })
   expect(result.current.error).toContain('Update this computer')
@@ -286,6 +286,36 @@ it('does not retry an incompatible initial snapshot', async () => {
   await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
   expect(request).toHaveBeenCalledTimes(1)
   expect(Socket.instances).toHaveLength(0)
+})
+
+it('requires a manual retry after an incompatible live close', async () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  act(() => Socket.instances[0].onclose?.({ code: 4002, reason: 'HOST_TELEMETRY_INVALID' }))
+  expect(result.current.error).toContain('Update this computer')
+  expect(result.current.retryRequired).toBe(true)
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000) })
+  expect(request).toHaveBeenCalledTimes(1)
+  await act(async () => { result.current.retry() })
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(Socket.instances).toHaveLength(2)
+  expect(result.current.error).toBeUndefined()
+})
+
+it.each([1000, 1006, 1011])('keeps reconnecting after an ordinary live close (%s)', async (code) => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useHostMonitor('studio', true, false, false))
+  await act(async () => {})
+  act(() => Socket.instances[0].onclose?.({ code }))
+  expect(result.current.error).toContain('Reconnecting')
+  expect(result.current.retryRequired).toBe(false)
+  await act(async () => { await vi.advanceTimersByTimeAsync(999) })
+  expect(request).toHaveBeenCalledTimes(1)
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(Socket.instances).toHaveLength(2)
+  expect(result.current.error).toBeUndefined()
 })
 
 it('freezes only the presentation while the stream remains subscribed', async () => {

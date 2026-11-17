@@ -18731,6 +18731,39 @@ describe('App', () => {
     expect(screen.getByLabelText('Message')).toHaveValue('')
   })
 
+  it('drops audio queued before unpairing when it only starts after the computer is paired again', async () => {
+    const remoteSession = { ...session, id: 'remote-queued-voice', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote queued voice chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    let finishUpload!: () => void
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = () => resolve({ name: 'notes.txt', path: '/synthetic/notes.txt', size: 4 })
+    }))
+    vi.mocked(transcribeAudio).mockResolvedValue({ transcript: 'Queued stale transcript', durationSeconds: 1 })
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote queued voice chat'))
+    const input = screen.getByLabelText('File attachment')
+    fireEvent.change(input, { target: { files: [new File(['data'], 'notes.txt', { type: 'text/plain' })] } })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.change(input, { target: { files: [new File(['data'], 'voice.webm', { type: 'audio/webm' })] } })
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }) } as MessageEvent)
+    })
+    await waitFor(() => expect(screen.queryByText('Remote queued voice chat')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await act(async () => { finishUpload() })
+    fireEvent.click((await screen.findAllByText('Remote queued voice chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote queued voice chat'))
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    expect(transcribeAudio).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+  })
+
   it('does not let a send that settles after a local removal recreate the removed session', async () => {
     seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote-send', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote send chat' }

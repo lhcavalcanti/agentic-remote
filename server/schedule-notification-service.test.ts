@@ -7,7 +7,7 @@ import type { PushSubscription, RequestOptions } from 'web-push'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import type { ScheduleRunNotification } from '../shared/notification-center.js'
 import { ScheduleShellNotifier, type NotificationScope } from '../shared/notifications.js'
-import type { Schedule, ScheduleRunStatus } from '../shared/schedules.js'
+import type { Schedule, ScheduleRunStatus, SchedulerChanged } from '../shared/schedules.js'
 import { NotificationCenterService } from './notification-center-service.js'
 import { classifyScheduleNotification, notificationIdentity } from './notification-classifier.js'
 import { NotificationStore } from './notification-store.js'
@@ -60,7 +60,10 @@ beforeEach(async () => {
   })
   events = new EventEmitter()
   push.attach(events)
-  service = new ScheduleNotificationService(schedules, { admit: (event) => center.hub(event), mutedSessions: () => muted, now: () => now })
+  service = new ScheduleNotificationService(schedules, {
+    admit: (event) => center.hub(event), admitBatch: (batch) => center.scheduleNotifications(batch),
+    mutedSessions: () => muted, now: () => now,
+  })
   push.attachScheduleNotifications(service)
   const shell = new ScheduleShellNotifier()
   service.on('event', (event) => {
@@ -89,6 +92,110 @@ async function run(policy: Schedule['notify'] = 'always') {
 }
 
 describe('canonical schedule notifications across channels', () => {
+  it('announces a skipped overlap once after its atomic commit and never replays it', async () => {
+    const { schedule } = await run()
+    const missed = (await schedules.admit(schedule.id, new Date(now + 1).toISOString(), 'manual'))!
+    const changed = vi.fn<(event: SchedulerChanged) => void>()
+    schedules.on('changed', changed)
+    await schedules.applyOverlap(missed.id)
+    await settled()
+    expect(await records.list()).toMatchObject([{ kind: 'schedule.run.missed' }])
+    expect(published).toHaveLength(1)
+    expect(sender).toHaveBeenCalledOnce()
+    expect(native).toHaveLength(1)
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ runIds: [missed.id] }))
+    await schedules.applyOverlap(missed.id)
+    await service.start()
+    await settled()
+    expect(published).toHaveLength(1)
+    expect(sender).toHaveBeenCalledOnce()
+  })
+
+  it('batches all replaced run outcomes from the committed snapshot and preserves their restart fences', async () => {
+    const schedule = await schedules.create({ ...input(), overlap: 'replace' })
+    const previous = (await schedules.admit(schedule.id, new Date(now).toISOString(), 'manual'))!
+    await schedules.changeRun(previous.id, { status: 'running', sessionId: 'live-review' })
+    const queued = await Promise.all([1, 2].map((offset) =>
+      schedules.admit(schedule.id, new Date(now + offset).toISOString(), 'manual')))
+    const replacement = (await schedules.admit(schedule.id, new Date(now + 3).toISOString(), 'manual'))!
+    const changed = vi.fn((event: SchedulerChanged) =>
+      event.runIds?.map((id) => ({ id, status: schedules.getRun(id).status })))
+    schedules.on('changed', changed)
+    const persist = vi.spyOn(schedules as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+    const notificationPersist = vi.spyOn(records as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+    try {
+      expect((await schedules.applyOverlap(replacement.id)).map((run) => run.id)).toEqual([previous.id])
+      await settled()
+      expect(await records.list()).toHaveLength(2)
+      expect(published.map((event) => event.notification.kind)).toEqual(['schedule.run.interrupted', 'schedule.run.interrupted'])
+      expect(changed.mock.results[0].value).toEqual([
+        { id: previous.id, status: 'stopping' }, ...queued.map((run) => ({ id: run!.id, status: 'stopped' })),
+      ])
+      expect(persist).toHaveBeenCalledTimes(2)
+      expect(notificationPersist).toHaveBeenCalledOnce()
+      expect(sender).toHaveBeenCalledTimes(2)
+      expect(native).toHaveLength(2)
+      await schedules.changeRun(previous.id, { status: 'stopped', endedAt: new Date(now).toISOString() })
+      await settled()
+      expect(published).toHaveLength(3)
+      expect(new Set(published.map((event) => event.notification.id)).size).toBe(3)
+      expect(sender).toHaveBeenCalledTimes(3)
+      expect(native).toHaveLength(3)
+      const restored = new SchedulerStore(directory, { now: () => now })
+      await restored.initialize()
+      const replay = new ScheduleNotificationService(restored, {
+        admitBatch: (batch) => center.scheduleNotifications(batch), mutedSessions: () => [], now: () => now,
+      })
+      const announced = vi.fn()
+      replay.on('event', announced)
+      try {
+        await replay.start()
+        expect(announced).not.toHaveBeenCalled()
+        expect(await records.list()).toHaveLength(3)
+      } finally { await replay.stop() }
+    } finally { persist.mockRestore(); notificationPersist.mockRestore() }
+  })
+
+  it('announces an archived-before-overlap stop without interrupting the older live run', async () => {
+    const schedule = await schedules.create({ ...input(), overlap: 'replace' })
+    const previous = (await schedules.admit(schedule.id, new Date(now).toISOString(), 'manual'))!
+    await schedules.changeRun(previous.id, { status: 'running' })
+    const replacement = (await schedules.admit(schedule.id, new Date(now + 1).toISOString(), 'manual'))!
+    await schedules.setArchived(schedule.id, schedule.revision, true)
+    expect(await schedules.applyOverlap(replacement.id)).toEqual([])
+    await settled()
+    expect(await records.list()).toMatchObject([{ kind: 'schedule.run.interrupted' }])
+    expect(schedules.getRun(previous.id).status).toBe('running')
+    expect(schedules.getRun(replacement.id)).toMatchObject({ status: 'stopped', error: 'Schedule was archived before replacement overlap' })
+    expect(sender).toHaveBeenCalledOnce()
+    expect(native).toHaveLength(1)
+    await service.start()
+    expect(published).toHaveLength(1)
+  })
+
+  it.each([false, true])('accepts a legacy runId event and deduplicates overlapping runIds=%s', async (includeBatch) => {
+    const { schedule, run: accepted } = await run()
+    await service.stop()
+    await schedules.changeRun(accepted.id, { status: 'failed' })
+    const admitBatch = vi.fn((batch: ScheduleRunNotification[]) => center.scheduleNotifications(batch))
+    const listener = new ScheduleNotificationService(schedules, {
+      admitBatch, mutedSessions: () => [], now: () => now,
+    })
+    const announced = vi.fn()
+    listener.on('event', announced)
+    try {
+      schedules.emit('changed', {
+        type: 'schedules.changed', revision: 1, scheduleId: schedule.id, runId: accepted.id,
+        ...(includeBatch ? { runIds: [accepted.id, accepted.id] } : {}),
+      })
+      await listener.flush()
+      expect(admitBatch).toHaveBeenCalledOnce()
+      expect(admitBatch.mock.calls[0][0]).toHaveLength(1)
+      expect(announced).toHaveBeenCalledOnce()
+      expect(await records.list()).toHaveLength(1)
+    } finally { await listener.stop() }
+  })
+
   it.each([4000, 3997, 0])('replays 4000 retained runs with %s existing fences using bounded durable work', async (fencedCount) => {
     await service.stop()
     const seed = await schedules.create(input())

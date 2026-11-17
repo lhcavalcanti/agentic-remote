@@ -15,6 +15,26 @@ afterEach(async () => {
 })
 
 describe('submission error HTTP contract', () => {
+  it('preserves an explicit machine-readable error code alongside existing submission metadata', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'submission-http-'))
+    directories.push(directory)
+    const runtime = await buildApp({ dataDirectory: directory, logger: false, role: 'node' })
+    runtime.app.get('/synthetic-coded-error', async () => {
+      throw Object.assign(new Error('Synthetic coded refusal'), {
+        statusCode: 502, code: 'SYNTHETIC_INVALID', uncertainDelivery: false,
+      })
+    })
+    try {
+      const response = await runtime.app.inject('/synthetic-coded-error')
+      expect(response.statusCode).toBe(502)
+      expect(response.json()).toEqual({
+        error: 'Synthetic coded refusal', code: 'SYNTHETIC_INVALID', uncertainDelivery: false,
+      })
+    } finally {
+      await runtime.app.close()
+    }
+  })
+
   it.each([false, true])('serializes explicit delivery uncertainty=%s', async (uncertainDelivery) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'submission-http-'))
     directories.push(directory)

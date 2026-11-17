@@ -60,6 +60,7 @@ export function httpDeliveryUncertain(
 
 export class SubmissionError extends Error {
   readonly statusCode: number
+  readonly code?: string
   readonly submission?: SubmissionReceipt
   readonly uncertainDelivery: boolean
   readonly terminalDraftConflict: boolean
@@ -69,6 +70,7 @@ export class SubmissionError extends Error {
     statusCode: number,
     submission?: SubmissionReceipt,
     options?: ErrorOptions & {
+      code?: string
       terminalDraftConflict?: boolean
       uncertainDelivery?: boolean
     },
@@ -76,6 +78,7 @@ export class SubmissionError extends Error {
     super(message, options)
     this.name = 'SubmissionError'
     this.statusCode = statusCode
+    this.code = options?.code
     this.submission = submission
     this.uncertainDelivery = options?.uncertainDelivery ?? submission?.accepted === true
     this.terminalDraftConflict = options?.terminalDraftConflict === true

@@ -77,6 +77,7 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
   const act = (path: string, body: unknown) => void mutate(path, body).catch(() => undefined)
   const historySchedule = scheduler.schedules.find((schedule) => schedule.id === historyId)
   const list = scheduler.schedules.filter((schedule) => schedule.archived === showArchived)
+  const listLoaded = !scheduler.loading && !scheduler.error
   return <DialogFrame title="Scheduler" eyebrow="Hub" onClose={() => {
     viewActive.current = false
     formGeneration.current++
@@ -129,12 +130,12 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
           }} />
       </> : <>
         {scheduler.historyError && <p role="status">{scheduler.historyError} <button className="secondary-button" onClick={() => setHistorySelection({})}>Show all schedules</button></p>}
-        {initialScheduleId && historyId === initialScheduleId && !scheduler.loading && !historySchedule && !scheduler.historyError &&
+        {initialScheduleId && historyId === initialScheduleId && listLoaded && !historySchedule && !scheduler.historyError &&
           <p role="status">The linked schedule is no longer available. <button className="secondary-button" onClick={() => setHistorySelection({})}>Show all schedules</button></p>}
         <label className="schedule-check"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Show archived schedules</label>
         {scheduler.loading && <p role="status">Loading schedules…</p>}
         {scheduler.recentError && <p role="status" className="schedule-caption">{scheduler.recentError}</p>}
-        {!list.length && !scheduler.loading && <p className="scheduler-empty">{showArchived ? 'No archived schedules.' : 'No schedules yet. Create a saved prompt to get started.'}</p>}
+        {!list.length && listLoaded && <p className="scheduler-empty">{showArchived ? 'No archived schedules.' : 'No schedules yet. Create a saved prompt to get started.'}</p>}
         <ul className="schedule-list">{list.map((schedule) => {
           const last = scheduler.recent.filter((run) => run.scheduleId === schedule.id)
             .sort((a, b) => b.occurrenceAt.localeCompare(a.occurrenceAt))[0]
@@ -150,7 +151,10 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
             <div className="schedule-card__footer"><span>{last ? <RunStatus run={last} /> : <small>{scheduler.recentError ? 'Recent run unavailable' : 'No recent run'}</small>}</span>
               <div className="schedule-actions">
                 {!schedule.archived && <button type="button" className="secondary-button" disabled={pending} onClick={() => act(`${path}/run`, {})} aria-label={`Run ${schedule.name} now`}>Run now</button>}
-                <button type="button" className="secondary-button" disabled={pending} onClick={() => changeForm({ initial: editableSchedule(schedule), editing: schedule })} aria-label={`Edit ${schedule.name}`}>Edit</button>
+                <button type="button" className="secondary-button" disabled={pending} onClick={() => {
+                  setError(undefined)
+                  changeForm({ initial: editableSchedule(schedule), editing: schedule })
+                }} aria-label={`Edit ${schedule.name}`}>Edit</button>
                 <button type="button" className="secondary-button" disabled={pending} onClick={() => {
                   setError(undefined)
                   changeForm({ initial: { ...editableSchedule(schedule), name: `${schedule.name.slice(0, 193)} (copy)`, enabled: false } })

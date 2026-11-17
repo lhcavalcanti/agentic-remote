@@ -492,6 +492,48 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     })
   }
 
+  applyOverlap(id: string): Promise<ScheduleRun[]> {
+    return this.commit((next) => {
+      const position = next.runs.findIndex((run) => run.id === id)
+      if (position < 0) throw failure('Schedule run not found', 404)
+      const run = next.runs[position]
+      const stopping: ScheduleRun[] = []
+      // Overlap can update several runs; invalidate the whole schedule.
+      const change = { result: stopping, scheduleId: run.scheduleId }
+      if (run.status !== 'pending') return change
+      const previous = next.runs.slice(0, position).filter((other) =>
+        other.scheduleId === run.scheduleId && isInFlight(other))
+      if (!previous.length) return change
+      const policy = next.runSchedules[id].overlap
+      const endedAt = this.now()
+      if (policy === 'skip') {
+        next.runs[position] = scheduleRunSchema.parse({
+          ...run, status: 'missed', endedAt, error: 'Skipped because another run is in flight',
+        })
+      } else if (policy === 'replace') {
+        const schedule = next.schedules.find((entry) => entry.id === run.scheduleId)
+        // Archive/disable and replacement stop intent share one commit ordering.
+        // Same eligibility as admission: a manual run of a disabled schedule may still replace.
+        if (!schedule || schedule.archived || (run.trigger !== 'manual' && !schedule.enabled)) {
+          const reason = !schedule ? 'deleted' : schedule.archived ? 'archived' : 'disabled'
+          next.runs[position] = scheduleRunSchema.parse({
+            ...run, status: 'stopped', endedAt, error: `Schedule was ${reason} before replacement overlap`,
+          })
+          return change
+        }
+        for (const other of previous) {
+          const updated = scheduleRunSchema.parse({
+            ...other, status: other.status === 'pending' ? 'stopped' : 'stopping',
+            ...(other.status === 'pending' ? { endedAt } : {}),
+          })
+          next.runs[next.runs.indexOf(other)] = updated
+          if (updated.status === 'stopping') stopping.push(updated)
+        }
+      }
+      return change
+    })
+  }
+
   beginLaunch(id: string, startedAt: string): Promise<ScheduleRun> {
     return this.commit((next) => {
       const position = next.runs.findIndex((run) => run.id === id)

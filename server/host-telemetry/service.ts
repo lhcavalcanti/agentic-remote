@@ -13,8 +13,8 @@ export interface HostTelemetryTarget {
   subscribe(sample: (snapshot: HostSnapshot) => void, ended: () => void): (() => void) | Promise<() => void>
 }
 
-export function hostTelemetryError(message: string, statusCode: number): Error & { statusCode: number } {
-  return Object.assign(new Error(message), { statusCode })
+export function hostTelemetryError(message: string, statusCode: number, code?: string): Error & { statusCode: number; code?: string } {
+  return Object.assign(new Error(message), { statusCode, ...(code === undefined ? {} : { code }) })
 }
 
 /** One instance per owning computer, never constructed with the feature off. */

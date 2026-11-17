@@ -26,7 +26,8 @@ export class ScheduleNotificationService extends EventEmitter<{ event: [event: S
   async start(): Promise<void> {
     this.queue(async () => {
       const replay = this.store.notificationReplay()
-      const events = replay.runs.flatMap(({ schedule, run }) => this.notifications(schedule, run))
+      const muted = new Set(this.options.mutedSessions())
+      const events = replay.runs.flatMap(({ schedule, run }) => this.notifications(schedule, run, muted))
         .filter((event) => !replay.claimed.has(event.notification.id))
       await this.deliver(events)
     })
@@ -41,11 +42,12 @@ export class ScheduleNotificationService extends EventEmitter<{ event: [event: S
     const events = this.notifications(schedule, run)
     if (events.length) this.queue(() => this.deliver(events))
   }
-  private notifications(schedule: Schedule, run: ScheduleRun): ScheduleRunNotification[] {
+  private notifications(schedule: Schedule, run: ScheduleRun, muted?: ReadonlySet<string>): ScheduleRunNotification[] {
     const now = new Date((this.options.now ?? Date.now)()).toISOString()
     return classifyScheduleNotification(schedule, run, now).map((notification) => {
+      const key = `${notification.computerId}:${notification.sessionId}`
       notification.muted = Boolean(notification.sessionId &&
-        this.options.mutedSessions().includes(`${notification.computerId}:${notification.sessionId}`))
+        (muted ? muted.has(key) : this.options.mutedSessions().includes(key)))
       return { type: 'schedule.run.notification', notification }
     })
   }

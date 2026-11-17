@@ -112,7 +112,8 @@ describe('canonical schedule notifications across channels', () => {
     await restored.initialize()
     const warn = vi.fn()
     const admitBatch = vi.fn((batch: ScheduleRunNotification[]) => center.scheduleNotifications(batch))
-    const replay = new ScheduleNotificationService(restored, { admitBatch, mutedSessions: () => [], now: () => now, warn })
+    const mutedSessions = vi.fn(() => state.runs.map((run: { computerId: string; sessionId: string }) => `${run.computerId}:${run.sessionId}`))
+    const replay = new ScheduleNotificationService(restored, { admitBatch, mutedSessions, now: () => now, warn })
     const announced = vi.fn()
     replay.on('event', announced)
     const persist = vi.spyOn(restored as unknown as { persist(state: unknown): Promise<void> }, 'persist')
@@ -135,12 +136,14 @@ describe('canonical schedule notifications across channels', () => {
       expect(notificationPersist).toHaveBeenCalledTimes(expected ? 1 : 0)
       expect(admitBatch).toHaveBeenCalledTimes(expected ? 1 : 0)
       expect(announced).toHaveBeenCalledTimes(expected)
+      expect(mutedSessions).toHaveBeenCalledOnce()
       expect(warn).not.toHaveBeenCalled()
       if (expected) {
         const event = announced.mock.calls[0][0]
         expect(center.hub(event)).toBe(center.admission(event))
       }
       await replay.start()
+      expect(mutedSessions).toHaveBeenCalledTimes(2)
       expect(announced).toHaveBeenCalledTimes(expected)
       expect(persist).toHaveBeenCalledTimes(expected ? 1 : 0)
       expect(notificationPersist).toHaveBeenCalledTimes(expected ? 1 : 0)

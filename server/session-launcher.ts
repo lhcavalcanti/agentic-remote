@@ -63,6 +63,8 @@ interface SessionLauncherOptions<Provenance extends object> {
 
 /** Creation succeeded; a provenance failure must never be treated as a creation refusal. */
 export class SessionLaunchPreparationError extends Error {
+  readonly uncertainDelivery = true
+
   constructor(readonly created: ManagedSession, cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause })
   }

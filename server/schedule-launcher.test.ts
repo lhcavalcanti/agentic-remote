@@ -435,20 +435,28 @@ describe('schedule runner', () => {
     expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
   })
 
-  it('keeps an unknown SDK creation result reserved after the owner create boundary', async () => {
+  it.each([false, true])('keeps an unknown SDK creation result reserved after the owner create boundary with remote=%s', async (remote) => {
     const f = await fixture()
     const ownerStore = new SessionStore(path.join(f.directory, 'uncertain-owner'))
     await ownerStore.initialize()
-    const sdkCreate = vi.fn(async () => { throw new Error('SDK creation result is unknown') })
+    const sdkCreate = vi.fn(async () => { throw Object.assign(new Error('SDK creation result is unknown'), { statusCode: 400 }) })
     const owner = new AgentService(ownerStore, { createSession: sdkCreate, stop: vi.fn(async () => []) } as unknown as CopilotClientLike)
     const dispatcher = new SchedulerDispatcher(f.store, f.runner)
     dispatchers.push(dispatcher)
     try {
       vi.mocked(f.host.validateSessionDirectory).mockResolvedValue(f.directory)
-      vi.mocked(f.host.createSession).mockImplementation(async (computerId, input) => ({
-        ...await owner.createSession(input.cwd, false, false, 'copilot', undefined, undefined, undefined, input.mode, input.launchId),
-        computerId, computerName: 'Fictional studio',
-      }))
+      vi.mocked(f.host.createSession).mockImplementation(async (computerId, input) => {
+        try {
+          return {
+            ...await owner.createSession(input.cwd, false, false, 'copilot', undefined, undefined, undefined, input.mode, input.launchId),
+            computerId, computerName: 'Fictional studio',
+          }
+        } catch (error) {
+          if (!remote) throw error
+          throw new RemoteNodeRequestError((error as Error).message,
+            (error as Error & { statusCode: number }).statusCode, undefined, deliveryUncertaintyFromError(error))
+        }
+      })
       await dispatcher.start()
       await vi.waitFor(() => expect(sdkCreate).toHaveBeenCalledOnce())
       await dispatcher.tick()

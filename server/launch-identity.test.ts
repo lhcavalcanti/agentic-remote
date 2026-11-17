@@ -84,7 +84,20 @@ describe('session create certainty boundary', () => {
   it('preserves post-boundary errors rather than guessing certainty from their name', async () => {
     const cause = Object.assign(new Error('Creation response is uncertain'), { name: 'RuntimeConfigurationError', statusCode: 400 })
     await expect(withSessionCreateBoundary(async (beginCreate) => { beginCreate(); throw cause })).rejects.toBe(cause)
+    expect(cause).toHaveProperty('uncertainDelivery', true)
+  })
+
+  it('keeps frozen post-create errors explicitly uncertain across HTTP status defaults', async () => {
+    const cause = Object.freeze(Object.assign(new Error('Creation result is unknown'), { statusCode: 400 }))
+    await expect(withSessionCreateBoundary(async (beginCreate) => { beginCreate(); throw cause }))
+      .rejects.toMatchObject({ cause, statusCode: 400, uncertainDelivery: true })
     expect(cause).not.toHaveProperty('uncertainDelivery')
+  })
+
+  it('preserves a delegated owner proof that creation never began', async () => {
+    const cause = Object.assign(new Error('The owner refused before creation'), { statusCode: 400, uncertainDelivery: false })
+    await expect(withSessionCreateBoundary(async (beginCreate) => { beginCreate(); throw cause })).rejects.toBe(cause)
+    expect(cause).toHaveProperty('uncertainDelivery', false)
   })
 })
 

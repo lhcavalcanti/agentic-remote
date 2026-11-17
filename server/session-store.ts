@@ -1157,6 +1157,7 @@ export class SessionStore {
     pendingUserInput?: SessionProjection<PendingUserInput | null | undefined>,
     observedQueueDispatchAt?: string,
     observation = this.observeTranscript(sessionId),
+    foregroundTurnActive?: boolean,
   ): Promise<SessionDetail | undefined> {
     return this.installTranscript(sessionId, observation, (session) => {
       const nextMessages = typeof messages === 'function' ? messages(session) : messages
@@ -1172,6 +1173,9 @@ export class SessionStore {
       const newerTerminalDispatch =
         session.queueDispatchAt &&
         session.queueDispatchAt !== observedQueueDispatchAt
+      if (foregroundTurnActive !== undefined && !newerTerminalDispatch) {
+        session.foregroundTurnActive = foregroundTurnActive
+      }
       session.status = session.pendingPermission || session.pendingUserInput
         ? 'waiting'
         : newerTerminalDispatch
@@ -1974,6 +1978,7 @@ export class SessionStore {
       session.recovery = undefined
       session.recoverySeed = undefined
       session.generatedPrompt = undefined
+      session.foregroundTurnActive = undefined
       session.queuedPrompts = []
       session.queuedCount = 0
       session.queueState = undefined
@@ -2040,6 +2045,7 @@ export class SessionStore {
         pendingPermission: undefined,
         pendingUserInput: undefined,
         recovery: undefined,
+        foregroundTurnActive: undefined,
         failedPrompt: clearSeedFailure ? undefined : existing.failedPrompt,
         recoveryResend: clearSeedFailure ? undefined : existing.recoveryResend,
         queuedPrompts: [],
@@ -2171,6 +2177,7 @@ export class SessionStore {
           state: 'pending',
         },
         generatedPrompt: { content: recoveryPrompt },
+        foregroundTurnActive: undefined,
         uploadOwnerIds: [
           ...new Set([
             ...(existing.uploadOwnerIds || []),

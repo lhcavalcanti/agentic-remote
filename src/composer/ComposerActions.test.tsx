@@ -11,7 +11,7 @@ afterEach(cleanup)
 
 const props = (): ComponentProps<typeof ComposerActions> => ({
   selected: { id: 'one', computerId: 'studio', computerName: 'Studio', status: 'running' } as ComponentProps<typeof ComposerActions>['selected'],
-  selectedComputerOnline: true, selectedQueueAvailable: true, supportsQueuedPromptDispatch: true,
+  selectedComputerOnline: true, selectedQueueAvailable: true, foregroundTurnActive: true, supportsQueuedPromptDispatch: true,
   recording: false, recordingSeconds: 0, askingAside: false, sideQuestionPending: false,
   cancelling: false, transcribing: false, uploadingFile: false, composer: 'Draft', expandedComposer: 'Draft',
   sending: false, queuedEditUnconfirmed: false, recordingDuration: String,
@@ -23,6 +23,21 @@ const props = (): ComponentProps<typeof ComposerActions> => ({
 })
 
 describe('refreshed composer actions', () => {
+  it.each([undefined, false, true])('sends a new prompt directly when only background work remains (steering: %s)', (supportsSteering) => {
+    const callbacks = {
+      ...props(), foregroundTurnActive: false,
+      providerCapability: { ...props().providerCapability!, supportsSteering },
+    }
+    render(<ComposerActions {...callbacks} />)
+    const send = screen.getByRole('button', { name: 'Send message' })
+    expect(send).toBeEnabled()
+    expect(send).toHaveAttribute('title', 'Send immediately')
+    expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument()
+    fireEvent.click(send)
+    expect(callbacks.onSubmitMessage).toHaveBeenCalledExactlyOnceWith()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
   it('sends an expanded multiline slash command without offering delivery choices', () => {
     const callbacks = {
       ...props(),

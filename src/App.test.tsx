@@ -18439,6 +18439,27 @@ describe('App', () => {
     expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
   })
 
+  it('does not read the selected session of a computer a reconnect finds unpaired', async () => {
+    const remoteSession = { ...session, id: 'remote-selected', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote selected chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote selected chat'))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockClear()
+    vi.mocked(getSession).mockImplementation(async (id) => {
+      if (id === secondComputer.id) throw new SubmissionError('Computer not found', 404)
+      return session
+    })
+    await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(screen.queryByText('Remote selected chat')).not.toBeInTheDocument())
+    expect(vi.mocked(getSession).mock.calls.filter(([computerId]) => computerId === secondComputer.id)).toEqual([])
+    expect(screen.queryByText(/Computer not found/)).not.toBeInTheDocument()
+  })
+
   it('drops side answers when a reconnect snapshot overtakes a connection check', async () => {
     seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remote: ComputerSummary = {

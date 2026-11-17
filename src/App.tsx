@@ -7382,8 +7382,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       // A replacement selected while the refresh was in flight is missing
       // from the snapshot by definition, and dropping it would jump the
       // reader to an unrelated session.
+      // Removed while this refresh ran (for example, its computer was found
+      // unpaired by the snapshot above): it is gone, not newly changed.
+      const selectedRemovedSinceRefresh = Boolean(selectedAtRefresh &&
+        removedSessions.current.has(sessionKey(selectedAtRefresh)) &&
+        changedSinceRefresh(sessionKey(selectedAtRefresh)))
       const selectedStillExists =
-        selectedAtRefresh &&
+        selectedAtRefresh && !selectedRemovedSinceRefresh &&
         (snapshotSessions.some(
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
         ) ||

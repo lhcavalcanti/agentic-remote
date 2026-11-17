@@ -110,11 +110,13 @@ export class SessionAdmissions {
   async exclusive<T>(
     sessionId: string,
     operation: (ownership: ExclusiveAdmission) => Promise<T>,
+    options: { intent: 'work' | 'teardown' } = { intent: 'work' },
   ): Promise<T> {
+    const fenceBlocks = () => options.intent !== 'teardown' && this.launchBlocked(sessionId)
     if (this.isClosed()) {
       throw Object.assign(new Error('The session service is stopping'), { statusCode: 503 })
     }
-    if (this.launchBlocked(sessionId)) {
+    if (fenceBlocks()) {
       throw Object.assign(new Error('The launch is stopping; no new work can start.'), { statusCode: 409, uncertainDelivery: false })
     }
     if (this.exclusiveOwners.has(sessionId) || this.context.getStore()?.get(sessionId)?.active) {
@@ -128,12 +130,12 @@ export class SessionAdmissions {
       if (this.isClosed()) {
         throw Object.assign(new Error('The session service is stopping'), { statusCode: 503 })
       }
-      if (this.launchBlocked(sessionId)) {
+      if (fenceBlocks()) {
         throw Object.assign(new Error('The launch is stopping; no new work can start.'), { statusCode: 409, uncertainDelivery: false })
       }
       return await operation({
         joinedActivity: joined.some((admission) => admission.committed),
-        isCurrent: () => !this.isClosed() && !this.launchBlocked(sessionId) && this.exclusiveOwners.get(sessionId) === owner,
+        isCurrent: () => !this.isClosed() && !fenceBlocks() && this.exclusiveOwners.get(sessionId) === owner,
       })
     } finally {
       if (this.exclusiveOwners.get(sessionId) === owner) this.exclusiveOwners.delete(sessionId)

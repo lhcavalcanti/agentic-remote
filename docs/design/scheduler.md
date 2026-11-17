@@ -126,6 +126,8 @@ Idle alone, another root's completion, and unknown outcomes never complete a run
 
 Max-runtime and replacement cancellation use `cancelWithAck`, never signal-only `cancel`. Unknown/offline acknowledgements leave the run `stopping` and keep its slot. A stopped acknowledgement is bound to the owning session before releasing capacity. A launch fenced for stopping is never sent a late root.
 
+Recovery applies the accepted schedule's folder-trust policy before classifying a live permission as needs-input. Auto-approval reuses the launch primitive's exact folder-trust shape and same-session-folder checks, then rereads the owner state before continuing. Ask policy, unrelated permissions and lookalike or different-folder prompts remain unanswered; accepted root prompts are never resent.
+
 ## Owned worktrees
 
 Each executing computer independently configures `AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS`, a comma-separated list of existing absolute real directories. There is no implicit root, no automatic root creation, and no expansion of `AGENTIC_REMOTE_ALLOWED_ROOTS`. Every configured root and source repository must also pass the existing session-directory authorization. Setup/update preserve the worktree-root variable. `target.worktreeRoot`, when supplied, must resolve to one of the configured roots; otherwise the first configured root is used.

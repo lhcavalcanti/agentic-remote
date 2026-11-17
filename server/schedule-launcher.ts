@@ -23,7 +23,7 @@ export type ScheduleLauncherHost = SessionLauncherHost & Pick<ComputerManager,
   'listComputers' | 'validateSessionDirectory' | 'listBackgroundTasks' | 'providerRuntimeOptions'
   | 'allocateScheduleWorktree' | 'readScheduleWorktree' | 'cleanupScheduleWorktree'>
 type LaunchPrimitives = Pick<SessionLauncher<ScheduleProvenance>,
-  'createSession' | 'deliverPrompt' | 'observeSession' | 'reconcileLaunch' | 'cancelWithAck'>
+  'createSession' | 'deliverPrompt' | 'observeSession' | 'reconcileLaunch' | 'cancelWithAck' | 'trustFolder'>
 
 export async function recordScheduleProvenance(
   store: ManagerStore, session: ManagedSession, provenance: ScheduleProvenance,
@@ -231,12 +231,19 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
       return this.terminal(run, { ...details, state: 'terminated', outcome: 'stopped' })
     }
     if (launch.deleted) return { ...details, state: 'unknown', error: 'Launch session was deleted without termination acknowledgement' }
-    const session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
+    let session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
     if (session.id !== launch.sessionId || session.computerId !== run.computerId) {
       return { ...details, state: 'unknown', error: 'Mismatched session evidence' }
     }
     await recordScheduleProvenance(this.registry, session, provenance(run, schedule))
     if (run.status === 'stopping' || launch.stopping) return { ...details, state: 'stopping' }
+    if (schedule.target.folderTrust === 'auto-approve' && session.pendingPermission && !session.pendingPermission.stale &&
+        await this.sessions.trustFolder({ session, folderTrust: 'auto-approve' })) {
+      session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
+      if (session.id !== launch.sessionId || session.computerId !== run.computerId) {
+        return { ...details, state: 'unknown', error: 'Mismatched session evidence' }
+      }
+    }
     if (this.needsInput(session)) return { ...details, state: 'needs-input' }
     if (!receipt) {
       // A positive owner binding permits idempotent root acceptance after a

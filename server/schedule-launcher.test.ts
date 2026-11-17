@@ -39,6 +39,13 @@ function session(change: Partial<ManagedSession> = {}): ManagedSession {
   }
 }
 const permission: PendingPermission = { requestId: 'p', title: 'Approve command?', kind: 'shell', options: [] }
+const folderTrustPermission: PendingPermission = {
+  requestId: 'folder-trust', title: 'Trust folder for this session: /fictional/repo',
+  kind: 'terminal', choiceCount: 3, options: [
+    { optionId: 'terminal:allow', name: 'Trust for this session', kind: 'allow_once' },
+    { optionId: 'terminal:stop', name: 'Stop', kind: 'reject_once' },
+  ],
+}
 
 afterEach(async () => {
   await Promise.all(dispatchers.splice(0).map((dispatcher) => dispatcher.stop()))
@@ -156,6 +163,7 @@ describe('schedule runner', () => {
       observeSession: vi.fn(async () => session()),
       reconcileLaunch: vi.fn(async () => undefined),
       cancelWithAck: vi.fn(),
+      trustFolder: vi.fn(async () => false),
     }
     await new SessionScheduleLauncher(f.host, f.store, f.registry, primitives).launch(f.run, f.schedule)
     expect(createSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -651,6 +659,40 @@ describe('schedule runner', () => {
     f.setDetail({ pendingPermission: undefined })
     expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'running' })
     expect(f.host.sendMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([false, true])('applies accepted auto folder trust during recovery with an accepted root=%s', async (accepted) => {
+    const f = await fixture({ target: {
+      computerId: 'hub', folder: '/fictional/repo', provider: 'copilot', folderTrust: 'auto-approve',
+    } })
+    await f.store.changeRun(f.run.id, { status: 'launching', startedAt: at })
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: accepted ? [f.receipt] : [] })
+    f.setDetail({ status: 'waiting', pendingPermission: folderTrustPermission })
+    vi.mocked(f.host.replyPermission).mockImplementation(async () => {
+      f.setDetail({ status: accepted ? 'running' : 'idle', pendingPermission: undefined })
+      return session()
+    })
+    if (accepted) await f.store.update(f.schedule.id, { revision: 1, target: { ...f.schedule.target, folderTrust: 'ask' } })
+    expect(await f.runner.reconcile(f.store.getRun(f.run.id))).toMatchObject({
+      state: 'running', rootPromptReceipt: f.receipt.promptId,
+    })
+    expect(f.host.replyPermission).toHaveBeenCalledExactlyOnceWith('hub', 'session-one', 'folder-trust', { optionId: 'terminal:allow' })
+    expect(f.host.sendMessage).toHaveBeenCalledTimes(accepted ? 0 : 1)
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.host.replyUserInput).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['ask', folderTrustPermission],
+    ['auto-approve', { ...folderTrustPermission, title: 'Trust folder for this session: /other/folder' }],
+    ['auto-approve', permission],
+  ] as const)('leaves unapproved or non-folder recovery permissions pending under %s', async (folderTrust, pendingPermission) => {
+    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider: 'copilot', folderTrust } })
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', receipts: [] })
+    f.setDetail({ status: 'waiting', pendingPermission })
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'needs-input' })
+    expect(f.host.replyPermission).not.toHaveBeenCalled()
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
   })
 
   it('reattaches after restart and resumes only idempotent root acceptance after a creation-only crash', async () => {

@@ -217,10 +217,10 @@ export class SessionLauncher<Provenance extends object> {
   }
 
   /**
-   * Without waitMs, look once. Trust is handled only during delivery, after
-   * naming and provenance recording, never as a side effect of observation.
+   * Without waitMs, look once. Explicit delivery or recovery may apply the
+   * caller's trust policy; passive observation never approves anything.
    */
-  private async trustFolder(target: SessionPromptTarget, waitMs = 0): Promise<boolean> {
+  async trustFolder(target: SessionPromptTarget, waitMs = 0): Promise<boolean> {
     if (target.folderTrust === 'ask') return false
     const { session } = target
     const deadline = Date.now() + waitMs

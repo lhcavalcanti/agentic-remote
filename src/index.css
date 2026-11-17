@@ -2108,13 +2108,21 @@ button {
   gap: 5px;
 }
 
-.session-mode-badge,
-.session-hidden-badge {
+.session-mode-badge {
   padding-left: 5px;
   color: var(--muted);
   border-left: 1px solid var(--border-strong);
   border-radius: 0;
   text-transform: none;
+}
+
+/* Hidden says how the list treats the session rather than what the session
+   is, so it carries an icon instead of the descriptors' divider. */
+.session-hidden-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted-strong);
 }
 
 .session-item small {
@@ -8452,6 +8460,23 @@ button {
 
 .session-item--suspended .status-dot {
   background: var(--muted);
+}
+
+/* Listed although hidden, because Hidden shows it or because it needs you: a
+   dashed outline sets it apart, and unlike a suspended row it keeps its full
+   strength. The left edge still says which session is open and which runs
+   background work. */
+.session-item--hidden {
+  border-top: 1px dashed var(--border-strong);
+  border-right: 1px dashed var(--border-strong);
+  border-bottom: 1px dashed var(--border-strong);
+}
+
+/* No state to show on the left, so the outline closes there, a pixel narrower
+   than that edge; the padding takes the pixel so the text stays in line. */
+.session-item--hidden:not(.session-item--active, .session-item--background-running) {
+  padding-left: 8px;
+  border-left: 1px dashed var(--border-strong);
 }
 
 /* On its way out: the other rows stay fully usable meanwhile. */

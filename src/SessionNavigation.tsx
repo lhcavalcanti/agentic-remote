@@ -212,7 +212,7 @@ function SortableSessionItem({
         session.computerId,
       )} ${presentation.working && runningBackgroundTasks > 0 ? 'session-item--background-running' : ''} ${
         session.suspended ? 'session-item--suspended' : ''
-      } ${presentation.needsAttention ? 'session-item--attention' : ''} ${
+      } ${hidden ? 'session-item--hidden' : ''} ${presentation.needsAttention ? 'session-item--attention' : ''} ${
         selected ? 'session-item--active' : ''
       } ${closing ? 'session-item--closing' : ''} ${isDragging ? 'sortable-dragging' : ''}`}
       ref={setNodeRef}
@@ -269,6 +269,7 @@ function SortableSessionItem({
                   className="provider-badge session-hidden-badge"
                   title="Hidden from the list; the session keeps running"
                 >
+                  <EyeOff aria-hidden="true" size={11} />
                   Hidden
                 </em>
               ) : null}

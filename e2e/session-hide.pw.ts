@@ -1,5 +1,12 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { createWorkspaceFixtureState, setupWorkspaceFixture } from './workspace-fixtures'
+import {
+  BACKGROUND_SESSION_ID,
+  createWorkspaceFixtureState,
+  IDLE_SESSION_ID,
+  setupWorkspaceFixture,
+  type WorkspaceFixtureOptions,
+  type WorkspaceFixtureState,
+} from './workspace-fixtures'
 
 // A phone or touch screen gets the 40px targets; a desktop with a mouse keeps
 // the small controls it reveals on hover.
@@ -8,11 +15,19 @@ const devices = [
   { name: 'desktop', viewport: { width: 1440, height: 900 }, hasTouch: false, target: 22 },
 ]
 
-async function open(page: Page, baseUrl: string, phone: boolean) {
+const LONG_TITLE = 'Park the archive cleanup and the retired handbook drafts until the next review'
+
+async function open(
+  page: Page,
+  baseUrl: string,
+  phone: boolean,
+  options: Pick<WorkspaceFixtureOptions, 'appearance' | 'state'> = {},
+) {
   const fixture = await setupWorkspaceFixture(page, {
     baseUrl,
     knowledgeMode: 'hidden',
     state: createWorkspaceFixtureState(),
+    ...options,
   })
   await page.goto(fixture.url)
   if (phone) await page.getByRole('button', { name: 'Open sessions' }).click()
@@ -21,8 +36,67 @@ async function open(page: Page, baseUrl: string, phone: boolean) {
   return { fixture, list }
 }
 
+/**
+ * Hidden sessions shown beside ordinary and suspended ones on Studio: one
+ * hidden, one suspended, and one both, whose long title comes with the For
+ * review badge as well. Check handbook links, which runs background work, is
+ * hidden too.
+ */
+function markedState(): WorkspaceFixtureState {
+  const state = createWorkspaceFixtureState()
+  const draft = state.sessions.find((session) => session.id === IDLE_SESSION_ID)
+  if (!draft) throw new Error('Expected the idle fixture session')
+  const added = [
+    { id: 'fixture-tidy-reading', title: 'Tidy the reading list' },
+    { id: 'fixture-pause-export', title: 'Pause the export audit', suspended: true },
+    {
+      id: 'fixture-park-archive',
+      title: LONG_TITLE,
+      provider: 'claude' as const,
+      suspended: true,
+      retention: { pinned: true },
+    },
+  ].map((change) => ({ ...structuredClone(draft), ...change }))
+  state.sessions.push(...added)
+  state.sessionOrder.order['fixture-studio'].push(
+    ...added.map((session) => `fixture-studio:${session.id}`),
+  )
+  state.sessionOrder.hidden = [
+    'fixture-studio:fixture-tidy-reading',
+    'fixture-studio:fixture-park-archive',
+    `fixture-build:${BACKGROUND_SESSION_ID}`,
+  ]
+  state.sessionOrder.showHidden = true
+  return state
+}
+
 function row(list: Locator, title: string) {
   return list.locator('.session-item').filter({ has: list.page().getByText(title, { exact: true }) })
+}
+
+/** Each side's computed border style and colour, top first, and the row's opacity. */
+async function edges(locator: Locator) {
+  return locator.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const sides = ['top', 'right', 'bottom', 'left']
+    return {
+      styles: sides.map((side) => style.getPropertyValue(`border-${side}-style`)),
+      colors: sides.map((side) => style.getPropertyValue(`border-${side}-color`)),
+      opacity: Number(style.opacity),
+    }
+  })
+}
+
+/** A colour token as the current theme resolves it. */
+async function token(page: Page, name: string) {
+  return page.evaluate((property) => {
+    const probe = document.createElement('i')
+    probe.style.color = `var(${property})`
+    document.body.append(probe)
+    const color = getComputedStyle(probe).color
+    probe.remove()
+    return color
+  }, name)
 }
 
 async function bounds(locator: Locator) {
@@ -96,6 +170,7 @@ for (const device of devices) {
         await waiting.getByRole('button', { name: 'Hide Review session recovery from the list' }).click()
         await expect(toggle).toHaveText(/Hidden\s*2/)
         await expect(waiting.getByText('Hidden', { exact: true })).toBeVisible()
+        await expect(waiting).toHaveCSS('border-top-style', 'dashed')
         await expect(waiting.getByRole('button', { name: 'Show Review session recovery in the list' }))
           .toBeVisible()
         await expect(list.getByRole('button', { name: 'Needs you' })).toHaveText(/Needs you\s*2/)
@@ -122,10 +197,86 @@ for (const device of devices) {
         await shown.hover()
         await shown.getByRole('button', { name: 'Show Draft the weekly summary in the list' }).click()
         await expect(shown.getByText('Hidden', { exact: true })).toHaveCount(0)
+        await expect(shown).not.toHaveCSS('border-top-style', 'dashed')
         await expect(toggle).toHaveText(/Hidden\s*1/)
       } finally {
         fixture.assertHealthy()
       }
     })
+
+    for (const appearance of ['graphite', 'light'] as const) {
+      test(`outlines hidden rows unlike ordinary and suspended ones in the ${appearance} theme`, async ({ page }, testInfo) => {
+        const { fixture, list } = await open(page, testInfo.project.use.baseURL!, device.name === 'phone', {
+          appearance,
+          state: markedState(),
+        })
+        try {
+          const outline = await token(page, '--border-strong')
+          const ordinary = row(list, 'Draft the weekly summary')
+          const hidden = row(list, 'Tidy the reading list')
+          const suspended = row(list, 'Pause the export audit')
+          const both = row(list, LONG_TITLE)
+          const tasks = row(list, 'Check handbook links')
+          await expect(tasks.getByRole('button', { name: 'View background tasks for Check handbook links' }))
+            .toBeVisible()
+          await screenshot(page, `${device.name}-${appearance}-marked`)
+
+          // Dashed all round in the neutral border colour, at full strength,
+          // and tagged with an icon as well as the word.
+          expect(await edges(hidden)).toEqual({
+            styles: ['dashed', 'dashed', 'dashed', 'dashed'],
+            colors: [outline, outline, outline, outline],
+            opacity: 1,
+          })
+          await expect(hidden.locator('.session-hidden-badge svg')).toBeVisible()
+          await expect(hidden.getByText('Hidden', { exact: true })).toBeVisible()
+
+          // Ordinary rows have no outline; suspended ones are faded instead.
+          const plain = await edges(ordinary)
+          expect(plain.styles).not.toContain('dashed')
+          expect(plain.opacity).toBe(1)
+          const paused = await edges(suspended)
+          expect(paused.styles).not.toContain('dashed')
+          expect(paused.opacity).toBeLessThan(1)
+
+          // Hidden and suspended carries both cues and both labels.
+          const marked = await edges(both)
+          expect(marked.styles).toEqual(['dashed', 'dashed', 'dashed', 'dashed'])
+          expect(marked.opacity).toBeLessThan(1)
+          await expect(both.getByText('Hidden', { exact: true })).toBeVisible()
+          await expect(both.getByText('Suspended', { exact: true })).toBeVisible()
+
+          // The left edge keeps saying a session runs background work...
+          const working = await edges(tasks)
+          expect(working.styles).toEqual(['dashed', 'dashed', 'dashed', 'solid'])
+          expect(working.colors[3]).toBe(await token(page, '--task'))
+
+          // ...and which session is open, once that one is hidden too.
+          const selected = row(list, 'Plan the knowledge workspace')
+          const beforeHiding = await edges(selected)
+          await selected.hover()
+          await selected.getByRole('button', { name: 'Hide Plan the knowledge workspace from the list' })
+            .click()
+          await expect(selected).toHaveCSS('border-top-style', 'dashed')
+          const afterHiding = await edges(selected)
+          expect(afterHiding.styles).toEqual(['dashed', 'dashed', 'dashed', 'solid'])
+          expect(afterHiding.colors[3]).toBe(beforeHiding.colors[3])
+
+          // Nothing spills sideways, the long title with all its badges included.
+          for (const item of await list.locator('.session-item').all()) {
+            expect(await item.evaluate((element) => element.scrollWidth - element.clientWidth))
+              .toBeLessThanOrEqual(0)
+            expect(await item.locator('.session-item__badges').evaluate(
+              (element) => element.scrollWidth - element.clientWidth,
+            )).toBeLessThanOrEqual(0)
+          }
+          expect(await list.locator('.session-list__scroll').evaluate(
+            (element) => element.scrollWidth - element.clientWidth,
+          )).toBeLessThanOrEqual(0)
+        } finally {
+          fixture.assertHealthy()
+        }
+      })
+    }
   })
 }

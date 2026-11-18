@@ -551,11 +551,50 @@ describe('session navigation', () => {
     const waiting = screen.getByRole('button', { name: /^Choose a direction,/ })
     expect(waiting).toHaveAccessibleName(/hidden from the list/)
     expect(within(waiting).getByText('Hidden')).toBeVisible()
+    expect(waiting.closest('.session-item')).toHaveClass('session-item--hidden')
     expect(screen.getByRole('button', { name: 'Show Choose a direction in the list' }))
       .toBeEnabled()
     expect(screen.getByRole('button', { name: 'Needs you' })).toHaveTextContent('Needs you1')
     fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
     expect(screen.getByRole('button', { name: /^Choose a direction,/ })).toBeVisible()
+  })
+
+  it('marks a listed hidden row apart from ordinary and suspended rows', () => {
+    const ordinary = { ...session, id: 'ordinary', title: 'Sort the inbox' }
+    const tidy = { ...session, id: 'tidy', title: 'Tidy the reading list' }
+    const paused = { ...session, id: 'paused', title: 'Paused planning', suspended: true }
+    const parked = { ...session, id: 'parked', title: 'Parked archive', suspended: true }
+    render(
+      <NavigationHarness
+        initialHidden={['studio:review', 'studio:tidy', 'studio:parked']}
+        initialShowHidden
+        sessions={new Map([['studio', [session, ordinary, tidy, paused, parked]]])}
+      />,
+    )
+    const row = (title: string) => {
+      const item = screen.getByRole('button', { name: new RegExp(`^${title},`) })
+        .closest<HTMLElement>('.session-item')
+      if (!item) throw new Error(`No row for ${title}`)
+      return item
+    }
+
+    const hidden = row('Tidy the reading list')
+    expect(hidden).toHaveClass('session-item--hidden')
+    expect(hidden).not.toHaveClass('session-item--suspended')
+    // Told by an icon and the word as well as by the outline.
+    const tag = within(hidden).getByText('Hidden')
+    expect(tag).toHaveAttribute('title', 'Hidden from the list; the session keeps running')
+    expect(tag.querySelector('svg.lucide-eye-off')).toHaveAttribute('aria-hidden', 'true')
+
+    expect(row('Sort the inbox')).not.toHaveClass('session-item--hidden')
+    expect(row('Paused planning')).toHaveClass('session-item--suspended')
+    expect(row('Paused planning')).not.toHaveClass('session-item--hidden')
+    const both = row('Parked archive')
+    expect(both).toHaveClass('session-item--hidden', 'session-item--suspended')
+    expect(within(both).getByText('Hidden')).toBeVisible()
+    expect(within(both).getByText('Suspended')).toBeVisible()
+    // Hiding the open session leaves it marked as the open one.
+    expect(row('Review the release')).toHaveClass('session-item--hidden', 'session-item--active')
   })
 
   it('says how many sessions are hidden rather than that there are none', () => {

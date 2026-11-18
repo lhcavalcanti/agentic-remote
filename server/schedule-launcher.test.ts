@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { lstat, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedSession, PendingPermission } from '../shared/contracts.js'
 import type { LaunchReconciliation, PromptAcceptanceReceipt, TerminationAcknowledgement } from '../shared/launch-identity.js'
 import { SCHEDULE_DELETED_SESSION_REASON, type ScheduleCreate } from '../shared/schedules.js'
@@ -46,7 +46,13 @@ const folderTrustPermission: PendingPermission = {
   ],
 }
 
+beforeEach(() => {
+  // Real session services validate fixture folders in the checkout; allow it explicitly instead of relying on the host's environment.
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', process.cwd())
+})
+
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(dispatchers.splice(0).map((dispatcher) => dispatcher.stop()))
   managers.splice(0).forEach((manager) => manager.stop())
   vi.useRealTimers()
@@ -975,6 +981,28 @@ describe('schedule runner', () => {
     expect(await f.runner.reconcile(f.run)).toMatchObject({
       state: 'terminated', outcome: 'succeeded', worktree: { state: 'deferred', reason: expect.stringContaining('manual review') },
     })
+  })
+
+  it('follows a Clear or Recover replacement only with owner lineage evidence', async () => {
+    const f = await fixture()
+    await f.runner.launch(f.run, f.schedule)
+    const current = f.store.getRun(f.run.id)
+    expect(current.sessionId).toBe('session-one')
+    const moved = { ...f.receipt, sessionId: 'session-two' }
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-two', receipts: [moved] })
+    f.setDetail({ id: 'session-two', launchId: f.run.launchId })
+    expect(await f.runner.reconcile(current)).toMatchObject({ state: 'unknown', error: 'Mismatched session evidence' })
+    expect(await f.runner.stop(current)).toEqual({ outcome: 'unknown' })
+    expect(f.host.cancelWithAck).not.toHaveBeenCalled()
+
+    f.setDetail({ id: 'session-two', launchId: f.run.launchId, replacedSessionIds: ['session-one'] })
+    expect(await f.runner.reconcile(current)).toMatchObject({ sessionId: 'session-two' })
+    expect(await f.runner.reconcile(current)).not.toMatchObject({ error: 'Mismatched session evidence' })
+    vi.mocked(f.host.cancelWithAck!).mockResolvedValue({
+      sessionId: 'session-two', outcome: 'stopped', checkedAt: at, scope: 'provider-owned',
+    })
+    expect(await f.runner.stop(current)).toEqual({ outcome: 'stopped', sessionId: 'session-two' })
+    expect(vi.mocked(f.host.cancelWithAck!).mock.calls.at(-1)?.slice(0, 2)).toEqual(['hub', 'session-two'])
   })
 
   it('does not trust mismatched root, session or termination evidence', async () => {

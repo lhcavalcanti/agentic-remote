@@ -226,7 +226,10 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     if (!launch) return { state: run.status === 'pending' ? 'absent' : 'unknown' }
     if (launch.launchId !== run.launchId) return { state: 'unknown', error: 'Mismatched launch evidence' }
     const expectedSession = run.sessionId ?? run.rootPromptAcceptance?.sessionId
-    if (expectedSession && expectedSession !== launch.sessionId) return { state: 'unknown', error: 'Mismatched session evidence' }
+    if (expectedSession && expectedSession !== launch.sessionId && !await this.followsReplacement(run, expectedSession, launch)) {
+      return { state: 'unknown', error: 'Mismatched session evidence' }
+    }
+    if (this.store.isLaunchAbandoned(run.launchId)) return { state: 'terminated', outcome: 'interrupted', error: SCHEDULE_ABANDONED_REASON }
     if (launch.deleted) {
       // Deleting the session record does not prove its provider work stopped.
       if (launch.termination?.outcome === 'stopped' && launch.termination.sessionId === launch.sessionId) {
@@ -328,13 +331,31 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     } catch { return deferred() }
   }
 
+  /**
+   * Clear and Recover move a launch to the replacement session. Follow it only when the
+   * owner's replacement lineage names the run's session; anything else stays unknown.
+   */
+  private async followsReplacement(run: ScheduleRun, expected: string, launch: LaunchReconciliation): Promise<boolean> {
+    if (launch.deleted) return false
+    try {
+      const session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
+      return session.id === launch.sessionId && session.computerId === run.computerId &&
+        Boolean(session.replacedSessionIds?.includes(expected))
+    } catch {
+      return false
+    }
+  }
+
   async stop(run: ScheduleRun): Promise<ScheduleStopAcknowledgement> {
     if (this.store.isLaunchAbandoned(run.launchId)) return { outcome: 'unknown' }
     const launch = await this.sessions.reconcileLaunch(run.computerId, run.launchId)
     if (this.store.isLaunchAbandoned(run.launchId)) return { outcome: 'unknown' }
     if (!launch || launch.launchId !== run.launchId) return { outcome: 'unknown' }
     const expectedSession = run.sessionId ?? run.rootPromptAcceptance?.sessionId
-    if (expectedSession && expectedSession !== launch.sessionId) return { outcome: 'unknown' }
+    if (expectedSession && expectedSession !== launch.sessionId && !await this.followsReplacement(run, expectedSession, launch)) {
+      return { outcome: 'unknown' }
+    }
+    if (this.store.isLaunchAbandoned(run.launchId)) return { outcome: 'unknown' }
     if (launch.deleted) {
       if (launch.termination?.outcome !== 'stopped' || launch.termination.sessionId !== launch.sessionId) {
         return { outcome: 'unknown', sessionId: launch.sessionId }

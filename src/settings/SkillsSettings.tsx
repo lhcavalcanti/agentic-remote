@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComputerSummary } from '../../shared/contracts'
 import type { SkillSettingsSnapshot } from '../../shared/skill-settings'
 import { listComputerSkills, toggleComputerSkill } from '../api'
@@ -23,6 +23,20 @@ function ComputerSkills({ computer }: { computer: ComputerSummary }) {
   const [refresh, setRefresh] = useState(0)
   const [query, setQuery] = useState('')
   const [pending, setPending] = useState<{ name: string; enabled: boolean }>()
+  const controls = useRef(new Map<string, HTMLButtonElement>())
+  const confirmation = useRef<HTMLButtonElement>(null)
+  const search = useRef<HTMLInputElement>(null)
+  const returnTo = useRef<string | null>(null)
+  useLayoutEffect(() => {
+    if (pending) {
+      confirmation.current?.focus()
+    } else if (!busy && returnTo.current !== null) {
+      const control = controls.current.get(returnTo.current)
+      if (control && !control.disabled) control.focus()
+      else search.current?.focus()
+      returnTo.current = null
+    }
+  }, [pending, busy, snapshot])
   useEffect(() => {
     const request = new AbortController()
     setSnapshot(undefined)
@@ -53,7 +67,7 @@ function ComputerSkills({ computer }: { computer: ComputerSummary }) {
     {computer.online && !snapshot && !error ? <p role="status">Discovering skills…</p> : null}
     {error ? <p role="alert">{error}</p> : null}
     {snapshot ? <>
-      <label className="field"><span>Search skills</span><input aria-label="Search skills" className="dialog-input" type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+      <label className="field"><span>Search skills</span><input aria-label="Search skills" className="dialog-input" ref={search} type="search" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
       {snapshot.warnings.map((warning) => <p className="dialog-message" key={warning}>{warning}</p>)}
       {!skills?.length ? <p role="status">No skills found.</p> : null}
       {!pending ? <ul className="skills-settings__list">{skills?.map((skill) => (
@@ -62,7 +76,15 @@ function ComputerSkills({ computer }: { computer: ComputerSummary }) {
             <small>{skill.source} · {skill.location}</small>
             {skill.reason ? <p className="dialog-message">{skill.reason}</p> : null}</div>
           <button aria-label={`${skill.enabled ? 'Disable' : 'Enable'} ${skill.name}`} className="secondary-button"
-            disabled={skill.manageable === false || busy || Boolean(pending) || !computer.online} onClick={() => setPending({ name: skill.name, enabled: !skill.enabled })} type="button">
+            ref={(element) => {
+              const key = `${skill.source}:${skill.location}`
+              if (element) controls.current.set(key, element)
+              else controls.current.delete(key)
+            }}
+            disabled={skill.manageable === false || busy || Boolean(pending) || !computer.online} onClick={() => {
+              returnTo.current = `${skill.source}:${skill.location}`
+              setPending({ name: skill.name, enabled: !skill.enabled })
+            }} type="button">
             {skill.enabled ? 'Disable' : 'Enable'}
           </button>
         </li>
@@ -71,7 +93,7 @@ function ComputerSkills({ computer }: { computer: ComputerSummary }) {
     {pending ? <section aria-label="Confirm skill change" className="skills-settings__confirmation" role="group">
       <h4>{pending.enabled ? 'Enable' : 'Disable'} {pending.name}?</h4>
       <p>This changes Copilot CLI settings for every session on {computer.name}. It is not limited to this session or repository. Existing sessions may need to reload skills.</p>
-      <button className="primary-button" disabled={busy || !computer.online} onClick={() => void save()} type="button">{busy ? 'Saving…' : 'Confirm change'}</button>
+      <button className="primary-button" disabled={busy || !computer.online} onClick={() => void save()} ref={confirmation} type="button">{busy ? 'Saving…' : 'Confirm change'}</button>
       <button className="secondary-button" disabled={busy} onClick={() => setPending(undefined)} type="button">Cancel</button>
     </section> : null}
     <button className="secondary-button" disabled={busy || !computer.online} onClick={() => setRefresh((value) => value + 1)} type="button">Refresh skills</button>

@@ -113,7 +113,7 @@ more than the last number in the shared copy.
 - A reset keeps its key revision as a tombstone, so a later import cannot
 bring an old value back.
 - Validation:
-  - An unknown key or a malformed value refuses the whole request with `400`.
+  - An unknown top-level setting key or a malformed value refuses the whole request with `400`.
   - The profile is limited to 32 KB (`413`).
   - Commits are serialized and persisted with an atomic rename before the
     response is sent.
@@ -152,6 +152,10 @@ holds (`agentic-remote:appearance`, the tab accent, `statusline`, `default-model
     behaviour.
 - **No flash.** An inline script in `index.html` applies `data-appearance` and
 `theme-color` from the cache, the legacy key, or `prefers-color-scheme` before the bundle loads.
+
+## Navigation and confirmation focus
+
+On narrow screens, All settings returns focus to the selected category so keyboard navigation can continue without falling back to the document body. Skill changes move focus into their confirmation; cancel, success, and failure return it to the originating skill control. The control is identified by its source/location rather than name alone. If the refreshed skill is absent or no longer manageable, Search skills receives focus instead. Focus targets are local UI state and are never stored in the profile.
 
 ## Tests
 

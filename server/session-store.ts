@@ -49,6 +49,48 @@ function carryLaunchIdentity(state: StoredState, existing: StoredSession, replac
   }
 }
 
+/**
+ * A release without launch identity copies these fields onto a Clear or Recover replacement
+ * verbatim, so after a rollback the replacement names its retired predecessor. Adopt them as
+ * carryLaunchIdentity would have, but only where the replacement's own lineage explains it.
+ */
+function adoptRolledBackLaunchIdentity(state: StoredState): boolean {
+  if (!state.sessions || typeof state.sessions !== 'object') return false
+  let changed = false
+  for (const [id, session] of Object.entries(state.sessions)) {
+    if (!session || !Array.isArray(session.replacedSessionIds) || !session.replacedSessionIds.length) continue
+    const predecessors = new Set(session.replacedSessionIds.filter((value) =>
+      typeof value === 'string' && !Object.hasOwn(state.sessions, value)))
+    const inherited = (owner: unknown) => typeof owner === 'string' && predecessors.has(owner)
+    const launches = state.launches && typeof state.launches === 'object' && !Array.isArray(state.launches)
+      ? state.launches : undefined
+    if (typeof session.launchId === 'string' && launches && Object.hasOwn(launches, session.launchId) &&
+        inherited(launches[session.launchId]?.sessionId)) {
+      state.launches = { ...launches, [session.launchId]: { sessionId: id } }
+      changed = true
+    }
+    if (Array.isArray(session.promptReceipts) && session.promptReceipts.some((receipt) => inherited(receipt?.sessionId))) {
+      const kept = new Set((session.queuedPrompts || []).map((prompt) => prompt.id))
+      session.promptReceipts = session.promptReceipts.map((receipt) => !inherited(receipt?.sessionId) ? receipt : {
+        ...receipt, sessionId: id,
+        ...(receipt.state === 'queued' && !kept.has(receipt.promptId) ? { state: 'rejected' as const, outcome: 'stopped' as const } : {}),
+      })
+      for (const receipt of session.promptReceipts) {
+        if (state.deliveryOwners && Object.hasOwn(state.deliveryOwners, receipt.deliveryId) &&
+            inherited(state.deliveryOwners[receipt.deliveryId])) {
+          state.deliveryOwners = { ...state.deliveryOwners, [receipt.deliveryId]: id }
+        }
+      }
+      changed = true
+    }
+    if (session.launchTermination && inherited(session.launchTermination.sessionId)) {
+      session.launchTermination = undefined
+      changed = true
+    }
+  }
+  return changed
+}
+
 function rememberDeliveryOwners(state: StoredState, sessionId: string, receipts: readonly PromptAcceptanceReceipt[] = []): boolean {
   const additions: Record<string, string> = {}
   for (const receipt of receipts) {
@@ -658,6 +700,7 @@ export class SessionStore {
     }
 
     const recoveries = loaded.sdkRestartRecoveries || {}
+    const launchIdentityAdopted = adoptRolledBackLaunchIdentity(loaded)
     if (loaded.launches !== undefined) {
       if (!loaded.launches || typeof loaded.launches !== 'object' || Array.isArray(loaded.launches)) {
         throw new Error('Invalid launch identity metadata')
@@ -702,7 +745,7 @@ export class SessionStore {
     for (const reply of Object.values(replies)) validateSdkAcceptedReply(reply)
     const legacyRetirements: string[] = []
     const interrupted: string[] = []
-    let staleSdkInteractionMarked = deliveryOwnersChanged || Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
+    let staleSdkInteractionMarked = launchIdentityAdopted || deliveryOwnersChanged || Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
       Object.keys(replies).some((id) => !Object.hasOwn(loaded.sessions, id))
     for (const [id, session] of Object.entries(loaded.sessions)) {
       if (session.launchId !== undefined && (!launchIdentitySchema.safeParse(session.launchId).success ||

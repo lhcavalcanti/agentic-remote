@@ -130,6 +130,55 @@ describe('SessionStore', () => {
     })
   })
 
+  it.each(['Clear', 'Recover'])('adopts launch identity a pre-identity release copied onto a %s replacement', async () => {
+    const { directory, store } = await createStore()
+    const at = '2026-11-17T10:00:00.000Z'
+    await store.create({
+      id: 'launched', cwd: directory, title: 'Launched', status: 'idle', updatedAt: at, launchId: 'launch-rollback',
+      promptReceipts: [
+        { deliveryId: 'delivery-done', sessionId: 'launched', acceptedAt: at, state: 'delivered', promptId: 'p1', outcome: 'succeeded' },
+        { deliveryId: 'delivery-queued', sessionId: 'launched', acceptedAt: at, state: 'queued', promptId: 'p2' },
+      ],
+      messages: [],
+    }, { backend: 'sdk', managedOpen: true })
+    await store.close()
+    // What 1.55 writes for Clear or Recover: the replacement spreads the predecessor, unknown fields
+    // included, and the predecessor is retired; top-level launch data is kept unchanged.
+    const filename = path.join(directory, 'state.json')
+    const saved = JSON.parse(await readFile(filename, 'utf8'))
+    saved.sessions.replacement = { ...saved.sessions.launched, id: 'replacement', replacedSessionIds: ['launched'], messages: [] }
+    delete saved.sessions.launched
+    saved.retiredSessionIds = [...(saved.retiredSessionIds || []), 'launched']
+    await writeFile(filename, JSON.stringify(saved))
+
+    const rolledForward = new SessionStore(directory)
+    await rolledForward.initialize()
+    expect(rolledForward.get('replacement')?.launchId).toBe('launch-rollback')
+    expect(rolledForward.reconcileLaunch('launch-rollback')?.sessionId).toBe('replacement')
+    expect(rolledForward.get('replacement')?.promptReceipts).toMatchObject([
+      { deliveryId: 'delivery-done', sessionId: 'replacement', state: 'delivered' },
+      { deliveryId: 'delivery-queued', sessionId: 'replacement', state: 'rejected', outcome: 'stopped' },
+    ])
+    await rolledForward.close()
+    const again = new SessionStore(directory)
+    await again.initialize()
+    expect(again.reconcileLaunch('launch-rollback')?.sessionId).toBe('replacement')
+    await again.close()
+  })
+
+  it('still refuses launch identity that the session lineage does not explain', async () => {
+    const { directory, store } = await createStore()
+    const at = '2026-11-17T10:00:00.000Z'
+    await store.create({ id: 'owner', cwd: directory, title: 'Owner', status: 'idle', updatedAt: at, launchId: 'launch-owned', messages: [] })
+    await store.create({ id: 'other', cwd: directory, title: 'Other', status: 'idle', updatedAt: at, messages: [] })
+    await store.close()
+    const filename = path.join(directory, 'state.json')
+    const saved = JSON.parse(await readFile(filename, 'utf8'))
+    saved.sessions.other.launchId = 'launch-owned'
+    await writeFile(filename, JSON.stringify(saved))
+    await expect(new SessionStore(directory).initialize()).rejects.toThrow('Invalid session launch identity')
+  })
+
   describe('SDK restart recovery', () => {
     async function interruptedSdkStore() {
       const { directory, store } = await createStore()

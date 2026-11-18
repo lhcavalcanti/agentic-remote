@@ -92,6 +92,32 @@ async function run(policy: Schedule['notify'] = 'always') {
 }
 
 describe('canonical schedule notifications across channels', () => {
+  it('reclaims obsolete fences at capacity without replaying retained outcomes', async () => {
+    await service.stop()
+    const schedule = await schedules.create(input())
+    const first = (await schedules.admit(schedule.id, new Date(now).toISOString(), 'manual', 'failed'))!
+    const second = (await schedules.admit(schedule.id, new Date(now + 1).toISOString(), 'manual', 'failed'))!
+    const firstId = classifyScheduleNotification(schedule, first, new Date(now).toISOString())[0].id
+    const state = JSON.parse(await readFile(schedules.statePath, 'utf8'))
+    state.notificationFences = [firstId, ...Array.from({ length: 99_999 }, (_, index) => index.toString(16).padStart(64, '0'))]
+    await writeFile(schedules.statePath, JSON.stringify(state))
+    const restored = new SchedulerStore(directory, { now: () => now })
+    await restored.initialize()
+    const warn = vi.fn()
+    const replay = new ScheduleNotificationService(restored, { mutedSessions: () => [], now: () => now, warn })
+    const announced = vi.fn()
+    replay.on('event', announced)
+    try {
+      await replay.start()
+      expect(warn).not.toHaveBeenCalled()
+      expect(announced).toHaveBeenCalledOnce()
+      expect(announced.mock.calls[0][0].notification.id).toBe(classifyScheduleNotification(schedule, second, new Date(now).toISOString())[0].id)
+      expect(restored.notificationReplay().claimed.size).toBe(2)
+      await replay.start()
+      expect(announced).toHaveBeenCalledOnce()
+    } finally { await replay.stop() }
+  }, 15_000)
+
   it('announces a skipped overlap once after its atomic commit and never replays it', async () => {
     const { schedule } = await run()
     const missed = (await schedules.admit(schedule.id, new Date(now + 1).toISOString(), 'manual'))!

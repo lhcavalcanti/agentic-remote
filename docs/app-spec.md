@@ -2126,6 +2126,8 @@ people sharing a hub share its profile. See
 
 ### 9.4 Scheduler service preview
 
+- Skipped overdue occurrences MUST coalesce into one missed record per schedule/catch-up pass with a skipped count; durable cursors MUST still fence every evaluated occurrence. Unchanged no-due ticks MUST NOT serialize or persist the full scheduler state. Cursor-fenced unreferenced occurrence metadata and notification claims for evicted runs MUST be reclaimed without reopening retained-run delivery identities.
+
 - The default-off hub `scheduler` flag MUST gate all scheduler construction, state, timers, routes, and startup work. Nodes MUST NOT dispatch schedules, even with that environment flag enabled.
 - The [scheduler contract](design/scheduler.md) defines revision-checked CRUD, unique active names, paged history, atomic owner-only storage, durable occurrence/launch identity, and typed hub change events. The independent default-off `schedulerView` UI preview requires that hub flag, uses the shared recurrence engine, defaults permissions and folder trust to Ask, and requires explicit Allow-all confirmation. The UI MUST NOT infer success from idle state or add launch behavior without a runner.
 - The dispatcher MUST reconcile every in-flight run before catch-up. Unknown launch or termination outcomes MUST retain concurrency slots and MUST NOT cause automatic resubmission. Replace and runtime expiry MUST await authoritative termination proof, not merely an abort acknowledgement or session idleness.

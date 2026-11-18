@@ -3,9 +3,10 @@ import { EventEmitter } from 'node:events'
 import { constants } from 'node:fs'
 import { chmod, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { validateRecurrence } from '../shared/schedule-recurrence.js'
-import { classifyScheduleNotification } from './notification-classifier.js'
+import { classifyScheduleNotification, notificationIdentity } from './notification-classifier.js'
 import {
   scheduleProposalInputSchema, scheduleProposalSchema,
   type ScheduleProposal, type ScheduleProposalInput, type ScheduleProposalsChanged,
@@ -188,6 +189,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     const existing = new Set(this.state.notificationFences)
     if (requested.every((id) => existing.has(id))) return []
     return this.commit((next) => {
+      if (next.notificationFences.length + requested.length > 100_000) this.pruneNotificationFences(next)
       const fenced = new Set(next.notificationFences)
       const claimed = requested.filter((id) => !fenced.has(id))
       if (next.notificationFences.length + claimed.length > 100_000) {
@@ -392,6 +394,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       for (const key of Object.keys(next.occurrences)) {
         if (JSON.parse(key)[0] === id) delete next.occurrences[key]
       }
+      this.pruneNotificationFences(next)
       return { result: undefined, scheduleId: id }
     })
   }
@@ -410,7 +413,9 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   cursor(id: string): string { this.get(id); return this.state.cursors[id] }
   allRuns(): ScheduleRun[] { return structuredClone(this.state.runs) }
   hasOccurrence(scheduleId: string, occurrenceAt: string): boolean {
-    return Object.hasOwn(this.state.occurrences, occurrenceKey(scheduleId, occurrenceAt))
+    return Object.hasOwn(this.state.occurrences, occurrenceKey(scheduleId, occurrenceAt)) ||
+      (new Date(occurrenceAt).toISOString() === occurrenceAt &&
+        Date.parse(occurrenceAt) < Date.parse(this.state.cursors[scheduleId]))
   }
   scheduleForRun(id: string): Schedule { this.getRun(id); return structuredClone(this.state.runSchedules[id]) }
   getRun(id: string): ScheduleRun {
@@ -453,6 +458,10 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       if (trigger !== 'manual') occurrenceAt = new Date(occurrenceAt).toISOString()
       const key = occurrenceKey(scheduleId, occurrenceAt)
       const existing = next.occurrences[key]
+      if (!existing && (trigger !== 'manual' || new Date(occurrenceAt).toISOString() === occurrenceAt) &&
+          Date.parse(occurrenceAt) < Date.parse(next.cursors[scheduleId])) {
+        return { result: undefined, scheduleId }
+      }
       if (cursor && Date.parse(cursor) > Date.parse(next.cursors[scheduleId])) next.cursors[scheduleId] = cursor
       if (existing) return { result: next.runs.find((run) => run.id === existing), scheduleId }
       const retained = next.runs.filter((run) => run.scheduleId === scheduleId)
@@ -465,6 +474,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
         if (!oldest) throw failure('Schedule run capacity reached; resolve in-flight runs or pending outcome notifications first', 409)
         next.runs.splice(next.runs.indexOf(oldest), 1)
         delete next.runSchedules[oldest.id]
+        this.pruneNotificationFences(next)
       }
       const run = scheduleRunSchema.parse({
         id: randomUUID(), scheduleId, occurrenceAt, trigger, status,
@@ -483,7 +493,11 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       return { result: run, scheduleId, runId: run.id, proposalId }
   }
 
-  advanceCursor(id: string, cursor: string): Promise<void> {
+  async advanceCursor(id: string, cursor: string): Promise<void> {
+    await this.work
+    if (!this.initialized || this.poisoned) throw new Error('Scheduler store is unavailable or its commit outcome is uncertain')
+    this.requireSchedule(this.state, id)
+    if (Date.parse(cursor) <= Date.parse(this.state.cursors[id])) return
     return this.commit((next) => {
       this.requireSchedule(next, id)
       if (Date.parse(cursor) > Date.parse(next.cursors[id])) next.cursors[id] = cursor
@@ -491,7 +505,13 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     })
   }
 
-  changeRun(id: string, changes: Partial<Omit<ScheduleRun, 'id' | 'scheduleId' | 'launchId' | 'occurrenceAt'>>): Promise<ScheduleRun> {
+  async changeRun(id: string, changes: Partial<Omit<ScheduleRun, 'id' | 'scheduleId' | 'launchId' | 'occurrenceAt'>>): Promise<ScheduleRun> {
+    await this.work
+    if (!this.initialized || this.poisoned) throw new Error('Scheduler store is unavailable or its commit outcome is uncertain')
+    const existing = this.state.runs.find((run) => run.id === id)
+    if (existing && Object.entries(changes).every(([key, value]) => isDeepStrictEqual(Reflect.get(existing, key), value))) {
+      return structuredClone(existing)
+    }
     return this.commit((next) => {
       const position = next.runs.findIndex((run) => run.id === id)
       if (position < 0) throw failure('Schedule run not found', 404)
@@ -567,6 +587,21 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
 
   async flush(): Promise<void> { await this.work }
 
+  private pruneNotificationFences(next: State): void {
+    const retained = new Set(next.runs.flatMap((run) =>
+      (['succeeded', 'failed', 'needs-input', 'missed', 'interrupted'] as const).map((outcome) =>
+        notificationIdentity(`schedule.run.${outcome}`, run.scheduleId, run.id, outcome))))
+    next.notificationFences = next.notificationFences.filter((id) => retained.has(id))
+  }
+
+  private pruneOccurrences(next: State): void {
+    const retained = new Set(next.runs.map((run) => run.id))
+    for (const [key, runId] of Object.entries(next.occurrences)) {
+      const [scheduleId, occurrenceAt] = JSON.parse(key) as [string, string]
+      if (!retained.has(runId) && Date.parse(occurrenceAt) < Date.parse(next.cursors[scheduleId])) delete next.occurrences[key]
+    }
+  }
+
   private commit<T>(mutate: (next: State) => { result: T; scheduleId?: string; runId?: string; runIds?: string[]; proposalId?: string }): Promise<T> {
     const task = this.work.then(async () => {
       if (!this.initialized) throw new Error('Scheduler store is not initialized')
@@ -574,6 +609,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       const next = structuredClone(this.state)
       const { result, scheduleId, runId, runIds, proposalId } = mutate(next)
       next.runs.forEach(deferUnboundWorktree)
+      this.pruneOccurrences(next)
       if (JSON.stringify(next) !== JSON.stringify(this.state)) {
         const visible = JSON.stringify([next.schedules, next.runs]) !== JSON.stringify([this.state.schedules, this.state.runs])
         next.revision += 1

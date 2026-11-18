@@ -31,10 +31,8 @@ export function PreviewFeaturesProvider({
         (flags) => {
           if (active && !request.signal.aborted) setHubFlags(flags)
         },
-        () => {
-          // Old or unreachable hubs cannot grant a server-dependent preview.
-          if (active && !request.signal.aborted) setHubFlags(defaultHubFeatureFlags)
-        },
+        // Defaults fail closed before the first success; transport failures cannot revoke known flags.
+        () => undefined,
       )
     }
     const refreshAuthoritative = (event: Event) => {

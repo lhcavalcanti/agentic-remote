@@ -18,6 +18,15 @@ export function SettingsNavigation({
     settingsSectionLabels(section, sectionProps).some((label) => label.toLocaleLowerCase().includes(search)))
   const current = matches.find((section) => section.id === selected) ?? matches[0]
   const content = useRef<HTMLDivElement>(null)
+  const categories = useRef<HTMLElement>(null)
+  const returnToCategories = useRef(false)
+
+  useLayoutEffect(() => {
+    if (!page && returnToCategories.current) {
+      returnToCategories.current = false
+      categories.current?.querySelector<HTMLButtonElement>('button[aria-current="page"]')?.focus()
+    }
+  }, [page])
 
   useLayoutEffect(() => {
     const root = content.current
@@ -45,7 +54,7 @@ export function SettingsNavigation({
           setPage(false)
         }} type="search" value={query} />
       </label>
-      <nav aria-label="Settings categories" className="settings-navigation__categories" onKeyDown={(event) => {
+      <nav aria-label="Settings categories" className="settings-navigation__categories" ref={categories} onKeyDown={(event) => {
         const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End']
         if (!keys.includes(event.key)) return
         const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')]
@@ -69,7 +78,10 @@ export function SettingsNavigation({
         {!matches.length ? <p role="status">No settings match.</p> : null}
       </nav>
       <div className="settings-navigation__content" ref={content}>
-        <button className="secondary-button settings-navigation__back" onClick={() => setPage(false)} type="button">All settings</button>
+        <button className="secondary-button settings-navigation__back" onClick={() => {
+          returnToCategories.current = true
+          setPage(false)
+        }} type="button">All settings</button>
         {current ? (
           <section aria-labelledby={`${current.id}-heading`} className="app-settings-group" id={current.id} key={current.id}>
             <h3 id={`${current.id}-heading`} tabIndex={-1}>{current.title}</h3>

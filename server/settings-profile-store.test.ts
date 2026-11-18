@@ -30,6 +30,23 @@ afterEach(async () => {
 })
 
 describe('SettingsProfileStore', () => {
+  it('loads known opt-ins alongside future preview names without rewriting stored bytes', async () => {
+    const { directory } = await store()
+    const file = path.join(directory, 'settings-profile.json')
+    const stored = JSON.parse(await readFile(file, 'utf8'))
+    stored.values.previewFeatures = { composerRefresh: true, skillToggles: true, futurePreview: true }
+    stored.revision = 7
+    stored.keyRevisions.previewFeatures = 7
+    const bytes = Buffer.from(`${JSON.stringify(stored, null, 3)}\n  \n`)
+    await writeFile(file, bytes)
+    const reopened = new SettingsProfileStore(directory)
+    await reopened.initialize()
+    expect(reopened.snapshot()).toMatchObject({
+      revision: 7, values: { previewFeatures: { composerRefresh: true, skillToggles: true } },
+    })
+    expect(await readFile(file)).toEqual(bytes)
+  })
+
   it('starts empty with a stable profile identity', async () => {
     const { store: profile, directory } = await store()
     const first = profile.snapshot()

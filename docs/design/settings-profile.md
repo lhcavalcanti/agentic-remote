@@ -1,34 +1,30 @@
 # Settings profile
 
-Settings that describe how you like to work follow you to every device that
-opens the same hub. Settings that describe a device, or hold content, stay on
-that device.
+Settings that describe how you like to work follow you to every device that opens the same hub. Settings that describe a device, or hold content, stay on that device.
 
 ## Why
 
 Before this design, nothing a browser chose reached the hub:
 
 - The accent lived in `sessionStorage`, so it was per tab and reset when the
-  tab closed.
+tab closed.
 - Appearance, the status line, new-session defaults, the session sort and the
-  computer order lived in that browser's `localStorage`.
+computer order lived in that browser's `localStorage`.
 - The first visit ignored the OS light/dark preference, and appearance was
-  applied only after React mounted, so a Light user saw a dark flash.
+applied only after React mounted, so a Light user saw a dark flash.
 
 A phone and a computer therefore never matched.
 
 ## Identity
 
-The hub has no login. It's a single trusted-administrator interface behind an
-authenticated proxy (README → Security), and every `/api/` request passes the
-existing Host/Origin policy. **The profile belongs to the hub.**
+The hub has no login. It's a single trusted-administrator interface behind an authenticated proxy (README → Security), and every `/api/` request passes the existing Host/Origin policy. **The profile belongs to the hub.**
 
 - Every device that opens the same hub shares it.
 - Different hubs, such as development and production, keep separate profiles.
 - Anyone who can reach the hub already controls every session, so sharing
-  these preferences adds no exposure.
+these preferences adds no exposure.
 - With no in-app sign-out, "signing out" means clearing the browser's storage.
-  The profile then reloads from the hub.
+The profile then reloads from the hub.
 
 ## Classification
 
@@ -41,7 +37,7 @@ existing Host/Origin policy. **The profile belongs to the hub.**
 Some related state is already hub-owned and is unchanged:
 
 - the custom session order, suspended-session visibility, and hidden
-  sessions (`/api/session-order`);
+sessions (`/api/session-order`);
 - Oracle's model and folder (`/api/manager/settings`).
 
 "Follow latest" is per-view state, not a setting.
@@ -62,29 +58,23 @@ Some related state is already hub-owned and is unchanged:
 | `notificationScope` | `all` \| `oracle` \| `off` | `all` |
 | `previewFeatures` | Partial map of known preview feature names to booleans | all off |
 
-Preview preferences sync through the same revision and conflict rules as other settings. They never enable hub behavior. The effective hub flags come from `GET /api/features` (`{hubFlags: {notificationCenter, hostMonitor, scheduler}}`), are read once at hub startup, and are not cached by the browser. The browser refreshes them on hub reconnect and authoritative refresh, as well as focus and online events. Dependent previews are unavailable when their hub flag is off, without discarding the user's preference. These are hub-owned rollout controls, so nodes do not report them; future node-specific services must negotiate their own capabilities.
+Preview preferences sync through the same revision and conflict rules as other settings. Unknown preview names are ignored field by field, preserving known opt-ins when an older build reads a newer profile; known names still require boolean values. Loading an existing profile does not rewrite it. Preferences never enable hub behavior. The effective hub flags come from `GET /api/features` (`{hubFlags: {notificationCenter, hostMonitor, scheduler}}`), are read once at hub startup, and are not persisted by the browser. The browser refreshes them on hub reconnect and authoritative refresh, as well as focus and online events. It retains the last successful flags in memory when a refresh fails, so a transient network failure does not close an open Scheduler or discard its draft. Before any successful response, defaults remain off. A successful response turning a hub flag off still makes its dependent preview unavailable without discarding the user's preference. These are hub-owned rollout controls, so nodes do not report them; future node-specific services must negotiate their own capabilities.
 
 Hub rollout environment values accept only `on` or `off`, case-insensitively with surrounding whitespace ignored. Unset variables default off; any other value stops startup and names the variable.
 
-`newSessionBackend` covers sessions you create. Oracle's sessions follow its
-own hub setting (`/api/manager/settings` `sessionBackend`).
+`newSessionBackend` covers sessions you create. Oracle's sessions follow its own hub setting (`/api/manager/settings` `sessionBackend`).
 
-Oracle runs on the hub, so it reads `oracleResponseStyle` from the same store as
-each turn's prompt is built; no browser relays it.
+Oracle runs on the hub, so it reads `oracleResponseStyle` from the same store as each turn's prompt is built; no browser relays it.
 
 `notificationScope` works the same way:
 - The hub's push service reads it for every notification, so the choice
-  reaches all devices at once (see app-spec §10).
+reaches all devices at once (see app-spec §10).
 - A later per-session or per-project scope becomes its own key, applied after
-  this one. The existing hub-side session mute already works that way. See
-[Oracle → Prompt composition](session-manager.md#prompt-composition).
+this one. The existing hub-side session mute already works that way. See [Oracle → Prompt composition](session-manager.md#prompt-composition).
 
-`system` follows the device's `prefers-color-scheme` live, and an unset
-appearance means the same thing. Choosing Graphite or Light pins the
-appearance on every device.
+`system` follows the device's `prefers-color-scheme` live, and an unset appearance means the same thing. Choosing Graphite or Light pins the appearance on every device.
 
-Validators live in `shared/settings-profile.ts`, so the hub and the browser
-agree on them.
+Validators live in `shared/settings-profile.ts`, so the hub and the browser agree on them.
 
 ## Hub protocol
 
@@ -101,8 +91,7 @@ The hub stores the profile in `<data>/settings-profile.json`:
 | `POST /api/settings/import` `{deviceId, values}` | Fills only keys that were never set, so the first device wins per setting |
 
 - A change conflicts when `keyRevisions[key] > baseRevision` and
-  `keyWriters[key]` is another device, meaning someone else committed that key
-  after this device last saw the profile.
+`keyWriters[key]` is another device, meaning someone else committed that key after this device last saw the profile.
   - `deviceId` is a random ID each browser keeps in its cache and shares with
     its tabs.
   - A device's retry of its own write is therefore not a conflict, even when
@@ -110,7 +99,7 @@ The hub stores the profile in `<data>/settings-profile.json`:
   - A request without a `deviceId` treats every newer write as another
     device's.
 - `seq` is the device's own edit number: the edit's time, and at least one
-  more than the last number in the shared copy.
+more than the last number in the shared copy.
   - The hub keeps each key's latest `seq` with its writer and ignores an older
     or repeated edit from that same device. A late request from one tab
     therefore cannot replace a newer edit from another.
@@ -122,22 +111,21 @@ The hub stores the profile in `<data>/settings-profile.json`:
   - Changes to other keys in the same request still apply, so two devices
     editing different settings never conflict.
 - A reset keeps its key revision as a tombstone, so a later import cannot
-  bring an old value back.
+bring an old value back.
 - Validation:
-  - An unknown key or a malformed value refuses the whole request with `400`.
+  - An unknown top-level setting key or a malformed value refuses the whole request with `400`.
   - The profile is limited to 32 KB (`413`).
   - Commits are serialized and persisted with an atomic rename before the
     response is sent.
 - Every commit that changes something broadcasts
-  `{type: 'settings.updated', settings}`. A commit that changes nothing keeps
-  its revision.
+`{type: 'settings.updated', settings}`. A commit that changes nothing keeps its revision.
 - `profileId` changes only when the file is recreated. A browser that sees a
-  new ID treats the hub as reset and offers its cached values as an import.
+new ID treats the hub as reset and offers its cached values as an import.
 
 ## Browser
 
 - **Cache.** `agentic-remote:settings-profile` in `localStorage` holds
-  `{deviceId, nextSeq, profileId, revision, values, pending}`.
+`{deviceId, nextSeq, profileId, revision, values, pending}`.
   - Tabs share it. Every change reads it first and writes it straight back,
     so one tab never drops another's unsent edit.
   - The `storage` event shows another tab's change at once.
@@ -145,44 +133,43 @@ The hub stores the profile in `<data>/settings-profile.json`:
     theme at once.
   - It is then reconciled with `GET /api/settings`.
 - **Edits.** An edit applies immediately and is recorded in `pending` with the
-  revision this device had seen. It is then sent in a `PATCH`.
+revision this device had seen. It is then sent in a `PATCH`.
   - Requests are sent one at a time.
   - An edit made while a request is in flight is rebased onto that request's
     result.
 - **Offline.** Network failures and `5xx` responses keep `pending` and show
-  "saved on this device".
+"saved on this device".
   - Retries happen on the websocket reconnect, the `online` event and a
     bounded backoff.
   - A `4xx` response to a batch retries its keys one at a time. Only the
     refused setting is dropped, and the notice names it. Imports work the same
     way.
 - **Live updates.** `settings.updated` events apply when they are newer than
-  the cached revision. A key with a pending local edit keeps showing that edit
-  until its request settles.
+the cached revision. A key with a pending local edit keeps showing that edit until its request settles.
 - **Migration.** A device with no cache imports the legacy keys it actually
-  holds (`agentic-remote:appearance`, the tab accent, `statusline`,
-  `default-models`, `default-session-folders`, `session-sort`,
-  `computer-order`).
+holds (`agentic-remote:appearance`, the tab accent, `statusline`, `default-models`, `default-session-folders`, `session-sort`, `computer-order`).
   - The legacy keys are left untouched, so rolling back restores the old
     behaviour.
 - **No flash.** An inline script in `index.html` applies `data-appearance` and
-  `theme-color` from the cache, the legacy key, or `prefers-color-scheme`
-  before the bundle loads.
+`theme-color` from the cache, the legacy key, or `prefers-color-scheme` before the bundle loads.
+
+## Navigation and confirmation focus
+
+On narrow screens, All settings returns focus to the selected category so keyboard navigation can continue without falling back to the document body. Skill changes move focus into their confirmation; cancel, success, and failure return it to the originating skill control. The control is identified by its source/location rather than name alone. If the refreshed skill is absent or no longer manageable, Search skills receives focus instead. Focus targets are local UI state and are never stored in the profile.
 
 ## Tests
 
 - **Store:** commit and persist, conflicts per key, resets and tombstones,
-  import fills only unset keys, bounds and malformed input, concurrent commits,
-  reload, unreadable file, and a recreated profile.
+import fills only unset keys, bounds and malformed input, concurrent commits, reload, unreadable file, and a recreated profile.
 - **Routes:** each request, `400`/`413`, a foreign Origin (`403`), and the
-  broadcast.
+broadcast.
 - **Client sync:**
   - first visit, an explicit choice, reload, and a closed and reopened tab;
   - cleared storage ("sign out and back in");
   - two devices, offline then online, and stale writes;
   - migration and a hub reset.
 - **App:** both appearances follow the OS when unset, an explicit choice pins
-  them, live events apply, and the sync status and contract copy show.
+them, live events apply, and the sync status and contract copy show.
 - **Inline bootstrap:** runs against the same cases as the resolver.
 - **Contrast:** every accent in both appearances.
 - **Playwright:** desktop and phone, in both appearances.
@@ -192,8 +179,8 @@ The hub stores the profile in `<data>/settings-profile.json`:
 - There is no per-user identity. People who share a hub share its profile.
 - The development and production hubs don't share settings.
 - A device that has never loaded the app on a hub, or whose storage was
-  cleared, renders from the OS preference until the profile loads.
+cleared, renders from the OS preference until the profile loads.
 - Keyboard shortcuts stay per device, because modifier keys differ between
-  operating systems.
+operating systems.
 - `localStorage` has no cross-tab lock. Each change is one synchronous read
-  and write, so only two tabs writing in the same instant can still race.
+and write, so only two tabs writing in the same instant can still race.

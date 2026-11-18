@@ -198,17 +198,33 @@ test('skill changes require confirmation and target the selected computer only',
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-skill-confirmation')!.setup(page)
   try {
     const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+    await expect(dialog.getByRole('button', { name: 'Confirm change', exact: true })).toBeFocused()
     expect(fixture.requests.filter((entry) => entry.method === 'PATCH' && entry.path.endsWith('/skills'))).toEqual([])
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(dialog.getByRole('button', { name: 'Disable review-notes', exact: true })).toBeFocused()
     await dialog.getByRole('button', { name: 'Disable review-notes', exact: true }).click()
     const write = page.waitForRequest((request) => request.method() === 'PATCH' && new URL(request.url()).pathname === '/api/computers/fixture-build/skills')
     await dialog.getByRole('button', { name: 'Confirm change', exact: true }).click()
     expect((await write).postDataJSON()).toEqual({ name: 'review-notes', enabled: false, confirmed: true, revision: 'a'.repeat(64) })
-    await expect(dialog.getByRole('button', { name: 'Enable review-notes', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Enable review-notes', exact: true })).toBeFocused()
     await dialog.getByRole('combobox', { name: 'Skills computer' }).selectOption('fixture-studio')
     await expect(dialog.getByRole('button', { name: 'Disable review-notes', exact: true })).toBeVisible()
     await dialog.getByRole('combobox', { name: 'Skills computer' }).selectOption('fixture-travel')
     await expect(dialog.getByRole('status')).toContainText('offline')
+  } finally { fixture.assertHealthy() }
+})
+
+test('phone All settings restores category focus and supports keyboard re-entry', async ({ page, baseURL }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-navigation')!.setup(page)
+  try {
+    const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+    await dialog.getByRole('button', { name: 'All settings', exact: true }).click()
+    const models = dialog.getByRole('button', { name: /^Models/ })
+    await expect(models).toBeFocused()
+    await models.press('Enter')
+    await expect(dialog.getByRole('heading', { name: 'Models', exact: true })).toBeFocused()
+    await assertNoHorizontalOverflow(page)
   } finally { fixture.assertHealthy() }
 })
 

@@ -111,12 +111,20 @@ describe('hub settings profile routes', () => {
       })
       expect(saved.statusCode).toBe(200)
       expect(saved.json().settings.values.previewFeatures).toEqual({ composerRefresh: true, schedulerView: true })
-      for (const value of [{ schedulerView: 'on' }, { scheduler: true }]) {
+      for (const value of [{ schedulerView: 'on' }]) {
         expect((await app.inject({
           method: 'PATCH', url: '/api/settings', headers: local,
           payload: { changes: { previewFeatures: { value, baseRevision: 1 } } },
         })).statusCode).toBe(400)
       }
+      const future = await app.inject({
+        method: 'PATCH', url: '/api/settings', headers: local,
+        payload: { changes: { previewFeatures: {
+          value: { composerRefresh: true, schedulerView: true, scheduler: true, futurePreview: true }, baseRevision: 1,
+        } } },
+      })
+      expect(future.statusCode).toBe(200)
+      expect(future.json().settings.values.previewFeatures).toEqual({ composerRefresh: true, schedulerView: true })
       expect(store.snapshot().revision).toBe(1)
     } finally {
       await app.close()

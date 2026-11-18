@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Settings } from 'lucide-react'
 import { SettingsNavigation } from './SettingsNavigation'
@@ -19,6 +19,18 @@ function open(initialSection?: string) {
 }
 
 describe('settings categories', () => {
+  it('returns focus to the selected category after All settings', async () => {
+    open()
+    const category = screen.getByRole('button', { name: /^Interface/ })
+    fireEvent.click(category)
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Interface' })).toHaveFocus())
+    const back = screen.getByRole('button', { name: 'All settings' })
+    back.focus()
+    fireEvent.click(back)
+    expect(category).toHaveFocus()
+    expect(document.querySelector('.settings-navigation--page')).toBeNull()
+  })
+
   it('filters categories and fields by label without changing values', () => {
     open()
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'accent' } })

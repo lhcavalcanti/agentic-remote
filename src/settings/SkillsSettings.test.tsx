@@ -17,6 +17,47 @@ const snapshot = {
   skills: [{ name: 'review', description: 'A review skill', source: 'user' as const, location: '~/.copilot/skills/review', enabled: true }],
 }
 describe('per-computer skill controls', () => {
+  it('focuses confirmation and restores the toggled control after cancel and save', async () => {
+    vi.mocked(listComputerSkills).mockResolvedValue(snapshot)
+    vi.mocked(toggleComputerSkill).mockResolvedValue({ ...snapshot, skills: [{ ...snapshot.skills[0], enabled: false }] })
+    render(<SkillsSettings computers={computers} />)
+    const disable = await screen.findByRole('button', { name: 'Disable review' })
+    disable.focus()
+    fireEvent.click(disable)
+    expect(screen.getByRole('button', { name: 'Confirm change' })).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('button', { name: 'Disable review' })).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Disable review' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm change' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Enable review' })).toHaveFocus())
+  })
+
+  it('restores the originating duplicate skill control rather than the first matching name', async () => {
+    vi.mocked(listComputerSkills).mockResolvedValue({
+      ...snapshot, skills: [snapshot.skills[0], { ...snapshot.skills[0], location: '~/other/review' }],
+    })
+    render(<SkillsSettings computers={computers} />)
+    const controls = await screen.findAllByRole('button', { name: 'Disable review' })
+    controls[1].focus()
+    fireEvent.click(controls[1])
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getAllByRole('button', { name: 'Disable review' })[1]).toHaveFocus()
+  })
+
+  it.each([false, true])('restores useful focus after a failed save or a disappearing skill (removed: %s)', async (removed) => {
+    vi.mocked(listComputerSkills).mockResolvedValue(snapshot)
+    if (removed) vi.mocked(toggleComputerSkill).mockResolvedValue({ ...snapshot, skills: [] })
+    else vi.mocked(toggleComputerSkill).mockRejectedValue(new Error('Settings changed; refresh and try again.'))
+    render(<SkillsSettings computers={computers} />)
+    const disable = await screen.findByRole('button', { name: 'Disable review' })
+    disable.focus()
+    fireEvent.click(disable)
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm change' }))
+    await waitFor(() => expect(removed
+      ? screen.getByRole('searchbox', { name: 'Search skills' })
+      : screen.getByRole('button', { name: 'Disable review' })).toHaveFocus())
+  })
+
   it('shows why invalid or repository-disabled skills cannot be toggled', async () => {
     vi.mocked(listComputerSkills).mockResolvedValue({
       ...snapshot, skills: [{ ...snapshot.skills[0], manageable: false, enabled: false, reason: 'SKILL.md frontmatter description is required.' }],

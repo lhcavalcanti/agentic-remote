@@ -40,6 +40,8 @@ export interface SessionLaunchInput<Provenance extends object> {
 export interface SessionPromptTarget {
   session: ManagedSession
   folderTrust: SessionFolderTrustPolicy
+  /** Caller-owned admission fence, rechecked after asynchronous preparation. */
+  assertActive?: () => void
 }
 
 export interface SessionLaunch extends SessionPromptTarget {
@@ -158,9 +160,11 @@ export class SessionLauncher<Provenance extends object> {
   ): Promise<SessionPromptDelivery> {
     requireFolderTrust(target.folderTrust)
     const { session } = target
+    target.assertActive?.()
     if (options.deliveryId !== undefined) {
       if (options.steer) throw new Error('Identified root prompts use durable queue acceptance, not steering.')
       await this.trustFolder(target)
+      target.assertActive?.()
       const delivered = await this.host.sendMessage(session.computerId, session.id, {
         content, enqueue: true, deliveryId: options.deliveryId,
       })
@@ -180,16 +184,19 @@ export class SessionLauncher<Provenance extends object> {
       } catch (error) {
         // A possibly-delivered steer must never be sent a second time.
         if (deliveryUncertaintyFromError(error) !== false) throw error
+        target.assertActive?.()
         const delivered = await this.host.sendMessage(session.computerId, session.id, { content, enqueue: true })
         return { outcome: 'queued', delivered }
       }
     }
     await this.trustFolder(target)
+    target.assertActive?.()
     let delivered: ManagedSession
     try {
       delivered = await this.host.sendMessage(session.computerId, session.id, { content, enqueue: true })
     } catch (error) {
       if (!(await this.trustFolder(target, this.trustWaitMs))) throw error
+      target.assertActive?.()
       delivered = await this.host.sendMessage(session.computerId, session.id, { content, enqueue: true })
     }
     return { outcome: session.status === 'running' ? 'queued' : 'sent', delivered }
@@ -232,6 +239,7 @@ export class SessionLauncher<Provenance extends object> {
       const folder = permission && trustedFolderOf(permission)
       // Only the session's own folder; all other permissions need an explicit answer.
       if (permission && folder && sameFolder(folder, detail.cwd || session.cwd)) {
+        target.assertActive?.()
         await this.answerPermission(session, permission.requestId, 'terminal:allow')
         this.options.onFolderTrusted?.(session, folder)
         const settled = Date.now() + this.trustWaitMs

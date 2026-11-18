@@ -176,7 +176,11 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
           <ul>{scheduler.history.map((run) => <li key={run.id} data-linked={run.id === linkedRunId} ref={run.id === linkedRunId ? linkedRun : undefined}>
             <div><RunStatus run={run} /><small>{scheduleTime(run.occurrenceAt, historySchedule.timezone)} · {historySchedule.timezone} · {run.trigger} · {runDuration(run, now)}</small>
               {(run.error || run.summary) && <p>{run.error ?? run.summary}</p>}</div>
-            {run.sessionId && <button type="button" className="secondary-button" onClick={() => onOpenSession(run.computerId, run.sessionId!)}>Open session</button>}
+            <div className="schedule-run-actions">
+              {run.sessionId && <button type="button" className="secondary-button" onClick={() => onOpenSession(run.computerId, run.sessionId!)}>Open session</button>}
+              {run.outcomeUnknown && ['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status) &&
+                <AbandonRun run={run} pending={pending} onAbandon={() => mutate(`/api/schedules/runs/${encodeURIComponent(run.id)}/abandon`, { confirm: true })} />}
+            </div>
           </li>)}</ul>
         </section>}
       </>}
@@ -185,5 +189,33 @@ export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOp
 }
 
 function RunStatus({ run }: { run: ScheduleRun }) {
-  return <span className="schedule-status" data-status={run.status}>{run.status}</span>
+  return <span className="schedule-status" data-status={run.status}>{run.abandonedAt ? 'abandoned' : run.status}</span>
+}
+
+function AbandonRun({ run, pending, onAbandon }: { run: ScheduleRun; pending: boolean; onAbandon(): Promise<void> }) {
+  const [confirming, setConfirming] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+  const button = useRef<HTMLButtonElement>(null)
+  const confirmation = useRef<HTMLFieldSetElement>(null)
+  useEffect(() => {
+    if (confirming) confirmation.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [confirming])
+  return <>
+    <button ref={button} type="button" className="secondary-button schedule-abandon-toggle" disabled={pending}
+      aria-expanded={confirming} aria-controls={`abandon-${run.id}`}
+      onClick={() => { setConfirming(!confirming); setConfirmed(false) }}>Abandon run</button>
+    {confirming && <fieldset ref={confirmation} className="schedule-abandon" id={`abandon-${run.id}`} disabled={pending}>
+      <legend>Abandon this run?</legend>
+      <p role="alert">This releases the slot but does not stop provider work. Work may still be running on {run.computerId}. This launch will never be resumed. Inspect that computer before removing files.</p>
+      <label className="schedule-check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I understand work may still be running.</label>
+      <div className="schedule-actions">
+        <button type="button" className="secondary-button" onClick={() => {
+          setConfirming(false); setConfirmed(false); button.current?.focus()
+        }}>Keep run</button>
+        <button type="button" className="primary-button" disabled={!confirmed} onClick={() => {
+          void onAbandon().catch(() => undefined)
+        }}>{pending ? 'Abandoning…' : 'Confirm abandon run'}</button>
+      </div>
+    </fieldset>}
+  </>
 }

@@ -57,6 +57,29 @@ async function app(role: 'hub' | 'node' = 'hub', realRunner = false) {
 }
 
 describe('scheduler hub API', () => {
+  it('requires explicit same-origin confirmation to abandon an uncertain run and leaves its identity fenced after deletion', async () => {
+    const server = await app()
+    const schedule = await runtime.scheduler!.store.create(input() as never)
+    const run = (await runtime.scheduler!.store.admit(schedule.id, new Date().toISOString(), 'manual'))!
+    expect((await server.inject({ method: 'POST', url: `/api/schedules/runs/${run.id}/abandon`, headers, payload: { confirm: true } })).statusCode).toBe(409)
+    await runtime.scheduler!.store.changeRun(run.id, { status: 'launching', outcomeUnknown: true })
+    const url = `/api/schedules/runs/${run.id}/abandon`
+    for (const payload of [{}, { confirm: false }, { confirm: true, force: true }]) {
+      expect((await server.inject({ method: 'POST', url, headers, payload })).statusCode).toBe(400)
+    }
+    for (const path of [url, url.replace('/api/', '/%61pi/')]) {
+      expect((await server.inject({ method: 'POST', url: path, headers: { ...headers, origin: 'https://evil.example' }, payload: { confirm: true } })).statusCode).toBe(403)
+    }
+    expect(runtime.scheduler!.store.getRun(run.id).status).toBe('launching')
+    const result = await server.inject({ method: 'POST', url, headers, payload: { confirm: true } })
+    expect(result.statusCode).toBe(200)
+    expect(result.json().run).toMatchObject({ status: 'interrupted', abandonedAt: expect.any(String), error: expect.stringMatching(/abandon/i) })
+    expect((await server.inject({ method: 'POST', url, headers, payload: { confirm: true } })).statusCode).toBe(200)
+    const archived = await runtime.scheduler!.store.setArchived(schedule.id, schedule.revision, true)
+    await runtime.scheduler!.store.delete(schedule.id, archived.revision)
+    expect(runtime.scheduler!.store.isLaunchAbandoned(run.launchId)).toBe(true)
+  })
+
   it('journals each proposal transition in order while an earlier journal batch is blocked', async () => {
     await app()
     let release!: () => void

@@ -91,6 +91,28 @@ afterEach(async () => {
 })
 
 describe('scheduler durable store', () => {
+  it('abandons only uncertain runs atomically and never accepts later updates into the abandoned identity', async () => {
+    const { store, schedule, directory } = await fixture()
+    const run = (await store.admit(schedule.id, INITIAL, 'manual'))!
+    expect(JSON.parse(await readFile(store.statePath, 'utf8'))).not.toHaveProperty('abandonedLaunches')
+    await expect(store.abandonRun(run.id)).rejects.toMatchObject({ statusCode: 409 })
+    await store.beginLaunch(run.id, INITIAL)
+    const persist = vi.spyOn(store as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+      .mockRejectedValueOnce(new Error('Fence write failed'))
+    await expect(store.abandonRun(run.id)).rejects.toThrow('Fence write failed')
+    expect(store.getRun(run.id).status).toBe('launching')
+    expect(store.isLaunchAbandoned(run.launchId)).toBe(false)
+    persist.mockRestore()
+    const abandoned = await store.abandonRun(run.id)
+    expect(await store.changeRun(run.id, { status: 'running', sessionId: 'late-session', rootPromptReceipt: 'late-root' })).toEqual(abandoned)
+    expect(await store.abandonRun(run.id)).toEqual(abandoned)
+    const restored = new SchedulerStore(directory)
+    await restored.initialize()
+    expect(restored.isLaunchAbandoned(run.launchId)).toBe(true)
+    expect(restored.ownsSession(run.computerId, 'late-session', run.launchId)).toBe(true)
+    expect(holdsSlot(restored.getRun(run.id))).toBe(false)
+  })
+
   it.each(['create', 'update', 'create-proposal', 'update-proposal'] as const)(
     'rejects unsupported Claude scheduling through %s', async (operation) => {
       const { store, schedule } = await fixture()
@@ -307,6 +329,23 @@ describe('scheduler durable store', () => {
 })
 
 describe('hub schedule dispatcher', () => {
+  it('does not make confirmed abandonment wait behind a provider stop and ignores its later acknowledgement', async () => {
+    const { dispatcher, launcher, schedule, store } = await fixture({ enabled: false })
+    await dispatcher.start()
+    const run = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    let release!: () => void
+    launcher.stop.mockImplementation(() => new Promise((resolve) => { release = () => resolve({ outcome: 'stopped' }) }))
+    const stopping = dispatcher.stopRun(run.id)
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    expect(store.getRun(run.id)).toMatchObject({ status: 'stopping', outcomeUnknown: true })
+    try {
+      expect(await dispatcher.abandonRun(run.id)).toMatchObject({ status: 'interrupted', abandonedAt: expect.any(String) })
+      expect(holdsSlot(store.getRun(run.id))).toBe(false)
+    } finally { release() }
+    expect(await stopping).toMatchObject({ status: 'interrupted', abandonedAt: expect.any(String) })
+  })
+
   it('lets an archive queued before the launch transition stop a pending drain atomically', async () => {
     let archive: Promise<unknown> | undefined
     const state = await fixture({}, () => {

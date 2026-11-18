@@ -19,9 +19,16 @@
 .schedule-status[data-status='needs-input'], .schedule-status[data-status='stopping'], .schedule-status[data-status='interrupted'] { border-color: #D83B01; }
 .schedule-history { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
 .schedule-history > ul { list-style: none; padding: 0; max-height: 280px; overflow-y: auto; }
+.schedule-history:has(.schedule-abandon) > ul { max-height: min(440px, 65dvh); }
 .schedule-history li { display: flex; justify-content: space-between; gap: 12px; align-items: center; border-top: 1px solid var(--border); padding: 12px 0; font-size: 13px; }
 .schedule-history small { display: block; color: var(--muted); font-size: 11px; margin-top: 6px; }
 .schedule-history li p { margin-bottom: 0; }
+.schedule-history li > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.schedule-run-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; max-width: 100%; min-width: 0; }
+.schedule-abandon { flex-basis: 100%; width: min(100%, 360px); min-width: 0; overflow-wrap: anywhere; border: 1px solid var(--warning); border-radius: 8px; padding: 12px; }
+.schedule-abandon legend { font-weight: 650; }
+.schedule-abandon .schedule-check { min-height: 40px; }
+.schedule-abandon button, .schedule-abandon-toggle { min-height: 40px; }
 .schedule-history li[data-linked='true'] { border-left: 3px solid var(--accent-foreground); padding-left: 10px; background: var(--accent-tint); }
 .scheduler-pending { border: 1px solid var(--accent-border-strong); border-radius: 10px; padding: 14px; margin: 14px 0; }
 .scheduler-pending h3 { margin: 0; font-size: 15px; }

@@ -121,6 +121,93 @@ async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' 
 }
 
 describe('schedule runner', () => {
+  it('settles an owner-confirmed deleted session without requiring its trimmed root receipt or removing its worktree', async () => {
+    const f = await fixture({ workspace: 'worktree' })
+    await f.runner.launch(f.run, f.schedule)
+    await f.store.changeRun(f.run.id, { status: 'running', startedAt: at })
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', deleted: true, receipts: [] })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    expect(f.store.getRun(f.run.id)).toMatchObject({
+      status: 'interrupted', error: expect.stringMatching(/deleted/i), worktree: { state: 'deferred' },
+    })
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+    expect(f.host.cleanupScheduleWorktree).not.toHaveBeenCalled()
+    expect(f.host.sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it.each(['create-failure', 'restart'] as const)('allows explicit abandonment of an uncertain %s and fences later owner evidence after deletion', async (stage) => {
+    const f = await fixture()
+    const cause = new Error('SDK creation failed after the create boundary')
+    if (stage === 'create-failure') vi.mocked(f.host.createSession).mockRejectedValue(cause)
+    else await f.store.changeRun(f.run.id, { status: 'launching', startedAt: new Date().toISOString() })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id)).toMatchObject({ status: 'launching', outcomeUnknown: true }))
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(true)
+    if (stage === 'create-failure') expect(deliveryUncertaintyFromError(cause)).toBe(true)
+    const abandoned = await dispatcher.abandonRun(f.run.id)
+    expect(abandoned).toMatchObject({ status: 'interrupted', abandonedAt: expect.any(String), error: expect.stringMatching(/abandon/i) })
+    expect(holdsSlot(abandoned)).toBe(false)
+    const archived = await f.store.setArchived(f.schedule.id, f.schedule.revision, true)
+    await f.store.delete(f.schedule.id, archived.revision)
+    const restored = new SchedulerStore(f.directory)
+    await restored.initialize()
+    expect(restored.isLaunchAbandoned(f.run.launchId)).toBe(true)
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'late-session', receipts: [] })
+    const runner = new SessionScheduleLauncher(f.host, restored, f.registry)
+    expect(await runner.reconcile(abandoned)).toMatchObject({ state: 'terminated', outcome: 'interrupted', error: expect.stringMatching(/abandon/i) })
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
+    expect(f.host.createSession).toHaveBeenCalledTimes(stage === 'create-failure' ? 1 : 0)
+  })
+
+  it('does not adopt or send a root to a late create response after abandonment and schedule deletion', async () => {
+    const f = await fixture()
+    let created!: (session: ManagedSession) => void
+    vi.mocked(f.host.createSession).mockImplementation(() => new Promise((resolve) => { created = resolve }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(created).toBeTypeOf('function'))
+    await dispatcher.tick()
+    expect(f.store.getRun(f.run.id)).toMatchObject({ outcomeUnknown: true })
+    await dispatcher.abandonRun(f.run.id)
+    const archived = await f.store.setArchived(f.schedule.id, f.schedule.revision, true)
+    await f.store.delete(f.schedule.id, archived.revision)
+    created(session({ launchId: f.run.launchId }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await dispatcher.tick()
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
+    expect(f.store.allRuns()).toEqual([])
+    expect(f.registry.registry()['hub:session-one']).toBeUndefined()
+    expect(f.store.isLaunchAbandoned(f.run.launchId)).toBe(true)
+  })
+
+  it('rechecks abandonment after the final worktree write before issuing create', async () => {
+    const f = await fixture({ workspace: 'worktree' })
+    let release!: () => void
+    let prepared = false
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const change = f.store.changeRun.bind(f.store)
+    vi.spyOn(f.store, 'changeRun').mockImplementation(async (id, changes) => {
+      const result = await change(id, changes)
+      if (changes.worktree?.state === 'ready') { prepared = true; await gate }
+      return result
+    })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    try {
+      await vi.waitFor(() => expect(prepared).toBe(true))
+      await dispatcher.abandonRun(f.run.id)
+    } finally { release() }
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.store.getRun(f.run.id)).toMatchObject({ status: 'interrupted', worktree: { state: 'deferred' } })
+  })
+
   it('definitively refuses Claude before creating a session and releases the slot', async () => {
     const f = await fixture()
     const unsupported = { ...f.schedule, target: { ...f.schedule.target, provider: 'claude' as const } }
@@ -316,6 +403,7 @@ describe('schedule runner', () => {
       })
       expect(f.store.getRun(f.run.id)).toMatchObject({ launchId: f.run.launchId, retryUntil: deadline })
       expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(f.store.getRun(f.run.id).outcomeUnknown).toBeUndefined()
       expect(f.store.getRun(f.run.id).rootPromptAcceptance).toBeUndefined()
       expect(f.host.createSession).not.toHaveBeenCalled()
       expect(f.host.sendMessage).not.toHaveBeenCalled()
@@ -748,12 +836,12 @@ describe('schedule runner', () => {
     expect(f.host.createSession).toHaveBeenCalledTimes(1)
   })
 
-  it('retains uncertain launches, offline errors and deleted sessions without relaunching', async () => {
+  it('retains uncertain and offline launches but settles confirmed deletion without relaunching', async () => {
     const f = await fixture()
     expect(await f.runner.reconcile(f.run)).toEqual({ state: 'absent' })
     expect(await f.runner.reconcile({ ...f.run, status: 'launching' })).toEqual({ state: 'unknown' })
     f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', deleted: true, receipts: [] })
-    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'unknown' })
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'terminated', outcome: 'interrupted' })
     vi.mocked(f.host.reconcileLaunch!).mockRejectedValue(new Error('Offline'))
     expect(await f.runner.reconcile({ ...f.run, status: 'launching', startedAt: at }))
       .toMatchObject({ state: 'unknown', error: expect.stringContaining('slot remains reserved') })

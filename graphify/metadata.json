@@ -629,9 +629,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 261,
+  "communities": 266,
   "community_algorithm": "louvain-seed-42",
-  "edges": 25519,
+  "edges": 25524,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -688,7 +688,7 @@
     "docs/design/oracle-dreamer.md": "c641c69c99e492eb0f15f9b93888a2d3cabf1d92d95d4be2ed75c1578f1844e4",
     "docs/design/oracle-durable-ux.md": "c26ae138274606865c3d580e652b71aa506a1fb8ddce4e428e31f2dc6b39fc38",
     "docs/design/oracle-proactive-inbox.md": "7bcbc71f4cd452e53618ef77464908561103b7750f4e1ec9e11112f1bceab329",
-    "docs/design/scheduler.md": "261a8974d904d776d92c3e7168feb1d185128ba88bc54b77a50279d996e7fe95",
+    "docs/design/scheduler.md": "d1c4ecf8bdd59e436e34d4f1d97f064b36b8e0bf09587873002a10e101b7fd14",
     "docs/design/session-manager.md": "8dab250a4d8fb14b161f2b90708168de40b39263c69431aa8b397fce47d40f1e",
     "docs/design/session-provenance.md": "88d937fcf198d4c46b91d11a047d7b0d24b0507bc92529eca2888b159278735b",
     "docs/design/settings-profile.md": "93980a661dd93d2ccab30b040ec025f8cdf642ce115906c0be87f4f69ad3466d",
@@ -1111,12 +1111,12 @@
     "server/remote-voice-client.test.ts": "16e8c31f055a519f64cd0760e8c5c979113dc344c4d7435630211a92ed3f7856",
     "server/remote-voice-client.ts": "a240dec15c9d4778373260b2025a5a2b77629fa26615019ee3da59e9a96ebfc4",
     "server/safe-area.test.ts": "528bbfad9c5cf4dca776d0e5e35933790d0a283de02acbc3cb7e88ffcbdf325c",
-    "server/schedule-launcher.test.ts": "30f348bfde7815435fd729439a97f1cdd31d22b6a414830de5bfbbe84e3add21",
-    "server/schedule-launcher.ts": "99e2a32c88ca14c901144ef89afa71c9f579d12f5b5d17ec3d7f2e037efdef0e",
+    "server/schedule-launcher.test.ts": "f81c10f803c2a6a8ef27f84a1ad47e62594332763b4b68d9e75b4885ae0e2b3b",
+    "server/schedule-launcher.ts": "51ef6004bc4b2e746683833a0062d49288a4ef5aae8ef4e32799b62725f6ee71",
     "server/schedule-notification-service.test.ts": "bb8b18d374d60c6a04423ae9cec71d6c6c6aac561310f094ddfdf9c0803a2dc2",
     "server/schedule-notification-service.ts": "b6605a5d3d5eb29f49abe8ac2e35a12f7bd87fc9127a2456eec1aceb856dede0",
     "server/schedule-notifications.integration.test.ts": "fe129a1240e874b79ba0ba41f04c874eccc09d5a293d6434466547a104b6c034",
-    "server/schedule-worktrees.test.ts": "a56d35ac5285c6720f7d8d63812892e1f3b6988da14b037c70524e82ff90757c",
+    "server/schedule-worktrees.test.ts": "a6c39a2a5a78d197ae4008d1c4d58fcf32387a03d503e7f0af2dd949a5fea7d1",
     "server/schedule-worktrees.ts": "0558434dd3438a03e76e5bce013d4905f826e578f2eca008853b8398eb1cd5a7",
     "server/scheduler-dispatcher.ts": "da2a33aa54344c8344f834d7f351a37ee580f0bb4d2e720aee4e188ce1d775b8",
     "server/scheduler-proposals.test.ts": "fb5c9cca90f67f6e7a613462ea71ba213cce733caa9db0efa6d0eb13b6f81eb0",
@@ -1502,7 +1502,7 @@
     "vite.config.ts": "9e2b989c7e4a2b0f7c887a3c0ae78c714e77f1f4e506dee1e51145133cc12cb1"
   },
   "mode": "local-ast-only",
-  "nodes": 8829,
+  "nodes": 8830,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1743,13 +1743,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "cc368c658f826d7e6f869061d20201bd5f95832c6bc602d16dc947ff4f5b72fa",
-    "communities.json": "5e2d801535b6c263db3468157d6187dd7c947c18b998f46b61a5158558fe6ae5",
-    "graph.html": "8969654fad7f9cf3dd644f1584c9e4b7274f554f34685f29379f18dd341d8293",
-    "graph.json": "54cec831026fc200c7161670767675a270f91987a1920a7a5dc34312bc06c570"
+    "GRAPH_REPORT.md": "5067c8b0198d462b30a4d1677712b23f8e444026486fc4ea2bfe8178bfb23b50",
+    "communities.json": "a2a177180cfc3ea5f9d4f6b6f56b8e59dee4e28d07b964cf8daf7e466c03f003",
+    "graph.html": "3e95a6d0801dc3ea13d621bacc47fcb637708f42238d4ccf7f8edbf0b2068c16",
+    "graph.json": "ca9888c342354c33ae97f2c0fa5406a47929989cc8eb61753de8e3d7e17d5631"
   },
   "schema_version": 1,
-  "source_commit": "97782f2d56addd2d93979894a1bc5dd49e04a51f",
-  "source_fingerprint": "3fcb44f6275c7a0fcf758ba6419c6ef5fa27ab92f09b9ffeba6ace36a01e89b6",
+  "source_commit": "bb4f5a55d5a1b699618ae84f00aba0a3676ae76c",
+  "source_fingerprint": "f47439ccaa86f9920b6c8cc7d055d8c076eb948b156cebeea09aa2b3b0d9695c",
   "working_tree_changes": []
 }

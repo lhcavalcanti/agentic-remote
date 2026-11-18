@@ -47,6 +47,23 @@ describe('SentMessages', () => {
     expect(onChoose).toHaveBeenCalledExactlyOnceWith(expectedId)
   })
 
+  it.each([
+    { isComposing: true, keyCode: 13 },
+    { isComposing: false, keyCode: 229 },
+  ])('ignores composing Enter without consuming it (isComposing=$isComposing, keyCode=$keyCode)', (composition) => {
+    const onChoose = vi.fn()
+    render(<SentMessages messages={messages} onChoose={onChoose} onCancel={vi.fn()} onUse={vi.fn()} />)
+    const search = screen.getByRole('combobox', { name: 'Search sent messages' })
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    fireEvent.compositionStart(search)
+    expect(fireEvent.keyDown(search, { key: 'Enter', ...composition })).toBe(true)
+    expect(onChoose).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Use message' })).toBeDisabled()
+    fireEvent.compositionEnd(search)
+    fireEvent.keyDown(search, { key: 'Enter', keyCode: 13 })
+    expect(onChoose).toHaveBeenCalledExactlyOnceWith('two')
+  })
+
   it('focuses the dialog rather than summoning a touch keyboard', () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
     render(<SentMessages messages={messages} onChoose={vi.fn()} onCancel={vi.fn()} onUse={vi.fn()} />)

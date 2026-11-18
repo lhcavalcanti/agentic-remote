@@ -57,6 +57,7 @@ export function SentMessages({
               event.preventDefault()
               setActive((index) => nextIndex(event.key, index))
             } else if (event.key === 'Enter' && matches.length) {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return
               event.preventDefault()
               choose(matches[Math.max(0, Math.min(active, matches.length - 1))])
             }

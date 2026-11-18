@@ -1,5 +1,6 @@
 import type { AgentProvider, RuntimeReasoningEffort } from './contracts.js'
 import { notificationScopes, type NotificationScope } from './notifications.js'
+import { previewFeatureNames, type PreviewFeatures } from './feature-flags.js'
 
 /**
  * The hub-owned settings profile: preferences that follow the user to every
@@ -17,6 +18,9 @@ export const settingsProfileKeys = [
   'computerOrder',
   'oracleResponseStyle',
   'notificationScope',
+  'previewFeatures',
+  'schedulerAllowAllForOracle',
+  'displayName',
 ] as const
 
 export type SettingsProfileKey = (typeof settingsProfileKeys)[number]
@@ -75,6 +79,7 @@ export const oracleResponseStyles = ['concise', 'balanced', 'detailed'] as const
 export type OracleResponseStyle = (typeof oracleResponseStyles)[number]
 
 export interface SettingsProfileValues {
+  displayName?: string
   appearance?: AppearanceSetting
   accent?: AccentSetting
   statusline?: StatuslineSetting
@@ -86,6 +91,9 @@ export interface SettingsProfileValues {
   oracleResponseStyle?: OracleResponseStyle
   /** Unset sends every notification, as before the setting existed. */
   notificationScope?: NotificationScope
+  previewFeatures?: PreviewFeatures
+  /** Unset is false. Still requires approval of each exact schedule proposal. */
+  schedulerAllowAllForOracle?: boolean
 }
 
 export interface SettingsProfileSnapshot {
@@ -168,6 +176,16 @@ export function parseSettingValue<K extends SettingsProfileKey>(
     value: parsed as NonNullable<SettingsProfileValues[K]>,
   })
   switch (key) {
+    case 'schedulerAllowAllForOracle':
+      return typeof value === 'boolean' ? valid(value) : invalid('must be true or false')
+    case 'displayName': {
+      if (typeof value !== 'string' || [...value].some((character) => {
+        const code = character.codePointAt(0)!
+        return code < 32 || (code >= 127 && code <= 159)
+      })) return invalid('must not contain control characters')
+      const name = value.trim()
+      return name.length >= 1 && name.length <= 60 ? valid(name) : invalid('must be 1–60 characters')
+    }
     case 'appearance':
       return oneOf(appearanceSettings, value) ? valid(value) : invalid('is not a known appearance')
     case 'accent':
@@ -180,6 +198,16 @@ export function parseSettingValue<K extends SettingsProfileKey>(
       return oneOf(oracleResponseStyles, value) ? valid(value) : invalid('is not a known response style')
     case 'notificationScope':
       return oneOf(notificationScopes, value) ? valid(value) : invalid('is not a known notification scope')
+    case 'previewFeatures': {
+      if (!isRecord(value)) return invalid('must be an object')
+      const parsed: PreviewFeatures = {}
+      for (const [feature, enabled] of Object.entries(value)) {
+        if (!oneOf(previewFeatureNames, feature)) continue
+        if (typeof enabled !== 'boolean') return invalid(`feature ${feature} must be true or false`)
+        parsed[feature] = enabled
+      }
+      return valid(parsed)
+    }
     case 'statusline': {
       if (!isRecord(value)) return invalid('must be an object')
       const parsed: StatuslineSetting = {}

@@ -1,5 +1,9 @@
 import type { ManagerEvent } from './manager.js'
 import type { SettingsProfileSnapshot } from './settings-profile.js'
+import type { NotificationsChanged, ScheduleRunNotification } from './notification-center.js'
+import type { SchedulerChanged } from './schedules.js'
+import type { ScheduleProposalsChanged } from './schedule-proposals.js'
+import type { PromptAcceptanceReceipt, TerminationAcknowledgement } from './launch-identity.js'
 
 export type SessionStatus = 'idle' | 'running' | 'waiting' | 'error'
 export type AgentMode = 'interactive' | 'plan' | 'autopilot'
@@ -15,6 +19,8 @@ export interface AgentProviderCapability {
   supportsTmuxMigration?: boolean
   supportsBackgroundTasks?: boolean
   supportsQueuedPromptDispatch?: boolean
+  /** Existing immediate follow-up delivery; absence means steering is unknown. */
+  supportsSteering?: boolean
   supportsSessionResources?: boolean
   supportsContextRecovery?: boolean
   supportsSessionRetention?: boolean
@@ -22,6 +28,7 @@ export interface AgentProviderCapability {
   supportsRecoverableClose?: boolean
   /** Answers side questions about a session without prompting it. */
   supportsSideQuestions?: boolean
+  supportsLaunchIdentity?: boolean
   unavailableReason?: string
 }
 
@@ -96,6 +103,12 @@ export interface ChatMessage {
   role: MessageRole
   content: string
   createdAt: string
+  /** Positive provider handoff evidence; admission or a retained user row is not delivery. */
+  deliveryConfirmed?: boolean
+  /** Locally retained user echoes, unlike records read from the provider's transcript. */
+  deliveryState?: 'pending' | 'refused' | 'uncertain'
+  /** App-owned context/control input, not a prompt authored by the user. */
+  appGenerated?: boolean
   streaming?: boolean
   activityStatus?: ActivityStatus
   activityKind?: ActivityKind
@@ -382,6 +395,11 @@ export interface SessionInterruption {
 
 export interface SessionSummary {
   id: string
+  launchId?: string
+  promptReceipts?: PromptAcceptanceReceipt[]
+  /** Durable admission fence for acknowledged cancellation. */
+  launchStopping?: boolean
+  launchTermination?: TerminationAcknowledgement
   revision?: number
   provider?: AgentProvider
   executionMode?: SessionExecutionMode
@@ -389,6 +407,8 @@ export interface SessionSummary {
   title: string
   updatedAt: string
   status: SessionStatus
+  /** Independent of aggregate running status, which includes background agents. */
+  foregroundTurnActive?: boolean
   isOpen?: boolean
   retention?: SessionRetention
   retentionLastUsedAt?: string
@@ -474,6 +494,7 @@ export interface ComputerSummary {
   name: string
   isLocal: boolean
   online: boolean
+  version?: string
   baseUrl?: string
   /** Durable pairing lifetime; stable across reconnects and process restarts. */
   lifecycleGeneration?: string
@@ -483,9 +504,22 @@ export interface ComputerSummary {
   voice?: VoiceBackendCapability
 }
 
+export type SessionOrigin = 'manager' | 'user' | 'discovered' | 'schedule'
+
+export interface SessionProvenance {
+  origin: SessionOrigin
+  scheduleId?: string
+  scheduleRunId?: string
+  scheduleName?: string
+}
+
 export interface ManagedSession extends SessionDetail {
+  /** Hub-owned provenance; never inferred from title, provider or runtime. */
+  provenance?: SessionProvenance
   computerId: string
   computerName: string
+  /** Hub-derived delivery metadata, not owner-side session provenance. */
+  suppressOrdinaryNotifications?: true
 }
 
 export interface ManagedRemovedQueuedPrompt {
@@ -506,8 +540,11 @@ export interface NodeInfo {
   id: string
   name: string
   version: string
+  skillSettings?: { version: number }
   providers?: AgentProviderCapability[]
   voice?: VoiceBackendCapability
+  hostTelemetry?: import('./host-telemetry.js').HostTelemetryCapability
+  scheduleWorktrees?: { version: 1; enabled: boolean }
 }
 
 export type VoiceBackendCapability =
@@ -565,6 +602,10 @@ export type ServerEvent =
 
 export type HubEvent =
   | ManagerEvent
+  | NotificationsChanged
+  | SchedulerChanged
+  | ScheduleProposalsChanged
+  | ScheduleRunNotification
   | {
       type: 'session.upserted'
       session: ManagedSession
@@ -655,6 +696,7 @@ export interface HubResyncRequest {
 
 export interface CreateSessionInput {
   cwd: string
+  launchId?: string
   provider?: AgentProvider
   terminalBacked?: boolean
   allowAllPermissions?: boolean
@@ -683,6 +725,7 @@ export interface SideQuestionAnswer {
 
 export interface SendMessageInput {
   content: string
+  deliveryId?: string
   enqueue?: boolean
   /** Explicitly replace verified unsent text in a tmux composer before sending. */
   replaceTerminalDraft?: boolean

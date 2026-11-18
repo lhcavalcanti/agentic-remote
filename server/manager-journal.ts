@@ -1,6 +1,8 @@
 import type { HubEvent, ManagedSession, SessionStatus } from '../shared/contracts.js'
+import { scheduleProposalSummary, type ScheduleProposal } from '../shared/schedule-proposals.js'
 import {
   registryKey,
+  applySessionReplacement,
   type JournalDraft,
   type ManagerRegistry,
   type ManagerStore,
@@ -14,6 +16,22 @@ interface Seen {
 }
 
 const TASK_LIMIT = 400
+
+/** Replayed at startup as well as after each durable proposal transition. */
+export async function recordScheduleProposals(
+  store: ManagerStore, proposals: ScheduleProposal[], persisted?: ReadonlyMap<string, string>,
+): Promise<void> {
+  await store.appendProposalJournal(proposals.map((proposal) => ({
+    createdAt: proposal.createdAt,
+    persistedStatus: persisted?.get(proposal.id),
+    entry: {
+      kind: 'schedule-proposal', computerId: 'hub', sessionId: proposal.id,
+      title: scheduleProposalSummary(proposal),
+      proposalId: proposal.id, proposalOperation: proposal.operation, proposalStatus: proposal.status,
+      ...(proposal.error ? { to: proposal.error } : {}),
+    },
+  })))
+}
 
 export interface JournalRecorderOptions {
   /** How long changes gather before they are written together. */
@@ -56,8 +74,7 @@ export class JournalRecorder {
   handle(event: HubEvent): void {
     if (this.stopped) return
     if (event.type === 'session.upserted') {
-      // Until a baseline exists, sessions arriving are the ones that already
-      // existed, which a first start announces all at once.
+      // Baseline timing controls journal noise, never the source of a launch.
       this.observe(event.session, !this.store.state().baselineAt)
     } else if (event.type === 'session.removed') {
       this.remove(event.computerId, event.sessionId, event.replacedBy)
@@ -106,11 +123,13 @@ export class JournalRecorder {
   /** Attributes a session to the manager and remembers what it was asked. */
   async markManaged(session: ManagedSession, task: string): Promise<void> {
     const key = registryKey(session.computerId, session.id)
+    if (this.store.registry()[key]?.origin === 'schedule') throw new Error('Schedule sessions are not owned by Oracle')
     this.observe(session)
     this.changes.push((registry) => {
       const entry = registry[key]
       if (entry) {
         entry.origin = 'manager'
+        entry.originEvidence = 'launch'
         entry.task = task.length > TASK_LIMIT ? `${task.slice(0, TASK_LIMIT)}…` : task
       }
     })
@@ -122,6 +141,11 @@ export class JournalRecorder {
     return Object.entries(this.store.registry())
       .filter(([, entry]) => entry.origin === 'manager' && !entry.removedAt && !entry.replacedBy)
       .map(([key]) => key)
+  }
+
+  /** Waits for started registry work without forcing the batched journal to flush. */
+  pendingRegistryWrites(): Promise<void> {
+    return this.writing
   }
 
   async flush(): Promise<void> {
@@ -172,7 +196,8 @@ export class JournalRecorder {
           computerName: session.computerName,
           cwd: session.cwd,
           provider: session.provider ?? 'copilot',
-          origin: existing?.origin ?? (baseline ? 'discovered' : 'user'),
+          origin: existing?.origin ?? 'discovered',
+          originEvidence: existing ? existing.originEvidence : 'discovery',
           task: existing?.task ?? task,
           firstSeenAt: existing?.firstSeenAt ?? now,
           lastStatus: status,
@@ -227,27 +252,28 @@ export class JournalRecorder {
       title: previous?.title,
       ...(replacedBy ? { replacedBy } : {}),
     })
-    this.changes.push((registry) => {
-      const entry = registry[key]
-      if (!entry) return
-      if (replacedBy) {
-        entry.replacedBy = replacedBy
-        entry.removedAt = now
-        const successorKey = registryKey(computerId, replacedBy)
-        registry[successorKey] = {
-          ...entry,
-          ...registry[successorKey],
-          sessionId: replacedBy,
-          origin: entry.origin,
-          task: entry.task,
-          firstSeenAt: registry[successorKey]?.firstSeenAt ?? now,
-        }
-        delete registry[successorKey].removedAt
-        delete registry[successorKey].replacedBy
+    if (replacedBy) {
+      let replacement: Promise<void>
+      if (!this.store.sessionOrigin(computerId, sessionId) && previous && this.changes.length) {
+        const changes = this.changes
+        this.changes = []
+        replacement = this.store.updateRegistry((registry) => {
+          for (const change of changes) change(registry)
+          applySessionReplacement(registry, computerId, sessionId, replacedBy, now)
+        })
+      } else if (!this.store.sessionOrigin(computerId, sessionId) && previous) {
+        replacement = this.writing.then(() => this.store.recordSessionReplacement(computerId, sessionId, replacedBy))
       } else {
-        entry.removedAt = now
+        replacement = this.store.recordSessionReplacement(computerId, sessionId, replacedBy)
       }
-    })
+      this.writing = Promise.all([this.writing, replacement]).then(() => undefined).catch((error: unknown) => {
+        console.warn('Manager replacement provenance write failed:', error)
+      })
+    } else {
+      this.changes.push((registry) => {
+        if (registry[key]) registry[key].removedAt = now
+      })
+    }
   }
 
   private schedule(): void {

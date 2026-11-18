@@ -270,7 +270,7 @@ function isStatus(value: unknown): value is SessionStatus {
 }
 
 function isOrigin(value: unknown): value is SessionOrigin {
-  return value === 'manager' || value === 'user' || value === 'discovered'
+  return value === 'manager' || value === 'user' || value === 'discovered' || value === 'schedule'
 }
 
 function isEventKind(value: unknown): value is ManagerProactiveInboxEventKind {

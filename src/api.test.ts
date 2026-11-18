@@ -5,6 +5,7 @@ import {
   createOracleVoiceTicket,
   dispatchQueuedPrompt,
   fetchSettingsProfile,
+  fetchHubFeatureFlags,
   getOracleVoiceCapabilities,
   importSettingsProfile,
   saveSettingsChanges,
@@ -24,6 +25,7 @@ import {
   removeQueuedPrompt,
   removeManagerFile,
   readKnowledgeFile,
+  request,
   sendMessage,
   sendTestPushNotification,
   transcribeAudio,
@@ -47,6 +49,22 @@ afterEach(() => {
 })
 
 describe('API request headers', () => {
+  it('reads authoritative hub feature booleans without caching', async () => {
+    const flags = { notificationCenter: true, hostMonitor: false, scheduler: false }
+    const fetchMock = vi.fn(async () => Response.json({ hubFlags: flags }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(fetchHubFeatureFlags()).resolves.toEqual(flags)
+    expect(fetchMock).toHaveBeenCalledWith('/api/features', expect.objectContaining({ cache: 'no-store' }))
+  })
+
+  it.each([undefined, null, {}, { notificationCenter: 'on', hostMonitor: false, scheduler: false }])(
+    'rejects malformed hub feature state %j instead of enabling a preview',
+    async (hubFlags) => {
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json({ hubFlags })))
+      await expect(fetchHubFeatureFlags()).rejects.toThrow('invalid feature flags')
+    },
+  )
+
   it('removes an Oracle upload successfully with an empty 204 response', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)
@@ -154,6 +172,24 @@ describe('API request headers', () => {
       statusCode: 502,
       message: 'The gateway could not reach Agentic Remote (502). Check the hub service and tunnel, then retry.',
     })
+  })
+
+  it.each([
+    ['HOST_TELEMETRY_INVALID', 'HOST_TELEMETRY_INVALID'],
+    [undefined, undefined],
+    [502, undefined],
+    [null, undefined],
+  ])('preserves only string error codes from HTTP responses (%j)', async (code, expectedCode) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: 'This computer returned invalid host telemetry', code, uncertainDelivery: false,
+    }, { status: 502 })))
+    const failure = request('/api/computers/studio/host')
+    await expect(failure).rejects.toMatchObject({
+      statusCode: 502, message: 'This computer returned invalid host telemetry', uncertainDelivery: false,
+      ...(expectedCode === undefined ? {} : { code: expectedCode }),
+    })
+    // A missing or non-string server code leaves no `code` property at all.
+    if (expectedCode === undefined) await expect(failure).rejects.not.toHaveProperty('code')
   })
 
   it('bounds the initial hub snapshot instead of loading forever', async () => {

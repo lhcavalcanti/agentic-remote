@@ -1,7 +1,7 @@
 {
   "name": "agentic-remote",
   "private": true,
-  "version": "1.55.1",
+  "version": "1.56.0",
   "packageManager": "pnpm@10.34.5",
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -26,6 +26,8 @@
     "test:quick": "vitest run --mode quick --project fast",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:ui-locks": "playwright test e2e/ui-locks.pw.ts --project chromium",
+    "screens": "TSX_DISABLE_CACHE=1 node --import tsx e2e/capture-screens.ts",
     "check": "pnpm lint && pnpm test && pnpm build"
   },
   "dependencies": {

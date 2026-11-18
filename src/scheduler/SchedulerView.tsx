@@ -1,0 +1,221 @@
+import { useEffect, useRef, useState } from 'react'
+import { CalendarClock, History, Plus } from 'lucide-react'
+import type { ComputerSummary } from '../../shared/contracts'
+import { nextOccurrences } from '../../shared/schedule-recurrence'
+import type { Schedule, ScheduleRun } from '../../shared/schedules'
+import { scheduleProposalSummary } from '../../shared/schedule-proposals'
+import { request } from '../api'
+import { DialogFrame } from '../components/DialogFrame'
+import { editableSchedule, recurrenceSummary, runDuration, scheduleError, scheduleTime } from './format'
+import { ScheduleForm, type ScheduleDefinition } from './ScheduleForm'
+import { useScheduler } from './use-scheduler'
+import './scheduler.css'
+
+function nextRun(schedule: Schedule, now: Date): string {
+  try {
+    const next = nextOccurrences(schedule.recurrence, schedule.timezone, now, 1)[0]
+    return next ? `${scheduleTime(next, schedule.timezone)} · ${schedule.timezone}` : 'No future occurrences'
+  } catch { return 'Invalid recurrence — edit this schedule' }
+}
+
+type ScheduleEditor = { initial?: ScheduleDefinition; editing?: Schedule }
+
+export function SchedulerView({ enabled, computers, onClose, onOpenSession, onOpenOracle, initialScheduleId, initialRunId }: {
+  enabled: boolean
+  computers: ComputerSummary[]
+  onClose(): void
+  onOpenSession(computerId: string, sessionId: string): void
+  onOpenOracle?: () => void
+  initialScheduleId?: string
+  initialRunId?: string
+}) {
+  const [historySelection, setHistorySelection] = useState<{ scheduleId?: string; runId?: string }>({
+    scheduleId: initialScheduleId, runId: initialScheduleId ? initialRunId : undefined,
+  })
+  const { scheduleId: historyId, runId: linkedRunId } = historySelection
+  const scheduler = useScheduler(enabled, historyId)
+  const formGeneration = useRef(0)
+  const viewActive = useRef(enabled)
+  const [form, setForm] = useState<ScheduleEditor & { generation: number }>()
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string>()
+  const [showArchived, setShowArchived] = useState(false)
+  const [now, setNow] = useState(() => new Date())
+  const linkedRun = useRef<HTMLLIElement>(null)
+  const followedLink = useRef(false)
+  useEffect(() => {
+    if (!linkedRunId || !scheduler.historyLoaded || followedLink.current || !linkedRun.current) return
+    linkedRun.current.scrollIntoView?.({ block: 'nearest' })
+    followedLink.current = true
+  }, [linkedRunId, scheduler.historyLoaded, scheduler.history])
+  useEffect(() => {
+    viewActive.current = enabled
+    if (!enabled) return
+    const timer = setInterval(() => setNow(new Date()), 30_000)
+    return () => {
+      viewActive.current = false
+      formGeneration.current++
+      clearInterval(timer)
+    }
+  }, [enabled])
+  function changeForm(next?: ScheduleEditor) {
+    const generation = ++formGeneration.current
+    setForm(next ? { ...next, generation } : undefined)
+  }
+  async function mutate(path: string, body: unknown, method = 'POST') {
+    setPending(true)
+    setError(undefined)
+    try {
+      await request(path, { method, body: JSON.stringify(body) })
+      await scheduler.refresh()
+    } catch (caught) {
+      const message = scheduleError(caught)
+      setError(message)
+      throw caught
+    } finally { setPending(false) }
+  }
+  const act = (path: string, body: unknown) => void mutate(path, body).catch(() => undefined)
+  const historySchedule = scheduler.schedules.find((schedule) => schedule.id === historyId)
+  const list = scheduler.schedules.filter((schedule) => schedule.archived === showArchived)
+  const listLoaded = !scheduler.loading && !scheduler.error
+  return <DialogFrame title="Scheduler" eyebrow="Hub" onClose={() => {
+    viewActive.current = false
+    formGeneration.current++
+    onClose()
+  }} className="scheduler-view">
+    {!enabled ? <p className="dialog-message">Scheduler is turned off on this hub.</p> : <>
+      <div className="scheduler-toolbar">
+        <p className="schedule-caption">Run saved prompts on your computers. Permissions default to Ask.</p>
+        {!form && <button className="primary-button" type="button" onClick={() => { setError(undefined); changeForm({}) }}><Plus size={17} />Create schedule</button>}
+      </div>
+      {!form && scheduler.proposalError && <p role="status" className="schedule-caption">{scheduler.proposalError}</p>}
+      {!form && scheduler.proposals.length > 0 && <section className="scheduler-pending" aria-label="Pending Oracle proposals">
+        <h3>Pending Oracle proposals · {scheduler.proposals.length}</h3>
+        <p className="schedule-caption">Review the exact request in Oracle before approving. No proposal is approved here.</p>
+        <ul>{scheduler.proposals.map((proposal) => <li key={proposal.id}>
+          <div><strong>{scheduleProposalSummary(proposal)}</strong><small>Expires {new Date(proposal.expiresAt).toLocaleString()}</small></div>
+          <button type="button" className="secondary-button" disabled={!onOpenOracle} onClick={onOpenOracle}>Review in Oracle</button>
+        </li>)}</ul>
+        {!onOpenOracle && <p className="schedule-caption">Oracle is unavailable. Reconnect it to review approvals.</p>}
+      </section>}
+      {(error || scheduler.error) && <div role="alert" className="error-banner">
+        <p>{error ?? scheduler.error}</p>
+        <button type="button" className="secondary-button" disabled={pending} onClick={async () => {
+          const generation = formGeneration.current
+          const ownsForm = () => viewActive.current && generation === formGeneration.current
+          if (!ownsForm()) return
+          if (form?.editing) {
+            try {
+              const { schedule } = await request<{ schedule: Schedule }>(`/api/schedules/${encodeURIComponent(form.editing.id)}`, { cache: 'no-store' })
+              if (!ownsForm()) return
+              changeForm({ editing: schedule, initial: editableSchedule(schedule) })
+              setError(undefined)
+            } catch (caught) { if (ownsForm()) setError(scheduleError(caught)) }
+          } else { await scheduler.refresh(); if (ownsForm()) setError(undefined) }
+        }}>Reload latest{form?.editing ? ' (replace draft)' : ''}</button>
+      </div>}
+      {form ? <>
+        <h3>{form.editing ? `Edit ${form.editing.name}` : 'Create schedule'}</h3>
+        <ScheduleForm key={form.generation}
+          initial={form.initial} editing={form.editing} computers={computers} pending={pending} saveError={error}
+          onClearSaveError={() => setError(undefined)}
+          onCancel={() => { changeForm(undefined); setError(undefined) }}
+          onSave={async (definition) => {
+            if (form.editing) {
+              const previous = editableSchedule(form.editing)
+              const changes = Object.fromEntries(Object.entries(definition).filter(([key, value]) =>
+                JSON.stringify(value) !== JSON.stringify(previous[key as keyof ScheduleDefinition])))
+              await mutate(`/api/schedules/${encodeURIComponent(form.editing.id)}`, { ...changes, revision: form.editing.revision }, 'PATCH')
+            } else await mutate('/api/schedules', definition)
+            changeForm(undefined)
+          }} />
+      </> : <>
+        {scheduler.historyError && <p role="status">{scheduler.historyError} <button className="secondary-button" onClick={() => setHistorySelection({})}>Show all schedules</button></p>}
+        {initialScheduleId && historyId === initialScheduleId && listLoaded && !historySchedule && !scheduler.historyError &&
+          <p role="status">The linked schedule is no longer available. <button className="secondary-button" onClick={() => setHistorySelection({})}>Show all schedules</button></p>}
+        <label className="schedule-check"><input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />Show archived schedules</label>
+        {scheduler.loading && <p role="status">Loading schedules…</p>}
+        {scheduler.recentError && <p role="status" className="schedule-caption">{scheduler.recentError}</p>}
+        {!list.length && listLoaded && <p className="scheduler-empty">{showArchived ? 'No archived schedules.' : 'No schedules yet. Create a saved prompt to get started.'}</p>}
+        <ul className="schedule-list">{list.map((schedule) => {
+          const last = scheduler.recent.filter((run) => run.scheduleId === schedule.id)
+            .sort((a, b) => b.occurrenceAt.localeCompare(a.occurrenceAt))[0]
+          const path = `/api/schedules/${encodeURIComponent(schedule.id)}`
+          return <li className="schedule-card" key={schedule.id}>
+            <div className="schedule-card__heading"><CalendarClock size={20} aria-hidden="true" />
+              <div><h3>{schedule.name}</h3><p className="schedule-caption">{recurrenceSummary(schedule.recurrence)}{schedule.createdBy === 'oracle' ? ' · Oracle-created' : ''}</p></div>
+              <label className="schedule-enable"><input type="checkbox" aria-label={`Enable ${schedule.name}`} checked={schedule.enabled} disabled={pending || schedule.archived}
+                onChange={(event) => act(`${path}/enabled`, { revision: schedule.revision, enabled: event.target.checked })} /><span>{schedule.enabled ? 'Enabled' : 'Paused'}</span></label>
+            </div>
+            <p className="schedule-next">{schedule.enabled ? 'Next' : 'Next if enabled'}: {nextRun(schedule, now)}</p>
+            <p className="schedule-caption">{computers.find((computer) => computer.id === schedule.target.computerId)?.name ?? schedule.target.computerId} · {schedule.target.folder} · {schedule.target.provider} · {schedule.target.permissionPolicy}</p>
+            <div className="schedule-card__footer"><span>{last ? <RunStatus run={last} /> : <small>{scheduler.recentError ? 'Recent run unavailable' : 'No recent run'}</small>}</span>
+              <div className="schedule-actions">
+                {!schedule.archived && <button type="button" className="secondary-button" disabled={pending} onClick={() => act(`${path}/run`, {})} aria-label={`Run ${schedule.name} now`}>Run now</button>}
+                <button type="button" className="secondary-button" disabled={pending} onClick={() => {
+                  setError(undefined)
+                  changeForm({ initial: editableSchedule(schedule), editing: schedule })
+                }} aria-label={`Edit ${schedule.name}`}>Edit</button>
+                <button type="button" className="secondary-button" disabled={pending} onClick={() => {
+                  setError(undefined)
+                  changeForm({ initial: { ...editableSchedule(schedule), name: `${schedule.name.slice(0, 193)} (copy)`, enabled: false } })
+                }} aria-label={`Duplicate ${schedule.name}`}>Duplicate</button>
+                <button type="button" className="secondary-button" disabled={pending} onClick={() => act(`${path}/archived`, { revision: schedule.revision, archived: !schedule.archived })} aria-label={`${schedule.archived ? 'Restore' : 'Archive'} ${schedule.name}`}>{schedule.archived ? 'Restore paused' : 'Archive'}</button>
+                <button type="button" className="secondary-button" disabled={pending} aria-label={`History for ${schedule.name}`} aria-pressed={historyId === schedule.id} onClick={() => setHistorySelection({ scheduleId: historyId === schedule.id ? undefined : schedule.id })}><History size={15} />History</button>
+              </div>
+            </div>
+          </li>
+        })}</ul>
+        {historySchedule && <section className="schedule-history" aria-label={`Run history for ${historySchedule.name}`}>
+          <h3>Run history · {historySchedule.name}</h3>
+          <p className="schedule-caption">Up to 200 retained runs. Launching and stopping are not terminal outcomes.</p>
+          {!scheduler.historyLoaded && <p role="status">Loading run history…</p>}
+          {scheduler.historyLoaded && !scheduler.historyError && !scheduler.history.length && <p>No runs yet.</p>}
+          {linkedRunId && scheduler.historyLoaded && !scheduler.historyError && !scheduler.history.some((run) => run.id === linkedRunId) &&
+            <p role="status">The linked run is no longer in retained history.</p>}
+          <ul>{scheduler.history.map((run) => <li key={run.id} data-linked={run.id === linkedRunId} ref={run.id === linkedRunId ? linkedRun : undefined}>
+            <div><RunStatus run={run} /><small>{scheduleTime(run.occurrenceAt, historySchedule.timezone)} · {historySchedule.timezone} · {run.trigger} · {runDuration(run, now)}</small>
+              {(run.error || run.summary) && <p>{run.error ?? run.summary}</p>}</div>
+            <div className="schedule-run-actions">
+              {run.sessionId && <button type="button" className="secondary-button" onClick={() => onOpenSession(run.computerId, run.sessionId!)}>Open session</button>}
+              {run.outcomeUnknown && ['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status) &&
+                <AbandonRun run={run} pending={pending} onAbandon={() => mutate(`/api/schedules/runs/${encodeURIComponent(run.id)}/abandon`, { confirm: true })} />}
+            </div>
+          </li>)}</ul>
+        </section>}
+      </>}
+    </>}
+  </DialogFrame>
+}
+
+function RunStatus({ run }: { run: ScheduleRun }) {
+  return <span className="schedule-status" data-status={run.status}>{run.abandonedAt ? 'abandoned' : run.status}</span>
+}
+
+function AbandonRun({ run, pending, onAbandon }: { run: ScheduleRun; pending: boolean; onAbandon(): Promise<void> }) {
+  const [confirming, setConfirming] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+  const button = useRef<HTMLButtonElement>(null)
+  const confirmation = useRef<HTMLFieldSetElement>(null)
+  useEffect(() => {
+    if (confirming) confirmation.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [confirming])
+  return <>
+    <button ref={button} type="button" className="secondary-button schedule-abandon-toggle" disabled={pending}
+      aria-expanded={confirming} aria-controls={`abandon-${run.id}`}
+      onClick={() => { setConfirming(!confirming); setConfirmed(false) }}>Abandon run</button>
+    {confirming && <fieldset ref={confirmation} className="schedule-abandon" id={`abandon-${run.id}`} disabled={pending}>
+      <legend>Abandon this run?</legend>
+      <p role="alert">This releases the slot but does not stop provider work. Work may still be running on {run.computerId}. This launch will never be resumed. Inspect that computer before removing files.</p>
+      <label className="schedule-check"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I understand work may still be running.</label>
+      <div className="schedule-actions">
+        <button type="button" className="secondary-button" onClick={() => {
+          setConfirming(false); setConfirmed(false); button.current?.focus()
+        }}>Keep run</button>
+        <button type="button" className="primary-button" disabled={!confirmed} onClick={() => {
+          void onAbandon().catch(() => undefined)
+        }}>{pending ? 'Abandoning…' : 'Confirm abandon run'}</button>
+      </div>
+    </fieldset>}
+  </>
+}

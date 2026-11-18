@@ -1,0 +1,560 @@
+import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
+import { readFile, rm } from 'node:fs/promises'
+import path from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { HubEvent, ManagedSession, SessionOrigin } from '../shared/contracts.js'
+import { buildApp } from './app.js'
+import type { ComputerManager } from './computer-manager.js'
+import { ManagerStore } from './manager-store.js'
+import { JournalRecorder } from './manager-journal.js'
+import { recordScheduleProvenance } from './schedule-launcher.js'
+
+const directories: string[] = []
+const applications: Array<{ close(): Promise<unknown> }> = []
+const sockets: Array<{ terminate(): void }> = []
+const releases: Array<() => void> = []
+afterEach(async () => {
+  for (const release of releases.splice(0)) release()
+  for (const socket of sockets.splice(0)) socket.terminate()
+  for (const app of applications.splice(0).reverse()) await app.close()
+  vi.restoreAllMocks()
+  vi.unstubAllEnvs()
+  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true })
+})
+const session = (id: string, revision = 1): ManagedSession => ({
+  id, revision, computerId: 'studio', computerName: 'Studio', title: `Fictional ${id}`,
+  cwd: '/fictional', status: 'idle', messages: [], updatedAt: '2026-11-15T19:00:00Z',
+})
+
+async function fixture(origin?: SessionOrigin, scheduler = false, evidence = true, earlySessions: ManagedSession[] = []) {
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'http://localhost')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', scheduler ? 'on' : 'off')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'off')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', 'off')
+  const directory = path.resolve(`.app-provenance-${randomUUID()}`)
+  directories.push(directory)
+  const file = path.join(directory, 'manager', 'sessions.json')
+  const store = new ManagerStore(path.dirname(file))
+  await store.initializeSessionRegistry()
+  if (origin) await store.updateRegistry((registry) => {
+    registry['studio:old'] = {
+      computerId: 'studio', sessionId: 'old', title: session('old').title, firstSeenAt: session('old').updatedAt,
+      origin, ...(evidence ? { originEvidence: origin === 'discovered' ? 'discovery' : 'launch' } : {}),
+      ...(origin === 'schedule' ? { scheduleId: 'daily', scheduleRunId: 'run' } : {}),
+    }
+  })
+  const current = new Map<string, ManagedSession>()
+  if (origin) current.set('old', session('old'))
+  const readSession = vi.fn(async (_computer: string, id: string) => {
+    const value = current.get(id)
+    if (!value) throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+    return structuredClone(value)
+  })
+  const listCachedSessions = vi.fn(() => [...current.values()])
+  const managerEvents: HubEvent[] = []
+  const manager = Object.assign(new EventEmitter(), {
+    initialize: async () => {
+      for (const value of earlySessions) {
+        current.set(value.id, value)
+        manager.emit('event', { type: 'session.upserted', session: value, summary: true })
+      }
+    },
+    stop: () => undefined, readSession, listCachedSessions,
+    listComputers: () => [{ id: 'studio', name: 'Studio', online: true, isLocal: true }],
+    captureComputerRegistration: () => () => true,
+    createSession: async () => current.get('next')!,
+  }) as unknown as ComputerManager
+  manager.on('event', (event) => managerEvents.push(event))
+  let runtimeStore!: ManagerStore
+  const initializers = (['initialize', 'initializeSessionRegistry'] as const).map((method) => {
+    const initialize = ManagerStore.prototype[method]
+    return vi.spyOn(ManagerStore.prototype, method).mockImplementation(function (this: ManagerStore) {
+      runtimeStore = this
+      return initialize.call(this)
+    })
+  })
+  const runtime = await buildApp({ dataDirectory: directory, manager, managerAgent: false, logger: false, serveStatic: false })
+  for (const initialize of initializers) initialize.mockRestore()
+  let closing: Promise<unknown> | undefined
+  const application = { close: () => closing ??= runtime.app.close() }
+  applications.push(application)
+  await runtime.app.ready()
+  const socket = await runtime.app.injectWS('/api/events', { headers: { host: 'localhost', origin: 'http://localhost' } })
+  sockets.push(socket)
+  const messages: HubEvent[] = []
+  socket.on('message', (data) => messages.push(JSON.parse(data.toString())))
+  return {
+    manager, current, messages, readSession, managerEvents, listCachedSessions, store: runtimeStore, schedules: runtime.scheduler?.store,
+    close() {
+      socket.terminate()
+      return application.close()
+    },
+    async createUser() {
+      return runtime.app.inject({ method: 'POST', url: '/api/computers/studio/sessions', headers: { host: 'localhost', origin: 'http://localhost' }, payload: { cwd: '/fictional' } })
+    },
+    async replaceViaResponse(operation: 'clear' | 'recover', modern = false) {
+      manager[operation === 'clear' ? 'clearConversation' : 'recoverConversation'] = async () => {
+        current.delete('old')
+        manager.emit('event', {
+          type: 'session.removed', computerId: 'studio', sessionId: 'old',
+          ...(modern ? { replacedBy: 'next' } : {}),
+        })
+        return current.get('next')!
+      }
+      return runtime.app.inject({
+        method: 'POST', url: `/api/computers/studio/sessions/old/${operation}`,
+        headers: { host: 'localhost', origin: 'http://localhost' },
+        ...(operation === 'recover' ? { payload: { reason: 'provider-error' } } : {}),
+      })
+    },
+    persisted: async () => JSON.parse(await readFile(file, 'utf8')),
+    upsert(value: ManagedSession, summary?: true) {
+      current.set(value.id, value)
+      manager.emit('event', { type: 'session.upserted', session: value, ...(summary ? { summary } : {}) })
+    },
+    replace() {
+      current.delete('old')
+      manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: 'old', replacedBy: 'next' })
+    },
+  }
+}
+
+async function scheduledFixture() {
+  const f = await fixture(undefined, true)
+  const schedules = f.schedules!
+  const create = (name: string) => schedules.create({
+    name, enabled: false, prompt: 'Review a fictional document.',
+    target: { computerId: 'studio', folder: '/fictional', provider: 'copilot' },
+    recurrence: { type: 'hourly', everyHours: 1 }, timezone: 'UTC',
+  })
+  const schedule = await create('Original name')
+  const other = await create('Other schedule')
+  for (const [id, source] of [['scheduled-one', schedule], ['scheduled-two', schedule], ['other-scheduled', other]] as const) {
+    const value = session(id)
+    f.upsert(value)
+    await recordScheduleProvenance(f.store, value, {
+      origin: 'schedule', scheduleId: source.id, scheduleRunId: `run-${id}`, task: 'Fictional scheduled task',
+    })
+  }
+  f.upsert(session('unrelated-user'))
+  await f.store.recordUserSession(session('unrelated-user'))
+  await vi.waitFor(() => {
+    for (const [id, name] of [['scheduled-one', schedule.name], ['scheduled-two', schedule.name], ['other-scheduled', other.name]]) {
+      expect(f.messages).toContainEqual(expect.objectContaining({
+        type: 'session.upserted', session: expect.objectContaining({ id, provenance: expect.objectContaining({ scheduleName: name }) }),
+      }))
+    }
+    expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', session: expect.objectContaining({ id: 'unrelated-user', provenance: { origin: 'user' } }),
+    }))
+  })
+  f.messages.length = 0
+  return { ...f, schedules, schedule }
+}
+
+describe('hub provenance publication', () => {
+  it('reprojects renamed schedule labels once without touching unrelated sessions or unchanged labels', async () => {
+    const f = await scheduledFixture()
+    const writes = vi.spyOn(f.store, 'updateRegistry')
+    const renamed = await f.schedules.update(f.schedule.id, { revision: f.schedule.revision, name: 'Renamed schedule' })
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toHaveLength(2))
+    for (const id of ['scheduled-one', 'scheduled-two']) expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', summary: true, session: expect.objectContaining({
+        id, provenance: { origin: 'schedule', scheduleId: renamed.id, scheduleRunId: `run-${id}`, scheduleName: renamed.name },
+      }),
+    }))
+    f.messages.length = 0
+    await f.schedules.update(renamed.id, { revision: renamed.revision, prompt: 'An unrelated prompt change.' })
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'schedules.changed')).toBe(true))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    expect(f.readSession).not.toHaveBeenCalled()
+    expect(writes).not.toHaveBeenCalled()
+  })
+
+  it('retains archived schedule labels and removes deleted names with metadata-only corrections', async () => {
+    const f = await scheduledFixture()
+    const archived = await f.schedules.setArchived(f.schedule.id, f.schedule.revision, true)
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'schedules.changed')).toBe(true))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    f.messages.length = 0
+    await f.schedules.delete(archived.id, archived.revision)
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toHaveLength(2))
+    for (const id of ['scheduled-one', 'scheduled-two']) expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', summary: true, session: expect.objectContaining({
+        id, provenance: { origin: 'schedule', scheduleId: archived.id, scheduleRunId: `run-${id}` },
+      }),
+    }))
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it('does not reproject removed or retired scheduled rows even if they remain cached', async () => {
+    const f = await scheduledFixture()
+    f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: 'scheduled-one' })
+    await f.store.updateRegistry((registry) => { registry['studio:scheduled-two'].removedAt = new Date().toISOString() })
+    f.messages.length = 0
+    await f.schedules.update(f.schedule.id, { revision: f.schedule.revision, name: 'Renamed after retirement' })
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'schedules.changed')).toBe(true))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it('closes after a large summary roster even when every passive read would remain unresolved', async () => {
+    const f = await fixture()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    releases.push(release)
+    f.readSession.mockImplementation(async (_computer, id) => {
+      await gate
+      return f.current.get(id)!
+    })
+    for (let index = 0; index < 50; index++) f.upsert(session(`roster-${index}`), true)
+    await vi.waitFor(async () => expect(Object.keys(await f.persisted())).toHaveLength(50))
+    let closed = false
+    const closing = f.close().then(() => { closed = true })
+    await vi.waitFor(() => expect(closed).toBe(true), { timeout: 2_000 })
+    await closing
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['user', 'clear'], ['user', 'recover'], ['manager', 'clear'], ['manager', 'recover'],
+    ['schedule', 'clear'], ['schedule', 'recover'],
+  ] as const)('carries %s origin through legacy %s response-only lineage and republishes once', async (origin, operation) => {
+    const f = await fixture(origin)
+    f.upsert(session('next'))
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.id === 'next' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    const writes = vi.spyOn(f.store, 'updateRegistry')
+    const expected = { origin, ...(origin === 'schedule' ? { scheduleId: 'daily', scheduleRunId: 'run' } : {}) }
+    const response = await f.replaceViaResponse(operation)
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().session).toMatchObject({ id: 'next', provenance: expected })
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([
+      expect.objectContaining({ type: 'session.upserted', summary: true, session: expect.objectContaining({
+        id: 'next', provenance: expected,
+      }) }),
+    ]))
+    expect((await f.persisted())['studio:next']).toMatchObject({ ...expected, originEvidence: 'launch' })
+    expect(writes).toHaveBeenCalledOnce()
+    expect(f.managerEvents.find((event) => event.type === 'session.removed')).not.toHaveProperty('replacedBy')
+  })
+
+  it.each(['clear', 'recover'] as const)('deduplicates the modern %s event and response replacement carry', async (operation) => {
+    const f = await fixture('user')
+    f.upsert(session('next'))
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.id === 'next' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    const writes = vi.spyOn(f.store, 'updateRegistry')
+    const response = await f.replaceViaResponse(operation, true)
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().session.provenance).toEqual({ origin: 'user' })
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([
+      expect.objectContaining({ summary: true, session: expect.objectContaining({ id: 'next', provenance: { origin: 'user' } }) }),
+    ]))
+    expect(writes).toHaveBeenCalledOnce()
+  })
+
+  it('returns a legacy replacement ID and warns clients if response-only origin persistence fails', async () => {
+    const f = await fixture('user')
+    f.upsert(session('next'))
+    await vi.waitFor(async () => expect((await f.persisted())['studio:next']?.origin).toBe('discovered'))
+    const record = vi.spyOn(f.store, 'recordSessionReplacement').mockRejectedValue(new Error('Fictional registry failure'))
+    const response = await f.replaceViaResponse('clear')
+    expect(response.statusCode, response.body).toBe(200)
+    expect(response.json().session.id).toBe('next')
+    expect(record).toHaveBeenCalledWith('studio', 'old', 'next')
+    await vi.waitFor(() => expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'error', sessionId: 'next', message: expect.stringContaining('origin'),
+    })))
+  })
+
+  it('reconciles an initial resync before attachment through discovery exactly once', async () => {
+    const record = vi.spyOn(ManagerStore.prototype, 'recordDiscoveredSession')
+    const f = await fixture(undefined, false, true, [session('early-external')])
+    await vi.waitFor(async () => expect((await f.persisted())['studio:early-external']).toMatchObject({
+      origin: 'discovered', originEvidence: 'discovery',
+    }))
+    await vi.waitFor(() => expect(f.managerEvents.filter((event) => event.type === 'session.upserted')).toHaveLength(2))
+    expect(f.managerEvents.at(-1)).toMatchObject({ type: 'session.upserted', summary: true, session: { id: 'early-external' } })
+    f.upsert(session('early-external'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(record).toHaveBeenCalledOnce()
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it.each(['manager', 'schedule'] as const)('corrects discovery after a later %s launch write without another upsert', async (origin) => {
+    const record = vi.spyOn(ManagerStore.prototype, 'recordDiscoveredSession')
+    const f = await fixture()
+    const launched = session('late-launch')
+    f.upsert(launched)
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    if (origin === 'manager') {
+      const recorder = new JournalRecorder(f.store)
+      await recorder.markManaged(launched, 'Fictional launch whose prompt delivery fails')
+      await recorder.stop()
+    } else {
+      await recordScheduleProvenance(f.store, launched, {
+        origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional launch whose prompt delivery fails',
+      })
+    }
+    await vi.waitFor(() => expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([
+      expect.objectContaining({ type: 'session.upserted', summary: true, session: expect.objectContaining({
+        id: launched.id, provenance: expect.objectContaining({
+          origin, ...(origin === 'schedule' ? { scheduleId: 'daily', scheduleRunId: 'run' } : {}),
+        }),
+      }) }),
+    ]))
+    await f.store.updateRegistry((registry) => { registry['studio:late-launch'].title = 'Unrelated title update' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toHaveLength(1)
+    expect(f.readSession).not.toHaveBeenCalled()
+    expect(record).toHaveBeenCalledOnce()
+  })
+
+  it.each(['removed', 'retired'] as const)('does not republish a later launch write for a %s session', async (state) => {
+    const f = await fixture()
+    const launched = session('late-launch')
+    f.upsert(launched)
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    if (state === 'removed') {
+      f.current.delete(launched.id)
+      f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: launched.id })
+    } else {
+      await f.store.updateRegistry((registry) => { registry['studio:late-launch'].removedAt = launched.updatedAt })
+    }
+    f.messages.length = 0
+    await recordScheduleProvenance(f.store, launched, {
+      origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional retired launch',
+    })
+    await f.store.flush()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.readSession).not.toHaveBeenCalled()
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+  })
+
+  it('skips a correction without a tracked or cached payload until the next upsert', async () => {
+    const f = await fixture()
+    const launched = session('late-launch')
+    f.upsert(launched)
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.listCachedSessions.mockReturnValue([])
+    f.messages.length = 0
+    await recordScheduleProvenance(f.store, launched, {
+      origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional launch',
+    })
+    await f.store.flush()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    f.upsert(session(launched.id, 2))
+    await vi.waitFor(() => expect(f.messages).toContainEqual(expect.objectContaining({
+      type: 'session.upserted', session: expect.objectContaining({ id: launched.id, provenance: expect.objectContaining({ origin: 'schedule' }) }),
+    })))
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it('does not resurrect a session removed while looking up its cached publication payload', async () => {
+    const f = await fixture()
+    const launched = session('late-launch')
+    f.upsert(launched)
+    await vi.waitFor(() => expect(f.messages.some((event) =>
+      event.type === 'session.upserted' && event.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    f.listCachedSessions.mockImplementationOnce(() => {
+      f.current.delete(launched.id)
+      f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: launched.id })
+      return [launched]
+    })
+    await recordScheduleProvenance(f.store, launched, {
+      origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'run', task: 'Fictional launch',
+    })
+    await vi.waitFor(() => expect(f.messages.some((event) => event.type === 'session.removed')).toBe(true))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.messages.filter((event) => event.type === 'session.upserted')).toEqual([])
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['user', 'before'], ['user', 'after'], ['manager', 'before'], ['manager', 'after'],
+    ['schedule', 'before'], ['schedule', 'after'],
+  ] as const)('Oracle-off replacement carries %s origin with successor %s removal', async (origin, order) => {
+    const f = await fixture(origin)
+    if (order === 'before') {
+      f.upsert(session('next'))
+      await vi.waitFor(async () => expect((await f.persisted())['studio:next']?.origin).toBe('discovered'))
+    }
+    f.replace()
+    if (order === 'after') f.upsert(session('next'))
+    await vi.waitFor(async () => expect((await f.persisted())['studio:next']).toMatchObject({
+      origin, originEvidence: 'launch', ...(origin === 'schedule' ? { scheduleId: 'daily', scheduleRunId: 'run' } : {}),
+    }))
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === origin,
+    )).toBe(true))
+    if (order === 'before') expect(f.messages.find((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === origin,
+    )).toMatchObject({ summary: true })
+  })
+
+  it('publishes metadata-only discovery without waiting for another runtime revision', async () => {
+    const f = await fixture()
+    f.upsert(session('external'))
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'external' &&
+      message.session.revision === 1 && message.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance)).toMatchObject({ summary: true })
+  })
+
+  it.each([
+    [1, 1, 1, false], [2, 1, 2, true], [1, 2, 2, false], [undefined, 2, 2, false],
+  ] as const)('uses cache revision %s and upsert revision %s for a metadata-only republish', async (cachedRevision, upsertRevision, expectedRevision, fromCache) => {
+    const f = await fixture()
+    const full = {
+      ...session('external', cachedRevision),
+      messages: [{ id: 'held-message', role: 'assistant' as const, content: 'Keep this fictional transcript.', createdAt: session('external').updatedAt }],
+    }
+    f.upsert(session('external', upsertRevision), true)
+    if (cachedRevision === undefined) f.current.delete('external')
+    else f.current.set('external', full)
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    const republished = f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance)
+    expect(republished).toMatchObject({
+      type: 'session.upserted', summary: true,
+      session: { revision: expectedRevision, messages: fromCache ? full.messages : [], provenance: { origin: 'discovered' } },
+    })
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it('publishes the current discovered session after persistence and never starts a rebroadcast loop', async () => {
+    const f = await fixture()
+    const original = ManagerStore.prototype.recordDiscoveredSession
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    releases.push(release)
+    const record = vi.spyOn(ManagerStore.prototype, 'recordDiscoveredSession').mockImplementation(async function (this: ManagerStore, value) {
+      await gate
+      await original.call(this, value)
+    })
+    f.upsert(session('external'))
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'external' && !message.session.provenance,
+    )).toBe(true))
+    f.current.set('external', { ...session('external', 2), title: 'Current fictional state' })
+    release()
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'external' &&
+      message.session.revision === 2 && message.session.title === 'Current fictional state' &&
+      message.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance)).toMatchObject({ summary: true })
+    f.upsert(f.current.get('external')!)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(record).toHaveBeenCalledOnce()
+    expect(f.readSession).not.toHaveBeenCalled()
+  })
+
+  it('does not rebroadcast a discovery removed while its write is in flight', async () => {
+    const f = await fixture()
+    const original = ManagerStore.prototype.recordDiscoveredSession
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    releases.push(release)
+    vi.spyOn(ManagerStore.prototype, 'recordDiscoveredSession').mockImplementation(async function (this: ManagerStore, value) {
+      await gate
+      await original.call(this, value)
+    })
+    f.upsert(session('external'))
+    f.current.delete('external')
+    f.manager.emit('event', { type: 'session.removed', computerId: 'studio', sessionId: 'external' })
+    release()
+    await vi.waitFor(async () => expect((await f.persisted())['studio:external']?.origin).toBe('discovered'))
+    expect(f.readSession).not.toHaveBeenCalled()
+    expect(f.messages.filter((message) => message.type === 'session.upserted' && message.session.provenance)).toEqual([])
+  })
+
+  it('lets replacement carry win over an in-flight successor discovery with one write and publication', async () => {
+    const f = await fixture('user')
+    const original = ManagerStore.prototype.recordDiscoveredSession
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    releases.push(release)
+    vi.spyOn(ManagerStore.prototype, 'recordDiscoveredSession').mockImplementation(async function (this: ManagerStore, value) {
+      await gate
+      await original.call(this, value)
+    })
+    const writes = vi.spyOn(ManagerStore.prototype, 'updateRegistry')
+    f.upsert(session('next'))
+    f.replace()
+    release()
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === 'user',
+    )).toBe(true))
+    expect(writes).toHaveBeenCalledOnce()
+    expect(f.messages.filter((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === 'user',
+    )).toEqual([expect.objectContaining({ summary: true })])
+  })
+
+  it('shares one schedule replacement write with the early schedule-suppression path', async () => {
+    const f = await fixture('schedule', true)
+    f.upsert(session('next'))
+    await vi.waitFor(async () => expect((await f.persisted())['studio:next']?.origin).toBe('discovered'))
+    const writes = vi.spyOn(ManagerStore.prototype, 'updateRegistry')
+    f.replace()
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === 'schedule',
+    )).toBe(true))
+    expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.provenance?.origin === 'schedule')).toMatchObject({ summary: true })
+    expect(writes).toHaveBeenCalledOnce()
+  })
+
+  it('does not republish or overwrite an explicitly launched successor', async () => {
+    const f = await fixture('manager')
+    f.current.set('next', session('next'))
+    expect((await f.createUser()).statusCode).toBe(201)
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === 'user',
+    )).toBe(true))
+    const before = f.messages.filter((message) => message.type === 'session.upserted' && message.session.id === 'next').length
+    f.replace()
+    await vi.waitFor(async () => expect((await f.persisted())['studio:old'].replacedBy).toBe('next'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.readSession).not.toHaveBeenCalled()
+    expect(f.messages.filter((message) => message.type === 'session.upserted' && message.session.id === 'next')).toHaveLength(before)
+    expect((await f.persisted())['studio:next']).toMatchObject({ origin: 'user', originEvidence: 'launch' })
+  })
+
+  it('keeps a legacy replacement unknown instead of fabricating launch evidence', async () => {
+    const f = await fixture('user', false, false)
+    f.upsert(session('next'))
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && message.session.provenance?.origin === 'discovered',
+    )).toBe(true))
+    f.messages.length = 0
+    f.replace()
+    await vi.waitFor(() => expect(f.messages.some((message) =>
+      message.type === 'session.upserted' && message.session.id === 'next' && !message.session.provenance,
+    )).toBe(true))
+    expect(f.messages.find((message) => message.type === 'session.upserted' && message.session.id === 'next')).toMatchObject({ summary: true })
+    expect((await f.persisted())['studio:next']).toMatchObject({ origin: 'user' })
+    expect((await f.persisted())['studio:next'].originEvidence).toBeUndefined()
+  })
+})

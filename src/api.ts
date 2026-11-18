@@ -1,3 +1,20 @@
+import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
+import type { HubHealth } from '../shared/hub-health'
+import { skillSettingsSchema, type SkillSettingsSnapshot, type SkillToggle } from '../shared/skill-settings'
+
+export async function listComputerSkills(computerId: string, signal?: AbortSignal): Promise<SkillSettingsSnapshot> {
+  return skillSettingsSchema.parse(await request(`/api/computers/${encodeURIComponent(computerId)}/skills`, { signal, cache: 'no-store' }))
+}
+
+export async function toggleComputerSkill(computerId: string, input: SkillToggle): Promise<SkillSettingsSnapshot> {
+  return skillSettingsSchema.parse(await request(`/api/computers/${encodeURIComponent(computerId)}/skills`, {
+    method: 'PATCH', body: JSON.stringify(input),
+  }))
+}
+
+export async function getHubHealth(signal?: AbortSignal): Promise<HubHealth> {
+  return request('/api/diagnostics/health', { signal, cache: 'no-store' })
+}
 import type {
   AddComputerInput,
   AgentProvider,
@@ -74,6 +91,7 @@ async function responseError(
         error?: string
         message?: string
         statusCode?: number
+        code?: unknown
         submission?: unknown
         terminalDraftConflict?: unknown
         uncertainDelivery?: unknown
@@ -89,6 +107,7 @@ async function responseError(
       : `Request failed (${response.status})`
   const submission = parseSubmissionReceipt(payload?.submission)
   const options = {
+    code: typeof payload?.code === 'string' ? payload.code : undefined,
     terminalDraftConflict: payload?.terminalDraftConflict === true,
     uncertainDelivery: httpDeliveryUncertain(
       response.status,
@@ -102,7 +121,7 @@ async function responseError(
   }
   // Fastify's built-in envelope carries a numeric `statusCode`, a generic
   // `error` label, and the real reason in `message`; the app's own handler
-  // sends only `{ error }`. Do not key off `statusText`, which is empty over
+  // sends `{ error }` with optional metadata. `statusText` can be empty over
   // HTTP/2. A 5xx `message` is the raw exception and must not reach the UI.
   const isDefaultEnvelope =
     typeof payload.statusCode === 'number' &&
@@ -123,7 +142,7 @@ async function responseError(
   )
 }
 
-async function request<TResult>(
+export async function request<TResult>(
   path: string,
   init?: RequestInit,
 ): Promise<TResult> {
@@ -313,6 +332,23 @@ export async function listSessionMcpServers(
       pluginName: server.pluginName,
     })),
   }
+}
+
+export async function fetchHubFeatureFlags(signal?: AbortSignal): Promise<HubFeatureFlags> {
+  const response = await request<{ hubFlags?: unknown }>('/api/features', {
+    cache: 'no-store',
+    signal,
+  })
+  const flags = response.hubFlags
+  if (!flags || typeof flags !== 'object' ||
+    Object.keys(defaultHubFeatureFlags).some(
+      (key) => typeof (flags as Record<string, unknown>)[key] !== 'boolean',
+    )) {
+    throw new Error('The hub returned invalid feature flags')
+  }
+  return Object.fromEntries(Object.keys(defaultHubFeatureFlags).map(
+    (key) => [key, (flags as Record<string, unknown>)[key]],
+  )) as HubFeatureFlags
 }
 
 /** The hub's settings profile, shared by every device that opens this hub. */
@@ -1289,6 +1325,28 @@ export async function resolveManagerConfirmation(
     { method: 'POST', body: JSON.stringify({ accept } satisfies ResolveManagerConfirmationInput) },
   )
   return response.message
+}
+
+export async function listScheduleProposals(): Promise<import('../shared/schedule-proposals').ScheduleProposal[]> {
+  const response = await request<{ proposals: import('../shared/schedule-proposals').ScheduleProposal[] }>(
+    '/api/schedules/proposals', { cache: 'no-store' },
+  )
+  return response.proposals
+}
+
+export async function getSchedule(id: string): Promise<import('../shared/schedules').Schedule> {
+  const response = await request<{ schedule: import('../shared/schedules').Schedule }>(
+    `/api/schedules/${encodeURIComponent(id)}`, { cache: 'no-store' },
+  )
+  return response.schedule
+}
+
+export async function resolveScheduleProposal(id: string, approve: boolean): Promise<import('../shared/schedule-proposals').ScheduleProposal> {
+  const response = await request<{ proposal: import('../shared/schedule-proposals').ScheduleProposal }>(
+    `/api/schedules/proposals/${encodeURIComponent(id)}/${approve ? 'approve' : 'reject'}`,
+    { method: 'POST', body: '{}' },
+  )
+  return response.proposal
 }
 
 export function cancelManager(): Promise<void> {

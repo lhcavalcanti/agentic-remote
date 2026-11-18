@@ -54,6 +54,7 @@ import {
   type QueuedPromptReservation, type TranscriptObservation,
 } from './session-store.js'
 import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
+import { LaunchCreations, awaitTermination, withSessionCreateBoundary } from './launch-identity.js'
 import {
   acceptanceReceipt,
   explicitlyRefused,
@@ -299,6 +300,7 @@ export class ClaudeAgentService
   private retentionTimer?: ReturnType<typeof setInterval>
   private retentionRefresh?: Promise<void>
   private readonly admissions = new SessionAdmissions(() => this.stopped)
+  private readonly launchCreations = new LaunchCreations()
   private readonly drainRequested = new Set<string>()
   private readonly queueWakeups = new Map<string, Promise<void>>()
   private readonly pendingQueueAdmissions = new Map<string, PendingQueueAdmission>()
@@ -336,6 +338,8 @@ export class ClaudeAgentService
         supportsTmuxMigration: false,
         supportsBackgroundTasks: false,
         supportsQueuedPromptDispatch: true,
+        supportsSteering: false,
+        supportsLaunchIdentity: true,
         supportsSessionResources: true,
         supportsContextRecovery: false,
         supportsSessionRetention: true,
@@ -525,59 +529,64 @@ export class ClaudeAgentService
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
     mode?: AgentMode,
+    launchId?: string,
   ): Promise<SessionDetail> {
-    if (provider !== 'claude') {
-      throw new Error(`Provider ${provider} is not handled by Claude Agent`)
-    }
-    this.requireAvailable()
-    const cwd = await this.validateDirectory(inputPath)
-    const id = randomUUID()
-    const now = new Date().toISOString()
-    const modelId = model?.trim()
-    const defaultModel = modelId
-      ? this.models.find((candidate) => candidate.id === modelId)
-      : undefined
-    if (modelId && !defaultModel) {
-      throw new Error('Selected Claude model is not available')
-    }
-    const effort =
-      reasoningEffort ||
-      (defaultModel?.reasoningEfforts.includes('high') === true
-        ? 'high'
-        : defaultModel?.reasoningEfforts[0])
-    const tier = contextTier || 'default'
-    if (
-      defaultModel &&
-      effort &&
-      !defaultModel.reasoningEfforts.includes(effort)
-    ) {
-      throw new Error('Selected reasoning effort is not supported by this model')
-    }
-    if (defaultModel && !defaultModel.contextTiers.includes(tier)) {
-      throw new Error('Selected context tier is not supported by this model')
-    }
-    const session = await this.store.create(
-      {
-        id,
-        provider: 'claude',
-        cwd,
-        title: path.basename(cwd) || 'New Claude session',
-        updatedAt: now,
-        status: 'idle',
-        isOpen: true,
-        messages: [],
-        runtime: {
-          allowAllPermissions,
-          ...(defaultModel ? { model: defaultModel.id } : {}),
-          ...(effort ? { reasoningEffort: effort } : {}),
-          contextTier: tier,
-          mode: mode || 'interactive',
+    return this.launchCreations.run(this.store, launchId, () => withSessionCreateBoundary(async (beginCreate) => {
+      if (provider !== 'claude') {
+        throw new Error(`Provider ${provider} is not handled by Claude Agent`)
+      }
+      this.requireAvailable()
+      const cwd = await this.validateDirectory(inputPath)
+      const id = randomUUID()
+      const now = new Date().toISOString()
+      const modelId = model?.trim()
+      const defaultModel = modelId
+        ? this.models.find((candidate) => candidate.id === modelId)
+        : undefined
+      if (modelId && !defaultModel) {
+        throw new Error('Selected Claude model is not available')
+      }
+      const effort =
+        reasoningEffort ||
+        (defaultModel?.reasoningEfforts.includes('high') === true
+          ? 'high'
+          : defaultModel?.reasoningEfforts[0])
+      const tier = contextTier || 'default'
+      if (
+        defaultModel &&
+        effort &&
+        !defaultModel.reasoningEfforts.includes(effort)
+      ) {
+        throw new Error('Selected reasoning effort is not supported by this model')
+      }
+      if (defaultModel && !defaultModel.contextTiers.includes(tier)) {
+        throw new Error('Selected context tier is not supported by this model')
+      }
+      beginCreate()
+      const session = await this.store.create(
+        {
+          id,
+          ...(launchId !== undefined ? { launchId } : {}),
+          provider: 'claude',
+          cwd,
+          title: path.basename(cwd) || 'New Claude session',
+          updatedAt: now,
+          status: 'idle',
+          isOpen: true,
+          messages: [],
+          runtime: {
+            allowAllPermissions,
+            ...(defaultModel ? { model: defaultModel.id } : {}),
+            ...(effort ? { reasoningEffort: effort } : {}),
+            contextTier: tier,
+            mode: mode || 'interactive',
+          },
         },
-      },
-      { managedOpen: true, backend: 'sdk' },
-    )
-    this.publish(session)
-    return session
+        { managedOpen: true, backend: 'sdk' },
+      )
+      this.publish(session)
+      return session
+    }))
   }
 
   uploadFile(
@@ -683,6 +692,7 @@ export class ClaudeAgentService
     requestId: string,
     input: UserInputReplyInput,
   ): Promise<SessionDetail> {
+    if (this.store.get(sessionId)?.launchStopping) throw queueConflict('The launch is stopping; no input can resume it.')
     if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
       throw new Error('Session is no longer available')
     }
@@ -886,6 +896,9 @@ export class ClaudeAgentService
     if (!stored.suspended) {
       return stored
     }
+    if (this.admissions.launchBlocked(id) || stored.launchStopping) {
+      throw queueConflict('The launch is stopping; its runtime cannot resume.')
+    }
     this.assertNotRetained(id, 'resuming it', true)
     const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
     if (hasQueue) {
@@ -1047,7 +1060,28 @@ export class ClaudeAgentService
     enqueue = false,
     acknowledgesFailure?: string,
     replaceTerminalDraft = false,
+    deliveryId?: string,
   ): Promise<SessionDetail> {
+    if (deliveryId !== undefined) {
+      if (replaceTerminalDraft || acknowledgesFailure) {
+        throw Object.assign(queueConflict('Identified delivery cannot replace a draft or acknowledge another prompt.'), { uncertainDelivery: false })
+      }
+      const receipt = this.store.get(sessionId)
+      if (this.admissions.launchBlocked(sessionId) &&
+          receipt?.promptReceipts?.some((entry) => entry.deliveryId === deliveryId)) return receipt
+      try {
+        return await this.admissions.run(sessionId, async () => {
+          if (this.stopped || this.deletingSessions.has(sessionId)) throw queueConflict('The session service is stopping.')
+          const accepted = await this.store.acceptIdentifiedPrompt(sessionId, deliveryId, content, enqueue)
+          this.admissions.markCommitted(sessionId)
+          this.drainRequested.add(sessionId)
+          this.publish(accepted)
+          return accepted
+        })
+      } finally {
+        this.wakeQueue(sessionId)
+      }
+    }
     if (replaceTerminalDraft) {
       throw Object.assign(
         new Error('Terminal draft replacement is only available for tmux-backed Copilot sessions.'),
@@ -1077,6 +1111,7 @@ export class ClaudeAgentService
     enqueue: boolean,
     acknowledgesFailure?: string,
   ): Promise<SessionDetail> {
+    if (this.store.get(sessionId)?.launchStopping) throw queueConflict('The launch is stopping; no new work can start.')
     if (!content.trim()) throw queueConflict('Message cannot be empty')
     // Queued or not, and before any recovery token is claimed.
     if (this.store.get(sessionId)?.closedAt) {
@@ -1515,6 +1550,34 @@ export class ClaudeAgentService
     this.active.get(sessionId)?.abortController.abort()
   }
 
+  async reconcileLaunch(launchId: string) {
+    return this.store.reconcileLaunch(launchId)
+  }
+
+  deliveryIdentity(deliveryId: string) {
+    return this.store.deliveryIdentity(deliveryId)
+  }
+
+  async cancelWithAck(sessionId: string, timeoutMs = 10_000) {
+    const acknowledgement = await awaitTermination(sessionId, timeoutMs, async () => {
+      this.active.get(sessionId)?.abortController.abort()
+      this.queueReceiptStops.get(sessionId)?.()
+      await this.admissions.wait(sessionId)
+      await this.startingQueries.get(sessionId)
+      const active = this.active.get(sessionId)
+      active?.abortController.abort()
+      if (active) await active.done
+    // Iterator teardown proves foreground quiescence, not the fate of background
+    // tasks. This adapter does not consume their membership/termination signals.
+    }, async () => false, async () => {
+      this.admissions.blockLaunch(sessionId)
+      await this.store.readAfterWrites(sessionId)
+      this.publish(await this.store.stopLaunchWork(sessionId))
+      this.drainRequested.delete(sessionId)
+    })
+    return { ...acknowledgement, reason: 'Claude cannot yet confirm background-task termination through this adapter.' }
+  }
+
   async listBackgroundTasks(
     sessionId: string,
   ): Promise<BackgroundTaskSnapshot> {
@@ -1737,6 +1800,7 @@ export class ClaudeAgentService
     requestId: string,
     optionId: string,
   ): Promise<SessionDetail> {
+    if (this.store.get(sessionId)?.launchStopping) throw queueConflict('The launch is stopping; no input can resume it.')
     if (this.stopped || this.deletingSessions.has(sessionId) || !this.store.get(sessionId)) {
       throw new Error('Session is no longer available')
     }
@@ -1949,11 +2013,19 @@ export class ClaudeAgentService
       (!this.startingQueries.has(sessionId) || this.startingQueries.get(sessionId) === registering)
     let registered = false
     let invocationStarted = false
+    let deliveryConfirmationRecorded = false
     const accept = () => {
       delivery?.accept()
       receipt?.resolve()
+      if (!deliveryConfirmationRecorded) {
+        deliveryConfirmationRecorded = true
+        void this.store.confirmPromptDelivery(sessionId, assistantId)
+          .then((session) => { if (session) this.publish(session) })
+          .catch(() => { deliveryConfirmationRecorded = false })
+      }
     }
     let aborted = false
+    let rootOutcome: 'succeeded' | 'failed' | 'unknown' = 'unknown'
     try {
       const hasProviderSession = Boolean(
         await this.sdk.getSessionInfo(sessionId, { dir: session.cwd }),
@@ -2021,6 +2093,9 @@ export class ClaudeAgentService
         this.startingQueries.delete(sessionId)
       }
       for await (const message of activeQuery) {
+        if (message.type === 'result') {
+          rootOutcome = message.subtype === 'success' && !message.is_error ? 'succeeded' : 'failed'
+        }
         if (!this.store.get(sessionId) || this.active.get(sessionId) !== owned) {
           return
         }
@@ -2044,6 +2119,8 @@ export class ClaudeAgentService
         return
       }
       const finished = await this.store.finishMessage(sessionId, assistantId)
+      await this.store.settlePromptOutcome(sessionId, assistantId,
+        abortController.signal.aborted ? 'stopped' : rootOutcome)
       const idle = await this.store.updateIf(finished.id, (stored) => {
         if (this.active.get(sessionId) !== owned) return false
         stored.status = 'idle'
@@ -2091,6 +2168,7 @@ export class ClaudeAgentService
       }
       if (this.active.has(sessionId) && this.active.get(sessionId) !== owned) return
       aborted = abortController.signal.aborted
+      await this.store.settlePromptOutcome(sessionId, assistantId, aborted ? 'stopped' : 'failed')
       await this.store.finishMessage(sessionId, assistantId).catch(() => undefined)
       const failed = await this.store.updateIf(sessionId, (stored) => {
         if (owned && this.active.get(sessionId) !== owned) return false
@@ -2473,7 +2551,7 @@ export class ClaudeAgentService
   }
 
   private wakeQueue(sessionId: string): void {
-    if (this.stopped || this.deletingSessions.has(sessionId)) return
+    if (this.stopped || this.deletingSessions.has(sessionId) || this.store.get(sessionId)?.launchStopping) return
     this.drainRequested.add(sessionId)
     if (!this.admissions.canEnter(sessionId)) return
     if (this.drainingSessions.has(sessionId) || this.queueWakeups.has(sessionId)) return
@@ -2493,7 +2571,7 @@ export class ClaudeAgentService
     // already waiting each took a different head off the queue before either
     // marked the session running, and started concurrent turns: the queue lost
     // its order, and the second registration hid the first from cancellation.
-    if (this.stopped || this.deletingSessions.has(sessionId)) return
+    if (this.stopped || this.deletingSessions.has(sessionId) || this.store.get(sessionId)?.launchStopping) return
     if (!this.admissions.canEnter(sessionId)) {
       this.drainRequested.add(sessionId)
       return undefined
@@ -2528,6 +2606,7 @@ export class ClaudeAgentService
     promptId: string,
     content: string,
   ): Promise<QueuedPromptDispatchResult> {
+    if (this.admissions.launchBlocked(sessionId)) throw queueConflict('The launch is stopping; no queued work can dispatch.')
     if (this.stopped || this.deletingSessions.has(sessionId)) {
       throw queueConflict('The session is no longer available.')
     }

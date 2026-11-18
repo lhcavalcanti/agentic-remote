@@ -2314,6 +2314,91 @@ button {
   font-size: 11px;
 }
 
+.session-origin-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  font-style: normal;
+  vertical-align: middle;
+}
+
+.conversation-header__origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.conversation-header__origin:empty {
+  display: none;
+}
+
+.session-origin-run-link {
+  display: inline-flex;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-strong);
+  border-radius: 8px;
+}
+
+.session-origin-run-link:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.session-item__body:has(> .session-origin-run-link) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px;
+  grid-template-rows: minmax(40px, auto) minmax(40px, auto);
+  row-gap: 2px;
+  min-height: 82px;
+}
+
+.session-item__body:has(> .session-origin-run-link) > .session-item__open {
+  display: grid;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-content: center;
+}
+
+.session-item__body > .session-origin-run-link {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: end;
+  justify-self: end;
+}
+
+.session-item__body:has(> .session-origin-run-link) > .session-item__tasks {
+  position: static;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+  min-height: 40px;
+}
+
+.session-item__body:has(> .session-origin-run-link) .session-item__badges,
+.session-item__body:has(> .session-origin-run-link) .session-item__text > strong {
+  padding-right: 0;
+}
+
+.subagent-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+@media (max-width: 600px) {
+  .subagent-count {
+    min-height: 40px;
+  }
+}
+
 .knowledge-toggle,
 .side-question-toggle,
 .oracle-toggle {
@@ -3947,6 +4032,309 @@ button {
   flex: 0 0 auto;
 }
 
+.composer-runtime-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.composer-runtime--refresh {
+  width: 100%;
+  max-width: 100%;
+  min-height: 40px;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.composer-runtime--refresh .composer-runtime-model {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.composer-runtime__model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-runtime__hint {
+  flex: 0 0 auto;
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-runtime__detail,
+.composer-runtime__mode {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.composer.composer--refresh {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--panel-raised);
+}
+
+.composer--refresh > .composer-text-panel,
+.composer--refresh > .composer-actions {
+  width: 100%;
+  flex: 0 1 auto;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.composer--refresh > .composer-text-panel {
+  padding: 7px 14px;
+}
+
+.composer-actions--refresh .composer-actions__spacer {
+  display: block;
+}
+
+.composer-tool,
+.composer-session-panel > .icon-button {
+  display: inline-flex;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--muted-strong);
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.composer-secondary-tools {
+  display: flex;
+  gap: 4px;
+}
+
+.composer-context-ring__track {
+  stroke: var(--border-strong);
+}
+
+.composer-context-ring__unavailable {
+  fill: currentColor;
+  font-size: 13px;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+
+.composer-secondary-overflow {
+  display: none;
+}
+
+.session-actions.composer-session-panel {
+  position: static;
+}
+
+.composer-session-panel .session-actions__panel {
+  top: auto;
+  right: 0;
+  /* Keep the anchor independent of the growing editor and leave room for the runtime line below it. */
+  bottom: 0;
+  max-width: min(320px, calc(100vw - 32px));
+  max-height: min(420px, calc(var(--visual-viewport-height, 100svh) - 100px));
+  overflow: auto;
+}
+
+.composer-session-panel .session-action {
+  min-height: 40px;
+}
+
+.composer-send-menu {
+  position: absolute;
+  z-index: 15;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: min(340px, 100%);
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-popover);
+}
+
+.composer-send-menu > button {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  color: var(--text);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-send-menu > button:hover,
+.composer-send-menu > button:focus-visible {
+  background: var(--panel-soft);
+}
+
+.composer-send-menu small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.composer-send-menu > button[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+
+.dialog-backdrop:has(> .composer-history) {
+  align-items: flex-end;
+}
+
+.dialog.composer-history {
+  display: flex;
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(620px, 72dvh);
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 110px;
+}
+
+.composer-history__search {
+  width: 100%;
+  min-height: 40px;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  font-size: 16px;
+}
+
+.composer-history__list {
+  min-height: 60px;
+  overflow: auto;
+}
+
+.composer-history__message {
+  display: flex;
+  width: 100%;
+  min-height: 64px;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  color: var(--text);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-history__message time,
+.composer-history__hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.composer-history__message > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.composer-history__message--active,
+.composer-history__message[aria-selected="true"] {
+  border-color: var(--accent-focus);
+  background: var(--panel-soft);
+}
+
+.composer-history__hint {
+  margin: 0;
+}
+
+.composer-history__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.composer-history__actions button,
+.composer-history .dialog__header button {
+  min-width: 40px;
+  min-height: 40px;
+}
+
+@media (min-width: 961px) {
+  .dialog-backdrop:has(> .composer-history) {
+    justify-content: flex-end;
+    background: transparent;
+    backdrop-filter: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .dialog-backdrop:has(> .composer-history) {
+    padding: 0;
+  }
+  .dialog.composer-history {
+    width: 100%;
+    max-height: min(80dvh, calc(var(--visual-viewport-height, 100dvh) - 8px));
+    margin: 0;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+@container composer (max-width: 480px) {
+  .composer-secondary-tools {
+    display: none;
+  }
+  .composer-secondary-overflow {
+    display: flex;
+  }
+}
+
+@container composer (max-width: 360px) {
+  .composer-actions--refresh:has(> .composer-send-options) > .send-button--queue {
+    display: none;
+  }
+  .composer--refresh .composer-actions--refresh > .send-button:has(.send-button__label) {
+    width: 40px;
+    min-width: 40px;
+    flex: 0 0 40px;
+    padding: 0;
+  }
+  .composer-actions--refresh .send-button__label {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .composer-runtime--refresh .composer-runtime__detail {
+    display: none;
+  }
+}
+
 .dialog-message,
 .runtime-dialog__hint {
   color: var(--muted);
@@ -4596,6 +4984,88 @@ button {
   .app-settings-group__body > .app-settings-section--wide {
     grid-column: 1 / -1;
   }
+}
+
+.dialog.app-settings-dialog--navigation {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 1040px);
+  height: min(800px, 100%);
+  overflow: hidden;
+}
+
+.settings-navigation {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px 24px;
+  min-height: 0;
+  flex: 1;
+}
+
+.settings-navigation__search { grid-column: 1 / -1; }
+.settings-navigation__categories { overflow-y: auto; }
+.settings-navigation__categories button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-navigation__categories button[aria-current="page"] {
+  border-color: var(--border-strong);
+  background: var(--panel-soft);
+}
+.settings-navigation__categories small, .settings-navigation__scope {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-strong);
+  font-size: 11px;
+}
+.settings-navigation__content { min-width: 0; overflow-y: auto; padding: 0 4px 16px; }
+.settings-navigation__content .app-settings-group { padding-top: 0; }
+.settings-navigation .app-settings-group__body { grid-template-columns: 1fr; }
+.settings-navigation [hidden] { display: none !important; }
+.settings-navigation__back { display: none; }
+.health-card__facts { display: grid; gap: 6px; font-size: 12px; }
+.health-card__facts > div { display: flex; justify-content: space-between; gap: 16px; }
+.health-card__facts dt { overflow-wrap: anywhere; }
+.health-card__facts dd { margin: 0; text-align: right; }
+.health-card__computers { padding-left: 18px; font-size: 12px; line-height: 1.8; }
+.skills-settings__list { display: grid; gap: 12px; padding: 0; list-style: none; }
+.skills-settings__list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-soft);
+}
+.skills-settings__list li > div { min-width: 0; }
+.skills-settings__list li > button { flex-shrink: 0; white-space: nowrap; }
+.skills-settings__list p { margin: 8px 0; font-size: 12px; }
+.skills-settings__list small { color: var(--muted-strong); font-size: 11px; overflow-wrap: anywhere; }
+.skills-settings__confirmation { padding: 16px; margin: 16px 0; border: 1px solid var(--border-strong); border-radius: 10px; }
+.skills-settings__confirmation p { font-size: 13px; line-height: 1.6; }
+.skills-settings__confirmation button { margin: 0 8px 8px 0; }
+
+@media (max-width: 599px) {
+  .settings-navigation { display: flex; flex-direction: column; gap: 12px; }
+  .settings-navigation__categories { flex: 1; }
+  .settings-navigation__content { display: none; }
+  .settings-navigation--page .settings-navigation__categories { display: none; }
+  .settings-navigation--page .settings-navigation__content { display: block; flex: 1; }
+  .settings-navigation__back { display: inline-flex; margin-bottom: 16px; }
 }
 
 .shortcut-list {

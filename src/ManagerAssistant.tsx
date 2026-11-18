@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent, MouseEvent, MutableRefObject, PointerEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
@@ -32,6 +32,7 @@ import type {
 } from '../shared/manager'
 import { MANAGER_MESSAGE_MAX_LENGTH, MANAGER_REMOVED_ATTACHMENTS_REASON } from '../shared/manager'
 import { CLOSED_SESSION_RETENTION_DAYS } from '../shared/closed-sessions'
+import { ScheduleProposalCards } from './ScheduleProposalCards'
 import {
   cancelManager,
   editQueuedManagerMessage,
@@ -745,6 +746,7 @@ export function ManagerAssistant({
   onPlacementChange,
   focusRequest = 0,
   onRequestSessionFocus,
+  scheduleProposalEpoch = 0,
 }: {
   /** Changes each time the event socket reconnects, so the snapshot is reread. */
   connectionEpoch: number
@@ -774,6 +776,7 @@ export function ManagerAssistant({
   focusRequest?: number
   /** Lets App focus the active writable session composer after Oracle closes. */
   onRequestSessionFocus?: () => boolean
+  scheduleProposalEpoch?: number
 }) {
   const [storedDraft] = useState(readStoredOracleDraft)
   const [snapshot, setSnapshot] = useState<ManagerSnapshot>()
@@ -1033,10 +1036,12 @@ export function ManagerAssistant({
   const available = Boolean(snapshot?.available)
   const shownWidth = available && open ? panelWidth.width : undefined
   const widthRef = useRef(onWidthChange)
-  useEffect(() => {
+  useLayoutEffect(() => {
     widthRef.current = onWidthChange
   })
-  useEffect(() => {
+  // Before paint: the docked grid column reads this width, and a frame with the
+  // previous (floating) width would push the panel past the window's edge.
+  useLayoutEffect(() => {
     widthRef.current?.(shownWidth)
   }, [shownWidth])
   const status = snapshot?.status ?? 'offline'
@@ -1470,6 +1475,7 @@ export function ManagerAssistant({
         </p>
       ) : null}
       <DreamerMorningPlan active={open} />
+      <ScheduleProposalCards active={open} refreshKey={scheduleProposalEpoch} />
       {confirmReset ? (
         <div className="manager-panel__confirm" role="alertdialog" aria-label="Start a new conversation">
           <p>Start a new conversation? Oracle keeps its notes and memory.</p>

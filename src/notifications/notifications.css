@@ -1,0 +1,29 @@
+.notification-panel { width: min(460px, calc(100vw - 24px)); max-height: 85dvh; overflow-y: auto; }
+.notification-tools { display: grid; gap: 12px; }
+.notification-search { display: grid; gap: 6px; font-size: 13px; }
+.notification-search input { width: 100%; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+.notification-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.notification-tabs button { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text); background: transparent; }
+.notification-tabs button[aria-selected='true'] { background: var(--accent-tint-strong); border-color: var(--accent-foreground); }
+.notification-list { padding: 0; margin: 16px 0 0; list-style: none; }
+.notification-row { display: flex; gap: 12px; padding: 16px 0; border-top: 1px solid var(--border); }
+.notification-row > svg { flex-shrink: 0; margin-top: 3px; color: var(--muted); }
+.notification-row[data-unread='true'] > svg { color: var(--accent-foreground); }
+.notification-row[data-severity='error'] > svg { color: #E81123; }
+.notification-row__body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.notification-link { color: var(--text); text-align: left; border: 0; background: transparent; padding: 0; font-size: 14px; }
+.notification-row p { margin: 6px 0; font-size: 13px; color: var(--muted); }
+.notification-row small { font-size: 11px; color: var(--muted); }
+.notification-kind { display: block; margin-bottom: 5px; }
+.notification-row__actions { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+.notification-empty { padding: 28px 0; color: var(--muted); }
+.notification-group summary { display: flex; align-items: center; min-height: 40px; cursor: pointer; font-size: 13px; }
+.notification-group ul { padding: 0; list-style: none; }
+.notification-group li { border-top: 1px solid var(--border); padding: 10px 0; }
+.notification-link { min-height: 40px; }
+.notification-tabs button { min-height: 40px; }
+@media (min-width: 1024px) { .dialog-backdrop:has(.notification-panel) { justify-content: flex-start; align-items: flex-end; padding-left: 76px; } }
+@media (max-width: 600px) {
+  .dialog-backdrop:has(.notification-panel) { align-items: flex-end; padding: 0; }
+  .notification-panel { width: 100%; max-height: 92dvh; border-radius: 18px 18px 0 0; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+}

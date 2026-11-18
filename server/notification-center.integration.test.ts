@@ -1,0 +1,600 @@
+import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
+import { mkdir, readFile, rm, stat } from 'node:fs/promises'
+import path from 'node:path'
+import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from 'node:timers'
+import type { PushSubscription, RequestOptions } from 'web-push'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { HubEvent, ManagedSession } from '../shared/contracts.js'
+import type { ManagerEvent } from '../shared/manager.js'
+import type { NotificationRecord } from '../shared/notification-center.js'
+import { buildApp } from './app.js'
+import type { ManagerAgent } from './manager-agent.js'
+import { NotificationCenterService } from './notification-center-service.js'
+import { NotificationStore } from './notification-store.js'
+import { PushNotificationService } from './push-notification-service.js'
+import { notificationIdentity, type NotificationCursors } from './notification-classifier.js'
+
+const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
+const directories: string[] = []
+const runtimes: Awaited<ReturnType<typeof buildApp>>[] = []
+const now = new Date().toISOString()
+
+function session(id = 'session'): ManagedSession {
+  return {
+    id, computerId: 'computer', computerName: 'Worker', cwd: '/project', title: `Review ${id}`,
+    status: 'running', isOpen: true, updatedAt: now,
+    messages: [{ id: `root-${id}`, role: 'user', content: 'Review', createdAt: now }],
+  }
+}
+
+async function directory() {
+  const directory = path.resolve(`.notification-center-test-${randomUUID()}`)
+  directories.push(directory)
+  await mkdir(directory, { mode: 0o700 })
+  return directory
+}
+
+async function hub(flag: 'on' | 'off') {
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', flag)
+  const sender = vi.fn(async (_subscription: PushSubscription, _payload?: string | Buffer | null, _options?: RequestOptions) =>
+    ({ statusCode: 201, headers: {}, body: '' }))
+  const oracle = Object.assign(new EventEmitter<{ event: [ManagerEvent] }>(), {
+    start: async () => undefined,
+    stop: async () => undefined,
+    snapshot: () => ({ available: true, status: 'idle', messages: [], queued: 0, managedSessions: [] }),
+  })
+  const dataDirectory = await directory()
+  const phases: string[] = []
+  const runtime = await buildApp({
+    dataDirectory, logger: false, managerAgent: oracle as unknown as ManagerAgent,
+    pushService: new PushNotificationService(dataDirectory, sender),
+    startupPhases: { run: async (name, work) => { phases.push(name); return work() } },
+    transcriptionService: { initialize: async () => undefined, stop: async () => undefined, transcribe: vi.fn() },
+  })
+  runtimes.push(runtime)
+  const emit = (event: HubEvent) => runtime.manager!.emit('event', event)
+  const list = async (query = '') => {
+    const response = await runtime.app.inject({ url: `/api/notifications${query}`, headers: trusted })
+    expect(response.statusCode).toBe(200)
+    return response.json().notifications as NotificationRecord[]
+  }
+  return { runtime, dataDirectory, sender, oracle, phases, emit, list }
+}
+
+beforeEach(() => {
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.example.test')
+  vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', '')
+})
+afterEach(async () => {
+  await Promise.all(runtimes.splice(0).map((runtime) => runtime.app.close()))
+  await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
+  vi.unstubAllEnvs()
+})
+
+describe('hub notification center', () => {
+  it('creates no store or startup phase and returns 404 for every route when disabled', async () => {
+    const { runtime, dataDirectory, phases, emit } = await hub('off')
+    emit({ type: 'session.upserted', session: { ...session(), status: 'waiting',
+      pendingPermission: { requestId: 'p', title: 'Run?', options: [] } } })
+    for (const [method, suffix] of [
+      ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'], ['POST', '/bulk'], ['POST', `/${'a'.repeat(64)}/read`], ['POST', `/${'a'.repeat(64)}/dismiss`],
+    ] as const) {
+      expect((await runtime.app.inject({ method, url: `/api/notifications${suffix}`, headers: trusted })).statusCode).toBe(404)
+    }
+    expect(runtime.notificationCenter).toBeUndefined()
+    expect(phases).not.toContain('notifications.initialize')
+    await expect(stat(path.join(dataDirectory, 'notifications'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('validates bulk bounds before mutating and admits a single batch', async () => {
+    const { runtime } = await hub('on')
+    const store = runtime.notificationCenter!.store
+    const mutate = vi.spyOn(store, 'mutateMany')
+    for (const payload of [
+      { ids: [], action: 'read' }, { ids: ['invalid'], action: 'read' },
+      { ids: ['a'.repeat(64)], action: 'delete' },
+      { ids: Array.from({ length: 1001 }, () => 'a'.repeat(64)), action: 'dismiss' },
+    ]) {
+      expect((await runtime.app.inject({ method: 'POST', url: '/api/notifications/bulk', headers: trusted, payload })).statusCode).toBe(400)
+    }
+    expect(mutate).not.toHaveBeenCalled()
+    const ids = ['a'.repeat(64), 'b'.repeat(64)]
+    expect((await runtime.app.inject({ method: 'POST', url: '/api/notifications/bulk',
+      headers: trusted, payload: { ids, action: 'dismiss' } })).statusCode).toBe(200)
+    expect(mutate).toHaveBeenCalledExactlyOnceWith(ids, 'dismiss')
+  })
+
+  it('lists, filters, acknowledges, dismisses, counts, and broadcasts only durable changes', async () => {
+    const { runtime, phases, emit, list } = await hub('on')
+    expect(phases).toContain('notifications.initialize')
+    await runtime.app.ready()
+    const socket = await runtime.app.injectWS('/api/events?patches=1', { headers: trusted })
+    const changes: HubEvent[] = []
+    socket.on('message', (raw) => {
+      const event = JSON.parse(String(raw)) as HubEvent
+      if (event.type === 'notifications.changed') changes.push(event)
+    })
+    try {
+      emit({ type: 'session.upserted', session: session('one') })
+      emit({ type: 'session.upserted', session: { ...session('one'), status: 'idle' } })
+      emit({ type: 'session.upserted', session: session('two') })
+      emit({ type: 'session.upserted', session: { ...session('two'), status: 'error' } })
+      const records = await list()
+      expect(records).toHaveLength(2)
+      const complete = records.find((record) => record.kind === 'session.completed')!
+      const failed = records.find((record) => record.kind === 'session.failed')!
+      expect(await list('?failed=true')).toEqual([failed])
+      expect(await list('?sessionId=one&computerId=computer&kind=session.completed&unread=true')).toEqual([complete])
+      expect((await runtime.app.inject({ url: '/api/notifications/unread-count', headers: trusted })).json()).toEqual({ unreadCount: 2 })
+      const read = await runtime.app.inject({ method: 'POST', url: `/api/notifications/${complete.id}/read`, headers: trusted })
+      expect(read.statusCode).toBe(200)
+      expect(await list('?unread=true')).toEqual([failed])
+      expect((await runtime.app.inject({ method: 'POST', url: `/api/notifications/${failed.id}/dismiss`, headers: trusted })).statusCode).toBe(200)
+      expect(await list()).toHaveLength(1)
+      await vi.waitFor(() => expect(changes).toHaveLength(4))
+      expect(changes.at(-1)).toMatchObject({ type: 'notifications.changed', unreadCount: 0, revision: 4 })
+      const state = JSON.parse(await readFile(runtime.notificationCenter!.store.statePath, 'utf8'))
+      expect(state.revision).toBe(4)
+      expect(state.records).toHaveLength(2)
+      expect((await runtime.app.inject({ method: 'POST', url: '/api/notifications/not-an-id/read', headers: trusted })).statusCode).toBe(400)
+      expect((await runtime.app.inject({ url: '/api/notifications?unread=garbage', headers: trusted })).statusCode).toBe(400)
+      expect((await runtime.app.inject({ url: '/api/notifications?kind=unknown', headers: trusted })).statusCode).toBe(400)
+      expect((await runtime.app.inject({ method: 'POST', url: `/api/notifications/${'a'.repeat(64)}/read`, headers: trusted })).statusCode).toBe(404)
+    } finally { socket.terminate() }
+  })
+
+  it('read-all is filter scoped; active session reads and explicit opens mark only that computer/session read', async () => {
+    const { runtime, emit, list } = await hub('on')
+    for (const id of ['one', 'two', 'three']) {
+      emit({ type: 'session.upserted', session: session(id) })
+      emit({ type: 'session.upserted', session: { ...session(id), status: 'idle' } })
+    }
+    await list()
+    expect((await runtime.app.inject({ method: 'POST', url: '/api/notifications/read-all?sessionId=one&computerId=computer', headers: trusted })).statusCode).toBe(200)
+    expect(await list('?unread=true')).toHaveLength(2)
+    vi.spyOn(runtime.manager!, 'readSession').mockResolvedValue(session('two'))
+    vi.spyOn(runtime.manager!, 'getSession').mockResolvedValue(session('two'))
+    vi.spyOn(runtime.manager!, 'activateSession').mockResolvedValue(session('three'))
+    expect((await runtime.app.inject({ url: '/api/computers/computer/sessions/two?passive=1', headers: trusted })).statusCode).toBe(200)
+    expect(await list('?unread=true')).toHaveLength(2)
+    expect((await runtime.app.inject({ url: '/api/computers/computer/sessions/two', headers: trusted })).statusCode).toBe(200)
+    expect(await list('?unread=true')).toHaveLength(1)
+    expect((await runtime.app.inject({ method: 'POST', url: '/api/computers/computer/sessions/three/open', headers: trusted })).statusCode).toBe(200)
+    expect(await list('?unread=true')).toHaveLength(0)
+  })
+
+  it('still publishes core hub and Oracle events once when notification admission fails', async () => {
+    const { runtime, emit, oracle } = await hub('on')
+    await runtime.app.ready()
+    const socket = await runtime.app.injectWS('/api/events', { headers: trusted })
+    const received: HubEvent[] = []
+    socket.on('message', (raw) => received.push(JSON.parse(String(raw)) as HubEvent))
+    const failure = new Error('Synthetic poisoned notification store')
+    const ingest = vi.spyOn(runtime.notificationCenter!.store, 'ingest').mockRejectedValue(failure)
+    const logged = vi.spyOn(runtime.app.log, 'error')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      emit({ type: 'session.upserted', session: { ...session('live'), revision: 1 } })
+      emit({ type: 'session.upserted', session: { ...session('live'), revision: 2, status: 'idle' } })
+      emit({ type: 'computer.updated', computer: { id: 'computer', name: 'Worker', online: false, isLocal: false } })
+      emit({ type: 'error', computerId: 'computer', notify: true, message: 'Synthetic health alert' })
+      oracle.emit('event', { type: 'manager.message', message: {
+        id: 'reply-failed-store', role: 'user', content: 'Status?', state: 'done', createdAt: now,
+      } })
+      await runtime.notificationCenter!.flush()
+      await vi.waitFor(() => {
+        expect(received.filter((event) => event.type === 'session.upserted' && event.session.id === 'live' && !event.summary)
+          .map((event) => event.type === 'session.upserted' && event.session.status)).toEqual(['running', 'idle'])
+        expect(received.filter((event) => event.type === 'computer.updated' && event.computer.id === 'computer')).toHaveLength(1)
+        expect(received.filter((event) => event.type === 'error' && event.message === 'Synthetic health alert')).toHaveLength(1)
+        expect(received.filter((event) => event.type === 'manager.message' && event.message.id === 'reply-failed-store')).toHaveLength(1)
+      })
+      expect(received.some((event) => event.type === 'notifications.changed')).toBe(false)
+      expect(await runtime.notificationCenter!.store.list()).toEqual([])
+      expect(logged).toHaveBeenCalledWith({ err: failure }, expect.stringContaining('notification'))
+    } finally {
+      socket.terminate()
+      ingest.mockRestore()
+      logged.mockRestore()
+      warning.mockRestore()
+    }
+  })
+
+  it.each([
+    ['GET', '', 'getSession'],
+    ['POST', '/open', 'activateSession'],
+  ] as const)('keeps %s session access successful when notification read marks cannot be saved', async (method, suffix, access) => {
+    const { runtime } = await hub('on')
+    const current = session('opened')
+    const read = vi.spyOn(runtime.manager!, access).mockResolvedValue(current)
+    const failure = new Error('Synthetic read-mark persistence failure')
+    const mark = vi.spyOn(runtime.notificationCenter!, 'sessionOpened').mockRejectedValue(failure)
+    const logged = vi.spyOn(runtime.app.log, 'error')
+    try {
+      const response = await runtime.app.inject({
+        method, url: `/api/computers/computer/sessions/opened${suffix}`, headers: trusted,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ session: { id: 'opened', computerId: 'computer' } })
+      expect(read).toHaveBeenCalledExactlyOnceWith('computer', 'opened')
+      expect(mark).toHaveBeenCalledExactlyOnceWith('computer', 'opened')
+      expect(logged).toHaveBeenCalledWith(
+        { err: failure, computerId: 'computer', sessionId: 'opened' }, expect.stringContaining('marked read'),
+      )
+    } finally {
+      read.mockRestore()
+      mark.mockRestore()
+      logged.mockRestore()
+    }
+  })
+
+  it('commits the in-app record before external delivery and resolves transcript-free outcomes passively', async () => {
+    const { runtime, sender, emit, list } = await hub('on')
+    await runtime.pushService!.subscribe({
+      endpoint: 'https://push.example.test/device', expirationTime: null,
+      keys: { p256dh: 'public', auth: 'auth' },
+    })
+    const active = session()
+    const passive = vi.spyOn(runtime.manager!, 'readSession').mockResolvedValue({ ...active, status: 'idle' })
+    sender.mockImplementationOnce(async () => {
+      const state = JSON.parse(await readFile(runtime.notificationCenter!.store.statePath, 'utf8'))
+      expect(state.records).toEqual([expect.objectContaining({ kind: 'session.completed' })])
+      return { statusCode: 201, headers: {}, body: '' }
+    })
+    emit({ type: 'session.upserted', session: { ...active, messages: [] } })
+    emit({ type: 'session.upserted', session: { ...active, messages: [], status: 'idle' } })
+    expect(await list()).toHaveLength(1)
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+    expect(passive).toHaveBeenCalledWith(active.computerId, active.id)
+  })
+
+  it('continues recording session outcomes and sending pushes after the dedupe cache reaches capacity', async () => {
+    const { runtime, sender, emit, list } = await hub('on')
+    await runtime.app.ready()
+    await runtime.notificationCenter!.flush()
+    const store = runtime.notificationCenter!.store
+    await store.ingest(() => Array.from({ length: 10_000 }, (_, index): NotificationRecord => ({
+      id: notificationIdentity('host.alert', 'old-fixture', String(index)), kind: 'host.alert', severity: 'info',
+      title: 'Old fixture', body: 'Synthetic retained alert', url: '/', createdAt: now, coalesceKey: 'fixture', muted: false,
+    })))
+    await runtime.pushService!.subscribe({
+      endpoint: 'https://push.example.test/device', expirationTime: null,
+      keys: { p256dh: 'public', auth: 'auth' },
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    sender.mockImplementation(async () => {
+      const state = JSON.parse(await readFile(store.statePath, 'utf8'))
+      expect(state.records.some((entry: NotificationRecord) => entry.kind === 'session.completed' && entry.sessionId === 'after-cap')).toBe(true)
+      expect(Object.keys(state.seen)).toHaveLength(10_000)
+      return { statusCode: 201, headers: {}, body: '' }
+    })
+    try {
+      for (let turn = 0; turn < 2; turn += 1) {
+        const active = { ...session('after-cap'), revision: turn * 2 + 1,
+          messages: [{ ...session('after-cap').messages[0], id: `root-${turn}` }] }
+        emit({ type: 'session.upserted', session: active })
+        emit({ type: 'session.upserted', session: { ...active, revision: active.revision + 1, status: 'idle' } })
+      }
+      expect(await list('?sessionId=after-cap')).toHaveLength(2)
+      await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(2))
+      const state = JSON.parse(await readFile(store.statePath, 'utf8'))
+      expect(state.cursors[JSON.stringify(['session', 'computer', 'after-cap'])]).toMatchObject({ revision: 4, status: 'idle' })
+    } finally { warning.mockRestore() }
+  })
+
+  it('does not bind an old terminal snapshot to a newer passive root prompt', async () => {
+    const { runtime, emit, list } = await hub('on')
+    const active = session()
+    vi.spyOn(runtime.manager!, 'readSession').mockResolvedValue({
+      ...active, status: 'running', revision: 3,
+      messages: [{ ...active.messages[0]!, id: 'later-root' }],
+    })
+    emit({ type: 'session.upserted', session: { ...active, revision: 1, messages: [] } })
+    emit({ type: 'session.upserted', session: { ...active, revision: 2, status: 'idle', messages: [] } })
+    expect(await list()).toEqual([])
+  })
+
+  it('retains a terminal outcome read mark through a fresh classifier and repeated node status transitions', async () => {
+    const { runtime, emit, list } = await hub('on')
+    emit({ type: 'session.upserted', session: session() })
+    emit({ type: 'session.upserted', session: { ...session(), status: 'idle' } })
+    const id = (await list())[0]!.id
+    await runtime.notificationCenter!.store.markRead(id)
+    const store = new NotificationStore(path.dirname(runtime.notificationCenter!.store.directory))
+    await store.initialize()
+    const restarted = new NotificationCenterService(store, {
+      mutedSessions: () => [], readSession: async () => session(),
+    })
+    await restarted.hub({ type: 'session.upserted', session: session() }, true)
+    await restarted.hub({ type: 'session.upserted', session: { ...session(), status: 'idle' }, summary: true })
+    expect(await store.list()).toHaveLength(1)
+    expect(await store.unreadCount()).toBe(0)
+  })
+
+  it('replays startup pending requests and node resyncs without duplicating or resurrecting read/dismissed records', async () => {
+    const dataDirectory = await directory()
+    const pending = { ...session(), status: 'waiting' as const,
+      pendingPermission: { requestId: 'permission-1', title: 'Run?', options: [] } }
+    async function start() {
+      const store = new NotificationStore(dataDirectory)
+      await store.initialize()
+      const center = new NotificationCenterService(store, {
+        mutedSessions: () => [], readSession: async () => pending,
+      })
+      const events = Object.assign(new EventEmitter<{ event: [HubEvent] }>(), { listSessions: async () => [pending] })
+      const push = new PushNotificationService(dataDirectory)
+      await push.initialize()
+      push.setRecorder(center)
+      push.attach(events)
+      await vi.waitFor(async () => expect(await store.list()).toHaveLength(1))
+      return { store, center, events, push }
+    }
+    const first = await start()
+    const id = (await first.store.list())[0]!.id
+    await first.store.markRead(id)
+    first.push.stop()
+    await first.center.flush()
+    const second = await start()
+    second.events.emit('event', { type: 'session.upserted', session: pending, summary: true })
+    await second.center.flush()
+    expect(await second.store.unreadCount()).toBe(0)
+    await second.store.dismiss(id)
+    second.push.stop()
+    await second.center.flush()
+    const finalStore = new NotificationStore(dataDirectory)
+    await finalStore.initialize()
+    const center = new NotificationCenterService(finalStore, { mutedSessions: () => [], readSession: async () => pending })
+    await center.hub({ type: 'session.upserted', session: pending }, true)
+    await center.hub({ type: 'session.upserted', session: pending, summary: true })
+    expect(await finalStore.list()).toEqual([])
+    expect(JSON.parse(await readFile(finalStore.statePath, 'utf8')).records).toHaveLength(1)
+  })
+
+  it('persists an Oracle reply only after successful completion, never after Stop with partial output', async () => {
+    const { oracle, list } = await hub('on')
+    const user = { id: 'oracle-user', role: 'user' as const, content: 'Status?', createdAt: now }
+    const reply = { id: 'oracle-reply', role: 'assistant' as const, replyTo: user.id, content: 'Partial\n\n_(stopped)_', createdAt: now }
+    oracle.emit('event', { type: 'manager.message', message: reply })
+    expect(await list()).toEqual([])
+    oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'cancelled' } })
+    expect(await list()).toEqual([])
+    oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'running' } })
+    oracle.emit('event', { type: 'manager.message', message: { ...reply, id: 'retry-reply', content: '## **Completed** [answer](https://example.test/report)' } })
+    expect(await list()).toEqual([])
+    oracle.emit('event', { type: 'manager.message', message: { ...user, state: 'done' } })
+    expect(await list()).toEqual([expect.objectContaining({ title: 'Oracle replied', body: 'Completed answer' })])
+  })
+
+  it('keeps proactive bookkeeping out of unread records without changing ordinary Oracle push delivery', async () => {
+    const { oracle, runtime, sender, list } = await hub('on')
+    await runtime.pushService!.subscribe({
+      endpoint: 'https://push.example.test/device', expirationTime: null,
+      keys: { p256dh: 'public', auth: 'auth' },
+    })
+    for (const state of ['done', 'failed'] as const) {
+      const id = `proactive-${state}`
+      oracle.emit('event', { type: 'manager.message', message: {
+        id: `${id}-reply`, role: 'assistant', replyTo: id, content: 'Internal observation', createdAt: now,
+      } })
+      oracle.emit('event', { type: 'manager.message', message: {
+        id, role: 'user', content: 'Observe', createdAt: now, state, source: 'proactive', suppressNotification: true,
+      } })
+    }
+    expect(await list()).toEqual([])
+    expect(sender).not.toHaveBeenCalled()
+    oracle.emit('event', { type: 'manager.message', message: {
+      id: 'typed', role: 'user', content: 'Status?', createdAt: now, state: 'done',
+    } })
+    expect(await list()).toHaveLength(1)
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
+  })
+
+  it('publishes unrelated sessions and invalidations during a slow detail read and a large roster resync', async () => {
+    const { runtime, emit } = await hub('on')
+    await runtime.app.ready()
+    let finish!: (value: ManagedSession) => void
+    const passive = vi.spyOn(runtime.manager!, 'readSession').mockImplementation(() =>
+      new Promise((resolve) => { finish = resolve }))
+    const socket = await runtime.app.injectWS('/api/events', { headers: trusted })
+    const published: HubEvent[] = []
+    let delivered!: () => void
+    const delivery = new Promise<void>((resolve) => { delivered = resolve })
+    socket.on('message', (raw) => {
+      published.push(JSON.parse(String(raw)) as HubEvent)
+      if (published.some((event) => event.type === 'session.upserted' && event.session.id === 'unrelated') &&
+          published.some((event) => event.type === 'notifications.changed')) delivered()
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      emit({ type: 'session.upserted', session: { ...session('slow'), messages: [] } })
+      for (let index = 0; index < 50; index += 1) {
+        emit({ type: 'session.upserted', session: { ...session(`roster-${index}`), messages: [] }, summary: true })
+      }
+      emit({ type: 'session.upserted', session: { ...session('unrelated'), status: 'waiting',
+        pendingPermission: { requestId: 'unrelated-permission', title: 'Run?', options: [] } } })
+      // Keep the detail deadline frozen while real filesystem/socket work
+      // drains; success must not depend on timing out the unresolved read.
+      await new Promise<void>((resolve, reject) => {
+        const watchdog = setRealTimeout(() => reject(new Error('Unrelated socket publications stalled')), 5000)
+        void delivery.then(() => { clearRealTimeout(watchdog); resolve() })
+      })
+      expect(passive).toHaveBeenCalledExactlyOnceWith('computer', 'slow')
+      emit({ type: 'session.upserted', session: { ...session('slow'), status: 'idle' } })
+      emit({ type: 'computer.removed', computerId: 'computer' })
+      finish(session('slow'))
+      await runtime.notificationCenter!.flush()
+      await vi.waitFor(() => expect(published.some((event) => event.type === 'computer.removed')).toBe(true))
+      const slowStates = published.flatMap((event) =>
+        event.type === 'session.upserted' && event.session.id === 'slow' ? [event] : [])
+      expect(slowStates.filter((event) => !event.summary).map((event) => event.session.status)).toEqual(['running', 'idle'])
+      // Origin corrections may arrive between runtime states, but remain metadata-only.
+      const metadata = slowStates.filter((event) => event.summary)
+      expect(metadata.length).toBeLessThanOrEqual(1)
+      for (const event of metadata) expect(event).toMatchObject({
+        summary: true, session: { provenance: { origin: 'discovered' } },
+      })
+      expect(published.findIndex((event) => event.type === 'computer.removed'))
+        .toBeGreaterThan(published.findLastIndex((event) => event.type === 'session.upserted' && event.session.id === 'slow'))
+    } finally {
+      finish(session('slow'))
+      await runtime.notificationCenter!.flush()
+      socket.terminate()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['off', 'on'] as const)('preserves push delivery suppression with the hub flag %s', async (flag) => {
+    const { runtime, sender, oracle, emit, list } = await hub(flag)
+    await runtime.pushService!.subscribe({
+      endpoint: 'https://push.example.test/device', expirationTime: null,
+      keys: { p256dh: 'public', auth: 'auth' },
+    })
+    const titles = () => sender.mock.calls.map(([, raw]) => JSON.parse(String(raw)).title as string)
+    const settled = async () => {
+      await runtime.notificationCenter?.flush()
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    let revision = 0
+    async function scope(value: 'all' | 'oracle' | 'off') {
+      const response = await runtime.app.inject({
+        method: 'PATCH', url: '/api/settings', headers: trusted,
+        payload: { changes: { notificationScope: { value, baseRevision: revision++ } } },
+      })
+      expect(response.statusCode).toBe(200)
+    }
+    const question = (id: string) => ({ ...session(id), status: 'waiting' as const,
+      pendingUserInput: { requestId: `${id}-question`, question: 'Where?', choices: [], allowFreeform: true } })
+    await runtime.pushService!.setSessionMuted('computer', 'muted', true)
+    emit({ type: 'session.upserted', session: question('muted') })
+    await scope('oracle')
+    emit({ type: 'session.upserted', session: question('oracle-scope') })
+    emit({ type: 'error', notify: true, computerId: 'computer', message: 'Hidden health alert' })
+    const reply = (id: string) => {
+      oracle.emit('event', { type: 'manager.message', message: { id: `${id}-reply`, role: 'assistant', replyTo: id, content: 'Done', createdAt: now } })
+      oracle.emit('event', { type: 'manager.message', message: { id, role: 'user', content: 'Status?', state: 'done', createdAt: now } })
+    }
+    reply('one')
+    await vi.waitFor(() => expect(titles()).toEqual(['Oracle replied']))
+    const socket = await runtime.app.injectWS('/api/events', { headers: trusted })
+    socket.send(JSON.stringify({ type: 'presence', oracleVisible: true }))
+    await settled()
+    reply('watched')
+    // Close before disk persistence can finish: event-time presence must win.
+    socket.terminate()
+    await settled()
+    expect(titles()).toEqual(['Oracle replied'])
+    await scope('all')
+    emit({ type: 'session.upserted', session: question('visible') })
+    emit({ type: 'session.upserted', session: session('finished') })
+    emit({ type: 'session.upserted', session: { ...session('finished'), status: 'idle' } })
+    emit({ type: 'error', notify: true, computerId: 'computer', message: 'Health alert' })
+    await vi.waitFor(() => expect(titles()).toEqual([
+      'Oracle replied', 'Action needed · Review visible', 'Finished · Review finished', 'Agentic Remote needs attention',
+    ]))
+    await scope('off')
+    reply('disabled-scope')
+    emit({ type: 'session.upserted', session: question('disabled-scope') })
+    await settled()
+    expect(titles()).toHaveLength(4)
+
+    if (flag === 'on') {
+      const records = await list()
+      expect(records.find((record) => record.sessionId === 'muted')).toMatchObject({ muted: true })
+      expect(records.filter((record) => record.kind === 'oracle.message')).toHaveLength(3)
+      expect(records.find((record) => record.title === 'Oracle replied')).toBeDefined()
+    }
+  })
+})
+
+describe('notification detail scheduling', () => {
+  function center(readSession: (computerId: string, sessionId: string) => Promise<ManagedSession>) {
+    const cursors: NotificationCursors = {}
+    const records: NotificationRecord[] = []
+    const store = {
+      ingest: vi.fn(async (classify: Parameters<NotificationStore['ingest']>[0]) => { records.push(...classify(cursors)) }),
+      flush: async () => undefined,
+    }
+    return {
+      service: new NotificationCenterService(store as unknown as NotificationStore, {
+        mutedSessions: () => [], readSession,
+      }),
+      records,
+    }
+  }
+
+  it('skips roster detail reads and keeps unrelated admissions flowing before a slow read finishes', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: ManagedSession) => void
+    const read = vi.fn(() => new Promise<ManagedSession>((resolve) => { finish = resolve }))
+    const { service, records } = center(read)
+    try {
+      const slow = service.hub({ type: 'session.upserted', session: { ...session('slow'), messages: [] } })
+      const roster = Array.from({ length: 50 }, (_, index) => service.hub({
+        type: 'session.upserted', session: { ...session(`roster-${index}`), messages: [] }, summary: true,
+      }))
+      const published = vi.fn()
+      const alert = service.hub({ type: 'error', notify: true, message: 'Unrelated alert' }).then(published)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(published).toHaveBeenCalledOnce()
+      expect(records).toEqual([expect.objectContaining({ kind: 'host.alert' })])
+      expect(read).toHaveBeenCalledExactlyOnceWith('computer', 'slow')
+      finish(session('slow'))
+      await Promise.all([slow, alert, ...roster])
+    } finally {
+      finish?.(session('slow'))
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('coalesces reads per session and bounds their deadlines and actual concurrency even after timeout', async () => {
+    vi.useFakeTimers()
+    const finishes: Array<(value: ManagedSession) => void> = []
+    const read = vi.fn(() => new Promise<ManagedSession>((resolve) => { finishes.push(resolve) }))
+    const { service } = center(read)
+    try {
+      const admissions = Array.from({ length: 50 }, (_, index) => service.hub({
+        type: 'session.upserted', session: { ...session(`slow-${index}`), messages: [] },
+      }))
+      for (let index = 0; index < 20; index += 1) {
+        admissions.push(service.hub({ type: 'session.upserted', session: { ...session('slow-0'), messages: [] } }))
+      }
+      await vi.advanceTimersByTimeAsync(0)
+      expect(read).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(1000)
+      await Promise.all(admissions)
+      const later = service.hub({ type: 'session.upserted', session: { ...session('later'), messages: [] } })
+      await vi.advanceTimersByTimeAsync(1000)
+      await later
+      expect(read).toHaveBeenCalledTimes(2)
+    } finally {
+      for (const finish of finishes) finish(session())
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a session completion behind its own earlier root read without blocking another session', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: ManagedSession) => void
+    const { service, records } = center(() => new Promise((resolve) => { finish = resolve }))
+    try {
+      const active = session('slow')
+      const running = service.hub({ type: 'session.upserted', session: { ...active, messages: [], revision: 1 } })
+      const completed = service.hub({ type: 'session.upserted', session: { ...active, status: 'idle', revision: 2 } })
+      const other = service.hub({ type: 'session.upserted', session: { ...session('other'), status: 'waiting',
+        pendingPermission: { requestId: 'p', title: 'Run?', options: [] } } })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(records.map((record) => record.sessionId)).toEqual(['other'])
+      finish({ ...active, revision: 1 })
+      await Promise.all([running, completed, other])
+      expect(records.map((record) => record.sessionId)).toEqual(['other', 'slow'])
+      expect(records[1].kind).toBe('session.completed')
+    } finally {
+      finish?.(session('slow'))
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+})

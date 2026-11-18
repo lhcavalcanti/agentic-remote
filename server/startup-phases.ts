@@ -19,6 +19,7 @@ export interface StartupPhaseRecord {
 
 export interface StartupPhases {
   run<T>(phase: string, work: () => Promise<T>): Promise<T>
+  snapshot?(): StartupPhaseRecord[]
 }
 
 /** Runs each phase unchanged and records nothing. */
@@ -64,8 +65,14 @@ export function createStartupPhases({
   now?: () => number
   write?: (line: string) => void
 } = {}): StartupPhases {
-  const emit = (record: StartupPhaseRecord) => write(JSON.stringify(record))
+  const records: StartupPhaseRecord[] = []
+  const emit = (record: StartupPhaseRecord) => {
+    records.push(record)
+    if (records.length > 256) records.shift()
+    write(JSON.stringify(record))
+  }
   return {
+    snapshot: () => records.map((record) => ({ ...record })),
     run<T>(phase: string, work: () => Promise<T>): Promise<T> {
       let began: number | undefined
       quietly(() => {

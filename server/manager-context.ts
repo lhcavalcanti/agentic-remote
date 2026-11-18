@@ -138,6 +138,7 @@ function cachedReply(latest: NonNullable<DreamerProgressEntry['latest']>, now: D
 function originLabel(entry: RegistryEntry | undefined): string {
   if (entry?.origin === 'manager') return 'started by you (manager)'
   if (entry?.origin === 'user') return 'started by the user'
+  if (entry?.origin === 'schedule') return 'started by a schedule (not owned by you)'
   return 'existing'
 }
 
@@ -274,6 +275,10 @@ function changeLines(changes: JournalEntry[], registry: ManagerRegistry, limit: 
   const lines: string[] = []
   const statusRuns = new Map<string, JournalEntry[]>()
   for (const change of changes) {
+    if (change.kind === 'schedule-proposal') {
+      lines.push(`- ${clock(change.at)} schedule proposal ${change.proposalId}: ${oneLine(change.title ?? '', 240)} · ${change.proposalStatus}${change.to ? ` · ${oneLine(change.to, 200)}` : ''}`)
+      continue
+    }
     if (change.kind === 'status') {
       const key = registryKey(change.computerId, change.sessionId)
       const run = statusRuns.get(key)
@@ -289,7 +294,8 @@ function changeLines(changes: JournalEntry[], registry: ManagerRegistry, limit: 
     if (change.kind === 'created') {
       const entry = registry[registryKey(change.computerId, change.sessionId)]
       const where = change.computerName ? ` on ${change.computerName}` : ''
-      const who = entry?.origin === 'manager' ? ' by you (manager)' : entry?.origin === 'user' ? ' by the user' : ''
+      const who = entry?.origin === 'manager' ? ' by you (manager)' : entry?.origin === 'user' ? ' by the user'
+        : entry?.origin === 'schedule' ? ' by a schedule (not owned by you)' : ''
       lines.push(`- ${clock(change.at)} created "${oneLine(change.title ?? change.sessionId, 80)}" (${change.sessionId}${where})${who}`)
     } else if (change.kind === 'renamed') {
       lines.push(`- ${clock(change.at)} renamed ${change.sessionId}: "${oneLine(change.from ?? '', 80)}" → "${oneLine(change.to ?? '', 80)}"`)

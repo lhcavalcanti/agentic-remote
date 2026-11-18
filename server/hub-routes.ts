@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
+import { launchIdentitySchema, cancellationAckSchema } from '../shared/launch-identity.js'
 import {
   SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
   SIDE_QUESTION_EARLIER_LIMIT,
@@ -7,6 +8,7 @@ import {
 } from './side-question.js'
 import type {
   HubEvent,
+  ManagedSession,
   HubResyncRequest,
   SessionOrderSnapshot,
   WorkspaceFile,
@@ -28,6 +30,11 @@ import type { SessionOrderStore } from './session-order-store.js'
 import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
 import type { ClientPresence } from './client-presence.js'
+import type { NotificationCenterService } from './notification-center-service.js'
+import type { SchedulerStore } from './scheduler-store.js'
+import type { ScheduleNotificationService } from './schedule-notification-service.js'
+import type { ManagerStore } from './manager-store.js'
+import { sessionProvenanceProjection } from './session-provenance.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
@@ -83,6 +90,7 @@ const sideQuestionSchema = z.object({
 
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
+  launchId: launchIdentitySchema.optional(),
   provider: z.enum(['copilot', 'claude']).default('copilot'),
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
@@ -109,6 +117,7 @@ const renameSessionSchema = z.object({
 })
 
 const sendMessageSchema = z.object({
+  deliveryId: launchIdentitySchema.optional(),
   acknowledgesFailure: z.string().max(64).optional(),
   content: z
     .string()
@@ -403,8 +412,40 @@ export async function registerHubRoutes(
   settingsProfile?: SettingsProfileStore,
   presence?: ClientPresence,
   oracleVoice?: OracleVoiceRouteOptions,
+  notifications?: NotificationCenterService,
+  scheduler?: SchedulerStore,
+  scheduleNotifications?: ScheduleNotificationService,
+  isScheduledSession?: (session: ManagedSession) => boolean,
+  provenance?: Pick<ManagerStore, 'sessionProvenance'> & Partial<Pick<ManagerStore, 'recordUserSession' | 'recordSessionReplacement'>>,
 ): Promise<void> {
+  const projection = sessionProvenanceProjection(provenance, scheduler)
+  app.addHook('preSerialization', async (_request, _reply, payload) => projection.reply(payload))
+  const sessionForClient = (session: ManagedSession): ManagedSession => {
+    const result = { ...session }
+    delete result.suppressOrdinaryNotifications
+    if (isScheduledSession?.(session)) result.suppressOrdinaryNotifications = true
+    return result
+  }
+  if (scheduler) {
+    app.addHook('preSerialization', async (_request, _reply, payload) => {
+      if (!payload || typeof payload !== 'object') return payload
+      const response = payload as { session?: ManagedSession; sessions?: ManagedSession[] }
+      if (response.session?.computerId) response.session = sessionForClient(response.session)
+      if (Array.isArray(response.sessions) && response.sessions.every((session) =>
+        session && typeof session === 'object' && typeof session.id === 'string' && typeof session.computerId === 'string')) {
+        response.sessions = response.sessions.map(sessionForClient)
+      }
+      return payload
+    })
+  }
   const policy = originPolicy()
+  const markSessionNotificationsRead = async (computerId: string, sessionId: string): Promise<void> => {
+    try {
+      await notifications?.sessionOpened(computerId, sessionId)
+    } catch (error) {
+      app.log.error({ err: error, computerId, sessionId }, 'Session opened but its notifications could not be marked read')
+    }
+  }
   // Assigned once the socket set exists further down. Until then a committed
   // order is still persisted and returned; only the push to other clients is
   // skipped, which is what a client's own response already told it.
@@ -669,6 +710,9 @@ export async function registerHubRoutes(
           request.params.computerId,
           request.params.sessionId,
         )
+      if (request.query.passive !== '1') {
+        await markSessionNotificationsRead(request.params.computerId, request.params.sessionId)
+      }
       return { session }
     },
   )
@@ -798,8 +842,12 @@ export async function registerHubRoutes(
     '/api/computers/:computerId/sessions',
     async (request, reply) => {
       const input = createSessionSchema.parse(request.body)
+      const session = await manager.createSession(request.params.computerId, input)
+      try { await provenance?.recordUserSession?.(session) }
+      catch (error) { app.log.error({ err: error }, 'Session was created but its launch origin could not be saved') }
+      manager.emit('event', { type: 'session.upserted', session })
       return reply.code(201).send({
-        session: await manager.createSession(request.params.computerId, input),
+        session,
       })
     },
   )
@@ -817,12 +865,14 @@ export async function registerHubRoutes(
 
   app.post<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/open',
-    async (request) => ({
-      session: await manager.activateSession(
+    async (request) => {
+      const session = await manager.activateSession(
         request.params.computerId,
         request.params.sessionId,
-      ),
-    }),
+      )
+      await markSessionNotificationsRead(request.params.computerId, request.params.sessionId)
+      return { session }
+    },
   )
 
   app.patch<{ Params: SessionParams }>(
@@ -893,6 +943,12 @@ export async function registerHubRoutes(
         }
       }
       await Promise.all([
+        carryMetadata(
+          () => session.id !== sessionId
+            ? provenance?.recordSessionReplacement?.(computerId, sessionId, session.id)
+            : undefined,
+          `${completed}, but its session origin could not be saved.`,
+        ),
         carryMetadata(
           () => carryKnowledge?.(sessionId, session),
           `${completed}, but its Knowledge folder metadata could not be saved. Open Knowledge or reload to retry.`,
@@ -1090,13 +1146,35 @@ export async function registerHubRoutes(
     '/api/computers/:computerId/sessions/:sessionId/messages',
     async (request, reply) => {
       const input = sendMessageSchema.parse(request.body)
+      const session = await manager.sendMessage(
+        request.params.computerId,
+        request.params.sessionId,
+        input,
+      )
       return reply.code(202).send({
-        session: await manager.sendMessage(
-          request.params.computerId,
-          request.params.sessionId,
-          input,
-        ),
+        session,
+        ...(input.deliveryId !== undefined ? {
+          receipt: session.promptReceipts?.find((receipt) => receipt.deliveryId === input.deliveryId),
+        } : {}),
       })
+    },
+  )
+
+  app.get<{ Params: { computerId: string; launchId: string } }>(
+    '/api/computers/:computerId/launches/:launchId',
+    async (request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return { launch: await manager.reconcileLaunch(
+        request.params.computerId, launchIdentitySchema.parse(request.params.launchId),
+      ) ?? null }
+    },
+  )
+
+  app.post<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/cancel-with-ack',
+    async (request) => {
+      const { timeoutMs } = cancellationAckSchema.parse(request.body ?? {})
+      return manager.cancelWithAck(request.params.computerId, request.params.sessionId, timeoutMs)
     },
   )
 
@@ -1238,11 +1316,54 @@ export async function registerHubRoutes(
       presence?.remove(socket)
     })
   })
+  const broadcasts = new Map<string, { computerId?: string; promise: Promise<void> }>()
   const broadcast = (event: HubEvent) => {
-    publications.broadcast(event)
+    const outgoing = projection.reply(scheduler && event.type === 'session.upserted'
+      ? { ...event, session: sessionForClient(event.session) } : event)
+    if (!notifications) {
+      publications.broadcast(outgoing)
+      return
+    }
+    const admitted = notifications.admission(event)
+    const computerId = event.type === 'session.upserted' ? event.session.computerId
+      : event.type === 'computer.updated' ? event.computer.id : 'computerId' in event ? event.computerId : undefined
+    const sessionId = event.type === 'session.upserted' ? event.session.id : 'sessionId' in event ? event.sessionId : undefined
+    const computerKey = JSON.stringify(['computer', computerId])
+    const key = sessionId ? JSON.stringify(['session', computerId, sessionId])
+      : event.type === 'computer.updated' || event.type === 'computer.removed' ? computerKey
+        : event.type.startsWith('manager.') ? 'oracle' : event.type
+    const previous = [broadcasts.get(key)?.promise, computerId ? broadcasts.get(computerKey)?.promise : undefined]
+    if (event.type === 'computer.removed') {
+      previous.push(...[...broadcasts.values()].filter((entry) => entry.computerId === computerId).map((entry) => entry.promise))
+    } else if (event.type === 'session.order.updated') {
+      previous.push(...[...broadcasts.values()].filter((entry) => entry.computerId !== undefined).map((entry) => entry.promise))
+    }
+    // Preserve each session's metadata/transcript order and computer retirement
+    // barriers, without letting one passive detail read stall unrelated streams.
+    const entry = {
+      computerId,
+      promise: Promise.all(previous).then(async () => {
+        try {
+          await admitted
+        } catch (error) {
+          app.log.error({ err: error }, 'Could not persist the notification for a hub event')
+        }
+        publications.broadcast(outgoing)
+      }).catch((error: unknown) => {
+        app.log.error({ err: error }, 'Could not broadcast a hub event')
+      }),
+    }
+    broadcasts.set(key, entry)
+    void entry.promise.then(() => {
+      if (broadcasts.get(key) === entry) broadcasts.delete(key)
+    })
   }
   manager.on('event', broadcast)
   managerEvents?.on('event', broadcast)
+  notifications?.store.on('changed', broadcast)
+  scheduler?.on('changed', broadcast)
+  scheduler?.on('proposal', broadcast)
+  scheduleNotifications?.on('event', broadcast)
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
   publishSettings = (settings) => broadcast({ type: 'settings.updated', settings })
@@ -1351,9 +1472,14 @@ export async function registerHubRoutes(
     closed = true
     manager.off('event', broadcast)
     managerEvents?.off('event', broadcast)
+    notifications?.store.off('changed', broadcast)
+    scheduler?.off('changed', broadcast)
+    scheduler?.off('proposal', broadcast)
+    scheduleNotifications?.off('event', broadcast)
     manager.off('event', trackOrder)
     // Drain in-flight order work so a closing app leaves no write behind it.
     await seeding
     await orderWork
+    await Promise.all([...broadcasts.values()].map((entry) => entry.promise))
   })
 }

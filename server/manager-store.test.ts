@@ -1,7 +1,8 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagerMessage } from '../shared/manager.js'
 import { ManagerStore } from './manager-store.js'
 
@@ -24,6 +25,59 @@ describe('ManagerStore', () => {
     await store.initialize()
     return store
   }
+
+  it('notifies only committed projection changes, including schedule run changes, and never on load', async () => {
+    const store = await open()
+    const notifications: Array<{ keys: string[]; origin: string }> = []
+    const unsubscribe = store.onSessionProvenanceChanged((sessions) => {
+      notifications.push({
+        keys: sessions.map(({ computerId, sessionId }) => `${computerId}:${sessionId}`),
+        origin: JSON.parse(readFileSync(path.join(root, 'manager', 'sessions.json'), 'utf8'))['c:live'].origin,
+      })
+    })
+    await store.updateRegistry((registry) => {
+      registry['c:live'] = { computerId: 'c', sessionId: 'live', title: 'Legacy', origin: 'user', firstSeenAt: 'x' }
+    })
+    expect(notifications).toEqual([])
+    const writing = store.updateRegistry((registry) => { registry['c:live'].originEvidence = 'launch' })
+    expect(notifications).toEqual([])
+    await writing
+    await store.updateRegistry((registry) => { registry['c:live'].title = 'Title only' })
+    expect(notifications).toEqual([{ keys: ['c:live'], origin: 'user' }])
+    await store.updateRegistry((registry) => {
+      Object.assign(registry['c:live'], { origin: 'schedule', scheduleId: 'daily', scheduleRunId: 'first' })
+    })
+    await store.updateRegistry((registry) => { registry['c:live'].scheduleRunId = 'second' })
+    expect(notifications).toHaveLength(3)
+    expect(notifications.slice(1)).toEqual([
+      { keys: ['c:live'], origin: 'schedule' }, { keys: ['c:live'], origin: 'schedule' },
+    ])
+    unsubscribe()
+    await store.updateRegistry((registry) => { registry['c:live'].origin = 'manager' })
+    const bytes = await readFile(path.join(root, 'manager', 'sessions.json'), 'utf8')
+    const reopened = new ManagerStore(path.join(root, 'manager'))
+    let notifiedOnLoad = false
+    reopened.onSessionProvenanceChanged(() => { notifiedOnLoad = true })
+    await reopened.initializeSessionRegistry()
+    expect(await readFile(path.join(root, 'manager', 'sessions.json'), 'utf8')).toBe(bytes)
+    expect(notifications).toHaveLength(3)
+    expect(notifiedOnLoad).toBe(false)
+  })
+
+  it('does not notify failed writes and compares recovery against the last committed projection', async () => {
+    const store = await open()
+    const changes: string[][] = []
+    store.onSessionProvenanceChanged((sessions) => { changes.push(sessions.map(({ sessionId }) => sessionId)) })
+    const file = path.join(root, 'manager', 'sessions.json')
+    await mkdir(file)
+    await expect(store.updateRegistry((registry) => {
+      registry['c:live'] = { computerId: 'c', sessionId: 'live', title: 'Task', origin: 'manager', firstSeenAt: 'x' }
+    })).rejects.toThrow()
+    expect(changes).toEqual([])
+    await rm(file, { recursive: true })
+    await store.updateRegistry((registry) => { registry['c:live'].title = 'Retry' })
+    expect(changes).toEqual([['live']])
+  })
 
   it('starts empty and persists state across reopen', async () => {
     const store = await open()
@@ -254,6 +308,29 @@ describe('ManagerStore', () => {
       registry['c:live'] = { computerId: 'c', sessionId: 'live', title: 'Live', origin: 'manager', firstSeenAt: 'x' }
     })
     expect(Object.keys(store.registry()).sort()).toEqual(['c:live', 'c:r2', 'c:r3'])
+  })
+
+  it.each(['{broken', '{"version":1,"proposals":{"old":"invalid"}}'])('quarantines a corrupt proposal journal and retains the legacy cutoff: %s', async (corrupt) => {
+    const seed = await open({ journalLimit: 2, journalKeep: 1 })
+    for (let index = 0; index < 3; index++) await seed.appendJournal([{ kind: 'status', computerId: 'c', sessionId: 's', to: 'idle' }])
+    await writeFile(path.join(seed.directory, 'proposal-journal.json'), corrupt)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const store = await open()
+      const files = await readdir(store.directory)
+      expect(files.filter((name) => /^proposal-journal\.json\.corrupt-[a-f0-9-]{36}$/.test(name))).toHaveLength(1)
+      expect(warn).toHaveBeenCalledOnce()
+      const entry = {
+        kind: 'schedule-proposal' as const, proposalId: 'old', proposalStatus: 'pending', title: 'Old proposal',
+        computerId: 'c', sessionId: 's',
+      }
+      expect(await store.appendProposalJournal([{ entry, createdAt: new Date(clock - 1000).toISOString(), persistedStatus: 'pending' }])).toEqual([])
+      expect(await store.appendProposalJournal([{
+        entry: { ...entry, proposalStatus: 'approved' }, createdAt: new Date(clock - 1000).toISOString(), persistedStatus: 'pending',
+      }])).toHaveLength(1)
+      await open()
+      expect(warn).toHaveBeenCalledOnce()
+    } finally { warn.mockRestore() }
   })
 
   it('sets a corrupt state file aside instead of failing to start', async () => {

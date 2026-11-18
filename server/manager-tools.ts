@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
+import { scheduleCreateSchema, scheduleRunListSchema, scheduleUpdateSchema } from '../shared/schedules.js'
+import { scheduleProposalSummary, type ScheduleProposalInput } from '../shared/schedule-proposals.js'
+import type { SchedulerStore } from './scheduler-store.js'
 import type {
   AgentMode,
   AgentProvider,
@@ -26,7 +29,6 @@ import type {
 import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
 import { ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH } from '../shared/oracle-task.js'
 import { DEFAULT_SESSION_PROVIDER, type NewSessionRuntime } from '../shared/settings-profile.js'
-import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import { CLOSED_SESSION_RETENTION_DAYS, closedSessionExpiresAt } from '../shared/closed-sessions.js'
 import { quoted, rosterLine } from './manager-context.js'
 import { ManagerMemoryError, type ManagerMemory } from './manager-memory.js'
@@ -35,6 +37,14 @@ import {
 } from './manager-structured-memory-search.js'
 import type { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import { registryKey, type ManagerRegistry } from './manager-store.js'
+import { oracleHostStatus } from './host-telemetry/oracle-status.js'
+import type { HostTelemetryTarget } from './host-telemetry/service.js'
+import {
+  SessionLauncher,
+  SessionLaunchPreparationError,
+  type SessionLaunch,
+  type SessionLaunchInput,
+} from './session-launcher.js'
 
 type ContextTier = NewSessionRuntime['contextTier']
 
@@ -46,8 +56,13 @@ export interface ManagerSkillSummary {
 
 /** What the manager's tools act on. Backed by the hub's ComputerManager. */
 export interface ManagerToolHost {
+  /** Present only on scheduler-enabled hubs. No direct scheduler mutation tools. */
+  scheduler?: () => SchedulerStore | undefined
+  schedulerAllowAllForOracle?: () => boolean
   computers(): ComputerSummary[]
   findComputer(nameOrId: string): ComputerSummary | undefined
+  /** Undefined targets explicitly report disabled monitoring without reading the host. */
+  hostTelemetryTarget?(computerId: string): Promise<HostTelemetryTarget | undefined>
   listSessions(): Promise<ManagedSession[]>
   listHistory(): Promise<ManagedSession[]>
   /** Sessions closed through the app that can still be reopened, newest first. */
@@ -189,7 +204,11 @@ class ToolFailure extends Error {}
 export type ManagerToolMutability = 'read' | 'mutation'
 
 const VOICE_READ_ONLY_TOOLS = new Set([
+  'list_schedules',
+  'get_schedule',
+  'list_schedule_runs',
   'list_computers',
+  'get_host_status',
   'list_models',
   'list_sessions',
   'list_closed_sessions',
@@ -336,7 +355,6 @@ function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit)}… (truncated)` : text
 }
 
-const FOLDER_TRUST_PREFIX = 'Trust folder for this session:'
 const APPROVE_WORDS = new Set(['allow', 'approve', 'accept', 'yes', 'trust', 'ok', 'continue'])
 const DECLINE_WORDS = new Set(['deny', 'reject', 'decline', 'no', 'stop', 'cancel'])
 
@@ -349,26 +367,6 @@ function permissionOption(permission: PendingPermission, response: string) {
   if (APPROVE_WORDS.has(wanted)) return permission.options.find((option) => option.kind.startsWith('allow'))
   if (DECLINE_WORDS.has(wanted)) return permission.options.find((option) => option.kind.startsWith('reject'))
   return undefined
-}
-
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-/**
- * The folder a genuine Copilot folder-trust prompt names, joined back where
- * the terminal wrapped it. Anything else that merely starts with the same
- * words, such as a command's permission, is not one.
- */
-function trustedFolderOf(permission: PendingPermission): string | undefined {
-  if (permission.stale || permission.kind !== 'terminal' || permission.choiceCount !== 3) return undefined
-  if (!permission.title.startsWith(FOLDER_TRUST_PREFIX)) return undefined
-  const [allow, stop, ...rest] = permission.options
-  if (rest.length || allow?.optionId !== 'terminal:allow' || allow.name !== 'Trust for this session'
-    || stop?.optionId !== 'terminal:stop') return undefined
-  return permission.title.slice(FOLDER_TRUST_PREFIX.length).split('\n').map((part) => part.trim()).join('')
-}
-
-function sameFolder(left: string, right: string): boolean {
-  return left.replace(/\/+$/, '') === right.replace(/\/+$/, '')
 }
 
 function describeField(field: UserInputField): string {
@@ -387,41 +385,27 @@ export function createManagerTools(
   onActivity: (activity: ManagerToolActivity) => void,
   timing: { pollMs?: number; trustWaitMs?: number } = {},
 ): ManagerTool[] {
-  const pollMs = timing.pollMs ?? 250
-  const trustWaitMs = timing.trustWaitMs ?? 10_000
-
-  /**
-   * Answers the folder-trust prompt a session opens on, as the user would for
-   * a folder they chose, and waits for it to go. Without `waitMs` it only
-   * looks once. True when a prompt was answered.
-   */
-  async function trustFolder(session: ManagedSession, waitMs = 0): Promise<boolean> {
-    const deadline = Date.now() + waitMs
-    for (;;) {
-      const detail = await host.readSession(session.computerId, session.id).catch(() => undefined)
-      const permission = detail?.pendingPermission
-      const folder = permission && trustedFolderOf(permission)
-      // Only the folder the session was given; any other prompt is left to answer_session.
-      if (permission && folder && sameFolder(folder, detail.cwd || session.cwd)) {
-        await host.replyPermission(session.computerId, session.id, permission.requestId, 'terminal:allow')
-        onActivity({
-          tool: 'trust_folder',
-          content: `Trusted ${folder} for "${session.title}"`,
-          sessionRefs: [ref(session)],
-        })
-        // Copilot takes a moment to act on the answer; until then the prompt is still showing.
-        const settled = Date.now() + trustWaitMs
-        while (Date.now() < settled) {
-          const next = await host.readSession(session.computerId, session.id).catch(() => undefined)
-          if (next?.pendingPermission?.requestId !== permission.requestId) break
-          await delay(pollMs)
-        }
-        return true
-      }
-      if (Date.now() >= deadline) return false
-      await delay(pollMs)
-    }
-  }
+  const launcher = new SessionLauncher<{ task: string }>({
+    createSession: (computerId, input) => host.createSession(computerId, input),
+    renameSession: (computerId, sessionId, input) => host.renameSession(computerId, sessionId, input.title),
+    readSession: (computerId, sessionId) => host.readSession(computerId, sessionId),
+    sendMessage: (computerId, sessionId, input) => input.enqueue === false
+      ? host.sendMessage(computerId, sessionId, input.content, { steer: true })
+      : host.sendMessage(computerId, sessionId, input.content),
+    replyPermission: (computerId, sessionId, requestId, input) =>
+      host.replyPermission(computerId, sessionId, requestId, input.optionId),
+    replyUserInput: (computerId, sessionId, requestId, input) =>
+      host.replyUserInput(computerId, sessionId, requestId, input),
+    cancel: (computerId, sessionId) => host.cancel(computerId, sessionId),
+  }, {
+    ...timing,
+    recordProvenance: (session, provenance) => host.markManaged(session, provenance.task),
+    onFolderTrusted: (session, folder) => onActivity({
+      tool: 'trust_folder',
+      content: `Trusted ${folder} for "${session.title}"`,
+      sessionRefs: [ref(session)],
+    }),
+  })
 
   function deliveredPromptIdentity(
     before: ManagedSession,
@@ -466,40 +450,6 @@ export function createManagerTools(
         !previousIds.has(message.id),
     )
     return delivered ? { promptId: delivered.id } : undefined
-  }
-
-  /** Delivers a message, first answering a folder-trust prompt, and once more if one appears. */
-  async function deliver(session: ManagedSession, content: string): Promise<ManagedSession> {
-    await trustFolder(session)
-    try {
-      return await host.sendMessage(session.computerId, session.id, content)
-    } catch (error) {
-      if (!(await trustFolder(session, trustWaitMs))) throw error
-      return await host.sendMessage(session.computerId, session.id, content)
-    }
-  }
-
-  /**
-   * Steers a busy session. Only a refusal that certainly sent nothing falls back to its queue, so
-   * a steer that may have been typed is never sent a second time.
-   */
-  async function steer(
-    session: ManagedSession,
-    content: string,
-  ): Promise<{ outcome: 'steered' | 'queued'; delivered: ManagedSession }> {
-    try {
-      const delivered = await host.sendMessage(
-        session.computerId,
-        session.id,
-        content,
-        { steer: true },
-      )
-      return { outcome: 'steered', delivered }
-    } catch (error) {
-      if (deliveryUncertaintyFromError(error) !== false) throw error
-      const delivered = await host.sendMessage(session.computerId, session.id, content)
-      return { outcome: 'queued', delivered }
-    }
   }
 
   function proactiveSessionAllowed(session: ManagedSession): boolean {
@@ -738,6 +688,79 @@ export function createManagerTools(
     confidence: z.number().min(0).max(1).optional(),
     validFrom: z.iso.datetime({ offset: true }).optional(),
     validUntil: z.iso.datetime({ offset: true }).optional(),
+  }
+
+  function scheduleTools(): ManagerTool[] {
+    if (!host.scheduler) return []
+    const scheduleStore = () => {
+      const store = host.scheduler?.()
+      if (!store) throw new ToolFailure('Scheduler is unavailable on this hub.')
+      return store
+    }
+    const propose = async (input: ScheduleProposalInput) => {
+      const proposal = await scheduleStore().propose(input, host.schedulerAllowAllForOracle?.() === true)
+      const summary = scheduleProposalSummary(proposal)
+      onActivity({ tool: `schedule.${input.operation}`, content: `Approval required · ${summary} · proposal ${proposal.id}` })
+      return JSON.stringify({ proposalId: proposal.id, status: proposal.status, summary, approvalRequired: true })
+    }
+    const scheduleIdentity = { scheduleId: z.string().min(1).max(200), revision: z.number().int().positive() }
+    const boundedPage = (key: 'schedules' | 'runs', rows: object[], total: number, offset: number) => {
+      const selected: object[] = []
+      for (const row of rows) {
+        if (JSON.stringify([...selected, row]).length > 12_000) break
+        selected.push(row)
+      }
+      return JSON.stringify({
+        [key]: selected, total, nextOffset: offset + selected.length < total ? offset + selected.length : null,
+        notice: `${total - selected.length} records not shown. Summaries only; use get_schedule for exact schedule prompts and targets.`,
+      })
+    }
+    return [
+      define('list_schedules', 'Read bounded schedule summaries; use get_schedule for exact details. Oracle-created schedules are not Oracle-owned sessions.',
+        z.object({ archived: z.boolean().optional(), offset: z.number().int().min(0).max(1_000_000).default(0) }).strict(),
+        async ({ archived, offset }) => {
+          const schedules = scheduleStore().list(archived)
+          return boundedPage('schedules', schedules.slice(offset, offset + 20).map((schedule) => ({
+            id: schedule.id, name: schedule.name.slice(0, 120), revision: schedule.revision,
+            enabled: schedule.enabled, archived: schedule.archived, createdBy: schedule.createdBy,
+            computerId: schedule.target.computerId, provider: schedule.target.provider,
+            recurrence: schedule.recurrence, timezone: schedule.timezone,
+          })), schedules.length, offset)
+        }),
+      define('get_schedule', 'Read one schedule without running or changing it.',
+        z.object({ scheduleId: scheduleIdentity.scheduleId }).strict(),
+        async ({ scheduleId }) => JSON.stringify(scheduleStore().get(scheduleId))),
+      define('list_schedule_runs', 'Read a bounded page of runs, optionally for one schedule.',
+        scheduleRunListSchema.extend({ scheduleId: scheduleIdentity.scheduleId.optional() }),
+        async ({ scheduleId, ...page }) => {
+          const result = scheduleStore().listRuns({ ...page, limit: Math.min(page.limit, 20) }, scheduleId)
+          return boundedPage('runs', result.runs.map((run) => ({
+            id: run.id, scheduleId: run.scheduleId, status: run.status, trigger: run.trigger,
+            occurrenceAt: run.occurrenceAt, sessionId: run.sessionId, computerId: run.computerId,
+            startedAt: run.startedAt, endedAt: run.endedAt,
+            summary: run.summary?.slice(0, 280), error: run.error?.slice(0, 280),
+          })), result.total, page.offset)
+        }),
+      define('create_schedule', 'Propose a new schedule. Nothing applies until the user approves the exact proposal.',
+        scheduleCreateSchema,
+        async (payload) => propose({ operation: 'create', payload }), { actsOnSessions: true }),
+      define('update_schedule', 'Propose exact schedule changes at a revision. User approval is always required.',
+        z.object({ ...scheduleIdentity, changes: scheduleUpdateSchema.omit({ revision: true }) }).strict(),
+        async ({ scheduleId, revision, changes }) => propose({ operation: 'update', scheduleId, baseRevision: revision, payload: changes }),
+        { actsOnSessions: true }),
+      define('set_schedule_enabled', 'Propose enabling or disabling a schedule. User approval is always required.',
+        z.object({ ...scheduleIdentity, enabled: z.boolean() }).strict(),
+        async ({ scheduleId, revision, enabled }) => propose({ operation: enabled ? 'enable' : 'disable', scheduleId, baseRevision: revision, payload: {} }),
+        { actsOnSessions: true }),
+      define('run_schedule_now', 'Propose running a schedule now. No run is admitted before user approval.',
+        z.object(scheduleIdentity).strict(),
+        async ({ scheduleId, revision }) => propose({ operation: 'run-now', scheduleId, baseRevision: revision, payload: {} }),
+        { actsOnSessions: true }),
+      define('archive_schedule', 'Propose archiving a schedule, never deleting it. User approval is always required.',
+        z.object(scheduleIdentity).strict(),
+        async ({ scheduleId, revision }) => propose({ operation: 'archive', scheduleId, baseRevision: revision, payload: {} }),
+        { actsOnSessions: true }),
+    ]
   }
 
   function structuredTools(): ManagerTool[] {
@@ -1023,6 +1046,25 @@ export function createManagerTools(
 
   return [
     ...proactiveTools,
+    ...(host.hostTelemetryTarget ? [define(
+      'get_host_status',
+      'Read host CPU, memory, data-mount disk space, load, sample age, and the top 5 processes with proven owner labels. Use this when the user asks why the hub or a computer is slow. Omit computerId for a bounded summary across computers. Read-only; requires host monitoring on the hub and owning computer.',
+      z.object({
+        computerId: computerField.optional().describe('Computer id or name; omit for a summary across computers.'),
+      }).strict(),
+      async ({ computerId }) => {
+        const computer = computerId ? host.findComputer(computerId) : undefined
+        if (computerId && !computer) {
+          throw new ToolFailure('Host status is not available on this computer; call list_computers for a valid computerId.')
+        }
+        return oracleHostStatus(
+          computer ? [computer] : host.computers(),
+          (id) => host.hostTelemetryTarget!(id),
+          () => host.now().getTime(),
+        )
+      },
+    )] : []),
+    ...scheduleTools(),
     define(
       'list_computers',
       'List the computers sessions can run on, whether each is online, and which providers it offers.',
@@ -1144,7 +1186,7 @@ export function createManagerTools(
       }),
       async ({ sessionId, computer, messages }) => {
         const found = await resolveSession(sessionId, computer, { history: true })
-        const detail = await host.readSession(found.computerId, found.id)
+        const detail = await launcher.observeSession(found)
         const lines = [describeSession({ ...detail, isOpen: found.isOpen }), ...pendingRequests(detail)]
         if (detail.queuedPrompts?.length) {
           lines.push(`Queued prompts: ${detail.queuedPrompts.map((prompt) => truncate(prompt.content, 200)).join(' | ')}`)
@@ -1272,11 +1314,15 @@ export function createManagerTools(
             }
           }
         }
-        const input = (): CreateSessionInput => ({
-          cwd: args.cwd ?? (host.sessionFolders()[computer.id] || defaults.folders?.[computer.id]?.trim() || '~'),
+        const input = (): SessionLaunchInput<{ task: string }> => ({
+          computerId: computer.id,
+          folder: args.cwd ?? (host.sessionFolders()[computer.id] || defaults.folders?.[computer.id]?.trim() || '~'),
           provider,
-          terminalBacked: capability?.terminalBacked === true && host.sessionBackend() === 'terminal',
-          allowAllPermissions: true,
+          backend: capability?.terminalBacked === true && host.sessionBackend() === 'terminal' ? 'terminal' : 'sdk',
+          permissionPolicy: 'allow-all',
+          folderTrust: 'auto-approve',
+          title: sessionTitle(args.title),
+          provenance: { task: args.prompt },
           ...(mode ? { mode } : {}),
           ...(model ? { model } : {}),
           ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -1292,8 +1338,8 @@ export function createManagerTools(
           }
         }
         const readContextChoices = (tier: ContextTier) => readChoices((models) => contextChoices(models, provider, tier))
-        let created: ManagedSession | undefined
-        while (!created) {
+        let launch: SessionLaunch | undefined
+        while (!launch) {
           // Copilot takes a context size only with a model, which is never
           // chosen here, so a larger window asked for without one goes back.
           if (args.contextTier === 'long_context' && !model) {
@@ -1305,8 +1351,9 @@ export function createManagerTools(
             )
           }
           try {
-            created = await host.createSession(computer.id, input())
+            launch = await launcher.createSession(input())
           } catch (error) {
+            if (error instanceof SessionLaunchPreparationError) throw error.cause
             const message = errorMessage(error)
             let refused = creationRefusal(message)
             if (!refused) throw error
@@ -1339,18 +1386,10 @@ export function createManagerTools(
             }
           }
         }
-        const title = sessionTitle(args.title)
-        let named = created
-        try {
-          named = await host.renameSession(computer.id, created.id, title)
-        } catch {
-          named = { ...created, title: created.title }
-        }
-        const session = { ...named, title: named.title || title }
-        await host.markManaged(session, args.prompt)
+        const { created, session } = launch
         let delivered: ManagedSession
         try {
-          delivered = await deliver(session, args.prompt)
+          delivered = (await launcher.deliverPrompt(launch, args.prompt)).delivered
         } catch (error) {
           onActivity({
             tool: 'create_session',
@@ -1463,12 +1502,11 @@ export function createManagerTools(
         }
         // Claude sessions have no way to take a message mid-turn, so theirs is queued as before.
         const busy = session.status === 'running' && (session.provider ?? 'copilot') === 'copilot'
-        const delivery = busy
-          ? await steer(session, message)
-          : {
-              outcome: session.status === 'running' ? 'queued' as const : 'sent' as const,
-              delivered: await deliver(session, message),
-            }
+        const delivery = await launcher.deliverPrompt(
+          { session, folderTrust: 'auto-approve' },
+          message,
+          { steer: busy },
+        )
         onActivity({
           tool: 'send_to_session',
           content: `Sent a message to "${session.title}"`,
@@ -1535,7 +1573,7 @@ export function createManagerTools(
         const found = await resolveSession(sessionId, computer, {
           taskOwned: true,
         })
-        const detail = await host.readSession(found.computerId, found.id)
+        const detail = await launcher.observeSession(found)
         const permission = detail.pendingPermission && !detail.pendingPermission.stale ? detail.pendingPermission : undefined
         const question = detail.pendingUserInput && !detail.pendingUserInput.stale ? detail.pendingUserInput : undefined
         const pending = permission ?? question
@@ -1548,7 +1586,7 @@ export function createManagerTools(
           if (!option) {
             throw new ToolFailure(`Choose one of: ${permission.options.map((candidate) => `"${candidate.name}"`).join(', ')}.`)
           }
-          await host.replyPermission(found.computerId, found.id, permission.requestId, option.optionId)
+          await launcher.answerPermission(found, permission.requestId, option.optionId)
           onActivity({
             tool: 'answer_session',
             content: `Answered "${truncate(permission.title, 120)}" on "${found.title}": ${option.name}`,
@@ -1583,7 +1621,7 @@ export function createManagerTools(
         } else {
           throw new ToolFailure('Give a response, responses, values, or dismiss.')
         }
-        await host.replyUserInput(found.computerId, found.id, asked.requestId, reply)
+        await launcher.answerUserInput(found, asked.requestId, reply)
         const said = reply.action === 'cancel' ? 'dismissed' : truncate(reply.answer, 120)
         onActivity({
           tool: 'answer_session',
@@ -1602,7 +1640,7 @@ export function createManagerTools(
         const session = await resolveSession(sessionId, computer, {
           taskOwned: true,
         })
-        await host.cancel(session.computerId, session.id)
+        await launcher.cancel(session)
         onActivity({ tool: 'cancel_session', content: `Stopped "${session.title}"`, sessionRefs: [ref(session)] })
         return `Stopped the current turn of ${link(session)}.`
       },

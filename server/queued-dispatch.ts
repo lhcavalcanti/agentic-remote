@@ -108,6 +108,7 @@ export async function preparePrompt(
   return store.update(sessionId, (session) => {
     if (delivery?.closed) throw queueConflict('The dispatch attempt has ended.')
     assertReady(session)
+    if (session.launchStopping) throw queueConflict('The launch is stopping; no new work can start.')
     if (delivery) {
       if (session.queuedDispatch?.attemptId !== delivery.attemptId) {
         throw queueConflict('The queued dispatch no longer owns this session.')
@@ -116,11 +117,17 @@ export async function preparePrompt(
         status: session.status, activity: session.activity,
         updatedAt: session.updatedAt, revision: (session.revision ?? 0) + 1,
       }
+      const receipt = session.promptReceipts?.find((entry) => entry.promptId === session.queuedDispatch!.promptId)
+      if (receipt) {
+        receipt.state = 'accepted'
+        receipt.rootTurnId = assistantId
+        receipt.userMessageId = userId
+      }
     } else if (session.queuedDispatch) {
       throw queueConflict('Resolve the queued dispatch before starting another turn.')
     }
     session.messages.push(
-      { id: userId, role: 'user', content, createdAt },
+      { id: userId, role: 'user', content, createdAt, deliveryState: 'pending' },
       { id: assistantId, role: 'assistant', content: '', createdAt, streaming: true },
     )
     session.updatedAt = createdAt
@@ -314,6 +321,7 @@ export class QueuedDispatches {
       try {
         claimed = await this.store.update(sessionId, (session) => {
           assertSessionNotRetained(session, 'dispatching its queue')
+          if (session.launchStopping) throw queueConflict('The launch is stopping; no new work can start.')
           assertIdle(session)
           if (
             session.queuedDispatch || session.failedPrompt ||
@@ -335,6 +343,8 @@ export class QueuedDispatches {
             originalIndex,
             recoveryFailedAt,
           }
+          const receipt = session.promptReceipts?.find((entry) => entry.promptId === original.id)
+          if (receipt) receipt.state = 'accepted'
           session.queuedPrompts = session.queuedPrompts.filter((entry) => entry.id !== original.id)
           session.queuedCount = session.queuedPrompts.length
           if (session.queueState?.promptId === original.id) {
@@ -386,6 +396,8 @@ export class QueuedDispatches {
             .filter((entry) => entry.id !== original.id)
           session.queuedCount = session.queuedPrompts.length
           if (ownsDispatchRecovery(session)) session.failedPrompt = undefined
+          const receipt = session.promptReceipts?.find((entry) => entry.promptId === original.id)
+          if (receipt) receipt.state = 'delivered'
           session.queuedDispatch = undefined
         })
         this.publish(completed)
@@ -410,11 +422,18 @@ export class QueuedDispatches {
               const ownsPreparedStatus = prepared && assistant && !assistant.content &&
                 session.messages.slice(assistantIndex + 1).every((message) => message.role === 'notice')
               const queue = session.queuedPrompts || []
-              if (session.queuedDispatch.original &&
+              if (!session.launchStopping && session.queuedDispatch.original &&
                 !queue.some((entry) => entry.id === original.id)) {
                 queue.splice(Math.min(originalIndex, queue.length), 0, original)
               }
               session.queuedPrompts = queue
+              const receipt = session.promptReceipts?.find((entry) => entry.promptId === original.id)
+              if (receipt) {
+                receipt.state = session.launchStopping ? 'rejected' : 'queued'
+                receipt.rootTurnId = undefined
+                receipt.userMessageId = undefined
+                if (session.launchStopping) receipt.outcome = 'stopped'
+              }
               session.queuedCount = queue.length
               if (previousQueueState &&
                   queue[0]?.id === previousQueueState.promptId) {
@@ -463,6 +482,8 @@ export class QueuedDispatches {
               throw queueConflict('The dispatch claim changed.')
             }
             session.queuedDispatch.state = 'uncertain'
+            const receipt = session.promptReceipts?.find((entry) => entry.promptId === original.id)
+            if (receipt && delivery.accepted) receipt.state = 'delivered'
             session.queuedDispatch.message = message
           })
         } catch (recordError) {

@@ -10,6 +10,14 @@ stable as the app evolves.
 The words MUST, MUST NOT, SHOULD, and MAY describe required, prohibited,
 recommended, and optional behavior.
 
+Interface › Preview features › Composer refresh is off by default. When enabled, the composer MUST show one session-setup button below the message box with the model-family glyph, model, effort, context window, and mode. While busy it MUST visibly describe changes as “applies when idle” without requiring hover; it MUST NOT apply runtime changes mid-turn. On phones the glyph and mode stay visible while the model and idle-only hint can truncate. The existing computer/provider/path/status/queue status line is unchanged.
+
+The refreshed composer keeps its action row inside the message box: attach, session setup, context usage, microphone, session panel, and Send/Stop. Attachment, paste, transcription and delivery pipelines and shortcuts are unchanged. The SVG context ring MUST use measured or estimated context tokens, never subscription/plan usage, and MUST visibly distinguish unavailable measurements from measured zero without hover. At narrow widths secondary setup/context controls move into the session panel, and Send can use its icon alone to retain every 40×40 px target at 320 px. The panel links to the existing tasks, skills/MCP resources and session actions; it MUST stay inside the visual viewport with scrollable actions when the phone keyboard is open.
+
+The preview clock opens Sent messages for only the selected session, newest user turns first with timestamps and case-insensitive search across full text. App-generated user-role turns, including the automatic Recover-conversation brief, MUST be explicitly marked and excluded from sent-message search and ArrowUp recall. The marker survives provider transcript refresh and session reload; unmarked older briefs remain eligible because their text cannot safely distinguish them from genuine user prompts. Provider transcript/event-log rows are delivered by definition, for terminal and SDK sessions alike. Locally retained user echoes MUST carry pending/refused/uncertain delivery state and stay excluded until provider confirmation or a delivered/handed receipt. Legacy rows without metadata remain available when a non-error provider reply or matching receipt proves delivery; absent that evidence, only known failures or a trailing active/pending turn are withheld, not settled historical conversations. The sheet MUST inherit the app shell's visual-viewport geometry while staying outside composer size containers, so its actions remain above the phone keyboard. Choosing a row previews the full message in the composer without sending; Cancel or Escape MUST restore the parked unsent draft, including collapsed-paste ownership. Use message commits the selection as the real persisted draft for editing or sending and clears the parked preview state. Reload MUST retain the chosen text, and sending it MUST NOT restore the previous draft. Cancel and Escape still restore the prior draft until Use message succeeds. The picker is a desktop popover above 960 px and a bottom sheet through 960 px, with keyboard navigation. From no active result, ArrowDown selects the first result and ArrowUp the last. Opening on a coarse pointer or phone MUST focus the dialog rather than the search field to avoid summoning the software keyboard; desktop search keeps its initial focus. ArrowUp recall retains its existing behavior and durable history-draft parking.
+
+While a foreground turn is running, preview Send opens Steer — guide the active turn or Queue — run after this turn. After the hub accepts a direct prompt, this browser MUST bridge a lagging foreground snapshot with a session-keyed local handoff; the accepted response's duplicate revision is not evidence that the new turn ended. The handoff clears on newer authoritative session evidence, idle/error, send failure, selection change, or a bounded timeout, and MUST NOT become durable delivery authority. A confirmed terminal queue handoff MUST publish foreground activity immediately and retain it across lagging transcript reads until a foreground completion at or after dispatch is observed. Aggregate running status alone MUST NOT open delivery choices when only background work remains: primary Send starts a direct new prompt, including when a computer has no steering capability metadata. Foreground activity is projected independently from the provider's foreground lifecycle; older nodes fall back to background-task and streaming/synchronous foreground evidence. Existing explicit Queue and Stop actions remain available for background work. The same menu is reachable by its chevron, long press, context menu, or keyboard (Shift+F10 / Alt+Down). Escape MUST restore the actual opening control, and Tab/Shift+Tab MUST move natively out of the menu and close it. At narrow widths the duplicate Queue button MAY move into the menu to preserve 40×40 px targets and prevent overflow at 320 px. Steer MUST require the selected provider's explicit `supportsSteering` advertisement and an available computer/provider without a pending request. Copilot advertises its existing immediate-follow-up path; Claude advertises no steering. Missing metadata on older computers MUST show an update explanation, not infer steering from queued-dispatch support. Queue retains automatic delivery; Enter and command/queued-edit behavior are unchanged. Command classification MUST use expanded draft content, including collapsed multiline pastes, rather than the visible paste placeholder. Hold is not implemented.
+
 ## 1. Product goals
 
 Agentic Remote MUST:
@@ -2038,6 +2046,7 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - Model IDs, names, and capabilities MUST come from Copilot CLI or Claude
   discovery, not an embedded model list. Documentation examples and test
   fixtures MUST use neutral synthetic models rather than named offerings.
+- The Composer refresh preview MAY show a neutral model-family glyph beside the model in the composer runtime summary. Classification uses model identity, not the owning provider or execution backend; unrecognized models use a generic glyph. These original glyphs are not official brand marks. With the preview off, the existing summary MUST remain visually unchanged.
 - Opening Model and context or App settings MUST request a fresh catalog from
   the owning providers, bypassing browser and SDK lifetime caches without
   restarting sessions. Concurrent discovery requests MAY share one in-flight
@@ -2080,13 +2089,14 @@ clear replacement IDs without losing, duplicating, or reordering content.
   - **Oracle**: Oracle's model and effort, response style, and which activity
     notifies you.
   - **Notifications**: this device's notification permission and subscription.
-  - **Interface**: Appearance, Status line, Keyboard shortcuts.
+  - **Interface**: Appearance, Status line, Keyboard shortcuts, Preview features.
   - **App**: Settings sync, Hub connection (native app only), App updates.
 - Each section whose scope is not obvious MUST say whether it is **Synced** or
   kept on **This device**.
 - A jump bar MUST reach each group and stay in view while the settings scroll.
 - Opened from Oracle's model, App settings MUST open at Oracle's model;
   opened any other way, at the top.
+- With category navigation enabled, search MUST find every rendered field label, including preview names, status-line items, and keyboard shortcuts, and show its matching card without changing saved values.
 
 ### 9.3 Settings profile
 
@@ -2097,7 +2107,7 @@ people sharing a hub share its profile. See
 
 | Scope | Settings |
 |---|---|
-| **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you |
+| **Synced** | Appearance, accent, status line, new-session runtimes, new-session folders, session sort, computer order, Oracle's response style, what notifies you, preview features |
 | **This device** | Keyboard shortcuts, panel placement and widths, Oracle's Ask/Delegate mode, Knowledge reading positions, notification permission and push subscription |
 | **Never in the profile** | Drafts, queues, transcripts, credentials, push subscriptions |
 
@@ -2110,10 +2120,22 @@ people sharing a hub share its profile. See
   reconnect.
 - The hub MUST validate every key and value against an allowlist, bound the
   profile to 32 KB, and guard it with the `/api/` Host and Origin policy.
+- Preview features MUST default off. A preview that depends on a hub feature flag MUST remain unavailable while that flag is off and show **Turned off on this hub**. Stored preferences MUST NOT enable hub behavior. Hub flags come only from the service environment, are read once at startup, and require a restart to change. Their values MUST be only `on` or `off` (case-insensitive, ignoring surrounding whitespace); any other value MUST fail hub startup with the variable's name.
 - A device without a copy MUST offer its earlier browser-local settings once;
   the hub MUST keep only settings no device has chosen yet.
 
+### 9.4 Scheduler service preview
+
+- The default-off hub `scheduler` flag MUST gate all scheduler construction, state, timers, routes, and startup work. Nodes MUST NOT dispatch schedules, even with that environment flag enabled.
+- The [scheduler contract](design/scheduler.md) defines revision-checked CRUD, unique active names, paged history, atomic owner-only storage, durable occurrence/launch identity, and typed hub change events. The independent default-off `schedulerView` UI preview requires that hub flag, uses the shared recurrence engine, defaults permissions and folder trust to Ask, and requires explicit Allow-all confirmation. The UI MUST NOT infer success from idle state or add launch behavior without a runner.
+- The dispatcher MUST reconcile every in-flight run before catch-up. Unknown launch or termination outcomes MUST retain concurrency slots and MUST NOT cause automatic resubmission. Replace and runtime expiry MUST await authoritative termination proof, not merely an abort acknowledgement or session idleness.
+
 ## 10. Notifications
+
+- The optional default-off hub notification center MUST follow the [durable notification contract](design/notification-center.md). The default-off `notificationPanel` Interface preview adds the client panel and requires the hub flag; enabling either MUST NOT change push or native-shell delivery policy.
+- A notification admission failure MUST be logged without dropping core session, computer, error, or Oracle socket events. A failed write MUST NOT produce a notification invalidation claiming durable success.
+- Failure to persist notification read marks after a successful session open MUST be logged without failing the session access.
+- Notification-center deduplication MUST be bounded to 10,000 identities and 30 days. At capacity it MUST evict the oldest identity fences not needed by retained records, breaking timestamp ties by identity, rather than reject new notifications. Retained read/dismissed records MUST keep their identity fences; deduplication outside the retained horizon is not guaranteed.
 
 - Notification settings MUST be discoverable under App settings.
 - **What notifies you** is synced (§9.3) and the hub applies it to every
@@ -2146,6 +2168,8 @@ people sharing a hub share its profile. See
   seconds, so a frozen phone cannot hold notifications back.
 - In a browser or installed PWA, Oracle notifications MUST open Oracle
   (`/?oracle=open`), and opening Oracle MUST clear them.
+- Browser/PWA notification clicks MUST open only HTTP(S) URLs on the app's origin. Malformed, non-HTTP(S), or off-origin targets MUST fall back to the app root.
+- Canonical schedule notifications MUST originate at the hub scheduler. Nodes MUST NOT forward hub-only schedule notification events, including while hub feature flags are disabled.
 - One event MUST belong to one category, so a single event never sends both a
   session and an Oracle notification.
 - The native shell has no Web Push. It MUST apply the same scope and Oracle

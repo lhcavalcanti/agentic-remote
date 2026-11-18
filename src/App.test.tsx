@@ -28,6 +28,9 @@ import type {
   WorkspaceListing,
 } from '../shared/contracts'
 import App from './App'
+import { defaultHubFeatureFlags } from '../shared/feature-flags'
+import { scheduleProposalSchema } from '../shared/schedule-proposals'
+import { scheduleSchema } from '../shared/schedules'
 import { SubmissionError } from '../shared/submission-error'
 import {
   applySettingsChanges,
@@ -40,11 +43,16 @@ import {
 } from '../shared/settings-profile'
 import {
   checkHubSignIn,
+  fetchHubFeatureFlags,
   getManager,
+  getSchedule,
+  listScheduleProposals,
+  resolveScheduleProposal,
   sendManagerMessage,
   activateSession,
   cancelBackgroundTask,
   askSession,
+  removeComputer,
   cancelSession,
   clearConversation,
   recoverConversation,
@@ -205,9 +213,14 @@ vi.mock('./dreamer-api', async (importOriginal) => ({
 }))
 
 vi.mock('./api', async (importOriginal) => ({
+  request: vi.fn(async () => ({ defaultDisplayName: 'Sample User' })),
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   checkHubSignIn: vi.fn(async () => undefined),
+  fetchHubFeatureFlags: vi.fn(async () => defaultHubFeatureFlags),
   getManager: vi.fn(),
+  getSchedule: vi.fn(),
+  listScheduleProposals: vi.fn(),
+  resolveScheduleProposal: vi.fn(),
   getOracleVoiceCapabilities: vi.fn(async () => ({
     protocol: 2,
     available: false,
@@ -331,6 +344,7 @@ const computer: ComputerSummary = {
       available: true,
       terminalBacked: true,
       supportsTmuxMigration: true,
+      supportsSteering: true,
       supportsContextRecovery: true,
       supportsRecoverableClose: true,
     },
@@ -339,6 +353,7 @@ const computer: ComputerSummary = {
       name: 'Claude Agent',
       available: true,
       terminalBacked: false,
+      supportsSteering: false,
     },
   ],
 }
@@ -1832,6 +1847,41 @@ describe('App', () => {
       }] : [])
     })
 
+    it.each([false, true])('keeps native channel policy unchanged with notificationCenter=%s', async (notificationCenter) => {
+      vi.mocked(fetchHubFeatureFlags).mockResolvedValueOnce({ ...defaultHubFeatureFlags, notificationCenter })
+      vi.spyOn(shell, 'nativeShell').mockReturnValue(true)
+      const raised = vi.spyOn(shell, 'sendShellNotification').mockReturnValue(true)
+      seedHubSettings({ notificationScope: 'all' })
+      const muted = { ...secondSession, id: 'muted-native', status: 'running' as const }
+      vi.mocked(getPushSettings).mockResolvedValue({ mutedSessions: [`${muted.computerId}:${muted.id}`] })
+      vi.mocked(listSessions).mockResolvedValue([session, { ...secondSession, status: 'running' }, muted])
+      render(<App />)
+      await screen.findByLabelText('Message')
+      await waitFor(() => expect(fetchSettingsProfile).toHaveBeenCalled())
+      await act(async () => {})
+      const emit = (event: unknown) => act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify(event),
+      } as MessageEvent))
+      const question = { requestId: 'native-q', question: 'Where?', choices: [], allowFreeform: true }
+      emit({ type: 'notifications.changed', revision: 1, unreadCount: 1 })
+      emit({ type: 'session.upserted', session: { ...muted, pendingUserInput: question } })
+      emit({ type: 'session.upserted', session: { ...session, pendingUserInput: question } })
+      expect(raised).not.toHaveBeenCalled()
+      emit({ type: 'session.upserted', session: { ...secondSession, status: 'waiting', pendingUserInput: question } })
+      emit({ type: 'session.upserted', session: { ...secondSession, status: 'running' } })
+      emit({ type: 'session.upserted', session: { ...secondSession, status: 'idle' } })
+      emit({ type: 'error', notify: true, computerId: computer.id, message: 'Health alert' })
+      emit({ type: 'manager.message', message: { id: 'native-reply', role: 'assistant', replyTo: 'native-user', content: 'Done.', createdAt: 't' } })
+      emit({ type: 'manager.message', message: { id: 'native-user', role: 'user', content: 'Status?', state: 'done', createdAt: 't' } })
+      emit({ type: 'notifications.changed', revision: 2, unreadCount: 0 })
+      expect(raised.mock.calls.map(([notification]) => ({ tag: notification.tag, urgent: notification.urgent }))).toEqual([
+        { tag: `agentic-question-${secondSession.computerId}-${secondSession.id}`, urgent: true },
+        { tag: `agentic-finished-${secondSession.computerId}-${secondSession.id}`, urgent: false },
+        { tag: `agentic-alert-${computer.id}`, urgent: true },
+        { tag: 'agentic-oracle-reply', urgent: false },
+      ])
+    })
+
     it('keeps the choice open when this device has notifications blocked', async () => {
       const restore = [
         ['PushManager', window] as const,
@@ -1867,7 +1917,7 @@ describe('App', () => {
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
       const sync = within(dialog).getByRole('heading', { name: 'Settings sync' }).closest('section')!
       expect(sync).toHaveTextContent(
-        'Appearance, accent, status line, new-session models and folders, session sort, computer order, Oracle\'s response style, and what notifies you follow you to every device that opens this hub.',
+        'Appearance, accent, status line, new-session models and folders, session sort, computer order, Oracle\'s response style, and what notifies you and preview features follow you to every device that opens this hub.',
       )
       expect(sync).toHaveTextContent(
         'Keyboard shortcuts, panel placement and widths, and drafts stay on this device.',
@@ -1877,6 +1927,7 @@ describe('App', () => {
           .closest('.app-settings-section__title')?.querySelector('.settings-scope')
       expect(scope('Appearance')).toHaveTextContent('Synced')
       expect(scope('Status line')).toHaveTextContent('Synced')
+      expect(scope('Preview features')).toHaveTextContent('Synced')
       expect(scope('New sessions')).toHaveTextContent('Synced')
       expect(scope('Keyboard shortcuts')).toHaveTextContent('This device')
     })
@@ -2092,6 +2143,9 @@ describe('App', () => {
     dragHandlers.clear()
     vi.restoreAllMocks()
     vi.clearAllMocks()
+    vi.mocked(getSchedule).mockReset()
+    vi.mocked(listScheduleProposals).mockReset().mockResolvedValue([])
+    vi.mocked(resolveScheduleProposal).mockReset()
     // Restores the factory's default answer; neither call above undoes a
     // test's own Dreamer answer.
     vi.mocked(getDreamer).mockReset()
@@ -2479,6 +2533,48 @@ describe('App', () => {
     vi.mocked(getSession).mockImplementation(async (_computerId, id) => id === secondSession.id ? secondSession : target)
     return target
   }
+
+  it.each(['edited', 'deleted'] as const)('refreshes schedule proposal facts on schedules.changed when the base is %s', async (change) => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-04T16:20:00Z'))
+    vi.mocked(fetchHubFeatureFlags).mockResolvedValueOnce({ ...defaultHubFeatureFlags, scheduler: true })
+    seedHubSettings({ previewFeatures: { schedulerView: true } })
+    vi.mocked(getManager).mockResolvedValue({ available: true, status: 'idle', messages: [], queued: 0, managedSessions: [] })
+    const schedule = scheduleSchema.parse({
+      id: 'existing-review', revision: 1, createdBy: 'user', archived: false,
+      createdAt: '2026-09-04T16:00:00Z', updatedAt: '2026-09-04T16:00:00Z',
+      name: 'Fictional review', prompt: 'Review the guide.',
+      target: { computerId: computer.id, folder: session.cwd, provider: 'copilot' },
+      recurrence: { type: 'daily', time: '09:00' }, timezone: 'America/Los_Angeles',
+      workspace: 'checkout', catchUp: 'skip', overlap: 'skip', maxRuntimeMin: 60, notify: 'attention', enabled: true,
+    })
+    const pending = scheduleProposalSchema.parse({
+      id: 'review-proposal', operation: 'update', scheduleId: schedule.id, baseRevision: 1, payload: { prompt: 'Revised review' },
+      createdBy: 'oracle', status: 'pending', createdAt: '2026-09-04T16:00:00Z', expiresAt: '2026-09-05T16:00:00Z',
+    })
+    vi.mocked(getSchedule).mockResolvedValue(schedule)
+    vi.mocked(listScheduleProposals).mockResolvedValue([pending])
+    window.history.replaceState({}, '', '/?oracle=open')
+    render(<App />)
+    const approvals = await screen.findByRole('region', { name: 'Schedule approvals' })
+    await waitFor(() => expect(within(approvals).getByRole('button', { name: 'Approve' })).toBeEnabled())
+    let finish!: (proposals: typeof pending[]) => void
+    vi.mocked(listScheduleProposals).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    if (change === 'edited') vi.mocked(getSchedule).mockResolvedValue({ ...schedule, revision: 2 })
+    else vi.mocked(getSchedule).mockRejectedValue(new Error('Schedule not found'))
+    const reads = vi.mocked(listScheduleProposals).mock.calls.length
+    try {
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'schedules.changed', revision: 2, scheduleId: schedule.id }),
+      } as MessageEvent))
+      expect(within(approvals).getByRole('button', { name: 'Approve' })).toBeDisabled()
+      expect(listScheduleProposals).toHaveBeenCalledTimes(reads + 1)
+      expect(within(approvals).getByRole('status')).toHaveTextContent('Refreshing schedule details')
+      await act(async () => { finish([pending]) })
+      expect(await within(approvals).findByRole('alert')).toHaveTextContent(change === 'edited' ? 'Schedule changed since revision 1' : 'Cannot verify')
+      expect(within(approvals).getByRole('button', { name: 'Approve' })).toBeDisabled()
+      expect(resolveScheduleProposal).not.toHaveBeenCalled()
+    } finally { finish([pending]) }
+  })
 
   it('badges sessions Oracle started, opens Oracle from the header, and keeps its events out of errors', async () => {
     vi.mocked(getManager).mockResolvedValue({
@@ -3879,7 +3975,7 @@ describe('App', () => {
     expect(screen.queryByText('Data may be stale')).not.toBeInTheDocument()
   })
 
-  it('refreshes sessions, Oracle, and Dreamer on reconnect and visibility return', async () => {
+  it('refreshes sessions, Oracle, Dreamer, and hub flags on reconnect and visibility return', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.mocked(getManager).mockResolvedValue({
       available: true,
@@ -3897,21 +3993,25 @@ describe('App', () => {
     const listingBeforeReconnect = vi.mocked(listSessionListing).mock.calls.length
     const managerBeforeReconnect = vi.mocked(getManager).mock.calls.length
     const dreamerBeforeReconnect = vi.mocked(getDreamer).mock.calls.length
+    const flagsBeforeReconnect = vi.mocked(fetchHubFeatureFlags).mock.calls.length
     act(() => MockWebSocket.instances.at(-1)?.onopen?.())
     await waitFor(() => {
       expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeReconnect + 1)
       expect(getManager).toHaveBeenCalledTimes(managerBeforeReconnect + 1)
       expect(getDreamer).toHaveBeenCalledTimes(dreamerBeforeReconnect + 1)
+      expect(fetchHubFeatureFlags).toHaveBeenCalledTimes(flagsBeforeReconnect + 1)
     })
 
     const listingBeforeVisible = vi.mocked(listSessionListing).mock.calls.length
     const managerBeforeVisible = vi.mocked(getManager).mock.calls.length
     const dreamerBeforeVisible = vi.mocked(getDreamer).mock.calls.length
+    const flagsBeforeVisible = vi.mocked(fetchHubFeatureFlags).mock.calls.length
     fireEvent(document, new Event('visibilitychange'))
     await waitFor(() => {
       expect(listSessionListing).toHaveBeenCalledTimes(listingBeforeVisible + 1)
       expect(getManager).toHaveBeenCalledTimes(managerBeforeVisible + 1)
       expect(getDreamer).toHaveBeenCalledTimes(dreamerBeforeVisible + 1)
+      expect(fetchHubFeatureFlags).toHaveBeenCalledTimes(flagsBeforeVisible + 1)
     })
     expect(sendMessage).not.toHaveBeenCalled()
     expect(sendManagerMessage).not.toHaveBeenCalled()
@@ -5124,6 +5224,23 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
+  it('keeps preview feature opt-ins under Interface and syncs them through settings', async () => {
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const section = within(screen.getByRole('region', { name: 'Interface' }))
+      .getByRole('region', { name: 'Preview features' })
+    const previews = within(section)
+    const composer = previews.getByRole('checkbox', { name: 'Composer refresh' })
+    expect(composer).not.toBeChecked()
+    expect(previews.getByRole('checkbox', { name: 'Notification panel' })).toBeDisabled()
+    fireEvent.click(composer)
+    await waitFor(() => expect(savedSetting('previewFeatures')).toEqual({ composerRefresh: true }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(screen.getByRole('checkbox', { name: 'Composer refresh' })).toBeChecked()
+  })
+
   it('groups app settings by what they are about', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [], settings: {},
@@ -6239,6 +6356,110 @@ describe('App', () => {
         'computer-1:session-2': 'Second session draft',
       }),
     )
+  })
+
+  it('preserves both session drafts while a queued rewrite settles after switching sessions', async () => {
+    const { textarea, queuedSession, prompts, key } = await openTargetedQueueEditor()
+    let currentQueue = queuedSession
+    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+      sessionId === secondSession.id ? secondSession : currentQueue,
+    )
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: secondSession }),
+      } as MessageEvent)
+    })
+    let accept!: (result: Awaited<ReturnType<typeof dispatchQueuedPrompt>>) => void
+    vi.mocked(dispatchQueuedPrompt).mockImplementationOnce(() =>
+      new Promise((resolve) => { accept = resolve }),
+    )
+    fireEvent.change(textarea, { target: { value: 'settling queued rewrite' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+    await waitFor(() => expect(dispatchQueuedPrompt).toHaveBeenCalledOnce())
+    fireEvent.change(textarea, { target: { value: 'new first-session draft' } })
+    fireEvent.click(screen.getByText('Second chat').closest('button')!)
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    fireEvent.change(textarea, { target: { value: 'unsent second-session draft' } })
+
+    currentQueue = { ...queuedSession, queuedPrompts: [prompts[0], prompts[2]], queuedCount: 2 }
+    await act(async () => accept({
+      outcome: 'sent', promptId: 'q2', attemptId: 'switch-settlement',
+      session: currentQueue,
+    }))
+    expect(textarea).toHaveValue('unsent second-session draft')
+    const first = screen.getAllByText('Project chat')
+      .find((element) => element.closest('.session-item'))
+    fireEvent.click(first!.closest('button')!)
+    await waitFor(() => expect(textarea).toHaveValue('new first-session draft'))
+    const queue = screen.getByRole('region', { name: 'Queued prompts' })
+    expect(within(queue).getByText('first original')).toBeInTheDocument()
+    expect(within(queue).getByText('third original')).toBeInTheDocument()
+    expect(within(queue).queryByText('second original')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save to queue' })).not.toBeInTheDocument()
+    const stored = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')
+    expect(stored[key]).toMatchObject({ text: 'new first-session draft' })
+    expect(stored[key].pendingSubmission).toBeUndefined()
+    expect(stored[key].queuedEdit).toBeUndefined()
+    expect(stored['computer-1:session-2'].text).toBe('unsent second-session draft')
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('preserves an unsent draft through socket replacement and reload', async () => {
+    const replacement: ManagedSession = {
+      ...session, id: 'socket-replacement', replacedSessionIds: [session.id], messages: [],
+    }
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'unsent before socket replacement' } })
+    vi.mocked(getSession).mockResolvedValue(replacement)
+    act(() => {
+      for (const event of [
+        { type: 'session.removed', computerId: computer.id, sessionId: session.id, replacedBy: replacement.id },
+        { type: 'session.upserted', session: replacement },
+      ]) {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify(event),
+        } as MessageEvent)
+      }
+    })
+    await waitFor(() => {
+      expect(window.location.search).toContain(`session=${replacement.id}`)
+      expect(textarea).toHaveValue('unsent before socket replacement')
+    })
+    fireEvent.change(textarea, { target: { value: 'unsent after socket replacement' } })
+    rendered.unmount()
+    vi.mocked(listSessions).mockResolvedValue([replacement])
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('unsent after socket replacement')
+    const stored = JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')
+    expect(stored['computer-1:socket-replacement'].text).toBe('unsent after socket replacement')
+    expect(stored['computer-1:session-1']).toBeUndefined()
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
+  })
+
+  it('preserves an unsent draft when reconnect refreshes authoritative session state', async () => {
+    const rendered = render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'unsent before reconnect' } })
+    const refreshed: ManagedSession = {
+      ...session, revision: 2,
+      messages: [...session.messages, {
+        id: 'reconnected-message', role: 'assistant', content: 'Arrived while disconnected',
+        createdAt: '2026-11-14T17:00:00.000Z',
+      }],
+    }
+    vi.mocked(listSessions).mockResolvedValue([refreshed])
+    vi.mocked(getSession).mockResolvedValue(refreshed)
+    act(() => { MockWebSocket.instances.at(-1)?.onopen?.() })
+    await screen.findByText('Arrived while disconnected')
+    await waitFor(() => expect(listSessions).toHaveBeenCalledTimes(2))
+    expect(textarea).toHaveValue('unsent before reconnect')
+    rendered.unmount()
+    render(<App />)
+    expect(await screen.findByLabelText('Message')).toHaveValue('unsent before reconnect')
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(dispatchQueuedPrompt).not.toHaveBeenCalled()
   })
 
   it('collapses a long paste while sending its full text in place', async () => {
@@ -18158,6 +18379,508 @@ describe('App', () => {
     expect(screen.queryByText('Hello agent')).not.toBeInTheDocument()
   })
 
+  it.each(['removed', 'offline'] as const)('keeps a newer %s computer state during a connection check', async (change) => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finish!: (computers: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify(change === 'removed'
+          ? { type: 'computer.removed', computerId: secondComputer.id }
+          : { type: 'computer.updated', computer: { ...secondComputer, online: false } }),
+      } as MessageEvent)
+    })
+    await act(async () => { finish([computer, secondComputer]) })
+    if (change === 'removed') {
+      expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+      expect(within(dialog).getByRole('status')).not.toHaveTextContent(secondComputer.name)
+    } else {
+      expect(within(dialog).getByText(/Offline · Node/)).toBeVisible()
+      expect(within(dialog).getByRole('status')).toHaveTextContent(`${secondComputer.name}: Offline`)
+    }
+  })
+
+  it('reconciles computers missing from a connection-check snapshot', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValueOnce([computer, secondComputer]).mockResolvedValue([computer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+  })
+
+  it('removes unpaired computer sessions and task cache on a connection check', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote = { ...secondComputer, providers: taskComputer.providers }
+    const remoteSession = { ...session, id: 'remote-task-session', computerId: remote.id, computerName: remote.name, title: 'Remote task chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    const tasks = {
+      supported: true, runningCount: 1,
+      tasks: [{ id: 'remote-task', type: 'shell' as const, description: 'Discard old cached task', status: 'running' as const, startedAt: session.updatedAt, canCancel: false }],
+    }
+    vi.mocked(listBackgroundTasks).mockResolvedValue(tasks)
+    render(<App />)
+    await screen.findByRole('button', { name: 'View background tasks for Remote task chat' })
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+    let finish!: (value: BackgroundTaskSnapshot) => void
+    const pending = new Promise<BackgroundTaskSnapshot>((resolve) => { finish = resolve })
+    vi.mocked(listBackgroundTasks).mockReturnValue(pending)
+    const before = vi.mocked(listBackgroundTasks).mock.calls.length
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledTimes(before + 1))
+    expect(screen.queryByRole('button', { name: 'View background tasks for Remote task chat' })).not.toBeInTheDocument()
+    await act(async () => { finish({ supported: true, runningCount: 0, tasks: [] }) })
+  })
+
+  it('drops side answers for a computer a connection check finds unpaired', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote: ComputerSummary = {
+      ...secondComputer,
+      providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+    const remoteSession = { ...session, id: 'remote-side-session', computerId: remote.id, computerName: remote.name, title: 'Remote side chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    vi.mocked(askSession).mockResolvedValue('Remote side answer.')
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Remote side chat')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+    fireEvent.change(screen.getByLabelText('Side question'), { target: { value: 'Still running?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+    expect(await screen.findByText('Remote side answer.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))
+    expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
+  })
+
+  it('does not read the selected session of a computer a reconnect finds unpaired', async () => {
+    const remoteSession = { ...session, id: 'remote-selected', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote selected chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote selected chat'))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    vi.mocked(listSessions).mockResolvedValue([session])
+    vi.mocked(getSession).mockClear()
+    vi.mocked(getSession).mockImplementation(async (id) => {
+      if (id === secondComputer.id) throw new SubmissionError('Computer not found', 404)
+      return session
+    })
+    await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(screen.queryByText('Remote selected chat')).not.toBeInTheDocument())
+    expect(vi.mocked(getSession).mock.calls.filter(([computerId]) => computerId === secondComputer.id)).toEqual([])
+    expect(screen.queryByText(/Computer not found/)).not.toBeInTheDocument()
+  })
+
+  it('drops side answers when a reconnect snapshot overtakes a connection check', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote: ComputerSummary = {
+      ...secondComputer,
+      providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+    const remoteSession = { ...session, id: 'remote-side-session', computerId: remote.id, computerName: remote.name, title: 'Remote side chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    vi.mocked(askSession).mockResolvedValue('Remote side answer.')
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Remote side chat')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+    fireEvent.change(screen.getByLabelText('Side question'), { target: { value: 'Still running?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+    expect(await screen.findByText('Remote side answer.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finishCheck!: (value: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finishCheck = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    vi.mocked(listSessions).mockResolvedValue([session])
+    await act(async () => { MockWebSocket.instances[0]?.onopen?.() })
+    await act(async () => { finishCheck([computer]) })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))
+    expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
+  })
+
+  it('drops side answers when removing a computer while the event socket is down', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote: ComputerSummary = {
+      ...secondComputer,
+      providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
+        provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+    }
+    const remoteSession = { ...session, id: 'remote-side-session', computerId: remote.id, computerName: remote.name, title: 'Remote side chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    vi.mocked(askSession).mockResolvedValue('Remote side answer.')
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Remote side chat')
+    fireEvent.click(await screen.findByRole('button', { name: 'Ask a side question' }))
+    fireEvent.change(screen.getByLabelText('Side question'), { target: { value: 'Still running?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Ask side question' }))
+    expect(await screen.findByText('Remote side answer.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${remote.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(remote.id))
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote side chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote side chat'))
+    expect(screen.queryByText('Remote side answer.')).not.toBeInTheDocument()
+  })
+
+  it.each(['computer', 'session', 're-added computer'] as const)('settles a newer %s update when a connection check omits its computer', async (changed) => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Live remote chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await screen.findAllByText('Live remote chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finish!: (value: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    act(() => {
+      if (changed === 're-added computer') {
+        MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }) } as MessageEvent)
+        MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: { ...secondComputer, registrationId: 'new-pairing' } }) } as MessageEvent)
+        MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: { ...remoteSession, revision: 2 } }) } as MessageEvent)
+        return
+      }
+      MockWebSocket.instances[0]?.onmessage?.({
+        data: JSON.stringify(changed === 'computer'
+          ? { type: 'computer.updated', computer: { ...secondComputer, registrationId: 'new-pairing' } }
+          : { type: 'session.upserted', session: { ...remoteSession, revision: 2, title: 'Fresh remote chat' } }),
+      } as MessageEvent)
+    })
+    await act(async () => { finish([computer]) })
+    if (changed === 'session') {
+      // A session event alone does not re-pair its computer, so its owner state goes with the computer.
+      expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Project chat'))
+      expect(screen.queryByText('Fresh remote chat')).not.toBeInTheDocument()
+      return
+    }
+    expect(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` })).toBeVisible()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Live remote chat')
+  })
+
+  it('does not let a transcription that finishes after a local removal recreate the removed draft', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote-voice', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote voice chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    let finish!: () => void
+    vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+      finish = () => resolve({ transcript: 'Late transcript', durationSeconds: 1 })
+    }))
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote voice chat'))
+    fireEvent.change(screen.getByLabelText('File attachment'), { target: { files: [new File(['data'], 'voice.webm', { type: 'audio/webm' })] } })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(secondComputer.id))
+    await act(async () => { finish() })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote voice chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote voice chat'))
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+  })
+
+  it.each(['settings', 'event'] as const)('lifts unpairing tombstones when the computer is paired again (%s removal)', async (via) => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote-repaired', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote repaired chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    vi.mocked(transcribeAudio).mockResolvedValue({ transcript: 'Fresh transcript', durationSeconds: 1 })
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote repaired chat'))
+    if (via === 'settings') {
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+      vi.mocked(removeComputer).mockResolvedValue(undefined)
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` }))
+      await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(secondComputer.id))
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    } else {
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }) } as MessageEvent)
+      })
+    }
+    await waitFor(() => expect(screen.queryByText('Remote repaired chat')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    fireEvent.click((await screen.findAllByText('Remote repaired chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote repaired chat'))
+    fireEvent.change(screen.getByLabelText('File attachment'), { target: { files: [new File(['data'], 'voice.webm', { type: 'audio/webm' })] } })
+    await waitFor(() => expect(screen.getByLabelText('Message')).toHaveValue('Fresh transcript'))
+  })
+
+  it('drops a transcription started before unpairing even when the computer is paired again first', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote-late-voice', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote late voice chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    let finish!: () => void
+    vi.mocked(transcribeAudio).mockReturnValueOnce(new Promise((resolve) => {
+      finish = () => resolve({ transcript: 'Stale transcript', durationSeconds: 1 })
+    }))
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote late voice chat'))
+    fireEvent.change(screen.getByLabelText('File attachment'), { target: { files: [new File(['data'], 'voice.webm', { type: 'audio/webm' })] } })
+    await waitFor(() => expect(transcribeAudio).toHaveBeenCalledOnce())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }) } as MessageEvent)
+    })
+    await waitFor(() => expect(screen.queryByText('Remote late voice chat')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await act(async () => { finish() })
+    fireEvent.click((await screen.findAllByText('Remote late voice chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote late voice chat'))
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+  })
+
+  it('drops audio queued before unpairing when it only starts after the computer is paired again', async () => {
+    const remoteSession = { ...session, id: 'remote-queued-voice', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote queued voice chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    let finishUpload!: () => void
+    vi.mocked(uploadSessionFile).mockReturnValueOnce(new Promise((resolve) => {
+      finishUpload = () => resolve({ name: 'notes.txt', path: '/synthetic/notes.txt', size: 4 })
+    }))
+    vi.mocked(transcribeAudio).mockResolvedValue({ transcript: 'Queued stale transcript', durationSeconds: 1 })
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote queued voice chat'))
+    const input = screen.getByLabelText('File attachment')
+    fireEvent.change(input, { target: { files: [new File(['data'], 'notes.txt', { type: 'text/plain' })] } })
+    await waitFor(() => expect(uploadSessionFile).toHaveBeenCalledOnce())
+    fireEvent.change(input, { target: { files: [new File(['data'], 'voice.webm', { type: 'audio/webm' })] } })
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.removed', computerId: secondComputer.id }) } as MessageEvent)
+    })
+    await waitFor(() => expect(screen.queryByText('Remote queued voice chat')).not.toBeInTheDocument())
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: secondComputer }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await act(async () => { finishUpload() })
+    fireEvent.click((await screen.findAllByText('Remote queued voice chat'))[0])
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote queued voice chat'))
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    expect(transcribeAudio).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Message')).toHaveValue('')
+  })
+
+  it('does not let a send that settles after a local removal recreate the removed session', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remoteSession = { ...session, id: 'remote-send', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote send chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === secondComputer.id ? remoteSession : session)
+    let finish!: () => void
+    vi.mocked(sendMessage).mockReturnValueOnce(new Promise((resolve) => {
+      finish = () => resolve({ ...remoteSession, title: 'Late send response' })
+    }))
+    window.history.replaceState({}, '', `/?computer=${secondComputer.id}&session=${remoteSession.id}`)
+    render(<App />)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent('Remote send chat'))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Pending prompt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${secondComputer.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(secondComputer.id))
+    await act(async () => { finish() })
+    expect(screen.queryByText('Late send response')).not.toBeInTheDocument()
+    expect(screen.queryByText('Remote send chat')).not.toBeInTheDocument()
+  })
+
+  it('does not refill task state from a read that settles after a local removal', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote = { ...secondComputer, providers: taskComputer.providers }
+    const remoteSession = { ...session, id: 'remote-task-removed', computerId: remote.id, computerName: remote.name, title: 'Remote removed task chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    let finishOld!: (value: BackgroundTaskSnapshot) => void
+    vi.mocked(listBackgroundTasks)
+      .mockReturnValueOnce(new Promise((resolve) => { finishOld = resolve }))
+      .mockResolvedValue({ supported: true, runningCount: 0, tasks: [] })
+    render(<App />)
+    await screen.findAllByText('Remote removed task chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(removeComputer).mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: `Remove ${remote.name}` }))
+    await waitFor(() => expect(removeComputer).toHaveBeenCalledWith(remote.id))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await act(async () => { finishOld({
+      supported: true, runningCount: 1,
+      tasks: [{ id: 'stale-removed-task', type: 'shell', description: 'Stale removed response', status: 'running', startedAt: session.updatedAt, canCancel: false }],
+    }) })
+    expect(screen.queryByRole('button', { name: 'View background tasks for Remote removed task chat' })).not.toBeInTheDocument()
+  })
+
+  it('does not refill removed task state from an old response after the computer is re-paired', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    const remote = { ...secondComputer, providers: taskComputer.providers }
+    const remoteSession = { ...session, id: 'remote-task-session', computerId: remote.id, computerName: remote.name, title: 'Remote task chat' }
+    vi.mocked(listComputers).mockResolvedValue([computer, remote])
+    vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
+    vi.mocked(getSession).mockImplementation(async (id) => id === remote.id ? remoteSession : session)
+    window.history.replaceState({}, '', `/?computer=${remote.id}&session=${remoteSession.id}`)
+    let oldFinish!: (value: BackgroundTaskSnapshot) => void
+    let newFinish!: (value: BackgroundTaskSnapshot) => void
+    vi.mocked(listBackgroundTasks)
+      .mockReturnValueOnce(new Promise((resolve) => { oldFinish = resolve }))
+      .mockReturnValueOnce(new Promise((resolve) => { newFinish = resolve }))
+    render(<App />)
+    await screen.findAllByText('Remote task chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Check connection' })).toBeEnabled())
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'computer.updated', computer: remote }) } as MessageEvent)
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify({ type: 'session.upserted', session: remoteSession }) } as MessageEvent)
+    })
+    await act(async () => { oldFinish({
+      supported: true, runningCount: 1,
+      tasks: [{ id: 'stale-task', type: 'shell', description: 'Stale old pairing response', status: 'running', startedAt: session.updatedAt, canCancel: false }],
+    }) })
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledTimes(2))
+    try {
+      expect(screen.queryByRole('button', { name: 'View background tasks for Remote task chat' })).not.toBeInTheDocument()
+    } finally { await act(async () => { newFinish({ supported: true, runningCount: 0, tasks: [] }) }) }
+  })
+
+  it('ignores a connection check overtaken by a newer computer snapshot', async () => {
+    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remote machines/ }))
+    let finish!: (computers: ComputerSummary[]) => void
+    vi.mocked(listComputers).mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Check connection' }))
+    vi.mocked(listComputers).mockResolvedValue([computer])
+    act(() => { MockWebSocket.instances[0]?.onopen?.() })
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument())
+    await act(async () => { finish([computer, secondComputer]) })
+    expect(within(dialog).queryByRole('button', { name: `Remove ${secondComputer.name}` })).not.toBeInTheDocument()
+  })
+
   it('converges after cancelling even when no event arrives', async () => {
     const running = {
       ...session,
@@ -18705,6 +19428,375 @@ describe('App', () => {
         },
       ),
     )
+  })
+
+  it.each([
+    { enabled: false, model: 'fixture-claude-99', provider: 'copilot' as const, family: undefined },
+    { enabled: true, model: 'fixture-claude-99', provider: 'copilot' as const, family: 'anthropic' },
+    { enabled: true, model: 'fixture-gpt-99', provider: 'copilot' as const, family: 'openai' },
+    { enabled: true, model: 'fixture-model', provider: 'claude' as const, family: 'generic' },
+  ])('gates the runtime model-family glyph for $model on $provider (preview $enabled)', async ({
+    enabled, model, provider, family,
+  }) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: enabled } })
+    const runtimeSession: ManagedSession = {
+      ...session, provider, runtime: { model, reasoningEffort: 'high' },
+    }
+    vi.mocked(listSessions).mockResolvedValue([runtimeSession])
+    vi.mocked(getSession).mockResolvedValue(runtimeSession)
+    render(<App />)
+    const summary = await screen.findByTestId('composer-runtime')
+    expect(summary).toHaveTextContent(model)
+    expect(summary).toHaveTextContent('effort high')
+    await waitFor(() => {
+      const icon = summary.querySelector('[data-model-family]')
+      if (family) {
+        expect(icon).toHaveAttribute('data-model-family', family)
+        expect(icon).toHaveAttribute('aria-hidden', 'true')
+        expect(icon?.parentElement).toHaveTextContent(model)
+      } else {
+        expect(icon).toBeNull()
+        expect([...summary.children].find((child) => child.textContent === model)?.outerHTML)
+          .toBe(`<span>${model}</span>`)
+      }
+    })
+    fireEvent.click(summary)
+    expect(await screen.findByRole('dialog', { name: 'Model and context' })).toBeInTheDocument()
+  })
+
+  it.each([
+    { provider: 'copilot' as const, supportsSteering: true, reason: undefined },
+    { provider: 'claude' as const, supportsSteering: false, reason: /does not support steering/ },
+    { provider: 'copilot' as const, supportsSteering: undefined, reason: /Update this computer/ },
+  ])('gates busy preview delivery for $provider steering=$supportsSteering', async ({ provider, supportsSteering, reason }) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const busy = { ...session, provider, status: 'running' as const, foregroundTurnActive: true }
+    vi.mocked(listSessions).mockResolvedValue([busy])
+    vi.mocked(getSession).mockResolvedValue(busy)
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Guide or queue this review' } })
+    if (provider === 'copilot') {
+      await waitFor(() => expect(screen.getByRole('button', { name: 'View background tasks' }))
+        .toHaveTextContent('1 background task running'))
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(sendMessage).not.toHaveBeenCalled()
+    const steer = screen.getByRole('menuitem', { name: /Steer —/ })
+    if (reason) {
+      expect(steer).toHaveAttribute('aria-disabled', 'true')
+      expect(steer).toHaveAccessibleDescription(reason)
+      fireEvent.click(steer)
+      expect(sendMessage).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('menuitem', { name: /Queue —/ }))
+    } else {
+      fireEvent.click(steer)
+    }
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1', 'session-1', expect.objectContaining({ content: 'Guide or queue this review', enqueue: Boolean(reason) }),
+    ))
+  })
+
+  it.each([
+    { supportsSteering: undefined, foregroundTurnActive: undefined },
+    { supportsSteering: true, foregroundTurnActive: false },
+  ])('sends directly during background-only work (steering=$supportsSteering, foreground=$foregroundTurnActive)', async ({
+    supportsSteering, foregroundTurnActive,
+  }) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const backgroundOnly = { ...session, status: 'running' as const, foregroundTurnActive }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledWith(session.computerId, session.id))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.change(textarea, { target: { value: 'Start a separate foreground prompt' } })
+    const send = screen.getByRole('button', { name: 'Send message' })
+    expect(send).toBeEnabled()
+    fireEvent.click(send)
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      session.computerId, session.id, expect.objectContaining({ content: 'Start a separate foreground prompt', enqueue: false }),
+    ))
+    expect(screen.queryByRole('menu', { name: 'Message delivery' })).not.toBeInTheDocument()
+  })
+
+  it('keeps Enter immediate delivery instead of opening the busy preview menu', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const busy = { ...session, status: 'running' as const }
+    vi.mocked(listSessions).mockResolvedValue([busy])
+    vi.mocked(getSession).mockResolvedValue(busy)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Existing Enter behavior' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1', 'session-1', expect.objectContaining({ content: 'Existing Enter behavior', enqueue: false }),
+    ))
+    expect(screen.queryByRole('menu', { name: 'Message delivery' })).not.toBeInTheDocument()
+  })
+
+  it('shows projected origin in the header and runtime subagents beside background work only in the preview', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...computer, providers: computer.providers!.map((capability) => ({ ...capability, supportsBackgroundTasks: true })),
+    }])
+    const projected = { ...session, provenance: { origin: 'manager' as const } }
+    vi.mocked(listSessions).mockResolvedValue([projected])
+    vi.mocked(getSession).mockResolvedValue(projected)
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      supported: true, runningCount: 0, tasks: [{
+        id: 'reported-sync-agent', type: 'agent', status: 'running', executionMode: 'sync',
+        description: 'Review the recovery checklist', startedAt: '2026-11-14T20:00:00Z', canCancel: false,
+      }],
+    })
+    render(<App />)
+    await screen.findByLabelText('Message')
+    const header = document.querySelector('.conversation-header') as HTMLElement
+    expect(within(header).getByRole('img', { name: 'Started by Oracle' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '1 subagent running' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View background tasks' })).toHaveTextContent('0 background tasks running')
+  })
+
+  it.each([undefined, true])('offers delivery choices for a rapid second Send before polling (steering=%s)', async (supportsSteering) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const backgroundOnly = {
+      ...session, status: 'running' as const, revision: 10,
+      foregroundTurnActive: supportsSteering === undefined ? undefined : false,
+    }
+    const accepted = { ...backgroundOnly, revision: 11 }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    vi.mocked(sendMessage).mockResolvedValueOnce(accepted).mockResolvedValueOnce({ ...accepted, revision: 13 })
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.change(textarea, { target: { value: 'Start a foreground turn' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+    fireEvent.change(textarea, { target: { value: 'An immediate follow-up' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled())
+    const detailReads = vi.mocked(getSession).mock.calls.length
+    // The hub may publish the same accepted revision before polling the CLI.
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({ type: 'session.upserted', session: accepted }),
+    } as MessageEvent))
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect(sendMessage).toHaveBeenCalledTimes(1)
+    const steer = screen.getByRole('menuitem', { name: /Steer —/ })
+    expect(steer).toHaveAttribute('aria-disabled', supportsSteering ? 'false' : 'true')
+    if (!supportsSteering) expect(steer).toHaveAccessibleDescription(/Update this computer/)
+    expect(getSession).toHaveBeenCalledTimes(detailReads)
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({ type: 'session.upserted', session: { ...accepted, revision: 12 } }),
+    } as MessageEvent))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(sendMessage).mock.calls[1][2]).toMatchObject({ content: 'An immediate follow-up', enqueue: false })
+  })
+
+  it.each([undefined, true])('offers delivery choices immediately after a terminal queue upsert (steering=%s)', async (supportsSteering) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([{
+      ...taskComputer,
+      providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
+    }])
+    const backgroundOnly = {
+      ...session, status: 'running' as const, foregroundTurnActive: false, revision: 10,
+    }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument()
+    const detailReads = vi.mocked(getSession).mock.calls.length
+    // This turn was auto-delivered by the server, not sent by this browser.
+    const delivered = { ...backgroundOnly, revision: 11, foregroundTurnActive: true, queuedCount: 0 }
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({ type: 'session.upserted', session: delivered }),
+    } as MessageEvent))
+    fireEvent.change(textarea, { target: { value: 'A rapid follow-up to the queued turn' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    const steer = screen.getByRole('menuitem', { name: /Steer —/ })
+    expect(steer).toHaveAttribute('aria-disabled', supportsSteering ? 'false' : 'true')
+    if (!supportsSteering) expect(steer).toHaveAccessibleDescription(/Update this computer/)
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(getSession).toHaveBeenCalledTimes(detailReads)
+
+    await act(async () => MockWebSocket.instances[0]?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.upserted', session: { ...delivered, revision: 12, foregroundTurnActive: false },
+      }),
+    } as MessageEvent))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      session.computerId, session.id,
+      expect.objectContaining({ content: 'A rapid follow-up to the queued turn', enqueue: false }),
+    ))
+  })
+
+  it('clears the local foreground handoff when a follow-up send fails', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [{
+        id: 'remaining-agent', type: 'agent', description: 'Continuing in background',
+        status: 'running', executionMode: 'background', startedAt: '2026-07-22T00:00:00Z', canCancel: false,
+      }],
+      runningCount: 1, supported: true,
+    })
+    const backgroundOnly = { ...session, status: 'running' as const, foregroundTurnActive: false, revision: 10 }
+    vi.mocked(listSessions).mockResolvedValue([backgroundOnly])
+    vi.mocked(getSession).mockResolvedValue(backgroundOnly)
+    vi.mocked(sendMessage).mockResolvedValueOnce({ ...backgroundOnly, revision: 11 })
+      .mockRejectedValueOnce(new Error('Steer request failed'))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Start foreground work' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1))
+    fireEvent.change(textarea, { target: { value: 'Keep this failed follow-up' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Steer —/ }))
+    await screen.findAllByText('Steer request failed')
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument())
+    expect(textarea).toHaveValue('Keep this failed follow-up')
+    expect(sendMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['Cancel', 'Escape'])('previews searched sent messages and restores the parked draft on %s', async (cancel) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const sentSession = {
+      ...session,
+      messages: [
+        { id: 'sent-message', role: 'user' as const, content: 'Searchable full history text', createdAt: '2026-11-14T12:00:00Z' },
+        { id: 'legacy-reply', role: 'assistant' as const, content: 'Here is the completed history review.', createdAt: '2026-11-14T12:00:01Z' },
+        { id: 'refused-message', role: 'user' as const, deliveryState: 'refused' as const, content: 'History prompt refused before provider start', createdAt: '2026-11-14T12:01:00Z' },
+        { id: 'dispatching-message', role: 'user' as const, deliveryState: 'pending' as const, content: 'History prompt still dispatching', createdAt: '2026-11-14T12:02:00Z' },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([sentSession])
+    vi.mocked(getSession).mockResolvedValue(sentSession)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const pasted = Array.from({ length: 21 }, (_, index) => `Unsent line ${index}`).join('\n')
+    fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
+    expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    const picker = screen.getByRole('dialog', { name: 'Sent messages' })
+    fireEvent.change(within(picker).getByRole('combobox'), { target: { value: 'HISTORY' } })
+    expect(within(picker).getAllByRole('option')).toHaveLength(1)
+    fireEvent.click(within(picker).getByRole('option'))
+    expect(textarea).toHaveValue('Searchable full history text')
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')['computer-1:session-1'])
+      .toMatchObject({ text: '[Paste #1 - 21 lines]', pastes: [{ content: pasted }] })
+    if (cancel === 'Escape') fireEvent.keyDown(within(picker).getByRole('combobox'), { key: 'Escape' })
+    else fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
+    expect(textarea).toHaveValue('[Paste #1 - 21 lines]')
+    expect(sendMessage).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1', 'session-1', expect.objectContaining({ content: pasted }),
+    ))
+  })
+
+  it.each([false, true])('commits Use message as the durable draft without resurrecting its predecessor (reload=%s)', async (reload) => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const chosen = 'Chosen sent-message text'
+    const historySession = {
+      ...session, messages: [{
+        id: 'chosen', role: 'user' as const, content: chosen, createdAt: '2026-11-14T12:00:00Z',
+      }],
+    }
+    vi.mocked(listSessions).mockResolvedValue([historySession])
+    vi.mocked(getSession).mockResolvedValue(historySession)
+    const first = render(<App />)
+    let textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Previous draft must not return' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    const picker = screen.getByRole('dialog', { name: 'Sent messages' })
+    fireEvent.click(within(picker).getByRole('option'))
+    fireEvent.click(within(picker).getByRole('button', { name: 'Use message' }))
+    expect(screen.queryByRole('dialog', { name: 'Sent messages' })).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')['computer-1:session-1'])
+      .toMatchObject({ text: chosen, pastes: [] })
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts') || '{}')['computer-1:session-1']).toBe(chosen)
+    if (reload) {
+      first.unmount()
+      render(<App />)
+      textarea = await screen.findByLabelText('Message')
+    }
+    expect(textarea).toHaveValue(chosen)
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+      'computer-1', 'session-1', expect.objectContaining({ content: chosen }),
+    ))
+    await waitFor(() => expect(textarea).toHaveValue(''))
+    expect(JSON.parse(localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}')['computer-1:session-1'])
+      .toBeUndefined()
+    expect(textarea).not.toHaveValue('Previous draft must not return')
+  })
+
+  it('omits an automatic recovery brief from sent-message search and ArrowUp recall', async () => {
+    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+    const recovered = {
+      ...session,
+      messages: [
+        { id: 'before', role: 'user' as const, content: 'User prompt before recovery', createdAt: '2026-11-14T12:00:00Z' },
+        { id: 'brief', role: 'user' as const, content: 'Conversation recovery context', appGenerated: true,
+          deliveryConfirmed: true, createdAt: '2026-11-14T12:01:00Z' },
+        { id: 'after', role: 'user' as const, content: 'User prompt after recovery', createdAt: '2026-11-14T12:02:00Z' },
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([recovered])
+    vi.mocked(getSession).mockResolvedValue(recovered)
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Sent messages' }))
+    const picker = screen.getByRole('dialog', { name: 'Sent messages' })
+    expect(within(picker).getAllByRole('option')).toHaveLength(2)
+    expect(picker).not.toHaveTextContent('Conversation recovery context')
+    fireEvent.click(within(picker).getByRole('button', { name: 'Cancel' }))
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('User prompt after recovery')
+    fireEvent.keyDown(textarea, { key: 'ArrowUp' })
+    expect(textarea).toHaveValue('User prompt before recovery')
+    expect(sendMessage).not.toHaveBeenCalled()
   })
 
   it('supports command abbreviations and configures the web status line', async () => {
@@ -23772,6 +24864,51 @@ describe('App', () => {
     expect(
       await screen.findByLabelText('Change the keys for Open or close knowledge'),
     ).toHaveTextContent('Alt + K')
+  })
+
+  it('makes every visible settings field label searchable in its category', async () => {
+    seedHubSettings({
+      previewFeatures: { settingsNavigation: true, desktopRail: true, schedulerView: true },
+      newSessionRuntimes: {
+        copilot: { model: 'fixture-model', reasoningEffort: 'high', contextTier: 'default', mode: '' },
+        claude: { model: 'provider-model', reasoningEffort: 'high', contextTier: 'default', mode: '' },
+      },
+    })
+    vi.mocked(fetchHubFeatureFlags).mockResolvedValue({ ...defaultHubFeatureFlags, scheduler: true })
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+      settings: { model: 'fixture-model', reasoningEffort: 'high', sessionBackend: 'sdk', sessionClosePolicy: 'ask' },
+    })
+    vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    await within(dialog).findByRole('combobox', { name: 'GitHub Copilot default model' })
+    const categories = [...dialog.querySelectorAll('.settings-navigation__categories button span')]
+      .map((node) => node.firstChild!.textContent!)
+    const search = within(dialog).getByRole('searchbox')
+    for (const category of categories) {
+      fireEvent.change(search, { target: { value: '' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(`^${category}`) }))
+      if (category === 'Oracle') await within(dialog).findByLabelText('Dreamer timezone')
+      const content = dialog.querySelector('.settings-navigation__content')!
+      const labels = new Set([...content.querySelectorAll('h4, legend, label, [aria-label]')].flatMap((node) => {
+        const clone = node.cloneNode(true) as HTMLElement
+        clone.querySelectorAll('input, select, small, button, kbd').forEach((child) => child.remove())
+        return [node.matches('h4, legend, label') ? clone.textContent?.trim() : undefined,
+          node.getAttribute('aria-label')].filter((label): label is string => Boolean(label))
+      }))
+      for (const label of labels) {
+        fireEvent.change(search, { target: { value: label } })
+        const button = within(dialog).queryByRole('button', { name: new RegExp(`^${category}`) })
+        expect(button, `${category}: ${label}`).not.toBeNull()
+        fireEvent.click(button!)
+        const visibleMatches = [...content.querySelectorAll('h4, legend, label, [aria-label]')].filter((node) =>
+          !node.closest('[hidden]') && (`${node.textContent} ${node.getAttribute('aria-label')}`).includes(label))
+        expect(visibleMatches.length, `${category}: ${label} must show its field`).toBeGreaterThan(0)
+      }
+    }
   })
 
   it('drops stored shortcut keys that the editor would have refused', async () => {

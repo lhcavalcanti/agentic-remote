@@ -1,7 +1,8 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { appendFile, chmod, lstat, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import type { AgentProvider, SessionStatus } from '../shared/contracts.js'
+import { isDeepStrictEqual } from 'node:util'
+import type { AgentProvider, ManagedSession, SessionOrigin, SessionProvenance, SessionStatus } from '../shared/contracts.js'
 import type {
   ManagerClientDefaults,
   ManagerAttachment,
@@ -12,7 +13,7 @@ import type {
 import { ManagerMemory } from './manager-memory.js'
 import { ManagerUploads } from './manager-uploads.js'
 
-export type SessionOrigin = 'manager' | 'user' | 'discovered'
+export type { SessionOrigin } from '../shared/contracts.js'
 
 export interface ManagerState {
   /** The SDK session holding the manager's conversation. */
@@ -57,7 +58,7 @@ export interface ManagerState {
   defaults?: ManagerClientDefaults
 }
 
-export type JournalKind = 'created' | 'status' | 'renamed' | 'replaced' | 'removed'
+export type JournalKind = 'created' | 'status' | 'renamed' | 'replaced' | 'removed' | 'schedule-proposal'
 
 export interface JournalDraft {
   kind: JournalKind
@@ -69,6 +70,9 @@ export interface JournalDraft {
   to?: string
   replacedBy?: string
   origin?: SessionOrigin
+  proposalId?: string
+  proposalOperation?: string
+  proposalStatus?: string
 }
 
 export interface JournalEntry extends JournalDraft {
@@ -84,6 +88,9 @@ export interface RegistryEntry {
   cwd?: string
   provider?: AgentProvider
   origin: SessionOrigin
+  originEvidence?: 'launch' | 'discovery'
+  scheduleId?: string
+  scheduleRunId?: string
   /** What the session was started to do, from its first prompt. */
   task?: string
   firstSeenAt: string
@@ -94,6 +101,43 @@ export interface RegistryEntry {
 }
 
 export type ManagerRegistry = Record<string, RegistryEntry>
+type ProvenanceListener = (sessions: ReadonlyArray<Pick<RegistryEntry, 'computerId' | 'sessionId'>>) => void
+
+function projectProvenance(entry: RegistryEntry | undefined, computerId: string, sessionId: string): SessionProvenance | undefined {
+  if (!entry || entry.computerId !== computerId || entry.sessionId !== sessionId) return undefined
+  if (entry.origin === 'user' && entry.originEvidence !== 'launch') return undefined
+  if (entry.origin === 'discovered' && entry.originEvidence !== 'discovery') return undefined
+  return entry.origin === 'schedule'
+    ? { origin: entry.origin, scheduleId: entry.scheduleId, scheduleRunId: entry.scheduleRunId }
+    : { origin: entry.origin }
+}
+
+export function applySessionReplacement(
+  registry: ManagerRegistry, computerId: string, sessionId: string, replacedBy: string, now: string,
+): boolean {
+  const key = registryKey(computerId, sessionId)
+  const previous = registry[key]
+  if (!previous || previous.computerId !== computerId || previous.sessionId !== sessionId || sessionId === replacedBy) return false
+  const successorKey = registryKey(computerId, replacedBy)
+  const current = registry[successorKey]
+  const explicit = current && (current.origin === 'manager' || current.origin === 'schedule' ||
+    (current.origin === 'user' && current.originEvidence === 'launch'))
+  const retired = { ...previous, removedAt: previous.removedAt ?? now, replacedBy }
+  const successor: RegistryEntry = explicit ? { ...current } : {
+    ...previous, ...current, computerId, sessionId: replacedBy,
+    origin: previous.origin, originEvidence: previous.originEvidence,
+    scheduleId: previous.scheduleId, scheduleRunId: previous.scheduleRunId, task: previous.task,
+    firstSeenAt: current?.firstSeenAt ?? now,
+  }
+  if (!explicit) {
+    delete successor.removedAt
+    delete successor.replacedBy
+  }
+  if (isDeepStrictEqual(previous, retired) && isDeepStrictEqual(current, successor)) return false
+  registry[key] = retired
+  registry[successorKey] = successor
+  return true
+}
 
 export interface ManagerStoreOptions {
   now?: () => Date
@@ -172,7 +216,12 @@ export class ManagerStore {
   private conversationLines = 0
   private journal: JournalEntry[] = []
   private journalSeq = 0
+  private proposalJournal = new Map<string, Set<string>>()
+  private retainedProposals?: Set<string>
+  private legacyProposalCutoff?: number
   private sessions: ManagerRegistry = {}
+  private committedSessions: ManagerRegistry = {}
+  private readonly provenanceListeners = new Set<ProvenanceListener>()
   private work: Promise<unknown> = Promise.resolve()
 
   constructor(readonly directory: string, options: ManagerStoreOptions = {}) {
@@ -194,7 +243,7 @@ export class ManagerStore {
     const { proactive: _retired, ...current } = (state ?? {}) as Partial<ManagerState> & { proactive?: unknown }
     this.current = { ...emptyState(), ...current }
     if (!Array.isArray(this.current.knownSdkSessionIds)) this.current.knownSdkSessionIds = []
-    this.sessions = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
+    await this.loadSessionRegistry()
 
     this.conversation = new Map()
     const conversationLines = await this.readLines<ManagerMessage>('conversation.jsonl')
@@ -214,6 +263,100 @@ export class ManagerStore {
     this.journal = (await this.readLines<JournalEntry>('journal.jsonl'))
       .filter((entry) => Number.isInteger(entry?.seq))
     this.journalSeq = this.journal.reduce((highest, entry) => Math.max(highest, entry.seq), 0)
+    let proposalJournalText: string | undefined
+    try {
+      proposalJournalText = await readFile(path.join(this.directory, 'proposal-journal.json'), 'utf8')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    this.proposalJournal = new Map()
+    let validProposalJournal = false
+    if (proposalJournalText !== undefined) {
+      try {
+        const proposalJournal: unknown = JSON.parse(proposalJournalText)
+        if (!proposalJournal || typeof proposalJournal !== 'object' || Array.isArray(proposalJournal) ||
+          Reflect.get(proposalJournal, 'version') !== 1) throw new Error('Invalid Oracle proposal journal index')
+        const proposals: unknown = Reflect.get(proposalJournal, 'proposals')
+        if (!proposals || typeof proposals !== 'object' || Array.isArray(proposals)) throw new Error('Invalid Oracle proposal journal index')
+        const loaded = new Map<string, Set<string>>()
+        for (const [id, statuses] of Object.entries(proposals)) {
+          if (!Array.isArray(statuses) || !statuses.every((status: unknown) => typeof status === 'string')) {
+            throw new Error('Invalid Oracle proposal journal index')
+          }
+          loaded.set(id, new Set(statuses as string[]))
+        }
+        this.proposalJournal = loaded
+        validProposalJournal = true
+      } catch {
+        await rename(path.join(this.directory, 'proposal-journal.json'),
+          path.join(this.directory, `proposal-journal.json.corrupt-${randomUUID()}`))
+        console.warn('Manager proposal-journal.json was corrupt; quarantined and using the legacy journal cutoff')
+      }
+    }
+    // State from before the index existed may have rotated proposal statuses away. Only
+    // proposals created before that loaded window are ambiguous; later ones are always new.
+    const oldest = this.journal[0]
+    this.legacyProposalCutoff = !validProposalJournal && oldest && oldest.seq > 1
+      ? Date.parse(oldest.at)
+      : undefined
+  }
+
+  /** Origin metadata does not require opening Oracle's conversation or uploads. */
+  async initializeSessionRegistry(): Promise<void> {
+    await this.prepareRegistryDirectory()
+    await this.loadSessionRegistry()
+  }
+
+  private async loadSessionRegistry(): Promise<void> {
+    this.sessions = (await this.readJson<ManagerRegistry>('sessions.json')) ?? {}
+    this.committedSessions = this.sessions
+  }
+
+  recordUserSession(session: ManagedSession): Promise<void> {
+    return this.recordSessionOrigin(session, 'user')
+  }
+
+  recordDiscoveredSession(session: ManagedSession): Promise<void> {
+    return this.recordSessionOrigin(session, 'discovered')
+  }
+
+  recordSessionReplacement(computerId: string, sessionId: string, replacedBy: string): Promise<void> {
+    const key = registryKey(computerId, sessionId)
+    const successorKey = registryKey(computerId, replacedBy)
+    const records: ManagerRegistry = {}
+    if (this.sessions[key]) records[key] = this.sessions[key]
+    if (this.sessions[successorKey]) records[successorKey] = this.sessions[successorKey]
+    if (!applySessionReplacement(records, computerId, sessionId, replacedBy, this.now().toISOString())) return Promise.resolve()
+    return this.updateRegistry((registry) => {
+      registry[key] = records[key]
+      registry[successorKey] = records[successorKey]
+    })
+  }
+
+  private async prepareRegistryDirectory(): Promise<void> {
+    await mkdir(this.directory, { recursive: true, mode: 0o700 })
+    const metadata = await lstat(this.directory)
+    if (!metadata.isDirectory() || (process.getuid && metadata.uid !== process.getuid())) {
+      throw new Error('Session provenance requires an owner-only real directory')
+    }
+    await chmod(this.directory, 0o700)
+  }
+
+  private async recordSessionOrigin(session: ManagedSession, origin: 'user' | 'discovered'): Promise<void> {
+    const key = registryKey(session.computerId, session.id)
+    if (origin === 'discovered' && this.sessions[key]) return
+    await this.prepareRegistryDirectory()
+    const current = this.sessions[key]
+    if ((origin === 'discovered' && current) || current?.origin === 'manager' || current?.origin === 'schedule') return
+    await this.updateRegistry((registry) => {
+      registry[key] = {
+        ...current, computerId: session.computerId, sessionId: session.id,
+        title: session.title, computerName: session.computerName, cwd: session.cwd, provider: session.provider,
+        origin, originEvidence: origin === 'user' ? 'launch' : 'discovery',
+        firstSeenAt: current?.firstSeenAt ?? this.now().toISOString(),
+        lastStatus: session.status, lastSeenAt: session.updatedAt,
+      }
+    })
   }
 
   state(): ManagerState {
@@ -324,19 +467,91 @@ export class ManagerStore {
 
   appendJournal(drafts: JournalDraft[]): Promise<JournalEntry[]> {
     if (!drafts.length) return Promise.resolve([])
+    return this.serialized(() => this.writeJournal(drafts))
+  }
+
+  /** Receives the complete retained proposal snapshot, not an individual changed proposal. */
+  appendProposalJournal(proposals: {
+    entry: JournalDraft & { proposalId: string; proposalStatus: string }; createdAt: string; persistedStatus?: string
+  }[]): Promise<JournalEntry[]> {
+    return this.serialized(async () => {
+      const retained = new Set(proposals.map(({ entry }) => entry.proposalId))
+      this.retainedProposals = retained
+      const fences = new Map([...this.proposalJournal]
+        .filter(([id]) => retained.has(id))
+        .map(([id, statuses]) => [id, new Set(statuses)]))
+      const known = new Map([...fences].map(([id, statuses]) => [id, new Set(statuses)]))
+      for (const entry of this.journal) {
+        if (entry.proposalId && entry.proposalStatus) {
+          const statuses = known.get(entry.proposalId) ?? new Set<string>()
+          statuses.add(entry.proposalStatus)
+          known.set(entry.proposalId, statuses)
+        }
+      }
+      const drafts: JournalDraft[] = []
+      for (const { entry, createdAt, persistedStatus } of proposals) {
+        const id = entry.proposalId
+        const status = entry.proposalStatus
+        if (known.get(id)?.has(status)) continue
+        // A legacy status already on disk before this process may have been journaled and rotated
+        // away; a transition made since (such as startup expiry) is new and must be journaled.
+        if (!known.has(id) && this.legacyProposalCutoff !== undefined &&
+          persistedStatus === status && Date.parse(createdAt) <= this.legacyProposalCutoff) {
+          fences.set(id, new Set([status]))
+        } else {
+          drafts.push(entry)
+        }
+        const statuses = known.get(id) ?? new Set<string>()
+        statuses.add(status)
+        known.set(id, statuses)
+      }
+      await this.writeProposalJournal(fences)
+      const entries: JournalEntry[] = []
+      const batchSize = Math.max(1, this.journalKeep)
+      for (let offset = 0; offset < drafts.length; offset += batchSize) {
+        entries.push(...await this.writeJournal(drafts.slice(offset, offset + batchSize)))
+      }
+      return entries
+    })
+  }
+
+  private async writeProposalJournal(next: Map<string, Set<string>>): Promise<void> {
+    const data = (proposals: Map<string, Set<string>>) => ({
+      version: 1, proposals: Object.fromEntries([...proposals].map(([id, statuses]) => [id, [...statuses]])),
+    })
+    if (JSON.stringify(data(next)) === JSON.stringify(data(this.proposalJournal))) return
+    await this.writeJson('proposal-journal.json', data(next))
+    this.proposalJournal = next
+  }
+
+  private async writeJournal(drafts: JournalDraft[]): Promise<JournalEntry[]> {
+    if (!drafts.length) return []
     const at = this.now().toISOString()
-    const entries = drafts.map((draft) => ({ ...draft, seq: ++this.journalSeq, at }))
-    this.journal.push(...entries)
-    const rotate = this.journal.length > this.journalLimit
-    if (rotate) this.journal = this.journal.slice(-this.journalKeep)
+    let seq = this.journalSeq
+    const entries = drafts.map((draft) => ({ ...draft, seq: ++seq, at }))
+    const appended = [...this.journal, ...entries]
+    const rotate = appended.length > this.journalLimit
+    const journal = rotate ? appended.slice(-this.journalKeep) : appended
+    if (rotate) {
+      const fences = new Map([...this.proposalJournal].map(([id, statuses]) => [id, new Set(statuses)]))
+      // Checkpoint persisted proposal statuses before rotation can remove their only durable record.
+      for (const entry of this.journal) {
+        if (!entry.proposalId || !entry.proposalStatus ||
+          (this.retainedProposals && !this.retainedProposals.has(entry.proposalId))) continue
+        const statuses = fences.get(entry.proposalId) ?? new Set<string>()
+        statuses.add(entry.proposalStatus)
+        fences.set(entry.proposalId, statuses)
+      }
+      await this.writeProposalJournal(fences)
+    }
     const content = rotate
-      ? this.journal.map((entry) => JSON.stringify(entry)).join('\n') + '\n'
+      ? journal.map((entry) => JSON.stringify(entry)).join('\n') + '\n'
       : entries.map((entry) => JSON.stringify(entry)).join('\n') + '\n'
-    return this.serialized(() =>
-      rotate
-        ? this.writeAtomic('journal.jsonl', content)
-        : appendFile(path.join(this.directory, 'journal.jsonl'), content, 'utf8'),
-    ).then(() => entries.map((entry) => ({ ...entry })))
+    if (rotate) await this.writeAtomic('journal.jsonl', content)
+    else await appendFile(path.join(this.directory, 'journal.jsonl'), content, 'utf8')
+    this.journal = journal
+    this.journalSeq = seq
+    return entries.map((entry) => ({ ...entry }))
   }
 
   journalSince(seq: number): JournalEntry[] {
@@ -351,12 +566,45 @@ export class ManagerStore {
     return structuredClone(this.sessions)
   }
 
+  sessionOrigin(computerId: string, sessionId: string): SessionOrigin | undefined {
+    return this.sessions[registryKey(computerId, sessionId)]?.origin
+  }
+
+  /** UI/API projection only; Oracle policy continues to read the stored origin. */
+  sessionProvenance(computerId: string, sessionId: string): SessionProvenance | undefined {
+    return projectProvenance(this.sessions[registryKey(computerId, sessionId)], computerId, sessionId)
+  }
+
+  isSessionRetired(computerId: string, sessionId: string): boolean {
+    const entry = this.sessions[registryKey(computerId, sessionId)]
+    return Boolean(entry?.removedAt || entry?.replacedBy)
+  }
+
+  onSessionProvenanceChanged(listener: ProvenanceListener): () => void {
+    this.provenanceListeners.add(listener)
+    return () => { this.provenanceListeners.delete(listener) }
+  }
+
   updateRegistry(change: (registry: ManagerRegistry) => void): Promise<void> {
     const next = structuredClone(this.sessions)
     change(next)
     this.sessions = this.pruneTombstones(next)
     const snapshot = structuredClone(this.sessions)
-    return this.serialized(() => this.writeJson('sessions.json', snapshot))
+    return this.serialized(async () => {
+      await this.writeJson('sessions.json', snapshot)
+      const changed = [...new Set([...Object.keys(this.committedSessions), ...Object.keys(snapshot)])].flatMap((key) => {
+        const { computerId, sessionId } = snapshot[key] ?? this.committedSessions[key]
+        return isDeepStrictEqual(
+          projectProvenance(this.committedSessions[key], computerId, sessionId),
+          projectProvenance(snapshot[key], computerId, sessionId),
+        ) ? [] : [{ computerId, sessionId }]
+      })
+      this.committedSessions = snapshot
+      if (changed.length) for (const listener of [...this.provenanceListeners]) {
+        try { listener(changed) }
+        catch (error) { console.warn('Session provenance listener failed:', error) }
+      }
+    })
   }
 
   /** Settles once every write issued so far is on disk. */
@@ -441,7 +689,7 @@ export class ManagerStore {
   private async writeAtomic(name: string, content: string): Promise<void> {
     const target = path.join(this.directory, name)
     const temporary = `${target}.${randomUUID()}.tmp`
-    await writeFile(temporary, content, 'utf8')
+    await writeFile(temporary, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
     await rename(temporary, target)
   }
 

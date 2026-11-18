@@ -101,6 +101,36 @@ describe('hub settings profile routes', () => {
     await app.close()
   })
 
+  it('persists validated preview preferences without accepting hub flags as preferences', async () => {
+    const store = await profileStore()
+    const app = await hub(store)
+    try {
+      const saved = await app.inject({
+        method: 'PATCH', url: '/api/settings', headers: local,
+        payload: { changes: { previewFeatures: { value: { composerRefresh: true, schedulerView: true }, baseRevision: 0 } } },
+      })
+      expect(saved.statusCode).toBe(200)
+      expect(saved.json().settings.values.previewFeatures).toEqual({ composerRefresh: true, schedulerView: true })
+      for (const value of [{ schedulerView: 'on' }]) {
+        expect((await app.inject({
+          method: 'PATCH', url: '/api/settings', headers: local,
+          payload: { changes: { previewFeatures: { value, baseRevision: 1 } } },
+        })).statusCode).toBe(400)
+      }
+      const future = await app.inject({
+        method: 'PATCH', url: '/api/settings', headers: local,
+        payload: { changes: { previewFeatures: {
+          value: { composerRefresh: true, schedulerView: true, scheduler: true, futurePreview: true }, baseRevision: 1,
+        } } },
+      })
+      expect(future.statusCode).toBe(200)
+      expect(future.json().settings.values.previewFeatures).toEqual({ composerRefresh: true, schedulerView: true })
+      expect(store.snapshot().revision).toBe(1)
+    } finally {
+      await app.close()
+    }
+  })
+
   it('imports only settings that were never chosen', async () => {
     const store = await profileStore()
     await store.update({ accent: { value: 'teal', baseRevision: 0 } })
@@ -111,8 +141,20 @@ describe('hub settings profile routes', () => {
       headers: local,
       payload: { values: { accent: 'rose', appearance: 'light' } },
     })
+
     expect(imported.statusCode).toBe(200)
     expect(imported.json().settings.values).toEqual({ accent: 'teal', appearance: 'light' })
+    await app.close()
+  })
+
+  it('exposes only the hub display-name default on the opt-in settings read', async () => {
+    const app = await hub(await profileStore())
+    const response = await app.inject({ url: '/api/settings?defaults=displayName', headers: local })
+    expect(response.statusCode).toBe(200)
+    expect(Object.keys(response.json()).sort()).toEqual(['defaultDisplayName', 'settings'])
+    expect(response.json().defaultDisplayName).toEqual(expect.any(String))
+    expect((await app.inject({ url: '/api/settings?defaults=displayName',
+      headers: { host: 'localhost', origin: 'https://evil.example' } })).statusCode).toBe(403)
     await app.close()
   })
 

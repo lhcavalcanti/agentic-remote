@@ -284,6 +284,14 @@ agentic-remote uninstall
 
 `doctor` is read-only and works with the service down. It checks the installed service, local health, provider tools, configured transcription/voice assets, origins, and recent startup phases. `--tunnel ID` (or `AGENTIC_REMOTE_DEVTUNNEL_ID` in the shell or service environment file, preserved by setup/update) also checks Dev Tunnel login and both tunnel and port ACLs: empty or deny-only ACLs pass; any allow entry, unknown JSON, or missing `devtunnel` binary fails closed. Tunnel checks skip only when no tunnel is selected. The origin check warns unless the allowlist includes the selected tunnel's HTTPS hostname, configured port, and region (when included in its ID); another tunnel's origin does not satisfy it. It reports the login provider without requiring a particular one and never changes ACLs. `--json` emits `{check, status, detail}` records; exit status is 1 if any check fails, otherwise 0. No package manager is executed: the pinned pnpm version must already be locally resolvable through its installation metadata or Corepack cache.
 
+### Feature flags
+
+Hub features default off: `notificationCenter` (`AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER`), `hostMonitor` (`AGENTIC_REMOTE_FEATURE_HOST_MONITOR`), and `scheduler` (`AGENTIC_REMOTE_FEATURE_SCHEDULER`). Set a variable only to `on` or `off` in the service environment file (case-insensitive; surrounding whitespace is ignored). Any other value stops hub startup and names the variable. Restart the hub after changing flags. `setup` and `update` preserve every `AGENTIC_REMOTE_FEATURE_*` variable; an exported value overrides the saved value during setup.
+
+App settings → Interface → **Preview features** holds the client opt-ins, all off by default and synced across devices on this hub. A preview cannot enable a server feature: dependent toggles show **Turned off on this hub** while their hub flag is off. These flags reserve rollout controls; enabling one does not add a feature that is not implemented yet.
+
+The scheduler flag enables the hub-only durable schedule/run store, dispatcher, `/api/schedules` API, and the runner that starts scheduled sessions on the target computer. Oracle's schedule tools only propose changes; each one runs after you approve that exact proposal. Scheduled sessions ask for permissions and folder trust by default, and Allow-all needs explicit confirmation. The Scheduler view is the separate `schedulerView` preview. See [Scheduler](docs/design/scheduler.md) for the runner, recovery/stop guarantees, notifications, and API contract.
+
 ## Access through Microsoft Dev Tunnels
 
 Microsoft Dev Tunnels can expose the hub through an authenticated HTTPS URL.
@@ -343,6 +351,13 @@ The development server uses Vite plus Fastify. Run the complete checks with:
 ```bash
 pnpm check
 ```
+
+- UI locks protect today's conversation, busy queue, session list, settings, setup dialogs, computers, and Oracle at desktop, foldable, and phone sizes.
+- Run `pnpm test:ui-locks` (Chromium only); it builds and serves the fixture frontend on 127.0.0.1:4395, with a fixed clock and mocked API/WebSocket traffic.
+- Update committed snapshots with `pnpm test:ui-locks --update-snapshots` only for reviewed, intentional visual changes; refactors must produce zero diff.
+- Capture PR screenshots with `pnpm screens -- --output-dir ./screenshots --scene conversation --viewport desktop --viewport phone`; omit filters to capture every scene and size. Keep captures outside `test-results`, which Playwright clears on each run.
+- The capture command builds once and starts/stops its own loopback frontend; `--no-build` reuses this worktree's Playwright build, and `--base-url <origin>` uses an existing frontend instead.
+- Neither command needs a backend; captures refuse production ports 4317/4318 and output directories under `/tmp` or `/var/tmp`, including symlinks.
 
 `pnpm test` runs every test file once, serially. Two named Vitest projects run
 a subset:

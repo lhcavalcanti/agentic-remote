@@ -563,6 +563,8 @@ describe('ClaudeAgentService', () => {
 
     await service.sendMessage(sessionId, 'hello')
     await waitForIdle(service, sessionId)
+    expect(service.getSession(sessionId)?.messages.find((message) => message.role === 'user'))
+      .toMatchObject({ content: 'hello', deliveryConfirmed: true })
     expect(service.getSession(sessionId)?.messages.at(-1)).toMatchObject({
       role: 'assistant',
       content: 'Hello from Claude',
@@ -897,8 +899,12 @@ describe('ClaudeAgentService', () => {
     await vi.waitFor(() =>
       expect(service.getSession(sessionId)?.status).toBe('error'),
     )
+    expect(service.getSession(sessionId)?.messages.find((message) => message.content === 'first')?.deliveryConfirmed)
+      .toBeUndefined()
     await service.sendMessage(sessionId, 'retry')
     await waitForIdle(service, sessionId)
+    expect(service.getSession(sessionId)?.messages.find((message) => message.content === 'retry')?.deliveryConfirmed)
+      .toBe(true)
 
     const runOptions = queryCalls.filter(
       (options) => options.sessionId || options.resume,
@@ -1237,6 +1243,25 @@ describe('ClaudeAgentService', () => {
         expect.stringContaining(`"sessionLifecycle":"suspended","sessionId":"${session.id}"`),
         expect.stringContaining(`"sessionLifecycle":"resumed","sessionId":"${session.id}"`),
       ])
+  })
+
+  it('suspends an unknown fenced Claude launch without reopening prompt or queue admissions', async () => {
+    const { directory, service, queryCalls } = await fixture(async function* () {})
+    const created = await service.createSession(directory, false, false, 'claude')
+    const initialQueries = queryCalls.length
+    const accepted = await service.store.acceptIdentifiedPrompt(created.id, 'follower', 'Synthetic follower', true)
+    expect(await service.cancelWithAck(created.id, 1)).toMatchObject({ outcome: 'unknown' })
+    await expect(service.suspendSession(created.id)).resolves.toMatchObject({ suspended: true, launchStopping: true })
+    await expect(service.sendMessage(created.id, 'Must not start', true)).rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.dispatchQueuedPrompt(created.id, accepted.queuedPrompts![0].id, 'Must not start'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.resumeSession(created.id)).rejects.toMatchObject({ statusCode: 409 })
+    expect(service.getSession(created.id)?.suspended).toBe(true)
+    expect(queryCalls).toHaveLength(initialQueries)
+    await service.cancelWithAck(created.id, 1)
+    await expect(service.closeSession(created.id)).resolves.toMatchObject({ closedAt: expect.any(String) })
+    await service.deleteSession(created.id)
+    expect(service.getSession(created.id)).toBeUndefined()
   })
 
   it('leaves a suspended session where it was when the send is refused', async () => {

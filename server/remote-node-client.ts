@@ -1,4 +1,12 @@
 import type { DirectoryScope } from './directory-browser.js'
+import { SKILL_SETTINGS_CAPABILITY, skillSettingsSchema } from '../shared/skill-settings.js'
+import type { SkillToggle } from '../shared/skill-settings.js'
+import { SkillSettingsError } from './skill-settings.js'
+import type { SkillSettingsTarget } from './skill-settings-routes.js'
+import {
+  cancellationAckSchema, launchReconciliationSchema, promptAcceptanceReceiptSchema, terminationAcknowledgementSchema,
+  type LaunchReconciliation, type TerminationAcknowledgement,
+} from '../shared/launch-identity.js'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
@@ -55,6 +63,15 @@ import {
   ResourceReads,
 } from './session-resources.js'
 import type { SessionKnowledgeBaseLocation } from './session-directory.js'
+import {
+  HOST_TELEMETRY_CAPABILITY_VERSION, HostSnapshotSchema, HostHistorySchema, HostProcessesSchema,
+} from '../shared/host-telemetry.js'
+import { hostTelemetryError, type HostTelemetryTarget } from './host-telemetry/service.js'
+import { subscribeRemoteHost, HOST_TELEMETRY_REMOTE_TIMEOUT_MS } from './host-telemetry/remote.js'
+import {
+  SCHEDULE_WORKTREE_VERSION, scheduleWorktreeRecordSchema, updateComputerForScheduleWorktrees,
+  type ScheduleWorktreeInput, type ScheduleWorktreeRecord,
+} from '../shared/schedule-worktrees.js'
 
 /**
  * Conversion, whisper, and probing each carry their own timeout on the owning
@@ -101,6 +118,7 @@ export function normalizeNodeUrl(value: string): string {
 }
 
 export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
+  version?: string
   readonly registrationId = randomUUID()
   private readonly resourceReads = new ResourceReads()
   private readonly resourceLifetime = new AbortController()
@@ -108,6 +126,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   private reconnectTimer?: NodeJS.Timeout
   private reconnectDelay = 1_000
   private stopped = false
+  private readonly stoppingLaunches = new Set<string>()
   private _online = false
   private _providers: NodeInfo['providers']
   private _voice: NodeInfo['voice']
@@ -146,10 +165,77 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       signal ? 0 : 15_000,
       false,
     )
+    this.version = info.version
     this._providers = info.providers
     this._voice = info.voice
     this.setOnline(true)
     return info
+  }
+
+  async skillSettingsTarget(): Promise<SkillSettingsTarget> {
+    const signal = this.resourceLifetime.signal
+    try {
+      const info = await this.getInfo(AbortSignal.any([signal, AbortSignal.timeout(10_000)]))
+      if (info.skillSettings?.version !== SKILL_SETTINGS_CAPABILITY) {
+        throw new SkillSettingsError(`Update this computer (${this.computer.name}) to manage skills.`)
+      }
+    } catch (error) {
+      if (error instanceof SkillSettingsError || error instanceof RemoteNodeRequestError) throw error
+      throw new RemoteNodeTransportError(this.computer.name, error)
+    }
+    const request = async (input?: SkillToggle) => {
+      if (signal.aborted) throw new RemoteNodeTransportError(this.computer.name, signal.reason)
+      try {
+        const result = await this.request('/node-api/skills', {
+          signal, method: input ? 'PATCH' : 'GET',
+          ...(input ? { body: JSON.stringify(input) } : {}),
+        }, 15_000)
+        const parsed = skillSettingsSchema.safeParse(result)
+        if (!parsed.success) throw new SkillSettingsError('This computer returned invalid skill settings.', 502)
+        return parsed.data
+      } catch (error) {
+        if (error instanceof SkillSettingsError || error instanceof RemoteNodeRequestError) throw error
+        throw new RemoteNodeTransportError(this.computer.name, error)
+      }
+    }
+    return { snapshot: () => request(), update: (input) => request(input) }
+  }
+
+  async hostTelemetryTarget(): Promise<HostTelemetryTarget> {
+    const signal = this.resourceLifetime.signal
+    let info: NodeInfo
+    try {
+      info = await this.getInfo(AbortSignal.any([signal, AbortSignal.timeout(HOST_TELEMETRY_REMOTE_TIMEOUT_MS)]))
+    } catch (error) {
+      if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
+      if (error instanceof RemoteNodeRequestError) throw error
+      throw new RemoteNodeTransportError(this.computer.name, error)
+    }
+    if (info.hostTelemetry?.version !== HOST_TELEMETRY_CAPABILITY_VERSION) {
+      throw hostTelemetryError(`Update this computer (${this.computer.name}) to use host monitoring.`, 409)
+    }
+    if (info.hostTelemetry.enabled !== true) {
+      throw hostTelemetryError(`Host monitoring is turned off on this computer (${this.computer.name}).`, 409)
+    }
+    const read = async <T>(path: string, schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }): Promise<T> => {
+      let payload: unknown
+      try {
+        payload = await this.request(path, { signal }, HOST_TELEMETRY_REMOTE_TIMEOUT_MS, false)
+      } catch (error) {
+        if (error instanceof SyntaxError) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
+        if (error instanceof RemoteNodeRequestError) throw error
+        throw new RemoteNodeTransportError(this.computer.name, error)
+      }
+      const parsed = schema.safeParse(payload)
+      if (!parsed.success) throw hostTelemetryError('This computer returned invalid host telemetry', 502, 'HOST_TELEMETRY_INVALID')
+      return parsed.data
+    }
+    return {
+      snapshot: () => read('/node-api/host', HostSnapshotSchema),
+      history: () => read('/node-api/host/history?range=24h', HostHistorySchema),
+      processes: () => read('/node-api/host/processes', HostProcessesSchema),
+      subscribe: (sample, ended) => subscribeRemoteHost(this.computer, signal, sample, ended),
+    }
   }
 
   connectVoice(
@@ -385,6 +471,9 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         body: JSON.stringify(input),
       },
     )
+    if (input.launchId !== undefined && response?.session?.launchId !== input.launchId) {
+      throw new RemoteNodeRequestError('The owning computer did not confirm launch identity. Reconcile before retrying.', 502, undefined, true)
+    }
     return response.session
   }
 
@@ -642,6 +731,12 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         body: JSON.stringify(input),
       },
     )
+    if (input.deliveryId !== undefined) {
+      const receipt = response?.session?.promptReceipts?.find((entry) => entry.deliveryId === input.deliveryId)
+      if (!promptAcceptanceReceiptSchema.safeParse(receipt).success || receipt?.sessionId !== sessionId) {
+        throw new RemoteNodeRequestError('The owning computer did not confirm prompt acceptance. Reconcile before retrying.', 502, undefined, true)
+      }
+    }
     return response.session
   }
 
@@ -667,6 +762,70 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
         body: '{}',
       },
     )
+  }
+
+  async reconcileLaunch(launchId: string): Promise<LaunchReconciliation | undefined> {
+    const response = await this.request<{ launch: LaunchReconciliation | null }>(
+      `/node-api/launches/${encodeURIComponent(launchId)}`,
+    )
+    if (response?.launch === null) return undefined
+    const parsed = launchReconciliationSchema.safeParse(response?.launch)
+    if (!parsed.success) throw new RemoteNodeRequestError('The owning computer returned invalid launch evidence.', 502)
+    const launch = parsed.data
+    if (launch.launchId !== launchId || launch.receipts.some((receipt) => receipt.sessionId !== launch.sessionId) ||
+        (launch.termination && launch.termination.sessionId !== launch.sessionId)) {
+      throw new RemoteNodeRequestError('The owning computer returned a mismatched launch identity.', 502)
+    }
+    return launch
+  }
+
+  private async scheduleWorktreeRequest(launchId: string, route: string, body?: unknown): Promise<ScheduleWorktreeRecord | undefined> {
+    const info = await this.getInfo()
+    if (info.scheduleWorktrees?.version !== SCHEDULE_WORKTREE_VERSION) throw updateComputerForScheduleWorktrees()
+    const response = await this.request<{ worktree: unknown }>(route,
+      body === undefined ? undefined : { method: 'POST', body: JSON.stringify(body) }, 35_000)
+    if (response?.worktree === null) return undefined
+    const record = scheduleWorktreeRecordSchema.parse(response?.worktree)
+    if (record.launchId !== launchId) throw new RemoteNodeRequestError('Mismatched worktree ownership evidence.', 502)
+    return record
+  }
+
+  async allocateScheduleWorktree(input: ScheduleWorktreeInput): Promise<ScheduleWorktreeRecord> {
+    const record = await this.scheduleWorktreeRequest(input.launchId, '/node-api/schedule-worktrees', input)
+    if (!record) throw new RemoteNodeRequestError('Missing worktree ownership evidence.', 502)
+    return record
+  }
+
+  readScheduleWorktree(launchId: string): Promise<ScheduleWorktreeRecord | undefined> {
+    return this.scheduleWorktreeRequest(launchId, `/node-api/schedule-worktrees/${encodeURIComponent(launchId)}`)
+  }
+
+  cleanupScheduleWorktree(launchId: string): Promise<ScheduleWorktreeRecord | undefined> {
+    return this.scheduleWorktreeRequest(launchId, `/node-api/schedule-worktrees/${encodeURIComponent(launchId)}/cleanup`, {})
+  }
+
+  async cancelWithAck(sessionId: string, timeoutMs: number): Promise<TerminationAcknowledgement> {
+    cancellationAckSchema.parse({ timeoutMs })
+    this.stoppingLaunches.add(sessionId)
+    try {
+      const parsed = terminationAcknowledgementSchema.safeParse(await this.request<TerminationAcknowledgement>(
+        `/node-api/sessions/${encodeURIComponent(sessionId)}/cancel-with-ack`,
+        { method: 'POST', body: JSON.stringify({ timeoutMs }) },
+        timeoutMs + 5_000,
+      ))
+      if (!parsed.success || parsed.data.sessionId !== sessionId) {
+        throw new RemoteNodeRequestError('The owning computer returned invalid termination evidence.', 502)
+      }
+      return parsed.data
+    } catch (error) {
+      if (error instanceof RemoteNodeRequestError) throw error
+      if (error instanceof SyntaxError) throw new RemoteNodeRequestError('The owning computer returned invalid termination evidence.', 502)
+      if (!(error instanceof TypeError || (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)))) throw error
+      return {
+        sessionId, outcome: 'unknown', checkedAt: new Date().toISOString(), scope: 'provider-owned',
+        reason: 'The owning computer did not confirm termination.',
+      }
+    }
   }
 
   async askSession(
@@ -817,6 +976,16 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       : 15_000,
     markOnline = true,
   ): Promise<TResult> {
+    const session = /^\/node-api\/sessions\/([^/]+)(?:\/(.*))?$/.exec(path)
+    if (session && init.method && init.method !== 'GET' && this.stoppingLaunches.has(decodeURIComponent(session[1]))) {
+      // Stop intent remains authoritative even if the request/response was lost.
+      // Only reads, metadata-only rename, and further teardown may cross it.
+      const teardown = ['cancel', 'cancel-with-ack', 'close', 'suspend'].includes(session[2] || '')
+      const metadataOrDelete = !session[2] && ['PATCH', 'DELETE'].includes(init.method)
+      if (!teardown && !metadataOrDelete) {
+        throw new RemoteNodeRequestError('The launch is stopping; no work may dispatch until cancellation is resolved.', 409, undefined, false)
+      }
+    }
     const headers = new Headers(init.headers)
     headers.set('authorization', `Bearer ${this.computer.token}`)
     if (init.body != null && !headers.has('content-type')) {

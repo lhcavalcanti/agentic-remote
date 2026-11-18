@@ -36,6 +36,8 @@ import {
 } from './session-resources.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 import { ClosedSessionSweeper } from './closed-session-sweeper.js'
+import { launchIdentitySchema } from '../shared/launch-identity.js'
+import { updateComputerForLaunchIdentity } from './launch-identity.js'
 
 interface ProviderSessionServiceEvents {
   event: [event: ServerEvent]
@@ -49,6 +51,8 @@ export class ProviderSessionService
   private resourceEpoch = 0
   private readonly resourceReads = new ResourceReads()
   private readonly closedSessions = new ClosedSessionSweeper(this)
+  private readonly pendingLaunches = new Map<string, Promise<SessionDetail>>()
+  private readonly pendingDeliveries = new Map<string, { sessionId: string; promise: Promise<SessionDetail> }>()
 
   constructor(
     private readonly copilot: SessionService,
@@ -61,6 +65,13 @@ export class ProviderSessionService
 
   providers(): AgentProviderCapability[] {
     return [...this.copilot.providers(), ...this.claude.providers()]
+  }
+
+  async listSessionPaneRoots() {
+    return [
+      ...await this.copilot.listSessionPaneRoots?.() ?? [],
+      ...await this.claude.listSessionPaneRoots?.() ?? [],
+    ]
   }
 
   async start(phases: StartupPhases = silentStartupPhases): Promise<void> {
@@ -149,9 +160,10 @@ export class ProviderSessionService
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
     mode?: AgentMode,
+    launchId?: string,
   ): Promise<SessionDetail> {
     const service = provider === 'claude' ? this.claude : this.copilot
-    return service.createSession(
+    const create = () => service.createSession(
       cwd,
       terminalBacked,
       allowAllPermissions,
@@ -160,7 +172,49 @@ export class ProviderSessionService
       reasoningEffort,
       contextTier,
       mode,
+      ...(launchId !== undefined ? [launchId] : []),
     )
+    if (launchId === undefined) return create()
+    launchIdentitySchema.parse(launchId)
+    if (!service.reconcileLaunch) return Promise.reject(updateComputerForLaunchIdentity())
+    const pending = this.pendingLaunches.get(launchId)
+    if (pending) return pending
+    const created = (async () => {
+      const existing = await this.reconcileLaunch(launchId)
+      if (existing) {
+        const session = this.getSession(existing.sessionId)
+        if (session) return session
+        throw Object.assign(new Error('This launch session has been deleted; its identity cannot be reused.'), { statusCode: 409 })
+      }
+      return create()
+    })().finally(() => this.pendingLaunches.delete(launchId))
+    this.pendingLaunches.set(launchId, created)
+    return created
+  }
+
+  async reconcileLaunch(launchId: string) {
+    launchIdentitySchema.parse(launchId)
+    return await this.copilot.reconcileLaunch?.(launchId) ?? await this.claude.reconcileLaunch?.(launchId)
+  }
+
+  deliveryIdentity(deliveryId: string): { sessionId?: string; historyComplete: boolean } {
+    launchIdentitySchema.parse(deliveryId)
+    if (!this.copilot.deliveryIdentity || !this.claude.deliveryIdentity) throw updateComputerForLaunchIdentity()
+    const identities = [this.copilot.deliveryIdentity(deliveryId), this.claude.deliveryIdentity(deliveryId)]
+    const owners = new Set(identities.flatMap((identity) => identity.sessionId ? [identity.sessionId] : []))
+    if (owners.size > 1) {
+      throw Object.assign(new Error('Delivery identity has conflicting provider owners.'), { statusCode: 409, uncertainDelivery: false })
+    }
+    return {
+      ...(owners.size ? { sessionId: [...owners][0] } : {}),
+      historyComplete: identities.every((identity) => identity.historyComplete),
+    }
+  }
+
+  cancelWithAck(sessionId: string, timeoutMs?: number) {
+    const service = this.serviceFor(sessionId)
+    if (!service.cancelWithAck) throw updateComputerForLaunchIdentity()
+    return service.cancelWithAck(sessionId, timeoutMs)
   }
 
   uploadFile(
@@ -288,14 +342,36 @@ export class ProviderSessionService
     enqueue?: boolean,
     acknowledgesFailure?: string,
     replaceTerminalDraft?: boolean,
+    deliveryId?: string,
   ): Promise<SessionDetail> {
-    return this.serviceFor(sessionId).sendMessage(
+    const send = () => this.serviceFor(sessionId).sendMessage(
       sessionId,
       content,
       enqueue,
       acknowledgesFailure,
       replaceTerminalDraft,
+      ...(deliveryId !== undefined ? [deliveryId] : []),
     )
+    if (deliveryId === undefined) return send()
+    launchIdentitySchema.parse(deliveryId)
+    const pending = this.pendingDeliveries.get(deliveryId)
+    let identity: ReturnType<ProviderSessionService['deliveryIdentity']>
+    try { identity = this.deliveryIdentity(deliveryId) }
+    catch (error) { return Promise.reject(error) }
+    if ((pending && pending.sessionId !== sessionId) || (identity.sessionId !== undefined && identity.sessionId !== sessionId)) {
+      return Promise.reject(Object.assign(new Error('Delivery identity belongs to another session.'), {
+        statusCode: 409, uncertainDelivery: false,
+      }))
+    }
+    if (pending) return pending.promise
+    if (identity.sessionId === undefined && !identity.historyComplete) {
+      return Promise.reject(Object.assign(new Error('Delivery identity history is incomplete; new identified prompts are disabled.'), {
+        statusCode: 409, uncertainDelivery: false,
+      }))
+    }
+    const promise = send().finally(() => this.pendingDeliveries.delete(deliveryId))
+    this.pendingDeliveries.set(deliveryId, { sessionId, promise })
+    return promise
   }
 
   listCommands(sessionId: string): Promise<SlashCommand[]> {

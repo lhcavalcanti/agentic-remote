@@ -24,7 +24,11 @@ async function worker(buildId?: string) {
   const self = {
     AGENTIC_REMOTE_BUILD_ID: buildId,
     location: new URL('https://example.test/sw.js?v=legacy'),
-    clients: { claim: vi.fn().mockResolvedValue(undefined) },
+    clients: {
+      claim: vi.fn().mockResolvedValue(undefined),
+      matchAll: vi.fn().mockResolvedValue([]),
+      openWindow: vi.fn().mockResolvedValue(undefined),
+    },
     addEventListener: (type: string, listener: (event: unknown) => void) => {
       listeners.set(type, listener)
     },
@@ -127,5 +131,36 @@ describe('service worker build caches', () => {
       request: new Request('https://example.test/api/version'),
     })).toBeUndefined()
     expect(caches.open).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['/?oracle=open', 'https://example.test/?oracle=open'],
+    ['/?schedule=review&run=one', 'https://example.test/?schedule=review&run=one'],
+    ['https://example.test/session?x=1#recent', 'https://example.test/session?x=1#recent'],
+    ['/\\evil.example', 'https://example.test/'],
+    ['//evil.example', 'https://example.test/'],
+    ['https://evil.example/path', 'https://example.test/'],
+    ['javascript:alert(1)', 'https://example.test/'],
+    ['data:text/html,test', 'https://example.test/'],
+    ['blob:https://example.test/opaque-id', 'https://example.test/'],
+    ['http://[invalid', 'https://example.test/'],
+    [17, 'https://example.test/'],
+  ])('opens only a same-origin notification target for %j', async (url, expected) => {
+    const { self, dispatch } = await worker()
+    const close = vi.fn()
+    await dispatch('notificationclick', { notification: { close, data: { url } } })
+    expect(close).toHaveBeenCalledOnce()
+    expect(self.clients.openWindow).toHaveBeenCalledExactlyOnceWith(expected)
+  })
+
+  it('does not navigate an existing client off-origin when a notification contains a backslash authority', async () => {
+    const { self, dispatch } = await worker()
+    const navigate = vi.fn().mockResolvedValue(undefined)
+    const focus = vi.fn().mockResolvedValue(undefined)
+    self.clients.matchAll.mockResolvedValue([{ navigate, focus }])
+    await dispatch('notificationclick', { notification: { close: vi.fn(), data: { url: '/\\evil.example' } } })
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('https://example.test/')
+    expect(focus).toHaveBeenCalledOnce()
+    expect(self.clients.openWindow).not.toHaveBeenCalled()
   })
 })

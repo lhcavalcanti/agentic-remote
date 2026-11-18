@@ -27,12 +27,16 @@ import type {
 } from '../shared/contracts.js'
 import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 import type { StartupPhases } from './startup-phases.js'
+import type { LaunchReconciliation, TerminationAcknowledgement } from '../shared/launch-identity.js'
+import type { SessionPaneRoot } from './host-telemetry/session-pane-roots.js'
 
 export interface SessionService {
   providers(): AgentProviderCapability[]
   /** Starts the provider, labelling its awaited startup phases on `phases`. */
   start(phases?: StartupPhases): Promise<void>
   stop(): Promise<void>
+  /** Read-only ownership observations; must not start providers. */
+  listSessionPaneRoots?(): Promise<SessionPaneRoot[]>
   listSessions(): SessionDetail[]
   listHistory(): SessionDetail[]
   /** Sessions closed through the app that can still be reopened. */
@@ -50,6 +54,7 @@ export interface SessionService {
     reasoningEffort?: RuntimeReasoningEffort,
     contextTier?: 'default' | 'long_context',
     mode?: AgentMode,
+    launchId?: string,
   ): Promise<SessionDetail>
   uploadFile(
     sessionId: string,
@@ -99,6 +104,7 @@ export interface SessionService {
     enqueue?: boolean,
     acknowledgesFailure?: string,
     replaceTerminalDraft?: boolean,
+    deliveryId?: string,
   ): Promise<SessionDetail>
   listCommands(sessionId: string): Promise<SlashCommand[]>
   /** Resource readers must settle and release their own work on cancellation. */
@@ -112,6 +118,10 @@ export interface SessionService {
     replaceTerminalDraft?: boolean,
   ): Promise<SessionDetail>
   cancel(sessionId: string): Promise<void>
+  /** Durable authority, including deleted sessions and pruned receipt details. */
+  deliveryIdentity?(deliveryId: string): { sessionId?: string; historyComplete: boolean }
+  reconcileLaunch?(launchId: string): Promise<LaunchReconciliation | undefined>
+  cancelWithAck?(sessionId: string, timeoutMs?: number): Promise<TerminationAcknowledgement>
   /** Answers a side question from the conversation without prompting it. */
   askSession?(
     sessionId: string,

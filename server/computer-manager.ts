@@ -1,4 +1,6 @@
 import type { DirectoryScope } from './directory-browser.js'
+import type { SkillSettingsService } from './skill-settings.js'
+import type { SkillSettingsTarget } from './skill-settings-routes.js'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -41,7 +43,12 @@ import {
 import { NodeIdentityStore } from './node-identity.js'
 import { normalizeNodeUrl, RemoteNodeClient } from './remote-node-client.js'
 import { RemoteNodeRequestError } from './remote-node-errors.js'
+import { launchIdentitySchema, cancellationAckSchema, type TerminationAcknowledgement } from '../shared/launch-identity.js'
+import { updateComputerForLaunchIdentity, withSessionCreateBoundary } from './launch-identity.js'
+import { updateComputerForScheduleWorktrees, type ScheduleWorktreeInput } from '../shared/schedule-worktrees.js'
+import type { ScheduleWorktreeService } from './schedule-worktrees.js'
 import type { SessionService } from './session-service.js'
+import type { HostTelemetryService, HostTelemetryTarget } from './host-telemetry/service.js'
 import {
   readSessionSkills,
   readSessionMcpServers,
@@ -124,6 +131,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     private readonly localService: SessionService,
     private readonly identity: NodeIdentityStore,
     private readonly registry: ComputerRegistry,
+    private readonly scheduleWorktrees?: ScheduleWorktreeService,
   ) {
     super()
   }
@@ -161,6 +169,18 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       this.localComputer(),
       ...this.registry.list().map((computer) => this.computerSummary(computer)),
     ]
+  }
+
+  async skillSettingsTarget(computerId: string, local: SkillSettingsService): Promise<SkillSettingsTarget> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id ? local : this.requireClient(computerId).skillSettingsTarget()
+  }
+
+  async hostTelemetryTarget(computerId: string, local: HostTelemetryService): Promise<HostTelemetryTarget> {
+    this.requireComputer(computerId)
+    return computerId === this.identity.info.id
+      ? local
+      : this.requireClient(computerId).hostTelemetryTarget()
   }
 
   async registerComputer(input: AddComputerInput): Promise<ComputerSummary> {
@@ -217,6 +237,15 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
 
   async listSessions(): Promise<ManagedSession[]> {
     return (await this.listSessionsWithAuthority()).sessions
+  }
+
+  /** Already-known open sessions only; never waits for a node or starts a read. */
+  listCachedSessions(): ManagedSession[] {
+    const local = this.localService.listSessions()
+      .map((session) => managedSession(session, this.localComputer()))
+    const remote = this.registry.list().flatMap((computer) => this.sessionCache.get(computer.id) ?? [])
+    return [...local, ...remote].filter((session) => session.isOpen !== false)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   }
 
   /**
@@ -621,20 +650,27 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     computerId: string,
     input: CreateSessionInput,
   ): Promise<ManagedSession> {
-    const computer = this.requireComputer(computerId)
-    const provider = input.provider || 'copilot'
-    const capability = computer.providers?.find(
-      (candidate) => candidate.id === provider,
-    )
-    if (!capability?.available) {
-      throw new Error(
-        capability?.unavailableReason ||
-          `${provider === 'claude' ? 'Claude Agent' : 'GitHub Copilot'} is not available on ${computer.name}`,
+    return withSessionCreateBoundary(async (beginCreate) => {
+      const computer = this.requireComputer(computerId)
+      const provider = input.provider || 'copilot'
+      const capability = computer.providers?.find(
+        (candidate) => candidate.id === provider,
       )
-    }
-    const session =
-      computerId === this.identity.info.id
-        ? await this.localService.createSession(
+      if (input.launchId !== undefined) {
+        launchIdentitySchema.parse(input.launchId)
+        if (!capability?.supportsLaunchIdentity) throw updateComputerForLaunchIdentity()
+      }
+      if (!capability?.available) {
+        throw new Error(
+          capability?.unavailableReason ||
+            `${provider === 'claude' ? 'Claude Agent' : 'GitHub Copilot'} is not available on ${computer.name}`,
+        )
+      }
+      const client = computerId === this.identity.info.id ? undefined : this.requireClient(computerId)
+      beginCreate()
+      const session = client
+        ? await client.createSession(input)
+        : await this.localService.createSession(
             input.cwd,
             input.terminalBacked,
             input.allowAllPermissions,
@@ -643,9 +679,10 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.reasoningEffort,
             input.contextTier,
             input.mode,
+            ...(input.launchId !== undefined ? [input.launchId] : []),
           )
-        : await this.requireClient(computerId).createSession(input)
-    return managedSession(session, computer)
+      return managedSession(session, computer)
+    })
   }
 
   async providerRuntimeOptions(
@@ -963,6 +1000,13 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     input: SendMessageInput,
   ): Promise<ManagedSession> {
     const computer = this.requireComputer(computerId)
+    if (input.deliveryId !== undefined) {
+      launchIdentitySchema.parse(input.deliveryId)
+      if (!computer.providers?.some((provider) => provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+      const owner = await this.readSession(computerId, sessionId)
+      if (!computer.providers?.some((provider) => provider.id === (owner.provider || 'copilot') &&
+          provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+    }
     const session =
       computerId === this.identity.info.id
         ? await this.localService.sendMessage(
@@ -971,6 +1015,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
             input.enqueue,
             input.acknowledgesFailure,
             input.replaceTerminalDraft,
+            ...(input.deliveryId !== undefined ? [input.deliveryId] : []),
           )
         : await this.requireClient(computerId).sendMessage(sessionId, input)
     return managedSession(session, computer)
@@ -1000,7 +1045,51 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       await this.localService.cancel(sessionId)
       return
     }
+
     await this.requireClient(computerId).cancel(sessionId)
+  }
+
+  async reconcileLaunch(computerId: string, launchId: string) {
+    launchIdentitySchema.parse(launchId)
+    const computer = this.requireComputer(computerId)
+    if (!computer.providers?.some((provider) => provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).reconcileLaunch(launchId)
+    if (!this.localService.reconcileLaunch) throw updateComputerForLaunchIdentity()
+    return this.localService.reconcileLaunch(launchId)
+  }
+
+  async allocateScheduleWorktree(computerId: string, input: ScheduleWorktreeInput) {
+    this.requireComputer(computerId)
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).allocateScheduleWorktree(input)
+    if (!this.scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+    return this.scheduleWorktrees.allocate(input)
+  }
+
+  async readScheduleWorktree(computerId: string, launchId: string) {
+    this.requireComputer(computerId)
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).readScheduleWorktree(launchId)
+    if (!this.scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+    return this.scheduleWorktrees.read(launchId)
+  }
+
+  async cleanupScheduleWorktree(computerId: string, launchId: string) {
+    this.requireComputer(computerId)
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).cleanupScheduleWorktree(launchId)
+    if (!this.scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+    return this.scheduleWorktrees.cleanup(launchId)
+  }
+
+  async cancelWithAck(computerId: string, sessionId: string, timeoutMs = 10_000): Promise<TerminationAcknowledgement> {
+    cancellationAckSchema.parse({ timeoutMs })
+    const computer = this.requireComputer(computerId)
+    if (!computer.providers?.some((provider) => provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+    if (computerId !== this.identity.info.id) return this.requireClient(computerId).cancelWithAck(sessionId, timeoutMs)
+    const owner = this.localService.getSession(sessionId)
+    if (!owner) throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+    if (!computer.providers?.some((provider) => provider.id === (owner.provider || 'copilot') &&
+        provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+    if (!this.localService.cancelWithAck) throw updateComputerForLaunchIdentity()
+    return this.localService.cancelWithAck(sessionId, timeoutMs)
   }
 
   async askSession(
@@ -1399,10 +1488,14 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       })
       return
     }
-    this.emit('event', {
-      ...event,
-      computerId: computer.id,
-    })
+    // Hub-only events, including canonical schedule notifications, are not
+    // part of the node ServerEvent protocol even if a peer sends one.
+    if (event.type === 'error') {
+      this.emit('event', {
+        ...event,
+        computerId: computer.id,
+      })
+    }
   }
 
   private localComputer(): ComputerSummary {
@@ -1411,6 +1504,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       name: this.identity.info.name,
       isLocal: true,
       online: true,
+      version: this.identity.info.version,
       lifecycleGeneration: this.identity.lifecycleGeneration,
       registrationId: this.localRegistrationId,
       providers: this.localService.providers(),
@@ -1423,6 +1517,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       name: computer.name,
       isLocal: false,
       online: this.clients.get(computer.id)?.online ?? false,
+      version: this.clients.get(computer.id)?.version,
       baseUrl: computer.baseUrl,
       lifecycleGeneration: computer.lifecycleGeneration,
       registrationId: this.clients.get(computer.id)?.registrationId,

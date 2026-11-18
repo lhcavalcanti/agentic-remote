@@ -22,12 +22,89 @@ import type {
 import { resolveDataDirectory } from './paths.js'
 import { canArchiveSession, mergeSessionRetention, sessionRetentionSchema } from './session-retention.js'
 import { closedSessionContext, isClosedSessionContext } from '../shared/closed-sessions.js'
+import {
+  launchIdentitySchema, promptAcceptanceReceiptSchema, terminationAcknowledgementSchema,
+  type LaunchReconciliation, type PromptAcceptanceReceipt, type TerminationAcknowledgement,
+} from '../shared/launch-identity.js'
 
 export interface DiscoveredSession {
   id: string
   cwd: string
   title: string
   updatedAt: string
+}
+
+function carryLaunchIdentity(state: StoredState, existing: StoredSession, replacementId: string): void {
+  if (!existing.launchId && !existing.promptReceipts && !existing.launchTermination) return
+  if (existing.launchId) state.launches = { ...state.launches, [existing.launchId]: { sessionId: replacementId } }
+  const kept = new Set((state.sessions[replacementId].queuedPrompts || []).map((prompt) => prompt.id))
+  state.sessions[replacementId].promptReceipts = existing.promptReceipts?.map((receipt) => ({
+    ...receipt, sessionId: replacementId,
+    ...(receipt.state === 'queued' && !kept.has(receipt.promptId) ? { state: 'rejected' as const, outcome: 'stopped' as const } : {}),
+  }))
+  state.sessions[replacementId].launchTermination = undefined
+  if (existing.promptReceipts?.length) {
+    state.deliveryOwners = { ...state.deliveryOwners }
+    for (const receipt of existing.promptReceipts) state.deliveryOwners[receipt.deliveryId] = replacementId
+  }
+}
+
+/**
+ * A release without launch identity copies these fields onto a Clear or Recover replacement
+ * verbatim, so after a rollback the replacement names its retired predecessor. Adopt them as
+ * carryLaunchIdentity would have, but only where the replacement's own lineage explains it.
+ */
+function adoptRolledBackLaunchIdentity(state: StoredState): boolean {
+  if (!state.sessions || typeof state.sessions !== 'object') return false
+  let changed = false
+  for (const [id, session] of Object.entries(state.sessions)) {
+    if (!session || !Array.isArray(session.replacedSessionIds) || !session.replacedSessionIds.length) continue
+    const predecessors = new Set(session.replacedSessionIds.filter((value) =>
+      typeof value === 'string' && !Object.hasOwn(state.sessions, value)))
+    const inherited = (owner: unknown) => typeof owner === 'string' && predecessors.has(owner)
+    const launches = state.launches && typeof state.launches === 'object' && !Array.isArray(state.launches)
+      ? state.launches : undefined
+    if (typeof session.launchId === 'string' && launches && Object.hasOwn(launches, session.launchId) &&
+        inherited(launches[session.launchId]?.sessionId)) {
+      state.launches = { ...launches, [session.launchId]: { sessionId: id } }
+      changed = true
+    }
+    if (Array.isArray(session.promptReceipts) && session.promptReceipts.some((receipt) => inherited(receipt?.sessionId))) {
+      const kept = new Set((session.queuedPrompts || []).map((prompt) => prompt.id))
+      session.promptReceipts = session.promptReceipts.map((receipt) => !inherited(receipt?.sessionId) ? receipt : {
+        ...receipt, sessionId: id,
+        ...(receipt.state === 'queued' && !kept.has(receipt.promptId) ? { state: 'rejected' as const, outcome: 'stopped' as const } : {}),
+      })
+      for (const receipt of session.promptReceipts) {
+        if (state.deliveryOwners && Object.hasOwn(state.deliveryOwners, receipt.deliveryId) &&
+            inherited(state.deliveryOwners[receipt.deliveryId])) {
+          state.deliveryOwners = { ...state.deliveryOwners, [receipt.deliveryId]: id }
+        }
+      }
+      changed = true
+    }
+    if (session.launchTermination && inherited(session.launchTermination.sessionId)) {
+      session.launchTermination = undefined
+      changed = true
+    }
+  }
+  return changed
+}
+
+function rememberDeliveryOwners(state: StoredState, sessionId: string, receipts: readonly PromptAcceptanceReceipt[] = []): boolean {
+  const additions: Record<string, string> = {}
+  for (const receipt of receipts) {
+    if (!promptAcceptanceReceiptSchema.safeParse(receipt).success || receipt.sessionId !== sessionId) {
+      throw new Error('Invalid delivery ownership receipt')
+    }
+    const owner = Object.hasOwn(state.deliveryOwners || {}, receipt.deliveryId)
+      ? state.deliveryOwners![receipt.deliveryId] : undefined
+    if (owner !== undefined && owner !== sessionId) throw new Error('Invalid delivery ownership: conflicting session')
+    if (owner === undefined) additions[receipt.deliveryId] = sessionId
+  }
+  if (!Object.keys(additions).length) return false
+  state.deliveryOwners = { ...state.deliveryOwners, ...additions }
+  return true
 }
 
 export interface TerminalQueueDispatch {
@@ -98,7 +175,7 @@ interface SdkQueueAdmission {
 }
 
 export type TerminalQueueOutcome =
-  | { kind: 'accepted'; startedTurn: boolean; notice?: string }
+  | { kind: 'accepted'; startedTurn: boolean; notice?: string; handedAt?: string }
   | { kind: 'failed'; uncertain: boolean; queueState?: QueueState }
 
 /**
@@ -144,6 +221,9 @@ export class SessionReplacementCleanupError extends Error {
 interface StoredState {
   version: 1
   sessions: Record<string, StoredSession>
+  launches?: Record<string, { sessionId: string; receipts?: PromptAcceptanceReceipt[]; termination?: TerminationAcknowledgement }>
+  deliveryOwners?: Record<string, string>
+  deliveryIdentityHistoryIncomplete?: boolean
   retiredSessionIds?: string[]
   sdkRestartRecoveries?: Record<string, SdkRestartRecovery>
   sdkAcceptedReplies?: Record<string, SdkAcceptedReply>
@@ -162,6 +242,7 @@ interface StoredSession extends SessionDetail {
   sdkQueueAdmission?: SdkQueueAdmission
   recoveryResend?: RecoveryResend
   recoverySeed?: RecoverySeed
+  generatedPrompt?: { content: string } | { messageId: string }
   sdkRestartRecovery?: SdkRestartRecovery
   sdkAcceptedReply?: SdkAcceptedReply
   uploadOwnerIds?: string[]
@@ -305,6 +386,18 @@ function archivedMessage(message: ChatMessage): ChatMessage {
       'Stopped when the provider conversation was recovered.'
   }
   return archived
+}
+
+function markGeneratedPrompt(session: StoredSession, messages: ChatMessage[]): ChatMessage[] {
+  const generated = session.generatedPrompt
+  if (!generated) return messages
+  const message = messages.find((candidate) => candidate.role === 'user' &&
+    ('messageId' in generated ? candidate.id === generated.messageId : candidate.content === generated.content))
+  if (!message) return messages
+  // Bind the provider's identity once. Later identical user prompts, including
+  // after transcript pruning, must not inherit the automatic brief's marker.
+  session.generatedPrompt = { messageId: message.id }
+  return messages.map((candidate) => candidate === message ? { ...candidate, appGenerated: true } : candidate)
 }
 
 function ownsRecoverySeedFailure(session: StoredSession): boolean {
@@ -483,6 +576,7 @@ function cloneSession(session: StoredSession): SessionDetail {
     sdkQueueAdmission,
     recoveryResend: _recoveryResend,
     recoverySeed,
+    generatedPrompt: _generatedPrompt,
     sdkRestartRecovery,
     sdkAcceptedReply: _sdkAcceptedReply,
     restartRecovery: _restartRecovery,
@@ -543,7 +637,7 @@ function cloneSession(session: StoredSession): SessionDetail {
 export class SessionStore {
   private readonly directory: string
   private readonly statePath: string
-  private state: StoredState = { version: 1, sessions: {} }
+  private state: StoredState = { version: 1, sessions: {}, deliveryOwners: {} }
   private checkpoint = this.state
   private writeQueue: Promise<void> = Promise.resolve()
   private closed = false
@@ -606,14 +700,70 @@ export class SessionStore {
     }
 
     const recoveries = loaded.sdkRestartRecoveries || {}
+    const launchIdentityAdopted = adoptRolledBackLaunchIdentity(loaded)
+    if (loaded.launches !== undefined) {
+      if (!loaded.launches || typeof loaded.launches !== 'object' || Array.isArray(loaded.launches)) {
+        throw new Error('Invalid launch identity metadata')
+      }
+      for (const [launchId, owner] of Object.entries(loaded.launches)) {
+        if (!launchIdentitySchema.safeParse(launchId).success || !owner ||
+            typeof owner.sessionId !== 'string' || !owner.sessionId ||
+            (owner.receipts !== undefined && (!Array.isArray(owner.receipts) ||
+              owner.receipts.some((receipt) => !promptAcceptanceReceiptSchema.safeParse(receipt).success ||
+                receipt.sessionId !== owner.sessionId))) ||
+            (owner.termination !== undefined && (!terminationAcknowledgementSchema.safeParse(owner.termination).success ||
+              owner.termination.sessionId !== owner.sessionId || owner.termination.outcome !== 'stopped'))) {
+          throw new Error('Invalid launch identity metadata')
+        }
+      }
+    }
+    if (loaded.deliveryOwners !== undefined && (
+      !loaded.deliveryOwners || typeof loaded.deliveryOwners !== 'object' || Array.isArray(loaded.deliveryOwners) ||
+      Object.entries(loaded.deliveryOwners).some(([deliveryId, owner]) =>
+        !launchIdentitySchema.safeParse(deliveryId).success || typeof owner !== 'string' || !owner)
+    )) throw new Error('Invalid delivery ownership metadata')
+    if (loaded.deliveryIdentityHistoryIncomplete !== undefined && typeof loaded.deliveryIdentityHistoryIncomplete !== 'boolean') {
+      throw new Error('Invalid delivery ownership history')
+    }
+    const legacyDeliveryHistory = loaded.deliveryOwners === undefined && (loaded.launches !== undefined ||
+      Object.values(loaded.sessions).some((session) => session.promptReceipts !== undefined))
+    let deliveryOwnersChanged = false
+    // Pre-identity stores have no delivery history, regardless of session retirement.
+    // Only builds that persisted launch/receipt data could have discarded delivery IDs.
+    // Preserve known retries, but never guess that a new token was unused.
+    if (legacyDeliveryHistory && (loaded.retiredSessionIds?.length ||
+        Object.values(loaded.sessions).some((session) => session.replacedSessionIds?.length) ||
+        Object.values(loaded.launches || {}).some((owner) => !Object.hasOwn(loaded.sessions, owner.sessionId)))) {
+      loaded.deliveryIdentityHistoryIncomplete = true
+    }
+    loaded.deliveryOwners ??= {}
+    for (const owner of Object.values(loaded.launches || {})) {
+      deliveryOwnersChanged = rememberDeliveryOwners(loaded, owner.sessionId, owner.receipts) || deliveryOwnersChanged
+    }
     const replies = loaded.sdkAcceptedReplies || {}
     for (const recovery of Object.values(recoveries)) validateSdkRestartRecovery(recovery)
     for (const reply of Object.values(replies)) validateSdkAcceptedReply(reply)
     const legacyRetirements: string[] = []
     const interrupted: string[] = []
-    let staleSdkInteractionMarked = Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
+    let staleSdkInteractionMarked = launchIdentityAdopted || deliveryOwnersChanged || Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
       Object.keys(replies).some((id) => !Object.hasOwn(loaded.sessions, id))
     for (const [id, session] of Object.entries(loaded.sessions)) {
+      if (session.launchId !== undefined && (!launchIdentitySchema.safeParse(session.launchId).success ||
+          loaded.launches?.[session.launchId]?.sessionId !== id)) throw new Error('Invalid session launch identity')
+      if (session.launchStopping !== undefined && typeof session.launchStopping !== 'boolean') {
+        throw new Error('Invalid launch stopping metadata')
+      }
+      if (session.launchTermination !== undefined && (!terminationAcknowledgementSchema.safeParse(session.launchTermination).success ||
+          session.launchTermination.sessionId !== id || session.launchTermination.outcome !== 'stopped' || !session.launchStopping)) {
+        throw new Error('Invalid launch termination metadata')
+      }
+      if (session.promptReceipts !== undefined && (!Array.isArray(session.promptReceipts) ||
+          session.promptReceipts.some((receipt) => !promptAcceptanceReceiptSchema.safeParse(receipt).success ||
+            receipt.sessionId !== id) ||
+          new Set(session.promptReceipts.map((receipt) => receipt.deliveryId)).size !== session.promptReceipts.length)) {
+        throw new Error('Invalid prompt acceptance receipts')
+      }
+      staleSdkInteractionMarked = rememberDeliveryOwners(loaded, id, session.promptReceipts) || staleSdkInteractionMarked
       if (session.retention !== undefined && !sessionRetentionSchema.safeParse(session.retention).success) {
         throw new Error('Invalid session retention metadata')
       }
@@ -939,6 +1089,15 @@ export class SessionStore {
       throw new Error('Invalid session retirement metadata')
     }
     return this.change((state) => {
+      rememberDeliveryOwners(state, incoming.id, incoming.promptReceipts)
+      if (incoming.launchId !== undefined) {
+        launchIdentitySchema.parse(incoming.launchId)
+        const owner = Object.hasOwn(state.launches || {}, incoming.launchId) ? state.launches![incoming.launchId] : undefined
+        if (owner && owner.sessionId !== incoming.id) {
+          throw Object.assign(new Error('Launch identity is already owned by another session'), { statusCode: 409 })
+        }
+        state.launches = { ...state.launches, [incoming.launchId]: { sessionId: incoming.id } }
+      }
       if (this.retiredIds(state).has(incoming.id)) {
         throw new Error('Session identity has been retired')
       }
@@ -1025,7 +1184,7 @@ export class SessionStore {
     observation = this.observeTranscript(sessionId),
   ): Promise<SessionDetail | undefined> {
     return this.installTranscript(sessionId, observation, (session) => {
-      session.messages = messages
+      session.messages = markGeneratedPrompt(session, messages)
       return true
     })
   }
@@ -1041,6 +1200,7 @@ export class SessionStore {
     pendingUserInput?: SessionProjection<PendingUserInput | null | undefined>,
     observedQueueDispatchAt?: string,
     observation = this.observeTranscript(sessionId),
+    foregroundTurnActive?: boolean,
   ): Promise<SessionDetail | undefined> {
     return this.installTranscript(sessionId, observation, (session) => {
       const nextMessages = typeof messages === 'function' ? messages(session) : messages
@@ -1049,13 +1209,16 @@ export class SessionStore {
       const nextUserInput = typeof pendingUserInput === 'function'
         ? pendingUserInput(session)
         : pendingUserInput
-      session.messages = nextMessages
+      session.messages = markGeneratedPrompt(session, nextMessages)
       if (nextUserInput !== undefined) {
         session.pendingUserInput = nextUserInput || undefined
       }
       const newerTerminalDispatch =
         session.queueDispatchAt &&
         session.queueDispatchAt !== observedQueueDispatchAt
+      if (foregroundTurnActive !== undefined && !newerTerminalDispatch) {
+        session.foregroundTurnActive = foregroundTurnActive
+      }
       session.status = session.pendingPermission || session.pendingUserInput
         ? 'waiting'
         : newerTerminalDispatch
@@ -1840,6 +2003,12 @@ export class SessionStore {
 
   async clearConversation(sessionId: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
+      for (const receipt of session.promptReceipts || []) {
+        if (receipt.state === 'queued') {
+          receipt.state = 'rejected'
+          receipt.outcome = 'stopped'
+        }
+      }
       clearRecoverySeedFailure(session)
       session.transcriptEpoch = randomUUID()
       session.archivedMessages = undefined
@@ -1851,6 +2020,8 @@ export class SessionStore {
       session.pendingUserInput = undefined
       session.recovery = undefined
       session.recoverySeed = undefined
+      session.generatedPrompt = undefined
+      session.foregroundTurnActive = undefined
       session.queuedPrompts = []
       session.queuedCount = 0
       session.queueState = undefined
@@ -1917,6 +2088,7 @@ export class SessionStore {
         pendingPermission: undefined,
         pendingUserInput: undefined,
         recovery: undefined,
+        foregroundTurnActive: undefined,
         failedPrompt: clearSeedFailure ? undefined : existing.failedPrompt,
         recoveryResend: clearSeedFailure ? undefined : existing.recoveryResend,
         queuedPrompts: [],
@@ -1927,6 +2099,7 @@ export class SessionStore {
         queuedPromptReservation: undefined,
         sdkQueueAdmission: undefined,
         recoverySeed: undefined,
+        generatedPrompt: undefined,
         uploadOwnerIds: undefined,
         transcriptEpoch: undefined,
         updatedAt: new Date().toISOString(),
@@ -1938,6 +2111,7 @@ export class SessionStore {
             }
           : undefined,
       }
+      carryLaunchIdentity(state, existing, replacementId)
       if (terminalReset) grantTerminalRecovery(state.sessions[replacementId])
       this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
@@ -2045,6 +2219,8 @@ export class SessionStore {
           prompt: recoveryPrompt,
           state: 'pending',
         },
+        generatedPrompt: { content: recoveryPrompt },
+        foregroundTurnActive: undefined,
         uploadOwnerIds: [
           ...new Set([
             ...(existing.uploadOwnerIds || []),
@@ -2067,6 +2243,7 @@ export class SessionStore {
             }
           : undefined,
       }
+      carryLaunchIdentity(state, existing, replacementId)
       if (terminalReset) grantTerminalRecovery(state.sessions[replacementId])
       this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       delete state.sessions[sessionId]
@@ -2086,9 +2263,131 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       if (session.closedAt) throw new RetainedSessionError('closed', 'queueing work')
+      if (session.launchStopping) {
+        throw Object.assign(new Error('The launch is stopping; no new work can be queued.'), { statusCode: 409 })
+      }
       const queue = session.queuedPrompts || []
       session.queuedPrompts = prepend ? [prompt, ...queue] : [...queue, prompt]
       session.queuedCount = session.queuedPrompts.length
+    })
+  }
+
+  reconcileLaunch(launchId: string): LaunchReconciliation | undefined {
+    launchIdentitySchema.parse(launchId)
+    const owner = Object.hasOwn(this.state.launches || {}, launchId) ? this.state.launches![launchId] : undefined
+    if (!owner) return undefined
+    const session = this.state.sessions[owner.sessionId]
+    return {
+      launchId, sessionId: owner.sessionId,
+      ...(session ? { sessionStatus: cloneSession(session).status, stopping: session.launchStopping === true } : { deleted: true }),
+      receipts: structuredClone(session?.promptReceipts || owner.receipts || []),
+      ...(session?.launchTermination || owner.termination ? { termination: structuredClone(session?.launchTermination || owner.termination) } : {}),
+    }
+  }
+
+  deliveryIdentity(deliveryId: string): { sessionId?: string; historyComplete: boolean } {
+    launchIdentitySchema.parse(deliveryId)
+    return {
+      ...(Object.hasOwn(this.state.deliveryOwners || {}, deliveryId) ? { sessionId: this.state.deliveryOwners![deliveryId] } : {}),
+      historyComplete: this.state.deliveryIdentityHistoryIncomplete !== true,
+    }
+  }
+
+  async acceptIdentifiedPrompt(
+    sessionId: string,
+    deliveryId: string,
+    content: string,
+    enqueue: boolean,
+  ): Promise<SessionDetail> {
+    launchIdentitySchema.parse(deliveryId)
+    if (!content.trim() || content.length > 200_000) {
+      throw Object.assign(new Error('Message must contain between 1 and 200000 characters.'), { statusCode: 400 })
+    }
+    return this.change((state) => {
+      const owner = Object.hasOwn(state.deliveryOwners || {}, deliveryId) ? state.deliveryOwners![deliveryId] : undefined
+      if (owner !== undefined) {
+        if (owner !== sessionId || !state.sessions[sessionId]?.promptReceipts?.some((receipt) => receipt.deliveryId === deliveryId)) {
+          throw Object.assign(new Error('Delivery identity belongs to another session.'), { statusCode: 409, uncertainDelivery: false })
+        }
+        return () => this.requireSession(sessionId)
+      }
+      if (state.deliveryIdentityHistoryIncomplete) {
+        throw Object.assign(new Error('Delivery identity history is incomplete; new identified prompts are disabled.'), {
+          statusCode: 409, uncertainDelivery: false,
+        })
+      }
+      const existing = state.sessions[sessionId]
+      if (!existing || this.retiredIds(state).has(sessionId)) throw new Error('Session not found')
+      const session = structuredClone(existing)
+      assertSessionNotRetained(session, 'accepting a prompt')
+      if (session.launchStopping || session.suspended ||
+          (!enqueue && (session.status === 'running' || session.status === 'waiting'))) {
+        throw Object.assign(new Error('This session cannot accept a new prompt now.'), {
+          statusCode: 409, uncertainDelivery: false,
+        })
+      }
+      const prompt = { id: randomUUID(), content: content.trim(), createdAt: new Date().toISOString() }
+      session.queuedPrompts = [...(session.queuedPrompts || []), prompt]
+      session.queuedCount = session.queuedPrompts.length
+      session.promptReceipts = [...(session.promptReceipts || []), {
+        deliveryId, sessionId, acceptedAt: prompt.createdAt, state: 'queued', promptId: prompt.id,
+      }]
+      rememberDeliveryOwners(state, sessionId, session.promptReceipts)
+      session.revision = (existing.revision ?? 0) + 1
+      state.sessions[sessionId] = session
+      return () => this.requireSession(sessionId)
+    })
+  }
+
+  async stopLaunchWork(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      session.launchStopping = true
+      const queued = new Set((session.queuedPrompts || []).map((prompt) => prompt.id))
+      for (const receipt of session.promptReceipts || []) {
+        if (queued.has(receipt.promptId)) {
+          receipt.state = 'rejected'
+          receipt.outcome = 'stopped'
+        }
+      }
+      session.queuedPrompts = []
+      session.queuedCount = 0
+      session.queuedPromptReservation = undefined
+      session.queueState = undefined
+    })
+  }
+
+  async settlePromptOutcome(
+    sessionId: string,
+    rootTurnId: string,
+    outcome: NonNullable<PromptAcceptanceReceipt['outcome']>,
+  ): Promise<SessionDetail | undefined> {
+    if (!this.state.sessions[sessionId]?.promptReceipts?.some((receipt) => receipt.rootTurnId === rootTurnId)) return
+    return this.updateIf(sessionId, (session) => {
+      const receipt = session.promptReceipts?.find((entry) => entry.rootTurnId === rootTurnId)
+      if (!receipt || receipt.outcome === outcome) return false
+      receipt.outcome = outcome
+      if (outcome !== 'unknown' && receipt.state === 'accepted') receipt.state = 'delivered'
+      return true
+    })
+  }
+
+  /** Called only after provider-owned foreground, queue and background work is proven stopped. */
+  async confirmLaunchTermination(sessionId: string): Promise<SessionDetail> {
+    return this.mutate(sessionId, (session) => {
+      if (!session.launchStopping) throw new Error('Termination acknowledgement requires an admission fence')
+      session.launchTermination = {
+        sessionId, outcome: 'stopped', checkedAt: new Date().toISOString(), scope: 'provider-owned',
+      }
+      session.queuedDispatch = undefined
+      session.terminalQueueDispatch = undefined
+      session.sdkQueueAdmission = undefined
+      session.queuedPromptReservation = undefined
+      session.queuedPrompts = []
+      session.queuedCount = 0
+      session.queueState = undefined
+      for (const receipt of session.promptReceipts || []) {
+        if (receipt.state === 'accepted' || receipt.state === 'delivered') receipt.outcome ??= 'unknown'
+      }
     })
   }
 
@@ -2105,7 +2404,7 @@ export class SessionStore {
       if (!prompt) return () => ({ session: this.requireSession(sessionId) })
       assertSessionNotRetained(existing, 'dispatching its queue')
       if (
-        !isCurrent() || existing.suspended ||
+        !isCurrent() || existing.suspended || existing.launchStopping ||
         (existing.status !== 'idle' && existing.status !== 'error') ||
         existing.failedPrompt || existing.recoverySeed || existing.terminalQueueDispatch ||
         existing.pendingPermission || existing.pendingUserInput
@@ -2147,6 +2446,9 @@ export class SessionStore {
       if (session.suspended) {
         throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409, uncertainDelivery: false })
       }
+      if (session.launchStopping) {
+        throw Object.assign(new Error('The launch is stopping; no new turn can start.'), { statusCode: 409 })
+      }
       if (!isCurrent()) {
         throw Object.assign(new Error('The session changed before turn admission; nothing was sent'), { statusCode: 409 })
       }
@@ -2187,10 +2489,17 @@ export class SessionStore {
         session.sdkQueueAdmission = {
           assistantId, userId, prompt: structuredClone(head), startedAt: createdAt,
         }
+        const receipt = session.promptReceipts?.find((entry) => entry.promptId === head.id)
+        if (receipt) {
+          receipt.rootTurnId = assistantId
+          receipt.userMessageId = userId
+          receipt.state = 'accepted'
+        }
         session.failedPrompt = { content: head.content, failedAt: createdAt, uncertain: true }
       }
       session.messages.push(
-        { id: userId, role: 'user', content, createdAt },
+        { id: userId, role: 'user', content, createdAt, deliveryState: 'pending',
+          ...(options.recoverySeedPrompt ? { appGenerated: true } : {}) },
         { id: assistantId, role: 'assistant', content: '', createdAt, streaming: true },
       )
       session.transcriptEpoch = assistantId
@@ -2213,7 +2522,7 @@ export class SessionStore {
 
   async claimRecoverySeed(sessionId: string, prompt: string): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      if (session.recoverySeed?.state !== 'pending' || session.recoverySeed.prompt !== prompt) {
+      if (session.launchStopping || session.recoverySeed?.state !== 'pending' || session.recoverySeed.prompt !== prompt) {
         throw Object.assign(new Error('The recovery seed is no longer pending'), { statusCode: 409 })
       }
       assertSessionNotRetained(session, 'sending its context brief')
@@ -2222,6 +2531,7 @@ export class SessionStore {
         state: 'dispatching',
         startedAt: new Date().toISOString(),
       }
+      session.generatedPrompt ??= { content: prompt }
       if (session.failedPrompt && ownsRecoverySeedFailure(session)) session.failedPrompt.uncertain = true
     })
   }
@@ -2271,6 +2581,9 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     const userId = randomUUID()
     return this.mutate(sessionId, (session) => {
+      if (session.launchStopping) {
+        throw Object.assign(new Error('The launch is stopping; no new turn can start.'), { statusCode: 409 })
+      }
       this.lastSdkAdmissionAt = Math.max(
         Date.now(),
         this.lastSdkAdmissionAt + 1,
@@ -2301,7 +2614,7 @@ export class SessionStore {
       }
       previous.streaming = false
       session.messages.push(
-        { id: userId, role: 'user', content, createdAt },
+        { id: userId, role: 'user', content, createdAt, deliveryState: 'pending' },
         {
           id: assistantId,
           role: 'assistant',
@@ -2354,9 +2667,10 @@ export class SessionStore {
     uncertainContent?: string,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
-      const assistant = session.messages.find(
-        (entry) => entry.id === assistantId,
-      )
+      const index = session.messages.findIndex((entry) => entry.id === assistantId)
+      const assistant = session.messages[index]
+      const user = session.messages[index - 1]
+      if (user?.role === 'user' && !user.deliveryConfirmed) user.deliveryState = 'uncertain'
       if (assistant?.role === 'assistant') {
         assistant.streaming = false
         assistant.content =
@@ -2384,12 +2698,21 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const admission = session.sdkQueueAdmission!
+      const receipt = session.promptReceipts?.find((entry) => entry.promptId === admission.prompt.id)
+      if (receipt) {
+        if (receipt.state !== 'delivered') receipt.state = started ? 'accepted' : session.launchStopping ? 'rejected' : 'queued'
+        if (!started && session.launchStopping) receipt.outcome = 'stopped'
+        if (!started) {
+          receipt.rootTurnId = undefined
+          receipt.userMessageId = undefined
+        }
+      }
       if (!started) {
         const queue = session.queuedPrompts || []
         if (queue.some((prompt) => prompt.id === admission.prompt.id)) {
           throw new Error('A cancelled admission conflicts with the canonical queue')
         }
-        session.queuedPrompts = [admission.prompt, ...queue]
+        session.queuedPrompts = session.launchStopping ? queue : [admission.prompt, ...queue]
         session.queuedCount = session.queuedPrompts.length
         session.messages = session.messages.filter((message) =>
           message.id !== admission.assistantId && message.id !== admission.userId)
@@ -2414,6 +2737,7 @@ export class SessionStore {
       const assistant = session.messages[index]
       const user = session.messages[index - 1]
       if (!assistant || assistant.role !== 'assistant' || user?.role !== 'user') return
+      if (!user.deliveryConfirmed) user.deliveryState = failure?.uncertain ? 'uncertain' : 'refused'
       assistant.streaming = false
       assistant.content = failure?.message || 'Not sent: the session service stopped before provider dispatch.'
       if (canBecomeIdle()) {
@@ -2439,6 +2763,8 @@ export class SessionStore {
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
       const admission = session.sdkQueueAdmission!
+      const user = session.messages.find((entry) => entry.id === admission.userId)
+      if (user?.role === 'user' && !user.deliveryConfirmed) user.deliveryState = 'uncertain'
       if (session.failedPrompt?.failedAt === admission.startedAt) session.failedPrompt.uncertain = true
       const assistant = session.messages.find((entry) => entry.id === assistantId)
       if (assistant) {
@@ -2477,7 +2803,7 @@ export class SessionStore {
       assertSessionNotRetained(stored, 'dispatching its queue')
       const head = stored.queuedPrompts?.[0]
       if (
-        !isCurrent() || stored.suspended ||
+        !isCurrent() || stored.suspended || stored.launchStopping ||
         (midTurnSteer ? stored.status !== 'running' || head?.steer !== true : stored.status !== 'idle') ||
         (requireManagedTerminal && (!stored.isOpen || stored.managedOpen !== true || stored.backend !== 'terminal')) ||
         stored.pendingPermission || stored.pendingUserInput || stored.recoverySeed ||
@@ -2495,6 +2821,8 @@ export class SessionStore {
       // Existing recovery state also protects against automatic replay by older runtimes.
       stored.failedPrompt = { content: head.content, failedAt: dispatch.startedAt, uncertain: true }
       stored.terminalQueueDispatch = dispatch
+      const receipt = stored.promptReceipts?.find((entry) => entry.promptId === head.id)
+      if (receipt) receipt.state = 'accepted'
       if (midTurnSteer) return
       stored.queueDispatchAt = dispatch.startedAt
       stored.status = 'running'
@@ -2521,6 +2849,11 @@ export class SessionStore {
         ? outcome.queueState
         : undefined
       if (outcome.kind === 'accepted') {
+        const receipt = stored.promptReceipts?.find((entry) => entry.promptId === dispatch.prompt.id)
+        if (receipt) {
+          receipt.state = 'delivered'
+          receipt.handedAt = outcome.handedAt
+        }
         stored.failedPrompt = undefined
         if (outcome.notice) {
           const createdAt = new Date().toISOString()
@@ -2535,16 +2868,23 @@ export class SessionStore {
       } else if (outcome.uncertain) {
         stored.failedPrompt.uncertain = outcome.uncertain || undefined
       } else {
-        stored.queuedPrompts = [dispatch.prompt, ...(stored.queuedPrompts || [])]
+        const receipt = stored.promptReceipts?.find((entry) => entry.promptId === dispatch.prompt.id)
+        if (receipt) {
+          receipt.state = stored.launchStopping ? 'rejected' : 'queued'
+          if (stored.launchStopping) receipt.outcome = 'stopped'
+        }
+        stored.queuedPrompts = stored.launchStopping ? stored.queuedPrompts || [] : [dispatch.prompt, ...(stored.queuedPrompts || [])]
         stored.queuedCount = stored.queuedPrompts.length
         stored.failedPrompt = undefined
       }
       if (stored.queueDispatchAt !== dispatch.startedAt) return
       if (outcome.kind === 'accepted' && outcome.startedTurn) {
+        stored.foregroundTurnActive = true
         if (stored.status === 'running') stored.activity = 'Sent queued prompt'
         return
       }
       stored.queueDispatchAt = undefined
+      stored.foregroundTurnActive = false
       stored.status = stored.pendingPermission || stored.pendingUserInput ? 'waiting' : 'idle'
       stored.activity = stored.pendingPermission?.title || stored.pendingUserInput?.question
     })
@@ -2561,6 +2901,11 @@ export class SessionStore {
       const index = queue.findIndex((prompt) => prompt.id === promptId)
       if (index >= 0) {
         removed = queue[index]
+        const receipt = stored.promptReceipts?.find((entry) => entry.promptId === promptId)
+        if (receipt) {
+          receipt.state = 'rejected'
+          receipt.outcome = 'stopped'
+        }
         stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
         stored.queuedCount = stored.queuedPrompts.length
         if (stored.queueState?.promptId === promptId) stored.queueState = undefined
@@ -2672,6 +3017,11 @@ export class SessionStore {
       const queue = stored.queuedPrompts || []
       stored.queuedPrompts = queue.filter((prompt) => prompt.id !== promptId)
       stored.queuedCount = stored.queuedPrompts.length
+      const receipt = stored.promptReceipts?.find((entry) => entry.promptId === promptId)
+      if (receipt) {
+        receipt.state = uncertain ? 'accepted' : 'rejected'
+        receipt.outcome = uncertain ? 'unknown' : 'failed'
+      }
       stored.failedPrompt = {
         content,
         failedAt: new Date().toISOString(),
@@ -2694,6 +3044,9 @@ export class SessionStore {
     priority = false,
   ): Promise<SessionDetail> {
     return this.mutate(sessionId, (session) => {
+      if (session.launchStopping) {
+        throw Object.assign(new Error('The launch is stopping; no new work can be queued.'), { statusCode: 409 })
+      }
       if (session.terminalQueueDispatch || session.sdkQueueAdmission) {
         throw Object.assign(new Error('The queued prompt is still awaiting delivery confirmation'), { statusCode: 409 })
       }
@@ -2795,7 +3148,7 @@ export class SessionStore {
       if (!token || session.failedPrompt?.failedAt !== token || session.lastClaimedRecovery === token) {
         throw Object.assign(new Error('That recovery has already been handled or replaced; refresh before retrying.'), { statusCode: 409 })
       }
-      if (session.recoverySeed || session.terminalQueueDispatch || session.sdkQueueAdmission ||
+      if (session.launchStopping || session.recoverySeed || session.terminalQueueDispatch || session.sdkQueueAdmission ||
           session.suspended || !isCurrent(session)) {
         throw Object.assign(new Error('The session changed before recovery admission; the recovery was not consumed.'), { statusCode: 409 })
       }
@@ -2857,6 +3210,7 @@ export class SessionStore {
     return this.mutate(sessionId, (session) => {
       session.queueDispatchAt = dispatchedAt
       session.status = 'running'
+      session.foregroundTurnActive = true
       session.activity = activity
       grantTerminalRecovery(session)
     })
@@ -2883,6 +3237,7 @@ export class SessionStore {
       }
       session.queueDispatchAt = undefined
       session.status = 'idle'
+      session.foregroundTurnActive = false
     })
   }
 
@@ -2903,11 +3258,33 @@ export class SessionStore {
     await this.change((state) => {
       const existing = state.sessions[sessionId]
       if (existing) {
+        rememberDeliveryOwners(state, sessionId, existing.promptReceipts)
+        if (existing.launchId && state.launches?.[existing.launchId]) {
+          state.launches = {
+            ...state.launches,
+            [existing.launchId]: {
+              sessionId, receipts: structuredClone(existing.promptReceipts || []),
+              ...(existing.launchTermination ? { termination: structuredClone(existing.launchTermination) } : {}),
+            },
+          }
+        }
         uploadOwnerIds = [...new Set([...(existing.uploadOwnerIds || []), sessionId])]
         // Retirement must outlive the last descendant, even if provider cleanup failed.
         this.retire(state, [...(existing.replacedSessionIds || []), sessionId])
       }
       delete state.sessions[sessionId]
+      const tombstones = Object.entries(state.launches || {}).filter(([, owner]) =>
+        !state.sessions[owner.sessionId] && owner.receipts?.length)
+      // Bound detailed reconciliation history, never the deliveryOwners fence.
+      const retained = new Set(tombstones.flatMap(([, owner]) => owner.receipts!)
+        .sort((left, right) => Date.parse(right.acceptedAt) - Date.parse(left.acceptedAt))
+        .slice(0, 1000).map((receipt) => receipt.deliveryId))
+      if (tombstones.length) {
+        state.launches = { ...state.launches }
+        for (const [launchId, owner] of tombstones) {
+          state.launches[launchId] = { ...owner, receipts: owner.receipts!.filter((receipt) => retained.has(receipt.deliveryId)) }
+        }
+      }
       return () => { this.observationOwners.delete(sessionId) }
     }, true)
     await this.removeUploadOwners(uploadOwnerIds)
@@ -3084,6 +3461,21 @@ export class SessionStore {
       content,
       updatedAt: new Date().toISOString(),
       revisions: 1,
+    })
+  }
+
+  async confirmPromptDelivery(
+    sessionId: string, assistantId: string, echo?: { content: string; createdAt: string },
+  ): Promise<SessionDetail | undefined> {
+    return this.updateIf(sessionId, (session) => {
+      const index = session.messages.findIndex((message) => message.id === assistantId && message.role === 'assistant')
+      const user = session.messages[index - 1]
+      if (user?.role !== 'user' || (user.deliveryConfirmed && !user.deliveryState)) return false
+      if (echo && (echo.content !== user.content || !Number.isFinite(Date.parse(echo.createdAt)) ||
+        Date.parse(echo.createdAt) < Date.parse(user.createdAt))) return false
+      user.deliveryConfirmed = true
+      delete user.deliveryState
+      return true
     })
   }
 
@@ -3421,6 +3813,8 @@ export class SessionStore {
           try {
             const resolve = change.apply(draft)
             durableChange ||= (
+              draft.deliveryOwners !== candidate.deliveryOwners ||
+              draft.deliveryIdentityHistoryIncomplete !== candidate.deliveryIdentityHistoryIncomplete ||
               draft.retiredSessionIds !== candidate.retiredSessionIds ||
               Object.keys(draft.sessions).length !== Object.keys(candidate.sessions).length ||
               Object.entries(draft.sessions).some(

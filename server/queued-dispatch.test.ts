@@ -9,7 +9,7 @@ import {
   type CopilotClientLike,
   type CopilotSessionLike,
 } from './agent-service.js'
-import { preparePrompt, QueuedDispatches, type QueuedDelivery } from './queued-dispatch.js'
+import { preparePrompt, QueuedDispatches, QueuedDelivery } from './queued-dispatch.js'
 import { SessionStore } from './session-store.js'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -141,6 +141,21 @@ afterEach(async () => {
 })
 
 describe('Queued dispatch claims', () => {
+  it('marks a prepared queued dispatch as a retained local echo until acknowledgement', async () => {
+    const { store } = await fixture()
+    await store.update('session', (session) => {
+      session.queuedDispatch = {
+        attemptId: 'attempt', promptId: 'middle', content: 'Waiting for acknowledgement',
+        startedAt: createdAt, state: 'dispatching',
+      }
+    })
+    const prepared = await preparePrompt(
+      store, 'session', 'Waiting for acknowledgement', 'local-user', 'local-assistant',
+      idle, new QueuedDelivery('attempt'),
+    )
+    expect(prepared.messages[0]).toMatchObject({ role: 'user', deliveryState: 'pending' })
+    expect(prepared.messages[0].deliveryConfirmed).toBeUndefined()
+  })
   it('keeps the idle queue visible while an SDK drain awaits its provider', async () => {
     const { store, entry } = await fixture()
     const sdk = sdkSession()

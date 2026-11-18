@@ -1,4 +1,14 @@
 import type { Page, Route, WebSocketRoute } from '@playwright/test'
+import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
+import { launchIdentitySchema } from '../shared/launch-identity'
+import { skillToggleSchema, type SkillSettingsSnapshot } from '../shared/skill-settings'
+import type { NotificationRecord } from '../shared/notification-center'
+import { hostMetricNames, type HostSnapshot, type HostMinuteAggregate, type HostProcesses } from '../shared/host-telemetry'
+import {
+  scheduleActionSchema, scheduleAbandonSchema, SCHEDULE_ABANDONED_REASON, scheduleArchivedSchema, scheduleCreateSchema, scheduleEnabledSchema, scheduleListSchema,
+  scheduleRevisionSchema, scheduleRunListSchema, scheduleSchema, scheduleUpdateSchema, type Schedule, type ScheduleRun,
+} from '../shared/schedules'
+import { validateRecurrence } from '../shared/schedule-recurrence'
 import type { DreamerSnapshot } from '../shared/dreamer'
 import type { ManagerSnapshot } from '../shared/manager'
 import {
@@ -48,6 +58,44 @@ export const KNOWLEDGE_FILE_PATH = 'handbook/agent-workspace.md'
 export const KNOWLEDGE_DOCUMENT_TITLE = 'Agent workspace field guide'
 export const CONTEXT_EXAMPLE = '{\n  "computer": "Studio",\n  "folder": "~/field-notes",\n  "mode": "plan"\n}\n'
 
+export const fixtureHostSnapshot: HostSnapshot = {
+  info: {
+    hostname: 'studio-fictional', os: 'Linux', kernel: '6.8.0-fictional',
+    cpuModel: 'Fictional 8-core CPU', logicalCpus: 16, totalMemoryBytes: 32 * 1024 ** 3,
+    uptimeSeconds: 172_800, isWsl: false,
+  },
+  latest: null,
+  live: Array.from({ length: 61 }, (_, index) => ({
+    at: new Date(Date.parse(FIXTURE_NOW) - (60 - index) * 1000).toISOString(),
+    cpuPercent: 18 + index % 12, memoryUsedBytes: 12 * 1024 ** 3 + index * 1024 ** 2,
+    memoryAvailableBytes: 20 * 1024 ** 3 - index * 1024 ** 2, swapUsedBytes: 0,
+    netRxBytesPerSec: 128_000 + index * 1024, netTxBytesPerSec: 64_000,
+    diskReadBytesPerSec: 2 * 1024 ** 2, diskWriteBytesPerSec: 512 * 1024,
+    load1: 1.8, load5: 1.5, load15: 1.2,
+  })),
+  disk: { mount: '/fictional-data', totalBytes: 512 * 1024 ** 3, freeBytes: 320 * 1024 ** 3 },
+}
+fixtureHostSnapshot.latest = fixtureHostSnapshot.live.at(-1)!
+
+export const fixtureHostHistory: HostMinuteAggregate[] = Array.from({ length: 1440 }, (_, index) => ({
+  at: new Date(Math.floor(Date.parse(FIXTURE_NOW) / 60_000) * 60_000 - (1439 - index) * 60_000).toISOString(),
+  samples: 4,
+  ...Object.fromEntries(hostMetricNames.map((metric) => {
+    const value = fixtureHostSnapshot.latest![metric]
+    return [metric, value === null ? null : { min: value * 0.9, avg: value, max: value * 1.1 }]
+  })) as Pick<HostMinuteAggregate, typeof hostMetricNames[number]>,
+}))
+
+export const fixtureHostProcesses: HostProcesses = {
+  scannedAt: FIXTURE_NOW, truncated: false, othersCount: 6,
+  rows: [
+    { pid: 2101, startTime: 123000, executable: 'node', cpuPercent: 1.2, rssBytes: 180 * 1024 ** 2, owner: 'agentic-remote' },
+    { pid: 2130, startTime: 123100, executable: 'copilot', cpuPercent: 24, rssBytes: 420 * 1024 ** 2, owner: 'session', sessionId: SELECTED_SESSION_ID },
+    { pid: 2150, startTime: 123200, executable: 'copilot-runtime', cpuPercent: 3.8, rssBytes: 256 * 1024 ** 2, owner: 'shared-runtime', label: 'Shared Copilot runtime' },
+    { pid: 2200, startTime: 123300, executable: 'editor', cpuPercent: 0.5, rssBytes: 90 * 1024 ** 2, owner: 'other' },
+  ],
+}
+
 export const fixtureComputers: ComputerSummary[] = [
   {
     id: 'fixture-studio',
@@ -61,6 +109,7 @@ export const fixtureComputers: ComputerSummary[] = [
         available: true,
         terminalBacked: true,
         supportsTmuxMigration: true,
+        supportsSteering: true,
         supportsBackgroundTasks: true,
         supportsRecoverableClose: true,
       },
@@ -69,6 +118,7 @@ export const fixtureComputers: ComputerSummary[] = [
         name: 'Claude Agent',
         available: true,
         terminalBacked: false,
+        supportsSteering: false,
         supportsRecoverableClose: true,
       },
     ],
@@ -85,6 +135,7 @@ export const fixtureComputers: ComputerSummary[] = [
         available: true,
         terminalBacked: true,
         supportsBackgroundTasks: true,
+        supportsSteering: true,
         supportsRecoverableClose: true,
       },
       {
@@ -92,6 +143,7 @@ export const fixtureComputers: ComputerSummary[] = [
         name: 'Claude Agent',
         available: true,
         terminalBacked: false,
+        supportsSteering: false,
         supportsRecoverableClose: true,
       },
     ],
@@ -111,6 +163,24 @@ export const fixtureComputers: ComputerSummary[] = [
     ],
   },
 ]
+
+export const fixtureSchedules: Schedule[] = [
+  scheduleSchema.parse({
+    id: 'fixture-morning-review', name: 'Morning field guide review',
+    prompt: 'Review the fictional field guide and summarize outdated links.',
+    target: { computerId: 'fixture-studio', folder: '/home/demo/field-notes', provider: 'copilot' },
+    workspace: 'checkout', recurrence: { type: 'weekdays', time: '09:00' },
+    catchUp: 'skip', overlap: 'queue', maxRuntimeMin: 30, notify: 'attention',
+    enabled: true, archived: false, createdBy: 'user', revision: 1, createdAt: FIXTURE_NOW, updatedAt: FIXTURE_NOW,
+  }),
+]
+export const fixtureScheduleRuns: ScheduleRun[] = [{
+  id: 'fixture-schedule-run', scheduleId: 'fixture-morning-review', occurrenceAt: '2026-09-04T16:00:00.000Z',
+  trigger: 'schedule', status: 'succeeded', launchId: 'fixture-review-launch', computerId: 'fixture-studio',
+  sessionId: SELECTED_SESSION_ID, rootPromptReceipt: 'fixture-review-root',
+  createdAt: '2026-09-04T16:00:00.000Z', startedAt: '2026-09-04T16:00:01.000Z',
+  endedAt: '2026-09-04T16:04:00.000Z', summary: 'Reviewed the field guide links.',
+}]
 
 const runtime = {
   model: 'fixture-model',
@@ -457,12 +527,42 @@ export const fixtureKnowledgePositions = Object.fromEntries(
 )
 
 export const fixtureEndpoints = [
+  'GET /api/features',
+  'GET /api/notifications',
+  'GET /api/notifications/unread-count',
+  'POST /api/notifications/read-all',
+  'POST /api/notifications/bulk',
+  'POST /api/notifications/:id/read',
+  'POST /api/notifications/:id/dismiss',
+  'GET /api/schedules',
+  'POST /api/schedules',
+  'GET /api/schedules/:id',
+  'PATCH /api/schedules/:id',
+  'DELETE /api/schedules/:id',
+  'POST /api/schedules/:id/enabled',
+  'POST /api/schedules/:id/archived',
+  'POST /api/schedules/:id/run',
+  'GET /api/schedules/:id/runs',
+  'GET /api/schedules/runs',
+  'GET /api/schedules/runs/:id',
+  'POST /api/schedules/runs/:id/stop',
+  'POST /api/schedules/runs/:id/abandon',
+  'GET /api/schedules/proposals',
+  'POST /api/schedules/proposals/:id/approve',
+  'POST /api/schedules/proposals/:id/reject',
   'GET /api/computers',
+  'GET /api/computers/:computerId/host',
+  'GET /api/computers/:computerId/host/history?range=24h',
+  'GET /api/computers/:computerId/host/processes',
+  'WS /api/computers/:computerId/host/live',
   'GET /api/sessions',
   'GET /api/history',
   'GET /api/closed-sessions',
   'GET /api/push/settings',
   'GET /api/version',
+  'GET /api/diagnostics/health',
+  'GET /api/computers/:computerId/skills',
+  'PATCH /api/computers/:computerId/skills',
   'GET /api/knowledge/roots',
   'GET /api/knowledge/roots/:rootId/entries?path=.',
   'GET /api/knowledge/roots/:rootId/file?path=handbook/agent-workspace.md',
@@ -493,12 +593,22 @@ export interface WorkspaceFixtureOptions {
   directoryListings?: Record<string, string[]>
   /** The manager agent's snapshot; absent keeps the manager hidden. */
   manager?: ManagerSnapshot
+  /** Omitted keeps the hub notification center disabled, as in production. */
+  notifications?: NotificationRecord[]
+  /** Omitted keeps host monitoring off; all data is fictional. */
+  hostMonitor?: boolean
+  hostMonitorWsl?: boolean
+  /** Omitted keeps the hub scheduler disabled. All data remains fictional. */
+  scheduler?: { schedules: Schedule[]; runs: ScheduleRun[]; proposals?: import('../shared/schedule-proposals').ScheduleProposal[] }
+  taskSnapshots?: Record<string, BackgroundTaskSnapshot>
   /** Use a native event socket only on the already-validated local fixture origin. */
   nativeLocalEvents?: boolean
   realClock?: boolean
 }
 
 export interface WorkspaceFixtureState {
+  hubFlags: HubFeatureFlags
+  models: RuntimeModelOption[]
   roots: KnowledgeRoot[]
   sessions: ManagedSession[]
   /** Closed and still reopenable, newest first. */
@@ -516,6 +626,8 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
   const roots = structuredClone(fixtureKnowledgeRoots)
   const sessions = structuredClone(fixtureSessions)
   return {
+    hubFlags: { ...defaultHubFeatureFlags },
+    models: structuredClone(fixtureModels),
     roots,
     sessions,
     closedSessions: [],
@@ -612,6 +724,23 @@ export async function setupWorkspaceFixture(
 ): Promise<WorkspaceFixture> {
   const baseUrl = fixtureBaseUrl(options.baseUrl)
   const state = options.state ?? createWorkspaceFixtureState()
+  const computerSkills = new Map<string, SkillSettingsSnapshot>(fixtureComputers.map((computer) => [computer.id, {
+    revision: 'a'.repeat(64), warnings: [],
+    skills: [
+      { name: 'review-notes', description: 'Review a fictional workspace checklist and summarize the next steps.',
+        source: 'user', location: '~/.copilot/skills/review-notes', enabled: true },
+      { name: 'release-check', description: 'Check the fictional release notes against the workspace plan.',
+        source: 'repository', location: '~/field-notes/.github/skills/release-check', enabled: true },
+      { name: 'draft-summary', description: 'Prepare a short handoff from the fictional review notes.',
+        source: 'configured', location: '~/shared-skills/draft-summary', enabled: false },
+      { name: 'invalid-checklist', description: '', source: 'repository', location: '~/field-notes/.agents/skills/invalid-checklist',
+        enabled: false, manageable: false, reason: 'SKILL.md frontmatter description is required and must be at most 1024 characters.' },
+    ],
+  }]))
+  const notifications = structuredClone(options.notifications ?? [])
+  const scheduled = structuredClone(options.scheduler ?? { schedules: [], runs: [] })
+  let scheduleRevision = 0
+  let notificationRevision = 0
   const extraKnowledgeFiles = options.extraKnowledgeFiles ?? 0
   const directoryListings = options.directoryListings ?? {}
   if (!Number.isInteger(extraKnowledgeFiles) || extraKnowledgeFiles < 0 || extraKnowledgeFiles > 200) {
@@ -629,6 +758,23 @@ export async function setupWorkspaceFixture(
   const failures: string[] = []
   const eventSockets = state.eventSockets
   const context = page.context()
+
+  async function multipartFile(route: Route, field: string): Promise<File | undefined> {
+    const request = route.request()
+    const contentType = request.headers()['content-type'] ?? ''
+    const body = request.postDataBuffer()
+    if (!contentType.startsWith('multipart/form-data;') || !body) return undefined
+    try {
+      const form = await new Response(new Uint8Array(body), {
+        headers: { 'content-type': contentType },
+      }).formData()
+      const file = form.get(field)
+      if (file instanceof File && file.name && !/[\\/]/.test(file.name)) return file
+    } catch {
+      // Malformed multipart data falls through to the fail-closed response.
+    }
+    return undefined
+  }
 
   page.on('pageerror', (error) => failures.push(`Page error: ${error.message}`))
   if (!options.realClock) await page.clock.setFixedTime(new Date(FIXTURE_NOW))
@@ -704,6 +850,23 @@ export async function setupWorkspaceFixture(
         })
         return
       }
+      const hostLive = /^\/api\/computers\/([^/]+)\/host\/live$/.exec(url.pathname)
+      if (hostLive) {
+        const computer = fixtureComputers.find(({ id }) => id === hostLive[1])
+        if (!options.hostMonitor || !computer?.online) {
+          socket.close({ code: 1008, reason: 'Host monitoring is unavailable in this fixture' })
+          return
+        }
+        socket.send(JSON.stringify({
+          type: 'host.snapshot',
+          snapshot: { ...fixtureHostSnapshot, info: { ...fixtureHostSnapshot.info!, hostname: `${computer.id}-fictional`, isWsl: options.hostMonitorWsl ?? fixtureHostSnapshot.info!.isWsl } },
+        }))
+        socket.onMessage(() => {
+          failures.push('Unexpected client message on fixture host stream')
+          socket.close({ code: 1008, reason: 'Host monitoring is receive-only' })
+        })
+        return
+      }
       if (url.pathname === '/' && url.searchParams.has('token')) {
         // Vite HMR is mocked too: never connectToServer(), even for the dev socket.
         socket.send(JSON.stringify({ type: 'connected' }))
@@ -755,8 +918,234 @@ export async function setupWorkspaceFixture(
         body: JSON.stringify(body),
       })
 
+    if (method === 'GET' && path === '/api/features') {
+      await respond({ hubFlags: {
+        ...state.hubFlags,
+        notificationCenter: state.hubFlags.notificationCenter || options.notifications !== undefined,
+        hostMonitor: state.hubFlags.hostMonitor || options.hostMonitor === true,
+        scheduler: state.hubFlags.scheduler || options.scheduler !== undefined,
+      } })
+      return
+    }
+    const skillRoute = /^\/api\/computers\/([^/]+)\/skills$/.exec(path)
+    if (skillRoute && ['GET', 'PATCH'].includes(method)) {
+      const computer = fixtureComputers.find((entry) => entry.id === skillRoute[1])
+      const snapshot = computerSkills.get(skillRoute[1])
+      if (!computer || !snapshot) { await respond({ error: 'Computer not found' }, 404); return }
+      if (!computer.online) { await respond({ error: 'This computer is offline.' }, 503); return }
+      if (method === 'GET') { await respond(snapshot); return }
+      const parsed = skillToggleSchema.safeParse(request.postDataJSON())
+      if (!parsed.success) { await respond({ error: 'Confirm the computer-wide CLI effect.' }, 400); return }
+      if (parsed.data.revision !== snapshot.revision) { await respond({ error: 'CLI settings changed. Refresh and confirm again.' }, 409); return }
+      if (!snapshot.skills.some((entry) => entry.name === parsed.data.name)) { await respond({ error: 'Skill not found' }, 404); return }
+      const target = snapshot.skills.find((entry) => entry.name === parsed.data.name)!
+      if (target.manageable === false) { await respond({ error: target.reason ?? 'This skill cannot be managed.' }, 409); return }
+      const next = {
+        ...snapshot, revision: (BigInt(`0x${snapshot.revision}`) + 1n).toString(16).padStart(64, '0'),
+        skills: snapshot.skills.map((skill) => skill.name === parsed.data.name ? { ...skill, enabled: parsed.data.enabled } : skill),
+      }
+      computerSkills.set(computer.id, next)
+      await respond(next)
+      return
+    }
+    if (path === '/api/schedules' || path.startsWith('/api/schedules/')) {
+      if (path === '/api/schedules/proposals' && method === 'GET') {
+        await respond(options.scheduler ? { proposals: (scheduled.proposals ?? []).filter((entry) => entry.status === 'pending') }
+          : { error: 'Scheduler is disabled' }, options.scheduler ? 200 : 404)
+        return
+      }
+      if (/^\/api\/schedules\/proposals\/[^/]+\/(?:approve|reject)$/.test(path) && method === 'POST') {
+        if (!options.scheduler) { await respond({ error: 'Scheduler is disabled' }, 404); return }
+        const proposal = scheduled.proposals?.find((entry) => entry.id === path.split('/')[4])
+        if (!proposal) { await respond({ error: 'Proposal not found' }, 404); return }
+        if (proposal.status !== 'pending') { await respond({ error: 'Proposal is already resolved' }, 409); return }
+        proposal.status = path.endsWith('/approve') ? 'applied' : 'rejected'
+        emit({ type: 'schedule-proposals.changed', revision: ++scheduleRevision, proposalId: proposal.id })
+        await respond({ proposal })
+        return
+      }
+      // The single-segment GET matcher includes the reserved global /api/schedules/runs route.
+      const known = (path === '/api/schedules' && ['GET', 'POST'].includes(method)) ||
+        (/^\/api\/schedules\/[^/]+$/.test(path) && ['GET', 'PATCH', 'DELETE'].includes(method)) ||
+        (/^\/api\/schedules\/[^/]+\/(?:enabled|archived|run)$/.test(path) && method === 'POST') ||
+        (/^\/api\/schedules\/(?:[^/]+\/runs|runs\/[^/]+)$/.test(path) && method === 'GET') ||
+        (/^\/api\/schedules\/runs\/[^/]+\/(?:stop|abandon)$/.test(path) && method === 'POST')
+      if (!known) { await reject(route, `Unmocked schedule request: ${method} ${path}`); return }
+      if (!options.scheduler) { await respond({ error: 'Scheduler is disabled' }, 404); return }
+      const parts = path.split('/').slice(3)
+      const changed = (scheduleId: string, runId?: string) =>
+        emit({ type: 'schedules.changed', revision: ++scheduleRevision, scheduleId, ...(runId ? { runId } : {}) })
+      const pageRuns = async (scheduleId?: string) => {
+        const page = scheduleRunListSchema.parse(Object.fromEntries(url.searchParams))
+        const runs = scheduled.runs.filter((run) => (!scheduleId || run.scheduleId === scheduleId) &&
+          (!page.status || page.status === run.status)).slice().reverse()
+        await respond({ runs: runs.slice(page.offset, page.offset + page.limit), total: runs.length,
+          nextOffset: page.offset + page.limit < runs.length ? page.offset + page.limit : null })
+      }
+      try {
+        const input = request.postDataJSON() ?? {}
+        if (!parts.length) {
+          if (method === 'GET') {
+            const { archived } = scheduleListSchema.parse(Object.fromEntries(url.searchParams))
+            await respond({ schedules: scheduled.schedules.filter((schedule) =>
+              archived === undefined || schedule.archived === archived) })
+            return
+          }
+          if (method === 'POST') {
+            const parsed = scheduleCreateSchema.parse(input)
+            if (!validateRecurrence(parsed.recurrence, parsed.timezone, new Date(FIXTURE_NOW)).valid) {
+              await respond({ error: 'Invalid recurrence' }, 400); return
+            }
+            if (scheduled.schedules.some((schedule) => !schedule.archived && schedule.name.toLowerCase() === parsed.name.toLowerCase())) {
+              await respond({ error: 'A non-archived schedule already has this name' }, 409); return
+            }
+            const schedule = scheduleSchema.parse({ ...parsed, id: `fixture-schedule-${++scheduleRevision}`,
+              revision: 1, archived: false, createdBy: 'user', createdAt: FIXTURE_NOW, updatedAt: FIXTURE_NOW })
+            scheduled.schedules.push(schedule)
+            changed(schedule.id)
+            await respond({ schedule }, 201); return
+          }
+        } else if (parts[0] === 'runs') {
+          if (parts.length === 1 && method === 'GET') { await pageRuns(); return }
+          const run = scheduled.runs.find((run) => run.id === parts[1])
+          if (!run) { await respond({ error: 'Schedule run not found' }, 404); return }
+          if (parts.length === 2 && method === 'GET') { await respond({ run }); return }
+          if (parts.length === 3 && parts[2] === 'abandon' && method === 'POST') {
+            scheduleAbandonSchema.parse(input)
+            if (!run.abandonedAt) {
+              if (!run.outcomeUnknown || !['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status)) {
+                await respond({ error: 'Only a run with an unknown outcome can be abandoned' }, 409); return
+              }
+              run.status = 'interrupted'; run.abandonedAt = FIXTURE_NOW; run.endedAt = FIXTURE_NOW
+              run.error = SCHEDULE_ABANDONED_REASON; changed(run.scheduleId, run.id)
+            }
+            await respond({ run }); return
+          }
+          if (parts.length === 3 && parts[2] === 'stop' && method === 'POST') {
+            scheduleActionSchema.parse(input)
+            if (['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status)) {
+              run.status = 'stopped'; run.endedAt = FIXTURE_NOW; changed(run.scheduleId, run.id)
+            }
+            await respond({ run }); return
+          }
+        } else {
+          const schedule = scheduled.schedules.find((schedule) => schedule.id === parts[0])
+          if (!schedule) { await respond({ error: 'Schedule not found' }, 404); return }
+          if (parts.length === 1 && method === 'GET') { await respond({ schedule }); return }
+          if (parts.length === 2 && parts[1] === 'runs' && method === 'GET') { await pageRuns(schedule.id); return }
+          if (parts.length === 2 && parts[1] === 'run' && method === 'POST') {
+            scheduleActionSchema.parse(input)
+            if (schedule.archived) { await respond({ error: 'Archived schedules cannot run' }, 409); return }
+            const previous = scheduled.runs.filter((run) => run.scheduleId === schedule.id &&
+              ['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status))
+            if (schedule.overlap === 'replace') previous.forEach((run) => { run.status = 'stopped'; run.endedAt = FIXTURE_NOW })
+            const id = `fixture-run-${++scheduleRevision}`
+            const run: ScheduleRun = { id, scheduleId: schedule.id, computerId: schedule.target.computerId,
+              occurrenceAt: FIXTURE_NOW, createdAt: FIXTURE_NOW, launchId: `${id}-launch`, trigger: 'manual',
+              status: previous.length && schedule.overlap === 'skip' ? 'missed' : 'pending' }
+            scheduled.runs.push(run); changed(schedule.id, run.id); await respond({ run }, 202); return
+          }
+          if ((parts.length === 1 && ['PATCH', 'DELETE'].includes(method)) ||
+              (parts.length === 2 && ['enabled', 'archived'].includes(parts[1]) && method === 'POST')) {
+            const mutation = method === 'PATCH' ? scheduleUpdateSchema.parse(input)
+              : parts[1] === 'enabled' ? scheduleEnabledSchema.parse(input)
+              : parts[1] === 'archived' ? scheduleArchivedSchema.parse(input) : scheduleRevisionSchema.parse(input)
+            if (mutation.revision !== schedule.revision) { await respond({ error: 'Schedule revision conflict' }, 409); return }
+            if (method === 'DELETE') {
+              if (!schedule.archived || scheduled.runs.some((run) => run.scheduleId === schedule.id &&
+                  ['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status))) {
+                await respond({ error: 'Archive and resolve in-flight runs before deleting' }, 409); return
+              }
+              scheduled.schedules.splice(scheduled.schedules.indexOf(schedule), 1)
+              scheduled.runs = scheduled.runs.filter((run) => run.scheduleId !== schedule.id)
+              changed(schedule.id); await respond({ ok: true }); return
+            }
+            const candidate = { ...schedule, ...mutation, revision: schedule.revision + 1, updatedAt: FIXTURE_NOW }
+            if (('recurrence' in mutation || 'timezone' in mutation) &&
+                !validateRecurrence(candidate.recurrence, candidate.timezone, new Date(FIXTURE_NOW)).valid) {
+              await respond({ error: 'Invalid recurrence' }, 400); return
+            }
+            if ('archived' in mutation && mutation.archived) candidate.enabled = false
+            if ((candidate.archived && candidate.enabled) || scheduled.schedules.some((other) =>
+              other.id !== candidate.id && !other.archived && !candidate.archived && other.name.toLowerCase() === candidate.name.toLowerCase())) {
+              await respond({ error: 'Schedule state or name conflict' }, 409); return
+            }
+            Object.assign(schedule, candidate); changed(schedule.id); await respond({ schedule }); return
+          }
+        }
+      } catch {
+        await respond({ error: 'Invalid synthetic schedule request' }, 400); return
+      }
+      await reject(route, `Unmocked schedule request: ${method} ${path}`); return
+    }
+    if ((method === 'GET' && ['/api/notifications', '/api/notifications/unread-count'].includes(path)) ||
+        (method === 'POST' && (['/api/notifications/read-all', '/api/notifications/bulk'].includes(path) || /^\/api\/notifications\/[a-f0-9]{64}\/(?:read|dismiss)$/.test(path)))) {
+      if (options.notifications === undefined) {
+        await respond({ error: 'Notification center is disabled' }, 404)
+        return
+      }
+      const filtered = () => notifications.filter((record) =>
+        !record.dismissedAt &&
+        (!url.searchParams.has('unread') || !record.readAt === (url.searchParams.get('unread') === 'true')) &&
+        (!url.searchParams.has('failed') || (record.severity === 'error') === (url.searchParams.get('failed') === 'true')) &&
+        ['kind', 'sessionId', 'computerId'].every((key) =>
+          !url.searchParams.has(key) || record[key as 'kind' | 'sessionId' | 'computerId'] === url.searchParams.get(key)),
+      )
+      if (method === 'GET') {
+        await respond(path.endsWith('/unread-count')
+          ? { unreadCount: filtered().filter((record) => !record.readAt).length }
+          : { notifications: filtered() })
+        return
+      }
+      if (path.endsWith('/bulk')) {
+        const batch = route.request().postDataJSON() as { ids: string[]; action: 'read' | 'dismiss' }
+        if (!Array.isArray(batch.ids) || !batch.ids.length || batch.ids.length > 1000 ||
+            batch.ids.some((id) => !/^[a-f0-9]{64}$/.test(id)) || !['read', 'dismiss'].includes(batch.action)) {
+          await respond({ error: 'Invalid notification batch' }, 400)
+          return
+        }
+        notifications.filter((record) => batch.ids.includes(record.id)).forEach((record) => {
+          if (batch.action === 'read') record.readAt ??= FIXTURE_NOW
+          else record.dismissedAt ??= FIXTURE_NOW
+        })
+      } else if (path.endsWith('/read-all')) {
+        filtered().forEach((record) => { record.readAt ??= FIXTURE_NOW })
+      } else {
+        const record = notifications.find((record) => record.id === path.split('/')[3])
+        if (!record) {
+          await respond({ error: 'Notification not found' }, 404)
+          return
+        }
+        if (path.endsWith('/dismiss')) record.dismissedAt ??= FIXTURE_NOW
+        else record.readAt ??= FIXTURE_NOW
+      }
+      emit({ type: 'notifications.changed', revision: ++notificationRevision,
+        unreadCount: notifications.filter((record) => !record.readAt && !record.dismissedAt).length })
+      await respond({ ok: true })
+      return
+    }
     if (method === 'GET' && path === '/api/computers') {
       await respond({ computers: fixtureComputers })
+      return
+    }
+    const hostRoute = /^\/api\/computers\/([^/]+)\/host(?:\/(history|processes|live))?$/.exec(path)
+    if (method === 'GET' && hostRoute) {
+      const computer = fixtureComputers.find(({ id }) => id === hostRoute[1])
+      if (!options.hostMonitor || !computer) {
+        await respond({ error: 'Host monitoring not found' }, 404)
+      } else if (!computer.online) {
+        await respond({ error: 'This computer is unavailable' }, 503)
+      } else if (hostRoute[2] === 'history') {
+        const ranges = url.searchParams.getAll('range')
+        const valid = ranges.length === 0 || (ranges.length === 1 && ranges[0] === '24h')
+        await respond(valid ? fixtureHostHistory : { error: 'Host history range must be 24h' }, valid ? 200 : 400)
+      } else if (hostRoute[2] === 'processes') {
+        await respond(fixtureHostProcesses)
+      } else if (hostRoute[2] === 'live') {
+        await respond({ error: 'WebSocket upgrade required' }, 404)
+      } else {
+        await respond({ ...fixtureHostSnapshot, info: { ...fixtureHostSnapshot.info!, hostname: `${computer.id}-fictional`, isWsl: options.hostMonitorWsl ?? fixtureHostSnapshot.info!.isWsl } })
+      }
       return
     }
     if (method === 'GET' && path === '/api/manager') {
@@ -793,7 +1182,7 @@ export async function setupWorkspaceFixture(
       }
       try {
         if (method === 'GET' && path === '/api/settings') {
-          await respond({ settings: snapshot() })
+          await respond({ settings: snapshot(), ...(url.searchParams.get('defaults') === 'displayName' ? { defaultDisplayName: 'Alex Morgan' } : {}) })
           return
         }
         if (method === 'POST' && path === '/api/settings/import') {
@@ -928,6 +1317,32 @@ export async function setupWorkspaceFixture(
     }
     if (method === 'GET' && path === '/api/version') {
       await respond({ version: '1.1.0', buildId: '1.1.0' })
+      return
+    }
+    if (method === 'GET' && path === '/api/diagnostics/health') {
+      await respond({
+        hub: { id: 'fixture-studio', name: 'Studio', role: 'hub', version: '1.54.0' },
+        release: { version: '1.54.0', buildId: 'fixture-release-2026-09-04' },
+        startup: [
+          { startupPhase: 'app.build', event: 'complete', elapsedMs: 184, durationMs: 184 },
+          { startupPhase: 'service.start', event: 'complete', elapsedMs: 426, durationMs: 242 },
+          { startupPhase: 'fastify.listen', event: 'complete', elapsedMs: 432, durationMs: 6 },
+        ],
+        computers: fixtureComputers.map((computer) => ({
+          id: computer.id, name: computer.name, role: computer.isLocal ? 'hub' : 'node',
+          online: computer.online, version: computer.isLocal ? '1.54.0' : computer.online ? '1.53.0' : undefined,
+        })),
+        hubFlags: state.hubFlags,
+      })
+      return
+    }
+    if (method === 'POST' && path === '/api/transcriptions') {
+      const file = await multipartFile(route, 'audio')
+      if (!file || !file.type.startsWith('audio/')) {
+        await reject(route, 'Unexpected fixture transcription')
+        return
+      }
+      await respond({ transcript: 'Transcribed fixture note', durationSeconds: 2 })
       return
     }
     if (method === 'GET' && path === '/api/knowledge/roots') {
@@ -1087,7 +1502,15 @@ export async function setupWorkspaceFixture(
           computer.providers?.some((entry) => entry.id === provider[2]),
       )
     ) {
-      await respond({ models: fixtureModels })
+      await respond({ models: state.models })
+      return
+    }
+    const launch = path.match(/^\/api\/computers\/([^/]+)\/launches\/([^/]+)$/)
+    if (method === 'GET' && launch && fixtureComputers.some((computer) => computer.id === launch[1])) {
+      const owned = sessions.find((entry) => entry.computerId === launch[1] && entry.launchId === decodeURIComponent(launch[2]))
+      await respond({ launch: owned ? {
+        launchId: owned.launchId, sessionId: owned.id, sessionStatus: owned.status, receipts: owned.promptReceipts || [],
+      } : null })
       return
     }
     const match = path.match(
@@ -1139,6 +1562,147 @@ export async function setupWorkspaceFixture(
         sessions.splice(sessions.indexOf(session), 1)
         emit({ type: 'session.removed', computerId: session.computerId, sessionId: session.id })
         await route.fulfill({ status: 204 })
+        return
+      }
+      const commitSession = () => {
+        session.revision = (session.revision ?? 0) + 1
+        session.updatedAt = FIXTURE_NOW
+        emit({ type: 'session.upserted', session })
+      }
+      if (method === 'POST' && action === '/commands') {
+        const input = request.postDataJSON() as { command?: unknown; enqueue?: unknown; replaceTerminalDraft?: unknown }
+        if (typeof input.command !== 'string' || !/^\/help(?:\s|$)/.test(input.command.trim()) ||
+          input.command.trim().length > 10_000 ||
+          (input.enqueue !== undefined && typeof input.enqueue !== 'boolean') ||
+          (input.replaceTerminalDraft !== undefined && typeof input.replaceTerminalDraft !== 'boolean')) {
+          await reject(route, 'Unexpected fixture command')
+          return
+        }
+        const content = input.command.trim()
+        const id = `fixture-command-${session.revision}`
+        if (input.enqueue) {
+          session.queuedPrompts = [...(session.queuedPrompts ?? []), { id, content, createdAt: FIXTURE_NOW }]
+          session.queuedCount = session.queuedPrompts.length
+        } else {
+          session.messages.push({ id, role: 'user', content, createdAt: FIXTURE_NOW })
+        }
+        commitSession()
+        await respond({ session })
+        return
+      }
+      if (method === 'POST' && action === '/messages') {
+        const input = request.postDataJSON() as { content?: unknown; enqueue?: unknown; deliveryId?: unknown }
+        if (typeof input.content !== 'string' || !input.content.trim() ||
+          (input.enqueue !== undefined && typeof input.enqueue !== 'boolean') ||
+          (input.deliveryId !== undefined && !launchIdentitySchema.safeParse(input.deliveryId).success)) {
+          await reject(route, 'Unexpected fixture message')
+          return
+        }
+        const deliveryId = typeof input.deliveryId === 'string' ? input.deliveryId : undefined
+        if (deliveryId !== undefined) {
+          const owner = sessions.find((entry) => entry.computerId === session.computerId &&
+            entry.promptReceipts?.some((receipt) => receipt.deliveryId === deliveryId))
+          if (owner && owner.id !== session.id) {
+            await respond({ error: 'Delivery identity belongs to another session.' }, 409)
+            return
+          }
+          const receipt = session.promptReceipts?.find((entry) => entry.deliveryId === deliveryId)
+          if (receipt) {
+            await respond({ session, receipt })
+            return
+          }
+          if (session.launchStopping || (!input.enqueue && (session.status === 'running' || session.status === 'waiting'))) {
+            await respond({ error: 'This session cannot accept a new prompt now.' }, 409)
+            return
+          }
+        }
+        const id = `fixture-submission-${session.revision}`
+        if (input.enqueue || deliveryId !== undefined) {
+          session.queuedPrompts = [...(session.queuedPrompts ?? []), { id, content: input.content, createdAt: FIXTURE_NOW }]
+          session.queuedCount = session.queuedPrompts.length
+        } else {
+          session.messages.push({ id, role: 'user', deliveryConfirmed: true, content: input.content, createdAt: FIXTURE_NOW })
+          session.status = 'running'
+          session.activity = 'Working on the follow-up'
+        }
+        if (deliveryId !== undefined) {
+          session.promptReceipts = [...(session.promptReceipts ?? []), {
+            deliveryId, sessionId: session.id, promptId: id, acceptedAt: FIXTURE_NOW, state: 'queued',
+          }]
+        }
+        commitSession()
+        await respond({
+          session,
+          ...(deliveryId !== undefined ? { receipt: session.promptReceipts!.find((receipt) => receipt.deliveryId === deliveryId) } : {}),
+        })
+        return
+      }
+      if (method === 'PUT' && action === '/queue') {
+        const { order } = request.postDataJSON() as { order?: unknown }
+        const prompts = session.queuedPrompts ?? []
+        if (!Array.isArray(order) || order.length !== prompts.length ||
+          new Set(order).size !== prompts.length ||
+          order.some((id) => !prompts.some((prompt) => prompt.id === id))) {
+          await reject(route, 'Unexpected fixture queue order')
+          return
+        }
+        session.queuedPrompts = order.map((id) => prompts.find((prompt) => prompt.id === id)!)
+        commitSession()
+        await respond({ session })
+        return
+      }
+      const queued = action.match(/^\/queue\/([^/]+)$/)
+      if (method === 'PATCH' && queued) {
+        const prompt = session.queuedPrompts?.find((prompt) => prompt.id === queued[1])
+        const { content } = request.postDataJSON() as { content?: unknown }
+        if (!prompt || typeof content !== 'string' || !content.trim()) {
+          await reject(route, 'Unexpected fixture queue edit')
+          return
+        }
+        prompt.content = content
+        commitSession()
+        await respond({ session, prompt })
+        return
+      }
+      if (method === 'POST' && action === '/cancel') {
+        session.status = 'idle'
+        session.activity = undefined
+        commitSession()
+        await respond({ ok: true })
+        return
+      }
+      if (method === 'PATCH' && action === '/runtime') {
+        const input = request.postDataJSON() as {
+          model: string; reasoningEffort: string; contextTier: string; mode: string
+        }
+        const model = state.models.find((model) => model.id === input.model)
+        if (session.status !== 'idle' || !model ||
+          !model.reasoningEfforts.some((effort) => effort === input.reasoningEffort) ||
+          input.contextTier !== 'default' || !['interactive', 'plan', 'autopilot'].includes(input.mode)) {
+          await reject(route, 'Unexpected fixture runtime change')
+          return
+        }
+        session.runtime = { ...session.runtime, ...input }
+        commitSession()
+        await respond({ session })
+        return
+      }
+      if (method === 'POST' && action === '/files') {
+        const file = await multipartFile(route, 'file')
+        if (!file) {
+          await reject(route, 'Unexpected fixture file upload')
+          return
+        }
+        await respond({
+          file: { name: file.name, size: file.size, path: `${session.cwd}/.agentic-remote/uploads/${file.name}` },
+        }, 201)
+        return
+      }
+      if (method === 'POST' && action === '/cancel-with-ack') {
+        await respond({
+          sessionId: session.id, outcome: 'unknown', checkedAt: session.updatedAt, scope: 'provider-owned',
+          reason: 'Synthetic fixture has no provider termination signal.',
+        })
         return
       }
       if (action === '/knowledge-root' && (method === 'GET' || method === 'PUT')) {
@@ -1205,14 +1769,14 @@ export async function setupWorkspaceFixture(
       if (method === 'GET' && action === '/runtime') {
         await respond({
           current: session.runtime,
-          models: fixtureModels,
+          models: state.models,
           status: session.status,
         })
         return
       }
       if (method === 'GET' && action === '/tasks') {
         await respond(
-          fixtureBackgroundTasks[session.id] ?? {
+          options.taskSnapshots?.[`${session.computerId}:${session.id}`] ?? fixtureBackgroundTasks[session.id] ?? {
             tasks: [],
             runningCount: 0,
             supported: session.provider === 'copilot',
@@ -1252,6 +1816,14 @@ export async function setupWorkspaceFixture(
   }
 
   function emit(event: HubEvent) {
+    if (event.type === 'schedule.run.notification') {
+      if (!options.scheduler) throw new Error('A disabled scheduler cannot publish an outcome')
+      if (options.notifications !== undefined && !notifications.some((record) => record.id === event.notification.id)) {
+        notifications.push(structuredClone(event.notification))
+        emit({ type: 'notifications.changed', revision: ++notificationRevision,
+          unreadCount: notifications.filter((record) => !record.readAt && !record.dismissedAt).length })
+      }
+    }
     if (event.type === 'session.knowledge.updated') {
       state.bindings.set(`${event.computerId}:${event.sessionId}`, event.binding)
     }

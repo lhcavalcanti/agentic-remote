@@ -1,9 +1,12 @@
 import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from './app.js'
 import type { SessionDetail } from '../shared/contracts.js'
+import { HostTelemetryService } from './host-telemetry/service.js'
+import { HostTelemetrySampler } from './host-telemetry/sampler.js'
+import { readingFixture } from './host-telemetry/test-fixtures.js'
+import { SkillSettingsService } from './skill-settings.js'
 
 const prefixes = ['/api', '/%61pi', '/a%70i', '/ap%69', '/%61%70%69']
 const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
@@ -22,11 +25,23 @@ let runtime: Awaited<ReturnType<typeof buildApp>>
 beforeEach(async () => {
   vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.example.test')
   vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', '')
-  directory = await mkdtemp(path.join(tmpdir(), 'agentic-origin-review-'))
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'on')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', 'on')
+  vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', 'on')
+  directory = await mkdtemp(path.join(process.cwd(), '.agentic-origin-review-'))
   // Services are never started; no provider process or inference is needed.
   runtime = await buildApp({
     dataDirectory: directory,
     logger: false,
+    skillSettings: new SkillSettingsService({
+      home: path.join(directory, 'synthetic-home'),
+      copilotHome: path.join(directory, 'synthetic-home', '.copilot'),
+      env: {},
+      folders: () => [],
+    }),
+    hostTelemetryFactory: (dataDirectory, context) => new HostTelemetryService(
+      new HostTelemetrySampler({ dataDirectory, reader: async () => readingFixture() }), context,
+    ),
     transcriptionService: {
       initialize: async () => undefined,
       stop: async () => undefined,
@@ -44,6 +59,72 @@ afterEach(async () => {
 })
 
 describe('canonical API origin enforcement', () => {
+  it.each(prefixes)('guards skill discovery and confirmed mutations through %s', async (prefix) => {
+    const url = `${prefix}/computers/${runtime.identity.info.id}/skills`
+    for (const headers of untrusted) {
+      expect((await runtime.app.inject({ url, headers })).statusCode).toBe(403)
+      expect((await runtime.app.inject({ method: 'PATCH', url, headers, payload: {} })).statusCode).toBe(403)
+    }
+    const listed = await runtime.app.inject({ url, headers: trusted })
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json().skills).toEqual([])
+    expect((await runtime.app.inject({ method: 'PATCH', url, headers: trusted, payload: {
+      name: 'sample', enabled: false, confirmed: false, revision: listed.json().revision,
+    } })).statusCode).toBe(400)
+  })
+  it.each(prefixes)('guards read-only health diagnostics through %s', async (prefix) => {
+    for (const headers of untrusted) {
+      expect((await runtime.app.inject({ url: `${prefix}/diagnostics/health`, headers })).statusCode).toBe(403)
+    }
+    const result = await runtime.app.inject({ url: `${prefix}/diagnostics/health`, headers: trusted })
+    expect(result.statusCode).toBe(200)
+    expect(result.headers['cache-control']).toBe('no-store')
+    expect(result.json()).toMatchObject({ hub: { role: 'hub' }, startup: [], hubFlags: { hostMonitor: true } })
+  })
+  it.each(prefixes)('guards host reads and live subscriptions through %s', async (prefix) => {
+    const base = `${prefix}/computers/${runtime.identity.info.id}/host`
+    for (const headers of untrusted) {
+      for (const suffix of ['', '/history?range=24h', '/processes', '/live']) {
+        expect((await runtime.app.inject({ url: base + suffix, headers })).statusCode).toBe(403)
+      }
+      await expect(runtime.app.injectWS(`${base}/live`, { headers })).rejects.toThrow('403')
+    }
+    expect(runtime.hostTelemetry!.sampler.status().viewers).toBe(0)
+    expect((await runtime.app.inject({ url: base, headers: trusted })).statusCode).toBe(200)
+    expect((await runtime.app.inject({ url: `${base}/history?range=24h`, headers: trusted })).statusCode).toBe(200)
+    const socket = await runtime.app.injectWS(`${base}/live`, { headers: trusted })
+    expect(runtime.hostTelemetry!.sampler.status().viewers).toBe(1)
+    socket.terminate()
+  })
+
+  it.each(prefixes)('guards every schedule and run route through %s', async (prefix) => {
+    for (const [method, suffix] of [
+      ['GET', ''], ['POST', ''], ['GET', '/example'], ['PATCH', '/example'], ['DELETE', '/example'],
+      ['POST', '/example/enabled'], ['POST', '/example/archived'], ['POST', '/example/run'],
+      ['GET', '/example/runs'], ['GET', '/runs'], ['GET', '/runs/run-id'], ['POST', '/runs/run-id/stop'],
+    ] as const) {
+      for (const headers of untrusted) {
+        expect((await runtime.app.inject({ method, url: `${prefix}/schedules${suffix}`, headers })).statusCode).toBe(403)
+      }
+    }
+    const listed = await runtime.app.inject({ url: `${prefix}/schedules`, headers: trusted })
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json()).toEqual({ schedules: [] })
+  })
+  it.each(prefixes)('guards notification reads and every mutation through %s', async (prefix) => {
+    for (const [method, suffix] of [
+      ['GET', ''], ['GET', '/unread-count'], ['POST', '/read-all'], ['POST', '/bulk'],
+      ['POST', `/${'a'.repeat(64)}/read`], ['POST', `/${'a'.repeat(64)}/dismiss`],
+    ] as const) {
+      for (const headers of untrusted) {
+        expect((await runtime.app.inject({ method, url: `${prefix}/notifications${suffix}`, headers })).statusCode).toBe(403)
+      }
+    }
+    const listed = await runtime.app.inject({ url: `${prefix}/notifications`, headers: trusted })
+    expect(listed.statusCode).toBe(200)
+    expect(listed.json()).toEqual({ notifications: [] })
+    expect(await runtime.notificationCenter!.store.unreadCount()).toBe(0)
+  })
   it.each(prefixes)('rejects untrusted reads and mutations through %s', async (prefix) => {
     for (const headers of untrusted) {
       const read = await runtime.app.inject({
@@ -73,6 +154,18 @@ describe('canonical API origin enforcement', () => {
     }
   })
 
+  it.each(prefixes)('guards launch reconciliation and acknowledged cancellation through %s', async (prefix) => {
+    for (const headers of untrusted) {
+      expect((await runtime.app.inject({
+        url: `${prefix}/computers/${runtime.identity.info.id}/launches/launch-identity`, headers,
+      })).statusCode).toBe(403)
+      expect((await runtime.app.inject({
+        method: 'POST', url: `${prefix}/computers/${runtime.identity.info.id}/sessions/${session.id}/cancel-with-ack`,
+        headers, payload: {},
+      })).statusCode).toBe(403)
+    }
+  })
+
   it('guards separately registered APIs before parsing their payloads', async () => {
     for (const [method, route] of [
       ['GET', '/version'],
@@ -80,6 +173,8 @@ describe('canonical API origin enforcement', () => {
       ['POST', '/push/subscriptions'],
       ['POST', '/transcriptions'],
       ['POST', `/computers/${runtime.identity.info.id}/sessions/${session.id}/files`],
+      ['GET', `/computers/${runtime.identity.info.id}/launches/launch-identity`],
+      ['POST', `/computers/${runtime.identity.info.id}/sessions/${session.id}/cancel-with-ack`],
     ] as const) {
       const response = await runtime.app.inject({
         method, url: `/%61pi${route}`, headers: untrusted[0],
@@ -106,6 +201,17 @@ describe('canonical API origin enforcement', () => {
     expect(trustedRead.json().settings).toMatchObject({ revision: 0, values: {} })
   })
 
+  it.each(prefixes)('guards effective feature flags through %s', async (prefix) => {
+    for (const headers of untrusted) {
+      expect((await runtime.app.inject({ url: `${prefix}/features`, headers })).statusCode).toBe(403)
+    }
+    const response = await runtime.app.inject({ url: `${prefix}/features`, headers: trusted })
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toMatchObject({
+      hubFlags: { notificationCenter: expect.any(Boolean), hostMonitor: expect.any(Boolean), scheduler: expect.any(Boolean) },
+    })
+  })
+
   it('allows trusted encoded HTTP routes and event upgrades', async () => {
     const response = await runtime.app.inject({
       url: '/%61pi/computers', headers: trusted,
@@ -113,9 +219,14 @@ describe('canonical API origin enforcement', () => {
     expect(response.statusCode).toBe(200)
     const socket = await runtime.app.injectWS('/%61pi/events', { headers: trusted })
     try {
-      const received = new Promise<string>((resolve) =>
-        socket.once('message', (data) => resolve(data.toString())),
-      )
+      const received = new Promise<string>((resolve) => {
+        socket.on('message', function readSessionEvent(data) {
+          const message = JSON.parse(data.toString())
+          if (message.type !== 'session.upserted' || message.session?.id !== session.id) return
+          socket.off('message', readSessionEvent)
+          resolve(data.toString())
+        })
+      })
       runtime.manager?.emit('event', {
         type: 'session.upserted',
         session: {

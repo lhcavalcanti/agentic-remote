@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { SessionStore } from './session-store.js'
+import type { ChatMessage } from '../shared/contracts.js'
+import { filterSentMessages } from '../src/composer/composer-state.js'
 
 const temporaryDirectories: string[] = []
 
@@ -36,6 +38,147 @@ function lifecycleLines(info: MockInstance<typeof console.info>): unknown[] {
 }
 
 describe('SessionStore', () => {
+  it.each(['sdk', 'terminal'] as const)('keeps the generated recovery marker through %s transcript refresh and reload', async (backend) => {
+    const { directory, store } = await createStore()
+    const before: ChatMessage = {
+      id: 'before', role: 'user', content: 'Keep my original goal', createdAt: '2026-01-01T00:00:00Z',
+    }
+    await store.create({
+      id: 'original', cwd: directory, title: 'Recovery history', status: 'error',
+      updatedAt: before.createdAt, messages: [before],
+    }, { backend, managedOpen: true })
+    const brief = 'Conversation recovery context\nExact app-created recovery brief.'
+    await store.replaceWithRecoveredSession('original', 'recovered', 'provider-error', 1, false, brief)
+    await store.claimRecoverySeed('recovered', brief)
+    if (backend === 'sdk') {
+      await store.beginPrompt('recovered', brief, 'seed-reply', () => true, undefined, { recoverySeedPrompt: brief })
+      expect(store.get('recovered')?.messages.find((message) => message.role === 'user' && message.content === brief))
+        .toMatchObject({ appGenerated: true })
+      await store.finishMessage('recovered', 'seed-reply')
+      await store.updateStatus('recovered', 'idle')
+    }
+    await store.admitRecoverySeed('recovered', brief)
+    expect(store.recoverySeed('recovered')).toBeUndefined()
+    const providerMessages: ChatMessage[] = [
+      { id: 'provider-seed', role: 'user', content: brief, createdAt: '2026-02-01T00:00:00Z', deliveryConfirmed: true },
+      // The exact same text is still a genuine prompt if the user sends it later.
+      { id: 'after', role: 'user', content: brief, createdAt: '2026-02-01T00:01:00Z', deliveryConfirmed: true },
+    ]
+    if (backend === 'sdk') await store.replaceMessages('recovered', providerMessages)
+    else await store.replaceTranscript('recovered', providerMessages, 'idle')
+    expect(store.get('recovered')).not.toHaveProperty('generatedPrompt')
+    expect(filterSentMessages(store.get('recovered')!.messages).map((message) => message.id)).toEqual(['after', 'before'])
+    await store.close()
+    const reopened = new SessionStore(directory)
+    await reopened.initialize()
+    expect(reopened.get('recovered')?.messages.find((message) => message.id === 'provider-seed')?.appGenerated).toBe(true)
+    await reopened.replaceMessages('recovered', [providerMessages[1]])
+    expect(filterSentMessages(reopened.get('recovered')!.messages).map((message) => message.id)).toEqual(['after', 'before'])
+    await reopened.updateStatus('recovered', 'idle')
+    await reopened.replaceWithClearedSession('recovered', 'cleared')
+    await reopened.replaceMessages('cleared', [providerMessages[1]])
+    expect(reopened.get('cleared')?.messages[0].appGenerated).toBeUndefined()
+    await reopened.close()
+  })
+
+  describe('prompt delivery confirmation', () => {
+    it('does not confirm a provider-start refusal and persists only the acknowledged turn', async () => {
+      const { directory, store } = await createStore()
+      await store.create({
+        id: 'delivery', cwd: directory, title: 'Delivery check', status: 'idle',
+        updatedAt: new Date().toISOString(), messages: [],
+      })
+      await store.beginPrompt('delivery', 'Refused before provider start', 'refused', () => true)
+      expect(store.get('delivery')?.messages[0].deliveryState).toBe('pending')
+      await store.cancelPromptAdmission('delivery', 'refused', () => true, {
+        message: 'Not sent: provider startup failed',
+      })
+      expect(store.get('delivery')?.messages[0].deliveryConfirmed).toBeUndefined()
+      expect(store.get('delivery')?.messages[0].deliveryState).toBe('refused')
+      await store.beginPrompt('delivery', 'Provider acknowledged', 'accepted', () => true)
+      expect(await store.confirmPromptDelivery('delivery', 'accepted', {
+        content: 'Different turn', createdAt: new Date().toISOString(),
+      })).toBeUndefined()
+      await store.confirmPromptDelivery('delivery', 'accepted')
+      expect(store.get('delivery')?.messages.filter((message) => message.role === 'user')
+        .map((message) => message.deliveryConfirmed)).toEqual([undefined, true])
+      expect(store.get('delivery')?.messages.find((message) => message.content === 'Provider acknowledged')?.deliveryState)
+        .toBeUndefined()
+      expect(await store.confirmPromptDelivery('delivery', 'accepted')).toBeUndefined()
+      await store.close()
+      const reopened = new SessionStore(directory)
+      await reopened.initialize()
+      expect(reopened.get('delivery')?.messages.find((message) => message.content === 'Provider acknowledged'))
+        .toMatchObject({ deliveryConfirmed: true })
+      await reopened.close()
+    })
+
+    it('leaves an in-flight queued admission unconfirmed', async () => {
+      const { directory, store } = await createStore()
+      await store.create({
+        id: 'delivery', cwd: directory, title: 'Delivery check', status: 'idle',
+        updatedAt: new Date().toISOString(), messages: [],
+        queuedPrompts: [{ id: 'queued', content: 'Waiting for the provider', createdAt: new Date().toISOString() }],
+      })
+      const { reservation } = await store.reserveQueuedPrompt('delivery', () => true)
+      await store.beginPrompt('delivery', 'Waiting for the provider', 'assistant', () => true, reservation)
+      const user = store.get('delivery')?.messages.find((message) => message.role === 'user')
+      expect(user).toMatchObject({ content: 'Waiting for the provider' })
+      expect(user?.deliveryConfirmed).toBeUndefined()
+      expect(user?.deliveryState).toBe('pending')
+      await store.close()
+    })
+  })
+
+  it.each(['Clear', 'Recover'])('adopts launch identity a pre-identity release copied onto a %s replacement', async () => {
+    const { directory, store } = await createStore()
+    const at = '2026-11-17T10:00:00.000Z'
+    await store.create({
+      id: 'launched', cwd: directory, title: 'Launched', status: 'idle', updatedAt: at, launchId: 'launch-rollback',
+      promptReceipts: [
+        { deliveryId: 'delivery-done', sessionId: 'launched', acceptedAt: at, state: 'delivered', promptId: 'p1', outcome: 'succeeded' },
+        { deliveryId: 'delivery-queued', sessionId: 'launched', acceptedAt: at, state: 'queued', promptId: 'p2' },
+      ],
+      messages: [],
+    }, { backend: 'sdk', managedOpen: true })
+    await store.close()
+    // What 1.55 writes for Clear or Recover: the replacement spreads the predecessor, unknown fields
+    // included, and the predecessor is retired; top-level launch data is kept unchanged.
+    const filename = path.join(directory, 'state.json')
+    const saved = JSON.parse(await readFile(filename, 'utf8'))
+    saved.sessions.replacement = { ...saved.sessions.launched, id: 'replacement', replacedSessionIds: ['launched'], messages: [] }
+    delete saved.sessions.launched
+    saved.retiredSessionIds = [...(saved.retiredSessionIds || []), 'launched']
+    await writeFile(filename, JSON.stringify(saved))
+
+    const rolledForward = new SessionStore(directory)
+    await rolledForward.initialize()
+    expect(rolledForward.get('replacement')?.launchId).toBe('launch-rollback')
+    expect(rolledForward.reconcileLaunch('launch-rollback')?.sessionId).toBe('replacement')
+    expect(rolledForward.get('replacement')?.promptReceipts).toMatchObject([
+      { deliveryId: 'delivery-done', sessionId: 'replacement', state: 'delivered' },
+      { deliveryId: 'delivery-queued', sessionId: 'replacement', state: 'rejected', outcome: 'stopped' },
+    ])
+    await rolledForward.close()
+    const again = new SessionStore(directory)
+    await again.initialize()
+    expect(again.reconcileLaunch('launch-rollback')?.sessionId).toBe('replacement')
+    await again.close()
+  })
+
+  it('still refuses launch identity that the session lineage does not explain', async () => {
+    const { directory, store } = await createStore()
+    const at = '2026-11-17T10:00:00.000Z'
+    await store.create({ id: 'owner', cwd: directory, title: 'Owner', status: 'idle', updatedAt: at, launchId: 'launch-owned', messages: [] })
+    await store.create({ id: 'other', cwd: directory, title: 'Other', status: 'idle', updatedAt: at, messages: [] })
+    await store.close()
+    const filename = path.join(directory, 'state.json')
+    const saved = JSON.parse(await readFile(filename, 'utf8'))
+    saved.sessions.other.launchId = 'launch-owned'
+    await writeFile(filename, JSON.stringify(saved))
+    await expect(new SessionStore(directory).initialize()).rejects.toThrow('Invalid session launch identity')
+  })
+
   describe('SDK restart recovery', () => {
     async function interruptedSdkStore() {
       const { directory, store } = await createStore()
@@ -1646,11 +1789,14 @@ describe('SessionStore', () => {
       false,
       undefined,
       undefined,
+      undefined,
+      false,
     )
 
     expect(updated).toMatchObject({
       status: 'running',
       activity: 'Sent to terminal',
+      foregroundTurnActive: true,
     })
     expect(updated!.revision).toBeGreaterThan(before?.revision || 0)
   })

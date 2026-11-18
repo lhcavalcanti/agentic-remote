@@ -39,6 +39,11 @@ import {
 } from './session-presentation'
 import type { SessionPresentation, SessionSort } from './session-presentation'
 import type { SessionFilter, SessionNavigationView } from './session-navigation-view'
+import { SessionOriginBadge } from './SessionOriginBadge'
+import { SessionOriginRunLink } from './SessionOriginRunLink'
+import { sessionOriginDescription } from './session-origin'
+import { usePreviewFeature } from './preview-features'
+import type { ScheduleLink } from './notifications/schedule-link'
 
 export type PendingSessionCreation = Pick<
   ManagedSession,
@@ -54,6 +59,7 @@ const sessionListScrollStorageKey = 'agentic-remote:session-list-scroll-v1'
 type SessionActions = {
   /** `computerId:sessionId` of the sessions Oracle started. */
   managedSessions?: ReadonlySet<string>
+  onOpenScheduleRun?: (target: ScheduleLink) => void
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
   onCloseSession: (session: ManagedSession) => void
@@ -148,6 +154,7 @@ function SortableSessionItem({
   sorting,
   onSelectSession,
   onOpenSessionTasks,
+  onOpenScheduleRun,
   onCloseSession,
   onToggleSessionSuspended,
   closingSessions,
@@ -180,6 +187,7 @@ function SortableSessionItem({
     disabled: reorderDisabled || sorting,
   })
   const presentation = sessionPresentation(session, backgroundTasks, online)
+  const originPreview = usePreviewFeature('composerRefresh')
   const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
   // Each session waits only for its own close or suspend; the owning computer
@@ -227,7 +235,8 @@ function SortableSessionItem({
           aria-current={selected ? 'page' : undefined}
           aria-label={[
             session.title,
-            managedSessions?.has(sessionKey(session)) ? 'started by Oracle' : undefined,
+            originPreview ? sessionOriginDescription(session.provenance) :
+              managedSessions?.has(sessionKey(session)) ? 'started by Oracle' : undefined,
             session.retention?.pinned ? 'kept for review' : undefined,
             hidden ? 'hidden from the list' : undefined,
             providerName(session.provider),
@@ -251,11 +260,7 @@ function SortableSessionItem({
                   {executionModeName(session.executionMode)}
                 </em>
               ) : null}
-              {managedSessions?.has(sessionKey(session)) ? (
-                <em className="provider-badge manager-badge" title="Started by Oracle">
-                  Oracle
-                </em>
-              ) : null}
+              <SessionOriginBadge provenance={session.provenance} legacyManaged={managedSessions?.has(sessionKey(session))} />
               {session.retention?.pinned ? (
                 <em className="provider-badge" title="Protected from automatic archival">For review</em>
               ) : null}
@@ -297,6 +302,7 @@ function SortableSessionItem({
             Tasks
           </button>
         ) : null}
+        <SessionOriginRunLink provenance={session.provenance} onOpenRun={onOpenScheduleRun} />
       </div>
       <div className="session-item__controls">
         <button

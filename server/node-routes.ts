@@ -1,8 +1,21 @@
 import { timingSafeEqual } from 'node:crypto'
+import { SKILL_SETTINGS_CAPABILITY } from '../shared/skill-settings.js'
+import type { SkillSettingsService } from './skill-settings.js'
+import { registerSkillSettingsRoutes } from './skill-settings-routes.js'
 import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import type WebSocket from 'ws'
 import { z } from 'zod'
+import { launchIdentitySchema, cancellationAckSchema } from '../shared/launch-identity.js'
+import { HOST_TELEMETRY_CAPABILITY_VERSION } from '../shared/host-telemetry.js'
+import type { HostTelemetryService } from './host-telemetry/service.js'
+import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
+import { updateComputerForLaunchIdentity } from './launch-identity.js'
+import {
+  SCHEDULE_WORKTREE_VERSION, scheduleWorktreeInputSchema, scheduleWorktreeCleanupSchema,
+  updateComputerForScheduleWorktrees,
+} from '../shared/schedule-worktrees.js'
+import type { ScheduleWorktreeService } from './schedule-worktrees.js'
 import {
   ORACLE_VOICE_PROTOCOL,
   decodeVoiceAudioFrame,
@@ -56,6 +69,7 @@ const sideQuestionSchema = z.object({
 
 const createSessionSchema = z.object({
   cwd: z.string().trim().min(1).max(4096),
+  launchId: launchIdentitySchema.optional(),
   provider: z.enum(['copilot', 'claude']).default('copilot'),
   terminalBacked: z.boolean().default(true),
   allowAllPermissions: z.boolean().default(true),
@@ -98,6 +112,7 @@ const reorderQueueSchema = z.object({
 })
 
 const sendMessageSchema = z.object({
+  deliveryId: launchIdentitySchema.optional(),
   acknowledgesFailure: z.string().max(64).optional(),
   content: z
     .string()
@@ -318,6 +333,10 @@ export async function registerNodeRoutes(
   identity: NodeIdentityStore,
   transcription: TranscriptionService,
   voice?: VoiceBackend,
+  hostTelemetry?: HostTelemetryService,
+  hostTelemetrySignal?: AbortSignal,
+  scheduleWorktrees?: ScheduleWorktreeService,
+  skillSettings?: SkillSettingsService,
 ): Promise<void> {
   await app.register(
     async (node) => {
@@ -341,7 +360,30 @@ export async function registerNodeRoutes(
         ...identity.info,
         providers: service.providers(),
         ...(voice ? { voice: voice.capability() } : {}),
+        hostTelemetry: { version: HOST_TELEMETRY_CAPABILITY_VERSION, enabled: hostTelemetry !== undefined },
+        scheduleWorktrees: { version: SCHEDULE_WORKTREE_VERSION, enabled: scheduleWorktrees?.enabled === true },
+        ...(skillSettings ? { skillSettings: { version: SKILL_SETTINGS_CAPABILITY } } : {}),
       }))
+
+      node.post('/schedule-worktrees', async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        if (!scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+        return { worktree: await scheduleWorktrees.allocate(scheduleWorktreeInputSchema.parse(request.body)) }
+      })
+      node.get<{ Params: { launchId: string } }>('/schedule-worktrees/:launchId', async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        if (!scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+        return { worktree: await scheduleWorktrees.read(launchIdentitySchema.parse(request.params.launchId)) ?? null }
+      })
+      node.post<{ Params: { launchId: string } }>('/schedule-worktrees/:launchId/cleanup', async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        if (!scheduleWorktrees) throw updateComputerForScheduleWorktrees()
+        const { launchId } = scheduleWorktreeCleanupSchema.parse(request.params)
+        return { worktree: await scheduleWorktrees.cleanup(launchId) ?? null }
+      })
+
+      if (skillSettings) registerSkillSettingsRoutes(node, '/skills', () => skillSettings, true)
+      if (hostTelemetry) registerHostTelemetryRoutes(node, '/host', () => hostTelemetry, hostTelemetrySignal)
 
       node.get<{
         Querystring: { protocol?: string; streamId?: string }
@@ -662,6 +704,8 @@ export async function registerNodeRoutes(
 
       node.post('/sessions', async (request, reply) => {
         const input = createSessionSchema.parse(request.body)
+        if (input.launchId !== undefined && !service.providers().some((provider) =>
+          provider.id === input.provider && provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
         return reply
           .code(201)
           .send({
@@ -674,8 +718,26 @@ export async function registerNodeRoutes(
               input.reasoningEffort,
               input.contextTier,
               input.mode,
+              ...(input.launchId !== undefined ? [input.launchId] : []),
             ),
           })
+      })
+
+      node.get<{ Params: { launchId: string } }>('/launches/:launchId', async (request, reply) => {
+        reply.header('cache-control', 'no-store')
+        if (!service.reconcileLaunch || !service.providers().some((provider) => provider.supportsLaunchIdentity)) {
+          throw updateComputerForLaunchIdentity()
+        }
+        return { launch: await service.reconcileLaunch(launchIdentitySchema.parse(request.params.launchId)) ?? null }
+      })
+
+      node.post<{ Params: { sessionId: string } }>('/sessions/:sessionId/cancel-with-ack', async (request) => {
+        const { timeoutMs } = cancellationAckSchema.parse(request.body ?? {})
+        const owner = service.getSession(request.params.sessionId)
+        if (!owner) throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+        if (!service.cancelWithAck || !service.providers().some((provider) =>
+          provider.id === (owner.provider || 'copilot') && provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+        return service.cancelWithAck(request.params.sessionId, timeoutMs)
       })
 
       node.get<{ Params: { provider: 'copilot' | 'claude' } }>(
@@ -869,14 +931,24 @@ export async function registerNodeRoutes(
         '/sessions/:sessionId/messages',
         async (request, reply) => {
           const input = sendMessageSchema.parse(request.body)
+          if (input.deliveryId !== undefined) {
+            const providerId = service.getSession(request.params.sessionId)?.provider || 'copilot'
+            if (!service.providers().some((provider) => provider.id === providerId &&
+                provider.supportsLaunchIdentity)) throw updateComputerForLaunchIdentity()
+          }
+          const session = await service.sendMessage(
+            request.params.sessionId,
+            input.content,
+            input.enqueue,
+            input.acknowledgesFailure,
+            input.replaceTerminalDraft,
+            ...(input.deliveryId !== undefined ? [input.deliveryId] : []),
+          )
           return reply.code(202).send({
-            session: await service.sendMessage(
-              request.params.sessionId,
-              input.content,
-              input.enqueue,
-              input.acknowledgesFailure,
-              input.replaceTerminalDraft,
-            ),
+            session,
+            ...(input.deliveryId !== undefined ? {
+              receipt: session.promptReceipts?.find((receipt) => receipt.deliveryId === input.deliveryId),
+            } : {}),
           })
         },
       )

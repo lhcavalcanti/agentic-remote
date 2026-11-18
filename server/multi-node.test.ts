@@ -859,6 +859,65 @@ afterEach(async () => {
 })
 
 describe('multi-node hub', () => {
+  it('stores a node request once through events, reconnect resync and hub restart', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', 'on')
+    const pending = {
+      ...session('notification-session', 'Node review'),
+      status: 'waiting' as const,
+      pendingPermission: { requestId: 'node-permission', title: 'Run tests?', options: [] },
+    }
+    const remoteService = new FakeSessionService(pending)
+    const remoteDirectory = await temporaryDirectory('notification-node')
+    const remote = await buildApp({ dataDirectory: remoteDirectory, role: 'node', logger: false, service: remoteService })
+    await remote.app.listen({ host: '127.0.0.1', port: 0 })
+    const remoteUrl = `http://127.0.0.1:${(remote.app.server.address() as AddressInfo).port}`
+    const hubDirectory = await temporaryDirectory('notification-hub')
+    let hub = await buildApp({ dataDirectory: hubDirectory, logger: false, service: new FakeSessionService() })
+    try {
+      expect(remote.notificationCenter).toBeUndefined()
+      const registered = await hub.app.inject({
+        method: 'POST', url: '/api/computers',
+        payload: { baseUrl: remoteUrl, token: remote.identity.token, name: 'Worker' },
+      })
+      expect(registered.statusCode).toBe(201)
+      const computerId = registered.json().computer.id as string
+      await vi.waitFor(async () => {
+        await hub.notificationCenter!.flush()
+        expect(await hub.notificationCenter!.store.list({ kind: 'session.needs-input' })).toHaveLength(1)
+      })
+      const record = (await hub.notificationCenter!.store.list({ kind: 'session.needs-input' }))[0]!
+      expect(record.computerId).toBe(computerId)
+      await hub.notificationCenter!.store.markRead(record.id)
+      remoteService.emit('event', { type: 'session.upserted', session: pending })
+      const client = hub.manager!['clients'].get(computerId)!
+      const originalSocket = client['socket']!
+      originalSocket.close()
+      await vi.waitFor(() => {
+        expect(client['socket']).toBeDefined()
+        expect(client['socket']).not.toBe(originalSocket)
+        expect(client.online).toBe(true)
+      }, { timeout: 5_000 })
+      await hub.notificationCenter!.flush()
+      expect(await hub.notificationCenter!.store.list({ kind: 'session.needs-input', unread: true })).toEqual([])
+      expect(await hub.notificationCenter!.store.list({ kind: 'session.needs-input' })).toHaveLength(1)
+      await hub.notificationCenter!.store.dismiss(record.id)
+      await hub.app.close()
+      hub = await buildApp({ dataDirectory: hubDirectory, logger: false, service: new FakeSessionService() })
+      await hub.app.ready()
+      await vi.waitFor(() => expect(hub.manager!.listComputers().find((computer) => computer.id === computerId)?.online).toBe(true))
+      await vi.waitFor(() => expect(hub.manager!['clients'].get(computerId)!['socket']?.readyState).toBe(1))
+      const observed = vi.spyOn(hub.notificationCenter!, 'hub')
+      remoteService.emit('event', { type: 'session.upserted', session: pending })
+      await vi.waitFor(() => expect(observed).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'session.upserted', session: expect.objectContaining({ id: pending.id }),
+      })))
+      await hub.notificationCenter!.flush()
+      expect(await hub.notificationCenter!.store.list({ kind: 'session.needs-input' })).toEqual([])
+    } finally {
+      await hub.app.close()
+      await remote.app.close()
+    }
+  })
   it('authenticates session Knowledge base setup on a node', async () => {
     const service = new FakeSessionService(session('active', 'Active'))
     const node = await buildApp({

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test'
+import { fixtureFrontendBuildCommand, fixtureFrontendDist } from './e2e/fixture-frontend'
 
 export default defineConfig({
   testDir: './e2e',
@@ -29,7 +30,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'pnpm exec tsc -b && AGENTIC_REMOTE_E2E_BUILD=1 pnpm exec vite build --outDir test-results/oracle-conversation-dist-e2e --emptyOutDir && AGENTIC_REMOTE_RELEASE_DIR=$PWD/test-results/oracle-conversation-dist-e2e AGENTIC_REMOTE_ALLOWED_ORIGINS=http://127.0.0.1:4395 pnpm tsx e2e/fixtures/fake-voice.ts --serve --port 4395',
+    command: `${fixtureFrontendBuildCommand} && AGENTIC_REMOTE_RELEASE_DIR=$PWD/${fixtureFrontendDist} AGENTIC_REMOTE_ALLOWED_ORIGINS=http://127.0.0.1:4395 pnpm tsx e2e/fixtures/fake-voice.ts --serve --port 4395`,
     url: 'http://127.0.0.1:4395/health',
     reuseExistingServer: false,
     timeout: 120_000,

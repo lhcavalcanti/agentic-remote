@@ -11,6 +11,40 @@ import {
   useSyncExternalStore,
 } from 'react'
 import ReaderWorkspace, { READER_WIDTH_MIN } from './ReaderWorkspace'
+import { Composer } from './composer/Composer'
+import { useForegroundHandoff } from './composer/use-foreground-handoff'
+import type { ComposerAttachment } from './composer/types'
+import {
+  activeComposerPastes,
+  applyComposerEdit,
+  collapsedPasteLabel,
+  collapsedPasteLineThreshold,
+  composerInputValue,
+  composerTextPosition,
+  expandComposerPastes,
+  hasComposerAcceptanceReceipt,
+  isComposerPastePayload,
+  mergeUnresolvedComposerPastes,
+  pastedLineCount,
+  prependComposerContent,
+  queuedEditOwners,
+  reconcileAcceptedComposerDrafts,
+  reconcileComposerEdit,
+  recoverPendingComposerDraft,
+  resolveComposerPastes,
+  writeComposerContent,
+  writeComposerEdit,
+} from './composer/composer-state'
+import type {
+  CollapsedPaste,
+  ComposerAcceptanceReceipt,
+  ComposerContent,
+  ComposerDraft,
+  ComposerDrafts,
+  ComposerEdit,
+  ComposerSubmission,
+  UnresolvedComposerPaste,
+} from './composer/composer-state'
 import {
   ManagerAssistant,
   ORACLE_CONVERSATION_WIDTH_MIN,
@@ -20,16 +54,34 @@ import {
 import type { OracleControl, OracleIndicator } from './ManagerAssistant'
 import { oracleCommand } from './oracle-command'
 import {
-  oracleDockShortcutBinding,
-  oracleShortcutBinding,
+  binding,
+  bindingLabel,
+  capturableCode,
+  sameBinding,
+  shortcutAcceptsBinding,
+  shortcutDefaults,
 } from './app-shortcuts'
-import { OracleModelSettings, OracleSettingsStatus } from './OracleSettings'
-import { useOracleSettings } from './use-oracle-settings'
+import type { ShortcutBinding, ShortcutId } from './app-shortcuts'
+import { AppSettingsDialog } from './settings/AppSettingsDialog'
+import { ShellNavigation } from './rail/ShellNavigation'
+import { publishFeatureEvent } from './features/events'
+import { NotificationPanel } from './notifications/NotificationPanel'
+import { useNotifications } from './notifications/use-notifications'
+import { readScheduleLink } from './notifications/schedule-link'
+import { HostMonitorView } from './host-monitor/HostMonitorView'
+import { SchedulerView } from './scheduler/SchedulerView'
+import { usePreviewFeature } from './preview-features'
+import { emptyRuntimeSelection } from './settings/runtime-defaults'
+import { StatuslineControls } from './settings/StatuslineControls'
+import type {
+  AccentTheme,
+  StatuslineSettings,
+} from './settings/types'
+import { PreviewFeaturesProvider } from './PreviewFeaturesProvider'
 import {
   coordinatedAuthoritativeRefresh,
   dispatchAuthoritativeRefresh,
   DreamerRefreshOwner,
-  DreamerSettings,
   waitUntilAuthoritativeRefresh,
 } from './OracleDreamer'
 import { isManagerEvent } from '../shared/manager'
@@ -60,12 +112,8 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core'
 import {
   arrayMove,
-  SortableContext,
   sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import {
   ArrowUp,
   Bell,
@@ -82,29 +130,22 @@ import {
   FolderInput,
   FolderOpen,
   FileText,
-  GripVertical,
   History,
   LoaderCircle,
-  ListPlus,
   Maximize2,
   Menu,
   MessageCircleQuestion,
   MessageSquare,
   Minimize2,
-  Mic,
   MonitorCog,
-  Paperclip,
   Pencil,
   Plus,
   Plug,
   RefreshCw,
   Search,
   Settings,
-  SlidersHorizontal,
-  Square,
   SquareTerminal,
   Trash2,
-  Wifi,
   WifiOff,
   X,
 } from 'lucide-react'
@@ -124,6 +165,9 @@ import {
   useSessionKnowledgeRoot,
 } from './use-session-knowledge-root'
 import { SessionActions } from './SessionActions'
+import { SessionOriginBadge } from './SessionOriginBadge'
+import { SessionOriginRunLink } from './SessionOriginRunLink'
+import { SubagentCount } from './SubagentCount'
 import { SessionRetentionSettings } from './SessionRetentionSettings'
 import { SessionResources } from './SessionResources'
 import {
@@ -177,18 +221,14 @@ import type { SideQuestionEntry, SideThread } from './SideQuestions'
 import {
   SIDE_QUESTION_EARLIER_ANSWER_MAX_LENGTH,
   SIDE_QUESTION_EARLIER_LIMIT,
-  SIDE_QUESTION_MAX_LENGTH,
 } from '../shared/side-question'
 import type {
-  AgentMode,
   AgentProvider,
-  AgentProviderCapability,
   ActivityKind,
   ActivityStatus,
   BackgroundTaskSnapshot,
   ChatMessage,
   ComputerSummary,
-  ConfigureRuntimeInput,
   DirectoryListing,
   HubWireEvent,
   ManagedSession,
@@ -197,9 +237,6 @@ import type {
   SessionOrderSnapshot,
   QueuedPrompt,
   UserInputReplyInput,
-  RuntimeOptions,
-  RuntimeModelOption,
-  RuntimeReasoningEffort,
   SlashCommand,
   WorkspaceFile,
   WorkspaceListing,
@@ -207,6 +244,7 @@ import type {
 } from '../shared/contracts'
 import {
   hasActiveBackgroundTasks,
+  hasForegroundTurn,
   hasRunningBackgroundAgent,
 } from '../shared/background-tasks'
 import { terminalSendOptions } from '../shared/send-policy'
@@ -232,28 +270,22 @@ import {
 } from '../shared/session-files'
 import {
   activateSession,
-  addComputer,
   cancelBackgroundTask,
   askSession,
   cancelSession,
   checkHubSignIn,
   clearConversation,
   recoverConversation,
-  configureRuntime,
   configureRetention,
-  createSession,
   deleteSession,
   closeSession,
   executeCommand,
   getPushSettings,
   getSession,
   SessionKnowledgeRequestError,
-  getProviderRuntimeOptions,
-  getRuntimeOptions,
   listComputers,
   listCommands,
   listBackgroundTasks,
-  listHistory,
   listKnowledgeEntries,
   listKnowledgeRoots,
   addKnowledgeRoot,
@@ -264,7 +296,6 @@ import {
   listSessionListing,
   listWorkspace,
   moveSessionToTmux,
-  removeComputer,
   removeQueuedPrompt,
   reorderQueuedPrompts,
   updateQueuedPrompt,
@@ -286,7 +317,6 @@ import {
   replyPermission,
   replyUserInput,
   sendMessage,
-  sendTestPushNotification,
   searchWorkspace,
   setSessionNotificationsMuted,
   transcribeAudio,
@@ -320,13 +350,10 @@ import {
   notificationAllowed,
   OracleNotifier,
   oracleNotificationTags,
-  type NotificationScope,
 } from '../shared/notifications'
 import {
-  DEFAULT_SESSION_PROVIDER,
   type AppearanceSetting,
   type NewSessionBackendSetting,
-  type OracleResponseStyle,
   type SettingsProfileKey,
   type SettingsProfileValues,
 } from '../shared/settings-profile'
@@ -345,14 +372,9 @@ import { composerMaximumHeight } from './composer-sizing'
 import { appKeyboardOpen, appViewportGeometry } from './app-viewport'
 import {
   activatePwaUpdate,
-  activePushSubscription,
-  checkForPwaUpdate,
   clearSessionPushNotifications,
   clearPushNotifications,
-  disablePushNotifications,
-  enablePushNotifications,
   installedAsApp,
-  pushNotificationsSupported,
   PWA_UPDATE_EVENT,
   sessionNotificationTags,
 } from './pwa'
@@ -360,14 +382,13 @@ import {
   attentionCount,
   nativeShell,
   onShellDeepLink,
-  openShellSettings,
   sendShellNotification,
   setShellBadge,
-  shellSettingsAvailable,
   withdrawShellNotifications,
 } from './shell'
 import {
   notificationState,
+  ScheduleShellNotifier,
   shellNotifications,
   type SessionNotificationState,
 } from './shell-notifications'
@@ -375,6 +396,7 @@ import { DialogFrame } from './components/DialogFrame'
 import { CloseSessionDialog, RecentlyClosedDialog } from './RecentlyClosed'
 import { useRecentlyClosed } from './use-recently-closed'
 import { CLOSED_SESSION_RETENTION_DAYS } from '../shared/closed-sessions'
+import { ComputersDialog } from './computers/ComputersDialog'
 import { MessageTime } from './MessageTime'
 import { drawnInParts } from './markdown-document/drawing'
 import { useMarkdownDocument } from './markdown-document/use-markdown-document'
@@ -387,6 +409,17 @@ import {
   StaleInteractionRecoveryCard,
   UserInputCard,
 } from './features/prompts/PromptCards'
+import { NewSessionDialog } from './session-setup/NewSessionDialog'
+import { RuntimeDialog } from './session-setup/RuntimeDialog'
+import {
+  compactTokens,
+  computerProviders,
+} from './session-setup/runtime-presentation'
+import type {
+  DefaultRuntimeSettings,
+  DefaultSessionFolders,
+  SessionCreationHandle,
+} from './session-setup/types'
 
 function scopedKnowledgeRoot(
   root: KnowledgeRoot,
@@ -416,21 +449,6 @@ function isAudioFile(file: File): boolean {
     file.type === 'video/mp4' ||
     /\.(?:aac|flac|m4a|mp3|mp4|ogg|wav|webm)$/i.test(file.name)
   )
-}
-
-type ComposerAttachment = {
-  id: string
-  ownerKey: string
-  computerId: string
-  sessionId: string
-  migratedFrom?: string
-  name: string
-  size: number
-  file?: File
-  status: 'uploading' | 'attached' | 'failed'
-  error?: string
-  retryable?: boolean
-  promptText?: string
 }
 
 let attachmentSequence = 0
@@ -602,90 +620,6 @@ function clearStored(key: string): void {
   }
 }
 
-type StatuslineSettings = {
-  enabled: boolean
-  computer: boolean
-  provider: boolean
-  path: boolean
-  status: boolean
-  queue: boolean
-  backgroundTasks: boolean
-  sessionId: boolean
-  model: boolean
-  effort: boolean
-  contextTier: boolean
-  contextUsage: boolean
-  mode: boolean
-  permissions: boolean
-  update: boolean
-}
-
-type DefaultRuntimeSelection = {
-  model: string
-  reasoningEffort: RuntimeReasoningEffort | ''
-  contextTier: 'default' | 'long_context'
-  /** Blank starts Interactive, as a provider does without one. */
-  mode: Exclude<AgentMode, 'interactive'> | ''
-}
-
-type DefaultRuntimeSettings = Record<AgentProvider, DefaultRuntimeSelection>
-
-const emptyRuntimeSelection: DefaultRuntimeSelection = {
-  model: '',
-  reasoningEffort: '',
-  contextTier: 'default',
-  mode: '',
-}
-
-function defaultAgentMode(value: unknown): DefaultRuntimeSelection['mode'] {
-  return value === 'plan' || value === 'autopilot' ? value : ''
-}
-
-function agentModeName(mode: AgentMode, provider: AgentProvider): string {
-  return mode === 'plan'
-    ? 'Plan'
-    : mode === 'autopilot'
-      ? provider === 'claude' ? 'Auto' : 'Autopilot'
-      : 'Interactive'
-}
-
-type DefaultSessionFolders = Record<string, string>
-
-const accentThemes = [
-  { id: 'agentic', name: 'Agentic', color: '#b8f36b' },
-  { id: 'ocean', name: 'Ocean', color: '#6eb7ff' },
-  { id: 'violet', name: 'Violet', color: '#ad92ff' },
-  { id: 'ember', name: 'Ember', color: '#ff9c64' },
-  { id: 'rose', name: 'Rose', color: '#ff83b6' },
-  { id: 'teal', name: 'Teal', color: '#63d6c0' },
-] as const
-
-type AccentTheme = (typeof accentThemes)[number]['id']
-
-const notificationScopeOptions: Array<{ id: NotificationScope; name: string; description: string }> = [
-  {
-    id: 'all',
-    name: 'All activity',
-    description: 'Sessions that need you or finish, hub alerts, and Oracle.',
-  },
-  {
-    id: 'oracle',
-    name: 'Oracle only',
-    description: 'Oracle’s replies and its requests for your OK. Sessions stay quiet, including ones Oracle started.',
-  },
-  {
-    id: 'off',
-    name: 'Disabled',
-    description: 'Nothing, on any device. Each device stays set up, so turning them back on is instant.',
-  },
-]
-
-const appearanceOptions: Array<{ id: AppearanceSetting; name: string }> = [
-  { id: 'system', name: 'System' },
-  { id: 'graphite', name: 'Graphite' },
-  { id: 'light', name: 'Light' },
-]
-
 const settingNames: Record<SettingsProfileKey, string> = {
   appearance: 'Appearance',
   accent: 'Accent',
@@ -697,6 +631,9 @@ const settingNames: Record<SettingsProfileKey, string> = {
   computerOrder: 'Computer order',
   oracleResponseStyle: 'Oracle’s response style',
   notificationScope: 'What notifies you',
+  previewFeatures: 'Preview features',
+  schedulerAllowAllForOracle: 'Oracle schedule permissions',
+  displayName: 'Display name',
 }
 
 /** Storage that may be blocked outright, as some private modes do. */
@@ -736,23 +673,6 @@ function prefersLightNow(): boolean {
   return typeof window.matchMedia === 'function' && Boolean(window.matchMedia(prefersLightQuery)?.matches)
 }
 
-function settingsSyncMessage(state: SettingsProfileState): string {
-  switch (state.status) {
-    case 'loading':
-      return 'Loading your settings from the hub…'
-    case 'saving':
-      return 'Saving to the hub…'
-    case 'offline':
-      return state.deviceCopy
-        ? 'The hub can’t be reached. Changes are kept on this device and sync when it’s back.'
-        : 'The hub can’t be reached, and this browser can’t keep a copy. Changes made now last until this page closes.'
-    default:
-      return state.deviceCopy
-        ? 'Saved on this hub.'
-        : 'Saved on this hub. This browser can’t keep a copy, so settings load from the hub each time.'
-  }
-}
-
 function settingsNotice(state: SettingsProfileState): string | undefined {
   if (state.conflicts.length) {
     const names = state.conflicts.map((key) => settingNames[key])
@@ -762,14 +682,6 @@ function settingsNotice(state: SettingsProfileState): string | undefined {
   return state.refusedKey
     ? `${settingNames[state.refusedKey]} wasn’t saved: ${state.refused}`
     : `Couldn’t save a setting: ${state.refused}`
-}
-
-function SettingScope({ synced }: { synced: boolean }) {
-  return (
-    <span className={`settings-scope${synced ? ' settings-scope--synced' : ''}`}>
-      {synced ? 'Synced' : 'This device'}
-    </span>
-  )
 }
 
 function currentAppViewportGeometry(keyboardOpen: boolean) {
@@ -793,51 +705,6 @@ type ComposerHistoryState = {
   draftPastes: CollapsedPaste[]
 }
 
-type CollapsedPaste = {
-  key: string
-  id: number
-  content: string
-  lineCount: number
-  start: number
-}
-
-type UnresolvedComposerPaste = Omit<CollapsedPaste, 'start'>
-
-type ComposerContent = {
-  text: string
-  pastes: CollapsedPaste[]
-}
-
-type ComposerEdit = {
-  content: ComposerContent
-  cursor: number
-  unresolvedPastes?: UnresolvedComposerPaste[]
-}
-
-type ComposerSubmission = ComposerContent & {
-  id: string
-  originKey?: string
-  acknowledgesFailure?: string
-  queuedPromptId?: string
-  accepted?: boolean
-}
-
-type ComposerAcceptanceReceipt = { key: string; id: string }
-
-type ComposerQueuedEdit = {
-  promptId: string
-  dispatchPending?: boolean
-  attachmentIds?: string[]
-}
-
-type ComposerDraft = ComposerContent & {
-  pendingSubmission?: ComposerSubmission
-  deliveryUncertain?: boolean
-  queuedEdit?: ComposerQueuedEdit
-  unresolvedPastes?: UnresolvedComposerPaste[]
-}
-
-type ComposerDrafts = Record<string, ComposerDraft>
 type ComposerPersistenceResult =
   | { ok: true }
   | { ok: false; error: string }
@@ -854,7 +721,6 @@ type ComposerStorageSnapshot = {
   recoveredContents: Record<string, string>
 }
 
-const collapsedPasteLineThreshold = 20
 const composerDraftsStorageKey = 'agentic-remote:composer-drafts-v2'
 const composerAttachmentsStorageKey = 'agentic-remote:composer-attachments-v1'
 const queuedEditsStorageKey = 'agentic-remote:queued-edit'
@@ -1023,250 +889,6 @@ function readComposerStorageSnapshot(): ComposerStorageSnapshot {
 function composerReadFailureMessage(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error)
   return `Saved drafts could not be read (${detail}). Copy new text and reload after storage is available.`
-}
-
-function hasComposerAcceptanceReceipt(
-  receipts: ComposerAcceptanceReceipt[],
-  key: string,
-  submission: ComposerSubmission,
-): boolean {
-  return receipts.some((receipt) =>
-    receipt.key === (submission.originKey || key) && receipt.id === submission.id,
-  )
-}
-
-function reconcileAcceptedComposerDrafts(
-  drafts: ComposerDrafts,
-  receipts: ComposerAcceptanceReceipt[],
-  retire: boolean,
-): ComposerDrafts {
-  let result = drafts
-  for (const [key, draft] of Object.entries(drafts)) {
-    const pending = draft.pendingSubmission
-    if (!pending || (!pending.accepted && !hasComposerAcceptanceReceipt(receipts, key, pending))) {
-      continue
-    }
-    if (retire) {
-      const { pendingSubmission: _accepted, ...remaining } = draft
-      if (pending.queuedPromptId === remaining.queuedEdit?.promptId) {
-        delete remaining.queuedEdit
-      }
-      if (result === drafts) {
-        result = { ...drafts }
-      }
-      if (remaining.text || remaining.queuedEdit) {
-        result[key] = remaining
-      } else {
-        delete result[key]
-      }
-    } else if (!pending.accepted ||
-      (pending.queuedPromptId && pending.queuedPromptId === draft.queuedEdit?.promptId)) {
-      const accepted = { ...draft, pendingSubmission: { ...pending, accepted: true } }
-      if (pending.queuedPromptId === accepted.queuedEdit?.promptId) {
-        delete accepted.queuedEdit
-      }
-      result = {
-        ...result,
-        [key]: accepted,
-      }
-    }
-  }
-  return result
-}
-
-function collapsedPasteLabel(paste: CollapsedPaste): string {
-  return `[Paste #${paste.id} - ${paste.lineCount} lines]`
-}
-
-function pastedLineCount(content: string): number {
-  return content.split(/\r\n|\r|\n/).length
-}
-
-function isComposerPastePayload(
-  value: unknown,
-): value is Pick<CollapsedPaste, 'id' | 'content' | 'lineCount'> {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-  const paste = value as CollapsedPaste
-  return Number.isInteger(paste.id) && paste.id > 0 &&
-    typeof paste.content === 'string' &&
-    Number.isInteger(paste.lineCount) &&
-    paste.lineCount > collapsedPasteLineThreshold
-}
-
-export function resolveComposerPastes(
-  text: string,
-  value: unknown,
-  namespace: string,
-  legacy = false,
-): { pastes: CollapsedPaste[]; unresolvedPastes: UnresolvedComposerPaste[] } {
-  if (!Array.isArray(value)) {
-    return { pastes: [], unresolvedPastes: [] }
-  }
-  const candidates = value.flatMap((raw, index) => {
-    if (!isComposerPastePayload(raw)) {
-      return []
-    }
-    const candidate = raw as CollapsedPaste & { unresolved?: boolean }
-    const label = collapsedPasteLabel(candidate)
-    const start = legacy ? text.indexOf(label) : candidate.start
-    const explicitKey = typeof candidate.key === 'string' && candidate.key.length > 0
-      ? candidate.key : undefined
-    const paste: CollapsedPaste = {
-      id: candidate.id,
-      content: candidate.content,
-      lineCount: candidate.lineCount,
-      key: explicitKey || `legacy:${namespace}:${candidate.id}:${start}`,
-      start,
-    }
-    const placed = Number.isInteger(start) && start >= 0 &&
-      text.slice(start, start + label.length) === label &&
-      (legacy
-        ? candidate.unresolved !== true && text.indexOf(label, start + label.length) < 0
-        : explicitKey !== undefined)
-    return [{
-      paste,
-      placed,
-      recoveryKey: candidate.unresolved === true && explicitKey
-        ? explicitKey : `unresolved:${namespace}:${index}:${explicitKey || candidate.id}`,
-    }]
-  })
-  const placed = candidates.filter((entry) => entry.placed)
-  const owned = placed.filter((entry) => !placed.some((other) =>
-    other !== entry && (
-      other.paste.key === entry.paste.key ||
-      (other.paste.start < entry.paste.start + collapsedPasteLabel(entry.paste).length &&
-        entry.paste.start < other.paste.start + collapsedPasteLabel(other.paste).length)
-    ),
-  ))
-  return {
-    pastes: owned.map((entry) => entry.paste).sort((left, right) => left.start - right.start),
-    unresolvedPastes: candidates.filter((entry) => !owned.includes(entry)).map((entry) => ({
-      key: entry.recoveryKey,
-      id: entry.paste.id,
-      content: entry.paste.content,
-      lineCount: entry.paste.lineCount,
-    })),
-  }
-}
-
-function mergeUnresolvedComposerPastes(
-  first: UnresolvedComposerPaste[] = [],
-  second: UnresolvedComposerPaste[] = [],
-): UnresolvedComposerPaste[] {
-  return [...first, ...second.filter((paste) =>
-    !first.some((entry) => entry.key === paste.key))]
-}
-
-function prependComposerContent(
-  submitted: ComposerContent,
-  existing: ComposerContent,
-): ComposerContent {
-  const submittedKeys = new Set(submitted.pastes.map((paste) => paste.key))
-  const retained = existing.pastes.filter(
-    (paste) => !submittedKeys.has(paste.key),
-  )
-  const usedIds = new Set(retained.map((paste) => paste.id))
-  let nextId = Math.max(0, ...usedIds)
-  let cursor = 0
-  let text = ''
-  const pastes: CollapsedPaste[] = []
-  for (const paste of [...submitted.pastes].sort(
-    (left, right) => left.start - right.start,
-  )) {
-    const oldLabel = collapsedPasteLabel(paste)
-    if (
-      paste.start < cursor ||
-      submitted.text.slice(paste.start, paste.start + oldLabel.length) !== oldLabel
-    ) {
-      continue
-    }
-    text += submitted.text.slice(cursor, paste.start)
-    let id = paste.id
-    if (usedIds.has(id)) {
-      do {
-        nextId += 1
-      } while (usedIds.has(nextId))
-      id = nextId
-    } else {
-      nextId = Math.max(nextId, id)
-    }
-    usedIds.add(id)
-    const restored = { ...paste, id, start: text.length }
-    text += collapsedPasteLabel(restored)
-    pastes.push(restored)
-    cursor = paste.start + oldLabel.length
-  }
-  text += submitted.text.slice(cursor)
-  const separator = text && existing.text
-    ? text.endsWith('\n') ? '\n' : '\n\n'
-    : ''
-  const shift = text.length + separator.length
-  return {
-    text: `${text}${separator}${existing.text}`,
-    pastes: [
-      ...pastes,
-      ...retained.map((paste) => ({ ...paste, start: paste.start + shift })),
-    ],
-  }
-}
-
-function recoverPendingComposerDraft(
-  draft: ComposerDraft,
-  deliveryUncertain = true,
-): ComposerDraft {
-  const { pendingSubmission, ...remaining } = draft
-  if (pendingSubmission?.accepted) {
-    if (pendingSubmission.queuedPromptId === remaining.queuedEdit?.promptId) {
-      delete remaining.queuedEdit
-    }
-    return remaining
-  }
-  return pendingSubmission
-    ? {
-        ...remaining,
-        ...prependComposerContent(pendingSubmission, remaining),
-        ...(deliveryUncertain ? { deliveryUncertain: true } : {}),
-      }
-    : draft
-}
-
-function writeComposerContent(
-  drafts: ComposerDrafts,
-  key: string,
-  content: ComposerContent,
-): ComposerDrafts {
-  const draft = { ...drafts[key], ...content }
-  if (!draft.text) {
-    if (!draft.unresolvedPastes?.length) {
-      delete draft.deliveryUncertain
-    }
-    if (!draft.pendingSubmission && !draft.queuedEdit &&
-        !draft.unresolvedPastes?.length) {
-      const { [key]: _removed, ...remaining } = drafts
-      return remaining
-    }
-  }
-  return { ...drafts, [key]: draft }
-}
-
-function writeComposerEdit(
-  drafts: ComposerDrafts,
-  key: string,
-  edit: ComposerEdit,
-): ComposerDrafts {
-  const existing = drafts[key] || { text: '', pastes: [] }
-  const updated = edit.unresolvedPastes?.length ? {
-    ...drafts,
-    [key]: {
-      ...existing,
-      unresolvedPastes: mergeUnresolvedComposerPastes(
-        existing.unresolvedPastes, edit.unresolvedPastes,
-      ),
-    },
-  } : drafts
-  return writeComposerContent(updated, key, edit.content)
 }
 
 function readComposerAttachments(
@@ -1502,14 +1124,6 @@ function readLegacyComposerDrafts(
   )
 }
 
-function queuedEditOwners(drafts: ComposerDrafts, pendingOnly = false): Record<string, string> {
-  return Object.fromEntries(Object.entries(drafts).flatMap(([key, draft]) =>
-    draft.queuedEdit && (!pendingOnly || draft.queuedEdit.dispatchPending)
-      ? [[key, draft.queuedEdit.promptId]]
-      : [],
-  ))
-}
-
 function writeQueuedEditOwners(storageKey: string, owners: Record<string, string>) {
   if (Object.keys(owners).length) {
     localStorage.setItem(storageKey, JSON.stringify(owners))
@@ -1518,292 +1132,11 @@ function writeQueuedEditOwners(storageKey: string, owners: Record<string, string
   }
 }
 
-function activeComposerPastes(
-  value: string,
-  pastes: CollapsedPaste[],
-): CollapsedPaste[] {
-  return pastes.filter((paste) => {
-    const label = collapsedPasteLabel(paste)
-    return value.slice(paste.start, paste.start + label.length) === label
-  })
-}
-
-function expandComposerPastes(
-  value: string,
-  pastes: CollapsedPaste[],
-): string {
-  let offset = 0
-  let expanded = ''
-  const ordered = [...pastes].sort((left, right) => left.start - right.start)
-  for (const paste of ordered) {
-    const label = collapsedPasteLabel(paste)
-    if (
-      paste.start < offset ||
-      value.slice(paste.start, paste.start + label.length) !== label
-    ) {
-      continue
-    }
-    expanded += value.slice(offset, paste.start)
-    expanded += paste.content
-    offset = paste.start + label.length
-  }
-  // Put back exactly as written. What is typed around a paste is part of the
-  // message -- indentation before it, a newline after it -- and trimming the
-  // ends quietly rewrote the prompt. Emptiness and whether it is a command are
-  // decided from a trimmed copy where they are asked, not here.
-  return expanded + value.slice(offset)
-}
-
-export function reconcileComposerEdit(
-  before: ComposerContent,
-  after: string,
-): ComposerEdit {
-  if (before.text === after) {
-    return { content: before, cursor: after.length }
-  }
-  const beforeInput = composerInputValue(before.text)
-  const afterInput = composerInputValue(after)
-  if (beforeInput === afterInput) {
-    return { content: before, cursor: before.text.length }
-  }
-  let prefix = 0
-  while (
-    prefix < beforeInput.length &&
-    prefix < afterInput.length &&
-    beforeInput[prefix] === afterInput[prefix]
-  ) {
-    prefix += 1
-  }
-  let suffix = 0
-  while (
-    suffix < beforeInput.length - prefix &&
-    suffix < afterInput.length - prefix &&
-    beforeInput[beforeInput.length - suffix - 1] ===
-      afterInput[afterInput.length - suffix - 1]
-  ) {
-    suffix += 1
-  }
-  const removedLength = beforeInput.length - prefix - suffix
-  let completeSuffix = suffix
-  while (
-    completeSuffix < Math.min(beforeInput.length, afterInput.length) &&
-    beforeInput[beforeInput.length - completeSuffix - 1] ===
-      afterInput[afterInput.length - completeSuffix - 1]
-  ) {
-    completeSuffix += 1
-  }
-  const earliest = Math.max(
-    0, beforeInput.length - completeSuffix - removedLength,
-  )
-  const ambiguous = earliest < prefix
-    ? activeComposerPastes(before.text, before.pastes).filter((paste) => {
-        const start = composerInputValue(before.text.slice(0, paste.start)).length
-        const end = start + collapsedPasteLabel(paste).length
-        const alwaysBefore = earliest >= end
-        const alwaysAfter = prefix + removedLength <= start
-        const alwaysRemoved =
-          prefix <= start && earliest + removedLength >= end
-        return !alwaysBefore && !alwaysAfter && !alwaysRemoved
-      })
-    : []
-  const ambiguousKeys = new Set(ambiguous.map((paste) => paste.key))
-  const edited = applyComposerEdit(
-    {
-      ...before,
-      pastes: before.pastes.filter((paste) => !ambiguousKeys.has(paste.key)),
-    },
-    composerTextPosition(before.text, prefix),
-    composerTextPosition(before.text, beforeInput.length - suffix),
-    {
-      text: after.slice(
-        composerTextPosition(after, prefix),
-        composerTextPosition(after, afterInput.length - suffix),
-      ),
-      pastes: [],
-    },
-  )
-  return ambiguous.length ? {
-    ...edited,
-    unresolvedPastes: ambiguous.map(({ start: _start, ...paste }) => paste),
-  } : edited
-}
-
-function composerInputValue(text: string): string {
-  return text.replace(/\r\n|\r/g, '\n')
-}
-
-function composerTextPosition(text: string, inputPosition: number): number {
-  let position = 0
-  for (
-    let input = 0;
-    input < inputPosition && position < text.length;
-    input += 1
-  ) {
-    position +=
-      text[position] === '\r' && text[position + 1] === '\n' ? 2 : 1
-  }
-  return position
-}
-
-export function applyComposerEdit(
-  before: ComposerContent,
-  start: number,
-  end: number,
-  inserted: ComposerContent,
-): ComposerEdit {
-  const partial = activeComposerPastes(before.text, before.pastes).filter(
-    (paste) => {
-      const pasteEnd = paste.start + collapsedPasteLabel(paste).length
-      return start === end
-        ? start > paste.start && start < pasteEnd
-        : start < pasteEnd && end > paste.start &&
-            !(start <= paste.start && end >= pasteEnd)
-    },
-  )
-  let from = start
-  let to = end
-  for (const paste of partial) {
-    const pasteEnd = paste.start + collapsedPasteLabel(paste).length
-    if (start > paste.start && start < pasteEnd) {
-      from = pasteEnd
-    }
-    if (end > paste.start && end < pasteEnd) {
-      to = paste.start
-    }
-  }
-  to = Math.max(from, to)
-  const position = (offset: number) => offset + partial.reduce(
-    (shift, paste) =>
-      paste.start + collapsedPasteLabel(paste).length <= offset
-        ? shift + paste.content.length - collapsedPasteLabel(paste).length
-        : shift,
-    0,
-  )
-  const expanded = expandComposerPastes(before.text, partial)
-  const partialKeys = new Set(partial.map((paste) => paste.key))
-  const retained = before.pastes
-    .filter((paste) => !partialKeys.has(paste.key))
-    .map((paste) => ({ ...paste, start: position(paste.start) }))
-  const fromExpanded = position(from)
-  const toExpanded = position(to)
-  return {
-    content: {
-      text: expanded.slice(0, fromExpanded) +
-        inserted.text +
-        expanded.slice(toExpanded),
-      pastes: [
-        ...composerPastesAfterRangeEdit(
-          retained, fromExpanded, toExpanded, inserted.text.length,
-        ),
-        ...inserted.pastes.map((paste) => ({
-          ...paste, start: paste.start + fromExpanded,
-        })),
-      ],
-    },
-    cursor: fromExpanded + inserted.text.length,
-  }
-}
-
-function composerPastesAfterRangeEdit(
-  pastes: CollapsedPaste[],
-  start: number,
-  end: number,
-  insertedLength: number,
-): CollapsedPaste[] {
-  const delta = insertedLength - (end - start)
-  return pastes.flatMap((paste) => {
-    const pasteEnd = paste.start + collapsedPasteLabel(paste).length
-    if (pasteEnd <= start) {
-      return [paste]
-    }
-    if (paste.start >= end) {
-      return [{ ...paste, start: paste.start + delta }]
-    }
-    return []
-  })
-}
-
 /**
  * How much room a session's Knowledge panel takes. `expanded` covers the
  * conversation so a document can be read at full width without losing the
  * session it belongs to.
  */
-/** A key and the modifiers held with it. */
-type ShortcutBinding = {
-  /** The physical key, so a macOS Option that rewrites the character still
-      resolves to the same place on the keyboard. */
-  code: string
-  alt: boolean
-  shift: boolean
-  ctrl: boolean
-  meta: boolean
-}
-
-type ShortcutId =
-  | 'nextSession'
-  | 'previousSession'
-  | 'toggleOracle'
-  | 'toggleOracleDock'
-  | 'toggleKnowledge'
-  | 'expandKnowledge'
-  | 'backgroundTasks'
-
-type ShortcutDefinition = {
-  id: ShortcutId
-  label: string
-  binding: ShortcutBinding
-}
-
-function binding(
-  code: string,
-  modifiers: Partial<Omit<ShortcutBinding, 'code'>> = {},
-): ShortcutBinding {
-  return {
-    code,
-    alt: modifiers.alt ?? false,
-    shift: modifiers.shift ?? false,
-    ctrl: modifiers.ctrl ?? false,
-    meta: modifiers.meta ?? false,
-  }
-}
-
-// What each shortcut is, in one place. The handler reads its keys from here
-// and the settings list is drawn from the same rows, so a shortcut cannot be
-// listed as one thing and answer to another.
-const shortcutDefaults: ShortcutDefinition[] = [
-  { id: 'nextSession', label: 'Next session', binding: binding('ArrowDown', { alt: true }) },
-  {
-    id: 'previousSession',
-    label: 'Previous session',
-    binding: binding('ArrowUp', { alt: true }),
-  },
-  {
-    id: 'toggleOracle',
-    label: 'Open, close, or focus Oracle',
-    binding: oracleShortcutBinding(),
-  },
-  {
-    id: 'toggleOracleDock',
-    label: 'Dock or undock Oracle',
-    binding: oracleDockShortcutBinding(),
-  },
-  {
-    id: 'toggleKnowledge',
-    label: 'Open or close knowledge',
-    binding: binding('KeyK', { alt: true }),
-  },
-  {
-    id: 'expandKnowledge',
-    label: 'Expand or minimize knowledge',
-    binding: binding('KeyK', { alt: true, shift: true }),
-  },
-  {
-    id: 'backgroundTasks',
-    label: 'View background tasks',
-    binding: binding('KeyT', { alt: true }),
-  },
-]
-
 const shortcutsStorageKey = 'agentic-remote:shortcuts'
 const oraclePlacementStorageKey = 'agentic-remote:oracle-placement'
 type OraclePlacement = 'overlay' | 'docked'
@@ -1820,16 +1153,6 @@ function readOraclePlacement(): OraclePlacement {
   }
 }
 
-function sameBinding(left: ShortcutBinding, right: ShortcutBinding): boolean {
-  return (
-    left.code === right.code &&
-    left.alt === right.alt &&
-    left.shift === right.shift &&
-    left.ctrl === right.ctrl &&
-    left.meta === right.meta
-  )
-}
-
 function bindingMatches(
   event: Pick<
     globalThis.KeyboardEvent,
@@ -1843,107 +1166,6 @@ function bindingMatches(
     event.shiftKey === wanted.shift &&
     event.ctrlKey === wanted.ctrl &&
     event.metaKey === wanted.meta
-  )
-}
-
-/** What to call the key on its own, as it is printed on the keyboard. */
-function keyLabel(code: string): string {
-  if (code.startsWith('Key')) {
-    return code.slice(3)
-  }
-  if (code.startsWith('Digit')) {
-    return code.slice(5)
-  }
-  const named: Record<string, string> = {
-    ArrowUp: '\u2191',
-    ArrowDown: '\u2193',
-    ArrowLeft: '\u2190',
-    ArrowRight: '\u2192',
-    Enter: 'Enter',
-    Space: 'Space',
-    Backquote: '`',
-    Slash: '/',
-    Period: '.',
-    Comma: ',',
-    Semicolon: ';',
-    BracketLeft: '[',
-    BracketRight: ']',
-    Backslash: '\\',
-    Minus: '-',
-    Equal: '=',
-  }
-  return named[code] || code
-}
-
-function bindingLabel(value: ShortcutBinding): string {
-  const parts: string[] = []
-  if (value.meta) {
-    parts.push('Cmd')
-  }
-  if (value.ctrl) {
-    parts.push('Ctrl')
-  }
-  if (value.alt) {
-    parts.push('Alt')
-  }
-  if (value.shift) {
-    parts.push('Shift')
-  }
-  parts.push(keyLabel(value.code))
-  return parts.join(' + ')
-}
-
-/** The keys that are only ever held down beside another one. */
-/** Whether the editor could ever have recorded this key. */
-// Escape leaves the editor rather than being captured, and Tab moves on, so
-// neither can be reached however they are held. Stored, they were shortcuts
-// that showed in the list and could never be pressed.
-const capturableCodes = new Set([
-  'Space',
-  'Enter',
-  'Backspace',
-  'Delete',
-  'Home',
-  'End',
-  'PageUp',
-  'PageDown',
-  'Insert',
-  'Backquote',
-  'Minus',
-  'Equal',
-  'BracketLeft',
-  'BracketRight',
-  'Backslash',
-  'Semicolon',
-  'Quote',
-  'Comma',
-  'Period',
-  'Slash',
-])
-
-function capturableCode(code: string): boolean {
-  if (isModifierCode(code) || code === 'Escape' || code === 'Tab') {
-    return false
-  }
-  // A shape a real `KeyboardEvent.code` actually takes. Any nonempty string
-  // was accepted before, so `NotARealKey` came back from storage as a shortcut
-  // that showed in the list and no key on the keyboard could ever produce.
-  return (
-    /^Key[A-Z]$/.test(code) ||
-    /^Digit[0-9]$/.test(code) ||
-    /^Numpad[0-9]$/.test(code) ||
-    /^F([1-9]|1[0-2])$/.test(code) ||
-    /^Arrow(Up|Down|Left|Right)$/.test(code) ||
-    capturableCodes.has(code)
-  )
-}
-
-function isModifierCode(code: string): boolean {
-  return (
-    code.startsWith('Alt') ||
-    code.startsWith('Shift') ||
-    code.startsWith('Control') ||
-    code.startsWith('Meta')
   )
 }
 
@@ -1977,13 +1199,6 @@ function usableBinding(value: unknown): value is ShortcutBinding {
   }
   // Held with nothing, it would fire while typing anywhere outside a text box.
   return Boolean(candidate.alt || candidate.ctrl || candidate.meta)
-}
-
-function shortcutAcceptsBinding(id: ShortcutId, value: ShortcutBinding): boolean {
-  return (
-    (id !== 'toggleOracle' && id !== 'toggleOracleDock') ||
-    value.code !== 'Enter'
-  )
 }
 
 function readStoredShortcuts(): Partial<Record<ShortcutId, ShortcutBinding>> {
@@ -2125,18 +1340,6 @@ type KnowledgePosition = {
   file?: string
 }
 
-function isRuntimeReasoningEffort(
-  value: unknown,
-): value is RuntimeReasoningEffort {
-  return (
-    value === 'low' ||
-    value === 'medium' ||
-    value === 'high' ||
-    value === 'xhigh' ||
-    value === 'max'
-  )
-}
-
 const defaultStatusline: StatuslineSettings = {
   enabled: true,
   computer: true,
@@ -2157,26 +1360,6 @@ const defaultStatusline: StatuslineSettings = {
 
 const timelineBottomThreshold = 48
 const keyboardFocusGapMs = 200
-
-const statuslineOptions: Array<{
-  key: keyof Omit<StatuslineSettings, 'enabled'>
-  label: string
-}> = [
-  { key: 'computer', label: 'Computer' },
-  { key: 'provider', label: 'Agent provider' },
-  { key: 'path', label: 'Working directory' },
-  { key: 'status', label: 'Agent status' },
-  { key: 'queue', label: 'Queued prompts' },
-  { key: 'backgroundTasks', label: 'Running background tasks' },
-  { key: 'sessionId', label: 'Session ID' },
-  { key: 'model', label: 'Model' },
-  { key: 'effort', label: 'Reasoning effort' },
-  { key: 'contextTier', label: 'Context size' },
-  { key: 'contextUsage', label: 'Context usage' },
-  { key: 'mode', label: 'Agent mode' },
-  { key: 'permissions', label: 'Permission mode' },
-  { key: 'update', label: 'Agent update available' },
-]
 
 /** Drops the side questions of the sessions `gone` names. */
 function withoutSideQuestions(gone: (key: string) => boolean) {
@@ -2283,39 +1466,6 @@ function supportsBackgroundTasks(
   return capability?.supportsBackgroundTasks === true
 }
 
-function computerProviders(
-  computer: ComputerSummary | undefined,
-): AgentProviderCapability[] {
-  return (
-    computer?.providers || [
-      {
-        id: 'copilot',
-        name: 'GitHub Copilot',
-        available: true,
-        terminalBacked: true,
-      },
-    ]
-  )
-}
-
-function compactTokens(value: number): string {
-  if (value < 1_000) {
-    return String(value)
-  }
-  if (value < 1_000_000) {
-    return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`
-  }
-  return `${(value / 1_000_000).toFixed(1)}m`
-}
-
-function contextSizeLabel(
-  model: RuntimeOptions['models'][number],
-  tier: 'default' | 'long_context',
-): string {
-  const limit = model.contextTokenLimits?.[tier]
-  return limit ? `${compactTokens(limit)} tokens` : 'Automatic'
-}
-
 interface SessionResourcesView {
   id: number
   ownerKey: string
@@ -2370,615 +1520,6 @@ function SessionResourcesDialog({
         session={session}
         supported={supported}
       />
-    </DialogFrame>
-  )
-}
-
-type SessionCreationHandle = {
-  id: string
-  intent: number
-  selectionIntent: number
-  selectedKey?: string
-  /** Settles once earlier creations on the same computer have finished. */
-  turn: Promise<void>
-  /** Lets the next creation on the same computer go ahead. */
-  finish: () => void
-}
-
-
-function NewSessionDialog({
-  open,
-  computers,
-  defaultComputerId,
-  defaultRuntimes,
-  defaultSessionFolders,
-  defaultBackend,
-  creationError,
-  onClose,
-  onCreating,
-  onCreationFailed,
-  onCreated,
-}: {
-  open: boolean
-  computers: ComputerSummary[]
-  defaultComputerId?: string
-  defaultRuntimes: DefaultRuntimeSettings
-  defaultSessionFolders: DefaultSessionFolders
-  defaultBackend: NewSessionBackendSetting
-  creationError?: string
-  onClose: () => void
-  onCreating: (
-    creation: Omit<PendingSessionCreation, 'id'>,
-  ) => SessionCreationHandle
-  onCreationFailed: (
-    creation: SessionCreationHandle,
-    message: string,
-  ) => void
-  onCreated: (
-    session: ManagedSession,
-    creation?: SessionCreationHandle,
-  ) => void
-}) {
-  const [computerId, setComputerId] = useState('')
-  const [provider, setProvider] = useState<AgentProvider>(DEFAULT_SESSION_PROVIDER)
-  const [cwd, setCwd] = useState('~')
-  const [directoryListing, setDirectoryListing] =
-    useState<DirectoryListing>()
-  const [loadingDirectories, setLoadingDirectories] = useState(false)
-  const [directoryComputerId, setDirectoryComputerId] = useState<string>()
-  const directoryRequest = useRef(0)
-  const [terminalBacked, setTerminalBacked] = useState(true)
-  const [allowAllPermissions, setAllowAllPermissions] = useState(true)
-  const [mode, setMode] = useState<'new' | 'previous'>('new')
-  const [history, setHistory] = useState<ManagedSession[]>([])
-  const [historyKey, setHistoryKey] = useState('')
-  const [loadingHistory, setLoadingHistory] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string>()
-  const [runtimeLoading, setRuntimeLoading] = useState(false)
-  const [runtimeError, setRuntimeError] = useState<string>()
-  const [providerRuntimeModels, setProviderRuntimeModels] =
-    useState<RuntimeModelOption[]>()
-  const available = useMemo(
-    () => computers.filter((computer) => computer.online),
-    [computers],
-  )
-  const initialized = useRef(false)
-  const initialSelection = useRef<string | undefined>(undefined)
-  const dialogGeneration = useRef(0)
-
-  useEffect(() => {
-    if (!open) {
-      dialogGeneration.current += 1
-      return
-    }
-    setSubmitting(false)
-  }, [open])
-
-  useEffect(() => {
-    if (!open) {
-      initialized.current = false
-      initialSelection.current = undefined
-      return
-    }
-    // Opening the dialog is what fills it in. `available` and the stored
-    // folders are rebuilt whenever any computer event arrives -- a node going
-    // online, a status refresh on returning to the tab -- and re-running this
-    // while the dialog is open threw away the provider, mode, folder, and
-    // previous session the reader had already chosen.
-    if (initialized.current) {
-      return
-    }
-    const initialComputerId =
-      available.find((computer) => computer.id === defaultComputerId)?.id ||
-      available[0]?.id || ''
-    // Opening before the first computer snapshot has landed leaves nothing to
-    // choose. Marking the dialog filled in at that point stranded it: the
-    // computers arrived, this returned at the guard above, and Create stayed
-    // disabled with no computer selected until the dialog was reopened.
-    if (!initialComputerId) {
-      return
-    }
-    initialized.current = true
-    initialSelection.current = initialComputerId
-    setComputerId(initialComputerId)
-    setProvider(DEFAULT_SESSION_PROVIDER)
-    setCwd(defaultSessionFolders[initialComputerId]?.trim() || '~')
-    setDirectoryComputerId(initialComputerId)
-    setDirectoryListing(undefined)
-    setTerminalBacked(defaultBackend !== 'sdk')
-    setAllowAllPermissions(true)
-    setMode('new')
-    setHistoryKey('')
-    setError(undefined)
-    setLoadingHistory(true)
-    void listHistory()
-      .then(setHistory)
-      .catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      })
-      .finally(() => setLoadingHistory(false))
-  }, [open, defaultComputerId, defaultSessionFolders, defaultBackend, available])
-
-  // The chosen computer can be unpaired, or go offline, while the dialog is
-  // still open. Left alone the selection stays truthy and Create stays
-  // enabled, so submitting aimed at a computer that is no longer there. Only
-  // the computer and its folder are reconciled; provider and mode remain
-  // what the reader chose.
-  useEffect(() => {
-    if (!open || !initialized.current) {
-      return
-    }
-    if (initialSelection.current !== undefined) {
-      if (computerId !== initialSelection.current) return
-      initialSelection.current = undefined
-    }
-    if (available.some((computer) => computer.id === computerId)) {
-      return
-    }
-    const nextComputerId =
-      available.find((computer) => computer.id === defaultComputerId)?.id ||
-      available[0]?.id || ''
-    directoryRequest.current += 1
-    setComputerId(nextComputerId)
-    setCwd('')
-    setDirectoryListing(undefined)
-    setDirectoryComputerId(undefined)
-    setLoadingDirectories(Boolean(nextComputerId))
-    setHistoryKey('')
-  }, [open, computerId, available, defaultComputerId])
-
-  useEffect(() => {
-    if (!open || mode !== 'new' || !computerId) {
-      return
-    }
-    let active = true
-    const request = ++directoryRequest.current
-    const initialPath = defaultSessionFolders[computerId]?.trim() || '~'
-    setLoadingDirectories(true)
-    setError(undefined)
-    const listingRequest = initialPath.startsWith('/')
-      ? listDirectories(computerId, initialPath, 'all')
-      : listDirectories(computerId, initialPath)
-    void listingRequest
-      .then((listing) => {
-        if (active && request === directoryRequest.current) {
-          setDirectoryListing(listing)
-          setCwd(listing.path)
-          setDirectoryComputerId(computerId)
-        }
-      })
-      .catch((caught: unknown) => {
-        if (active && request === directoryRequest.current) {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        }
-      })
-      .finally(() => {
-        if (active && request === directoryRequest.current) {
-          setLoadingDirectories(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [computerId, defaultSessionFolders, mode, open])
-
-  useEffect(() => {
-    if (!open || mode !== 'new' || !computerId) {
-      return
-    }
-    let active = true
-    setRuntimeLoading(true)
-    setRuntimeError(undefined)
-    setProviderRuntimeModels(undefined)
-    void getProviderRuntimeOptions(computerId, provider)
-      .then(({ models }) => {
-        if (active) {
-          setProviderRuntimeModels(models)
-        }
-      })
-      .catch((caught: unknown) => {
-        if (active) {
-          setRuntimeError(
-            caught instanceof Error ? caught.message : String(caught),
-          )
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setRuntimeLoading(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [
-    computerId,
-    mode,
-    open,
-    provider,
-  ])
-
-  if (!open) {
-    return null
-  }
-
-  async function browseDirectory(path: string) {
-    const request = ++directoryRequest.current
-    setLoadingDirectories(true)
-    setError(undefined)
-    try {
-      const listing = await (cwd.startsWith('/')
-        ? listDirectories(computerId, path, 'all')
-        : listDirectories(computerId, path))
-      if (request === directoryRequest.current) {
-        setDirectoryListing(listing)
-        setCwd(listing.path)
-        setDirectoryComputerId(computerId)
-      }
-    } catch (caught) {
-      if (request === directoryRequest.current) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      }
-    } finally {
-      if (request === directoryRequest.current) {
-        setLoadingDirectories(false)
-      }
-    }
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    const submittedGeneration = dialogGeneration.current
-    setSubmitting(true)
-    setError(undefined)
-    let pendingCreation: SessionCreationHandle | undefined
-    try {
-      if (
-        !available.some((computer) => computer.id === computerId) ||
-        (mode === 'new' && (
-          directoryComputerId !== computerId || !cwd.trim()
-        ))
-      ) {
-        throw new Error('Choose an available computer and wait for its folder to load.')
-      }
-      if (mode === 'new') {
-        const defaultRuntime = providerRuntimeModels
-          ? normalizedRuntimeSelection(
-              defaultRuntimes[provider],
-              providerRuntimeModels,
-            )
-          : undefined
-        const defaultModel = defaultRuntime?.model.trim()
-        const createInTmux =
-          computerProviders(
-            available.find((computer) => computer.id === computerId),
-          ).find((entry) => entry.id === provider)?.terminalBacked === true
-            ? terminalBacked
-            : false
-        pendingCreation = onCreating({
-          computerId,
-          cwd,
-          executionMode: createInTmux ? 'tmux' : 'sdk',
-          provider,
-        })
-        setSubmitting(false)
-        await pendingCreation.turn
-        onCreated(
-          await createSession(computerId, {
-            cwd,
-            provider,
-            terminalBacked: createInTmux,
-            allowAllPermissions,
-            ...(defaultModel && defaultRuntime
-              ? {
-                  model: defaultModel,
-                  ...(defaultRuntime.reasoningEffort
-                    ? {
-                        reasoningEffort: defaultRuntime.reasoningEffort,
-                      }
-                    : {}),
-                  contextTier: defaultRuntime.contextTier,
-                }
-              : {}),
-            ...(defaultRuntimes[provider].mode
-              ? { mode: defaultRuntimes[provider].mode }
-              : {}),
-          }),
-          pendingCreation,
-        )
-        if (dialogGeneration.current === submittedGeneration) {
-          setCwd('')
-        }
-      } else {
-        const previous = history.find(
-          (session) =>
-            sessionKey(session) === historyKey &&
-            session.computerId === computerId &&
-            available.some((computer) => computer.id === session.computerId) &&
-            !session.isOpen,
-        )
-        if (!previous) {
-          throw new Error('Choose a previous session')
-        }
-
-        const opened = await activateSession(previous.computerId, previous.id)
-        if (dialogGeneration.current === submittedGeneration) {
-          onCreated(opened)
-        }
-      }
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught)
-      if (pendingCreation) {
-        onCreationFailed(pendingCreation, message)
-      } else if (dialogGeneration.current === submittedGeneration) {
-        setError(message)
-      }
-    } finally {
-      if (dialogGeneration.current === submittedGeneration) {
-        setSubmitting(false)
-      }
-    }
-  }
-
-  const previousSessions = history.filter(
-    (session) => session.computerId === computerId && !session.isOpen,
-  )
-  const selectedComputer = available.find(
-    (computer) => computer.id === computerId,
-  )
-  const providers = computerProviders(selectedComputer)
-  const selectedProvider = providers.find((entry) => entry.id === provider)
-  const savedDefaultRuntime = defaultRuntimes[provider]
-  const defaultRuntime = providerRuntimeModels
-    ? normalizedRuntimeSelection(savedDefaultRuntime, providerRuntimeModels)
-    : savedDefaultRuntime
-  const defaultModel = defaultRuntime?.model.trim() || ''
-
-  return (
-    <DialogFrame
-      className="new-session-dialog"
-      eyebrow="Conversation"
-      onClose={onClose}
-      title={mode === 'new' ? 'Choose a folder' : 'Open previous session'}
-    >
-      <form onSubmit={submit}>
-        <div className="dialog-tabs" role="tablist" aria-label="Session type">
-          <button
-            aria-selected={mode === 'new'}
-            className={mode === 'new' ? 'dialog-tab dialog-tab--active' : 'dialog-tab'}
-            onClick={() => setMode('new')}
-            role="tab"
-            type="button"
-          >
-            <Plus size={15} />
-            New session
-          </button>
-          <button
-            aria-selected={mode === 'previous'}
-            className={
-              mode === 'previous' ? 'dialog-tab dialog-tab--active' : 'dialog-tab'
-            }
-            onClick={() => setMode('previous')}
-            role="tab"
-            type="button"
-          >
-            <History size={15} />
-            Open previous
-          </button>
-        </div>
-        <label className="field">
-          <span>Computer</span>
-          <select
-            className="dialog-select"
-            onChange={(event) => {
-              const nextComputerId = event.target.value
-              directoryRequest.current += 1
-              setComputerId(nextComputerId)
-              setProvider(DEFAULT_SESSION_PROVIDER)
-              setHistoryKey('')
-              setCwd(defaultSessionFolders[nextComputerId]?.trim() || '~')
-              setDirectoryListing(undefined)
-              setDirectoryComputerId(nextComputerId || undefined)
-              setLoadingDirectories(Boolean(nextComputerId))
-            }}
-            value={computerId}
-          >
-            {available.map((computer) => (
-              <option key={computer.id} value={computer.id}>
-                {computer.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {mode === 'new' ? (
-          <label className="field">
-            <span>Agent provider</span>
-            <select
-              aria-label="Agent provider"
-              className="dialog-select"
-              onChange={(event) =>
-                setProvider(event.target.value as AgentProvider)
-              }
-              value={provider}
-            >
-              {providers.map((entry) => (
-                <option
-                  disabled={!entry.available}
-                  key={entry.id}
-                  value={entry.id}
-                >
-                  {entry.name}
-                  {entry.available ? '' : ' — unavailable'}
-                </option>
-              ))}
-            </select>
-            {!selectedProvider?.available && selectedProvider?.unavailableReason ? (
-              <small className="field__hint">
-                {selectedProvider.unavailableReason}
-              </small>
-            ) : null}
-            {defaultModel ? (
-              <small className="field__hint">
-                New sessions use <strong>{defaultModel}</strong> with{' '}
-                {defaultRuntime?.reasoningEffort ? (
-                  <>
-                    <strong>{defaultRuntime.reasoningEffort}</strong> effort and{' '}
-                  </>
-                ) : null}
-                <strong>
-                  {defaultRuntime?.contextTier.replace('_', ' ')}
-                </strong>{' '}
-                context.
-              </small>
-            ) : null}
-            {savedDefaultRuntime.mode ? (
-              <small className="field__hint">
-                New sessions start in{' '}
-                <strong>{agentModeName(savedDefaultRuntime.mode, provider)}</strong>{' '}
-                mode.
-              </small>
-            ) : null}
-            {runtimeError ? (
-              <small className="field__hint">{runtimeError}</small>
-            ) : null}
-          </label>
-        ) : null}
-        {mode === 'new' ? (
-          <div className="folder-picker">
-            <div className="folder-picker__toolbar">
-              <button
-                aria-label="Parent folder"
-                className="icon-button"
-                disabled={!directoryListing?.parent || loadingDirectories}
-                onClick={() =>
-                  void browseDirectory(directoryListing?.parent || '~')
-                }
-                type="button"
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <div className="folder-picker__path">
-                <Folder size={15} />
-                <strong>{directoryListing?.path || '~'}</strong>
-              </div>
-            </div>
-            <div
-              aria-label="Folders"
-              className="folder-picker__list"
-              role="listbox"
-            >
-              {loadingDirectories ? (
-                <p>Loading folders…</p>
-              ) : directoryListing?.directories.length ? (
-                directoryListing.directories.map((directory) => (
-                  <button
-                    key={`${directory.name}:${directory.path}`}
-                    onClick={() => void browseDirectory(directory.path)}
-                    role="option"
-                    type="button"
-                  >
-                    <FolderOpen size={17} />
-                    <span>{directory.name}</span>
-                    <ChevronLeft
-                      className="folder-picker__chevron"
-                      size={15}
-                    />
-                  </button>
-                ))
-              ) : (
-                <p>No subfolders here.</p>
-              )}
-            </div>
-            <p className="folder-picker__hint">
-              The session will start in <strong>{cwd || '~'}</strong>.
-            </p>
-            {selectedProvider?.terminalBacked ? (
-              <label className="tmux-session-option">
-                <input
-                  checked={terminalBacked}
-                  onChange={(event) => setTerminalBacked(event.target.checked)}
-                  type="checkbox"
-                />
-                <span>
-                  <strong>Create in tmux</strong>
-                  <small>
-                    Opens a new window that remains accessible from SSH.
-                  </small>
-                </span>
-              </label>
-            ) : null}
-            <label className="tmux-session-option">
-              <input
-                checked={allowAllPermissions}
-                onChange={(event) =>
-                  setAllowAllPermissions(event.target.checked)
-                }
-                type="checkbox"
-              />
-              <span>
-                <strong>Allow all permissions</strong>
-                <small>
-                  Runs tools without asking for individual approval.
-                </small>
-              </span>
-            </label>
-          </div>
-        ) : (
-          <label className="field">
-            <span>Previous session</span>
-            <select
-              className="dialog-select history-select"
-              disabled={loadingHistory || previousSessions.length === 0}
-              onChange={(event) => setHistoryKey(event.target.value)}
-              value={historyKey}
-            >
-              <option value="">
-                {loadingHistory
-                  ? 'Loading sessions…'
-                  : previousSessions.length === 0
-                    ? 'No closed sessions on this computer'
-                    : 'Choose a session'}
-              </option>
-              {previousSessions.map((session) => (
-                <option key={sessionKey(session)} value={sessionKey(session)}>
-                  {session.title} — {providerName(session.provider)} —{' '}
-                  {shortPath(session.cwd)}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {error || creationError ? (
-          <p className="form-error" role="alert">
-            {error || creationError}
-          </p>
-        ) : null}
-        <button
-          className="primary-button dialog__submit"
-          disabled={
-            submitting ||
-            !selectedComputer ||
-            Boolean(defaultModel && runtimeLoading) ||
-            Boolean(defaultModel && runtimeError) ||
-            (mode === 'new' && (
-              !selectedProvider?.available || directoryComputerId !== computerId
-            )) ||
-            (mode === 'new'
-              ? !cwd.trim()
-              : !previousSessions.some((session) => sessionKey(session) === historyKey))
-          }
-          type="submit"
-        >
-          {submitting
-            ? mode === 'new'
-              ? 'Creating…'
-              : 'Opening…'
-            : mode === 'new'
-              ? 'Create session'
-              : 'Open session'}
-        </button>
-      </form>
     </DialogFrame>
   )
 }
@@ -3158,1631 +1699,6 @@ function ChangeDirectoryDialog({
           {submitting ? 'Changing…' : 'Change directory'}
         </button>
       </form>
-    </DialogFrame>
-  )
-}
-
-function ComputersDialog({
-  open,
-  computers,
-  onClose,
-  onAdded,
-  onRemoved,
-}: {
-  open: boolean
-  computers: ComputerSummary[]
-  onClose: () => void
-  onAdded: (computer: ComputerSummary) => void
-  onRemoved: (computerId: string) => void
-}) {
-  const [name, setName] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
-  const [token, setToken] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string>()
-
-  if (!open) {
-    return null
-  }
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    setSubmitting(true)
-    setError(undefined)
-    try {
-      const computer = await addComputer({
-        baseUrl,
-        token,
-        name: name.trim() || undefined,
-      })
-      onAdded(computer)
-      setName('')
-      setBaseUrl('')
-      setToken('')
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  async function remove(id: string) {
-    if (!window.confirm('Remove this computer from the hub? Its sessions are not deleted.')) {
-      return
-    }
-    setError(undefined)
-    try {
-      await removeComputer(id)
-      onRemoved(id)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    }
-  }
-
-  return (
-    <DialogFrame eyebrow="Hub settings" onClose={onClose} title="Computers">
-      <div className="computer-list">
-        {computers.map((computer) => (
-          <div className="computer-row" key={computer.id}>
-            {computer.online ? <Wifi size={16} /> : <WifiOff size={16} />}
-            <span>
-              <strong>{computer.name}</strong>
-              <small>{computer.isLocal ? 'This computer' : computer.baseUrl}</small>
-            </span>
-            {!computer.isLocal ? (
-              <button
-                aria-label={`Remove ${computer.name}`}
-                className="icon-button icon-button--danger"
-                onClick={() => void remove(computer.id)}
-                type="button"
-              >
-                <Trash2 size={16} />
-              </button>
-            ) : null}
-          </div>
-        ))}
-      </div>
-      <form className="computer-form" onSubmit={submit}>
-        <label className="field">
-          <span>Name (optional)</span>
-          <input
-            className="dialog-input"
-            onChange={(event) => setName(event.target.value)}
-            placeholder="worker-node"
-            value={name}
-          />
-        </label>
-        <label className="field">
-          <span>Node URL</span>
-          <input
-            className="dialog-input"
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="http://192.168.1.11:4317"
-            spellCheck={false}
-            value={baseUrl}
-          />
-        </label>
-        <label className="field">
-          <span>Pairing token</span>
-          <input
-            className="dialog-input"
-            onChange={(event) => setToken(event.target.value)}
-            placeholder="Paste from agentic-remote pair-info"
-            spellCheck={false}
-            type="password"
-            value={token}
-          />
-        </label>
-        {error ? <p className="form-error">{error}</p> : null}
-        <button
-          className="primary-button dialog__submit"
-          disabled={submitting || !baseUrl.trim() || !token.trim()}
-          type="submit"
-        >
-          {submitting ? 'Connecting…' : 'Add computer'}
-        </button>
-      </form>
-    </DialogFrame>
-  )
-}
-
-function StatuslineControls({
-  settings,
-  onChange,
-}: {
-  settings: StatuslineSettings
-  onChange: (settings: StatuslineSettings) => void
-}) {
-  return (
-    <>
-      <label className="statusline-toggle">
-        <input
-          checked={settings.enabled}
-          onChange={(event) =>
-            onChange({ ...settings, enabled: event.target.checked })
-          }
-          type="checkbox"
-        />
-        <span>Show status line</span>
-      </label>
-      <div className="statusline-options">
-        {statuslineOptions.map((option) => (
-          <label key={option.key}>
-            <input
-              checked={settings[option.key]}
-              disabled={!settings.enabled}
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  [option.key]: event.target.checked,
-                })
-              }
-              type="checkbox"
-            />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </div>
-    </>
-  )
-}
-
-function normalizedRuntimeSelection(
-  selection: DefaultRuntimeSelection,
-  models: RuntimeModelOption[],
-): DefaultRuntimeSelection | undefined {
-  const modelId = selection.model.trim()
-  if (!modelId) {
-    return undefined
-  }
-
-  const model =
-    models.find((candidate) => candidate.id === modelId) || models[0]
-  if (!model) {
-    return undefined
-  }
-
-  return {
-    model: model.id,
-    reasoningEffort:
-      selection.reasoningEffort !== '' &&
-      model.reasoningEfforts.includes(selection.reasoningEffort)
-      ? selection.reasoningEffort
-      : model.reasoningEfforts[0] || '',
-    contextTier: model.contextTiers.includes(selection.contextTier)
-      ? selection.contextTier
-      : 'default',
-    mode: selection.mode,
-  }
-}
-
-function mergeRuntimeModelOptions(
-  catalogs: RuntimeModelOption[][],
-): RuntimeModelOption[] {
-  const merged = new Map<string, RuntimeModelOption>()
-  for (const catalog of catalogs) {
-    for (const model of catalog) {
-      const existing = merged.get(model.id)
-      if (!existing) {
-        merged.set(model.id, {
-          ...model,
-          reasoningEfforts: [...model.reasoningEfforts],
-          contextTiers: [...model.contextTiers],
-          contextTokenLimits: model.contextTokenLimits
-            ? { ...model.contextTokenLimits }
-            : undefined,
-        })
-        continue
-      }
-      merged.set(model.id, {
-        ...existing,
-        description: existing.description || model.description,
-        reasoningEfforts: [
-          ...new Set([
-            ...existing.reasoningEfforts,
-            ...model.reasoningEfforts,
-          ]),
-        ],
-        contextTiers: [
-          ...new Set([...existing.contextTiers, ...model.contextTiers]),
-        ],
-        contextTokenLimits: {
-          ...model.contextTokenLimits,
-          ...existing.contextTokenLimits,
-        },
-      })
-    }
-  }
-  return [...merged.values()]
-}
-
-function sameRuntimeSelection(
-  left: DefaultRuntimeSelection,
-  right: DefaultRuntimeSelection,
-): boolean {
-  return (
-    left.model === right.model &&
-    left.reasoningEffort === right.reasoningEffort &&
-    left.contextTier === right.contextTier &&
-    left.mode === right.mode
-  )
-}
-
-function DefaultRuntimeControls({
-  error,
-  loading,
-  models,
-  onChange,
-  provider,
-  selection,
-}: {
-  error?: string
-  loading: boolean
-  models: RuntimeModelOption[]
-  onChange: (selection: DefaultRuntimeSelection) => void
-  provider: AgentProvider
-  selection: DefaultRuntimeSelection
-}) {
-  const name = providerName(provider)
-  const selectedModel = models.find((model) => model.id === selection.model)
-  const unavailableModel = selection.model.trim() && !selectedModel
-
-  return (
-    <div className="default-runtime">
-      <h4>{name}</h4>
-      {loading ? <p className="dialog-message">Loading models…</p> : null}
-      {error ? <p className="form-error">{error}</p> : null}
-      {!loading && !error && models.length === 0 ? (
-        <p className="dialog-message">No models are available.</p>
-      ) : null}
-      {models.length > 0 ? (
-        <>
-          <label className="field">
-            <span>Model</span>
-            <select
-              aria-label={`${name} default model`}
-              className="dialog-select"
-              onChange={(event) => {
-                if (!event.target.value) {
-                  onChange({ ...emptyRuntimeSelection, mode: selection.mode })
-                  return
-                }
-                const model = models.find(
-                  (candidate) => candidate.id === event.target.value,
-                )
-                if (!model) {
-                  return
-                }
-                onChange({
-                  model: model.id,
-                  reasoningEffort: model.reasoningEfforts[0] || '',
-                  contextTier: model.contextTiers.includes(selection.contextTier)
-                    ? selection.contextTier
-                    : 'default',
-                  mode: selection.mode,
-                })
-              }}
-              value={selection.model.trim()}
-            >
-              <option value="">Provider default</option>
-              {unavailableModel ? (
-                <option value={selection.model.trim()}>
-                  {selection.model.trim()} (unavailable)
-                </option>
-              ) : null}
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedModel?.description ? (
-            <div className="default-runtime__description">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkSafeBreaks]}>
-                {selectedModel.description}
-              </ReactMarkdown>
-            </div>
-          ) : null}
-          {selectedModel && selectedModel.reasoningEfforts.length > 0 ? (
-            <label className="field">
-              <span>Reasoning effort</span>
-              <select
-                aria-label={`${name} default reasoning effort`}
-                className="dialog-select"
-                onChange={(event) =>
-                  isRuntimeReasoningEffort(event.target.value)
-                    ? onChange({
-                        ...selection,
-                        reasoningEffort: event.target.value,
-                      })
-                    : undefined
-                }
-                value={selection.reasoningEffort}
-              >
-                {selectedModel.reasoningEfforts.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effort}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {selectedModel ? (
-            <label className="field">
-              <span>Context size</span>
-              <select
-                aria-label={`${name} default context size`}
-                className="dialog-select"
-                onChange={(event) =>
-                  onChange({
-                    ...selection,
-                    contextTier: event.target.value as
-                      | 'default'
-                      | 'long_context',
-                  })
-                }
-                value={selection.contextTier}
-              >
-                {selectedModel.contextTiers.map((tier) => (
-                  <option key={tier} value={tier}>
-                    {contextSizeLabel(selectedModel, tier)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-        </>
-      ) : null}
-      <label className="field">
-        <span>Agent mode</span>
-        <select
-          aria-label={`${name} default agent mode`}
-          className="dialog-select"
-          onChange={(event) =>
-            onChange({ ...selection, mode: defaultAgentMode(event.target.value) })
-          }
-          value={selection.mode}
-        >
-          {(['interactive', 'plan', 'autopilot'] as const).map((mode) => (
-            <option key={mode} value={mode === 'interactive' ? '' : mode}>
-              {agentModeName(mode, provider)}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
-  )
-}
-
-function DefaultSessionFolderControl({
-  computer,
-  value,
-  onChange,
-  label = 'default session folder',
-  blankLabel = 'Home directory (blank)',
-  selectHint = 'the default for new sessions',
-  title,
-  purpose,
-  offlineNote = true,
-}: {
-  computer: Pick<ComputerSummary, 'id' | 'name' | 'online'>
-  value?: string
-  onChange: (path?: string) => void
-  /** What the folder is for, as in "Browse <label> for <computer>". */
-  label?: string
-  /** Shown when no folder is chosen. */
-  blankLabel?: string
-  /** Completes "Select <folder> as …". */
-  selectHint?: string
-  /** The row's name; the computer's when it stands alone. */
-  title?: string
-  /** Tells apart two pickers for the same computer, as in "Folders on <computer> for <purpose>". */
-  purpose?: string
-  /** Whether to say the computer is offline; off where the computer's card says it once. */
-  offlineNote?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  const [listing, setListing] = useState<DirectoryListing>()
-  const [loading, setLoading] = useState(false)
-  const [validating, setValidating] = useState(false)
-  const [error, setError] = useState<string>()
-  const requestRef = useRef(0)
-
-  useEffect(() => {
-    if (!open || !computer.online) {
-      return
-    }
-    let active = true
-    const request = ++requestRef.current
-    const path = value?.trim() || '~'
-    setLoading(true)
-    setError(undefined)
-    void listDirectories(computer.id, path, 'all')
-      .then((nextListing) => {
-        if (active && request === requestRef.current) {
-          setListing(nextListing)
-        }
-      })
-      .catch((caught: unknown) => {
-        if (active && request === requestRef.current) {
-          setListing(undefined)
-          setError(caught instanceof Error ? caught.message : String(caught))
-        }
-      })
-      .finally(() => {
-        if (active && request === requestRef.current) {
-          setLoading(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [computer.id, computer.online, open, value])
-
-  async function browse(path: string) {
-    const request = ++requestRef.current
-    setLoading(true)
-    setError(undefined)
-    try {
-      const nextListing = await listDirectories(computer.id, path, 'all')
-      if (request === requestRef.current) {
-        setListing(nextListing)
-      }
-    } catch (caught) {
-      if (request === requestRef.current) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      }
-    } finally {
-      if (request === requestRef.current) {
-        setLoading(false)
-      }
-    }
-  }
-
-  async function chooseFolder() {
-    if (!listing) {
-      return
-    }
-    setValidating(true)
-    setError(undefined)
-    try {
-      const normalized = (await validateSessionDirectory(
-        computer.id,
-        listing.path,
-      )).trim()
-      if (!normalized) {
-        throw new Error('The selected folder could not be validated')
-      }
-      onChange(normalized)
-      setOpen(false)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setValidating(false)
-    }
-  }
-
-  return (
-    <div className="default-session-folder">
-      <div className="default-session-folder__header">
-        <span>
-          <strong>{title ?? computer.name}</strong>
-          <small>{value ? shortPath(value) : blankLabel}</small>
-        </span>
-        <div className="default-session-folder__actions">
-          <button
-            aria-expanded={open}
-            aria-label={`Browse ${label} for ${computer.name}`}
-            className="secondary-button"
-            disabled={!computer.online}
-            onClick={() => {
-              setOpen((current) => !current)
-              setError(undefined)
-            }}
-            type="button"
-          >
-            {open ? 'Close' : 'Browse'}
-          </button>
-          {value ? (
-            <button
-              aria-label={`Remove ${label} for ${computer.name}`}
-              className="icon-button icon-button--danger"
-              disabled={validating}
-              onClick={() => {
-                setOpen(false)
-                setError(undefined)
-                onChange()
-              }}
-              type="button"
-            >
-              <X size={16} />
-            </button>
-          ) : null}
-        </div>
-      </div>
-      {offlineNote && !computer.online ? (
-        <small className="default-session-folder__offline">
-          Connect to browse this computer.
-        </small>
-      ) : null}
-      {open ? (
-        <div className="folder-picker default-session-folder__picker">
-          <div className="folder-picker__toolbar">
-            <button
-              aria-label={`Parent folder for ${computer.name}${purpose ? ` for ${purpose}` : ''}`}
-              className="icon-button"
-              disabled={!listing?.parent || loading || validating}
-              onClick={() => void browse(listing?.parent || '~')}
-              type="button"
-            >
-              <ChevronLeft size={18} />
-            </button>
-            <div className="folder-picker__path">
-              <Folder size={15} />
-              <strong>{listing?.path || value || '~'}</strong>
-            </div>
-          </div>
-          <div
-            aria-label={`Folders on ${computer.name}${purpose ? ` for ${purpose}` : ''}`}
-            className="folder-picker__list"
-            role="listbox"
-          >
-            {loading ? (
-              <p>Loading folders…</p>
-            ) : listing?.directories.length ? (
-              listing.directories.map((directory) => (
-                <button
-                  disabled={validating}
-                  key={directory.path}
-                  onClick={() => void browse(directory.path)}
-                  role="option"
-                  type="button"
-                >
-                  <FolderOpen size={17} />
-                  <span>{directory.name}</span>
-                  <ChevronLeft
-                    className="folder-picker__chevron"
-                    size={15}
-                  />
-                </button>
-              ))
-            ) : (
-              <p>{listing ? 'No subfolders here.' : 'Folder unavailable.'}</p>
-            )}
-          </div>
-          <p className="folder-picker__hint">
-            Select <strong>{listing?.path || value || '~'}</strong> as{' '}
-            {selectHint}. The folder is checked against this computer’s
-            session roots before it is saved.
-          </p>
-          {error ? <p className="form-error">{error}</p> : null}
-          <button
-            className="primary-button app-settings-section__action"
-            disabled={!listing || loading || validating}
-            onClick={() => void chooseFolder()}
-            type="button"
-          >
-            {validating ? 'Validating…' : 'Use this folder'}
-          </button>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-/** The shortcut list, with each row open to being given different keys. */
-function ShortcutEditor({
-  shortcuts,
-  overrides,
-  onChange,
-}: {
-  shortcuts: ShortcutDefinition[]
-  overrides: Partial<Record<ShortcutId, ShortcutBinding>>
-  onChange: (overrides: Partial<Record<ShortcutId, ShortcutBinding>>) => void
-}) {
-  const [recording, setRecording] = useState<ShortcutId>()
-  const [refused, setRefused] = useState<string>()
-
-  function stopRecording() {
-    setRecording(undefined)
-    setRefused(undefined)
-  }
-
-  function capture(id: ShortcutId, event: KeyboardEvent<HTMLButtonElement>) {
-    // Before anything is prevented, so Tab still moves on as it always does.
-    // Stopping capture and swallowing the press left the reader recording on a
-    // control they could not leave by keyboard.
-    if (event.key === 'Tab') {
-      stopRecording()
-      return
-    }
-    event.preventDefault()
-    event.stopPropagation()
-    if (event.key === 'Escape') {
-      stopRecording()
-      return
-    }
-    // Held on their own they are only half a shortcut. Waiting for the key
-    // they are held with is what lets Alt+Shift+K be typed at all.
-    if (isModifierCode(event.code)) {
-      return
-    }
-    const chosen = binding(event.code, {
-      alt: event.altKey,
-      shift: event.shiftKey,
-      ctrl: event.ctrlKey,
-      meta: event.metaKey,
-    })
-    // The same rule the stored ones are held to. Accepting a key here that a
-    // reload would throw away meant a shortcut that worked until the page was
-    // opened again.
-    if (!capturableCode(chosen.code)) {
-      setRefused('That key cannot be used for a shortcut.')
-      return
-    }
-    if (!shortcutAcceptsBinding(id, chosen)) {
-      setRefused('Enter sends from a composer, so Oracle needs another key.')
-      return
-    }
-    // A bare letter would be swallowed the moment it was typed anywhere
-    // outside a text box, so the shortcut has to be held with something.
-    if (!chosen.alt && !chosen.ctrl && !chosen.meta) {
-      setRefused('Hold Alt, Ctrl or Cmd as well, or this would fire while you type.')
-      return
-    }
-    const taken = shortcuts.find(
-      (entry) => entry.id !== id && sameBinding(entry.binding, chosen),
-    )
-    if (taken) {
-      setRefused(`${bindingLabel(chosen)} already does "${taken.label}".`)
-      return
-    }
-    onChange({ ...overrides, [id]: chosen })
-    stopRecording()
-  }
-
-  function reset(id: ShortcutId) {
-    const restored = shortcutDefaults.find((entry) => entry.id === id)?.binding
-    // Its default can have been given to another row in the meantime, and
-    // putting it back regardless left two rows answering to the same keys --
-    // only the first of which is ever reached, so this one could not be
-    // pressed at all.
-    const taken = restored
-      ? shortcuts.find(
-          (entry) => entry.id !== id && sameBinding(entry.binding, restored),
-        )
-      : undefined
-    if (taken && restored) {
-      setRefused(
-        `${bindingLabel(restored)} now does "${taken.label}", so this cannot be put back until that changes.`,
-      )
-      return
-    }
-    const { [id]: _removed, ...rest } = overrides
-    onChange(rest)
-    stopRecording()
-  }
-
-  return (
-    <>
-      <ul className="shortcut-list shortcut-list--editable">
-        {shortcuts.map((entry) => {
-          const isRecording = recording === entry.id
-          const changed = Boolean(overrides[entry.id])
-          return (
-            <li key={entry.id}>
-              <span>{entry.label}</span>
-              <span className="shortcut-list__controls">
-                <button
-                  aria-label={
-                    isRecording
-                      ? `Press the new keys for ${entry.label}`
-                      : `Change the keys for ${entry.label}`
-                  }
-                  className={`shortcut-key ${
-                    isRecording ? 'shortcut-key--recording' : ''
-                  }`}
-                  onBlur={stopRecording}
-                  onClick={() => {
-                    setRefused(undefined)
-                    setRecording(isRecording ? undefined : entry.id)
-                  }}
-                  onKeyDown={(event) =>
-                    isRecording ? capture(entry.id, event) : undefined
-                  }
-                  type="button"
-                >
-                  {isRecording ? (
-                    'Press keys\u2026'
-                  ) : (
-                    <kbd>{bindingLabel(entry.binding)}</kbd>
-                  )}
-                </button>
-                {changed ? (
-                  <button
-                    aria-label={`Reset the keys for ${entry.label}`}
-                    className="shortcut-reset"
-                    onClick={() => reset(entry.id)}
-                    type="button"
-                  >
-                    Reset
-                  </button>
-                ) : null}
-              </span>
-            </li>
-          )
-        })}
-      </ul>
-      {refused ? (
-        <p className="dialog-message shortcut-refused" role="alert">
-          {refused}
-        </p>
-      ) : null}
-    </>
-  )
-}
-
-/**
- * Scrolls App settings, and only App settings, so the element sits just
- * below the jump bar. `scrollIntoView` also scrolls whatever holds the
- * dialog when the element cannot reach the top, such as the last group,
- * which moved the dialog off screen and left the app scrolled behind it.
- */
-function scrollSettingsTo(id: string, { focus = false } = {}) {
-  const target = document.getElementById(id)
-  const container = target?.closest<HTMLElement>('.app-settings-dialog')
-  if (!target || !container) return
-  const nav = container.querySelector<HTMLElement>('.app-settings-nav')
-  const top = Math.max(0, Math.round(
-    container.scrollTop
-      + target.getBoundingClientRect().top
-      - container.getBoundingClientRect().top
-      - (nav?.offsetHeight ?? 0)
-      - 8,
-  ))
-  if (typeof container.scrollTo === 'function') container.scrollTo({ top })
-  else container.scrollTop = top
-  // Moving the focus too takes keyboard and screen reader users there, not
-  // just the eye; Tab carries on from the heading into that part.
-  if (focus) {
-    target.querySelector<HTMLElement>(':scope > h3, :scope > h4')?.focus({ preventScroll: true })
-  }
-}
-
-/** Anything that shows you have taken over scrolling App settings yourself. */
-const settingsTakeoverEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const
-
-/** App settings' groups, in order, for its jump bar. */
-const settingsGroups = [
-  { id: 'settings-models', label: 'Models' },
-  { id: 'settings-folders', label: 'Folders' },
-  { id: 'settings-oracle', label: 'Oracle' },
-  { id: 'settings-notifications', label: 'Notifications' },
-  { id: 'settings-interface', label: 'Interface' },
-  { id: 'settings-app', label: 'App' },
-] as const
-
-function AppSettingsDialog({
-  open,
-  computers,
-  onClose,
-  onApplyUpdate,
-  onUpdateReady,
-  defaultRuntimes,
-  onDefaultRuntimesChange,
-  defaultSessionFolders,
-  onDefaultSessionFoldersChange,
-  newSessionBackend,
-  onNewSessionBackendChange,
-  accentTheme,
-  onAccentThemeChange,
-  appearance,
-  onAppearanceChange,
-  settingsSync,
-  oracleResponseStyle,
-  onOracleResponseStyleChange,
-  notificationScope,
-  onNotificationScopeChange,
-  statusline,
-  onStatuslineChange,
-  shortcuts,
-  shortcutOverrides,
-  onShortcutsChange,
-  updateRegistration,
-  updatingApp,
-  initialSection,
-}: {
-  open: boolean
-  computers: ComputerSummary[]
-  onClose: () => void
-  onApplyUpdate: () => void
-  onUpdateReady: (registration: ServiceWorkerRegistration) => void
-  defaultRuntimes: DefaultRuntimeSettings
-  onDefaultRuntimesChange: (settings: DefaultRuntimeSettings) => void
-  defaultSessionFolders: DefaultSessionFolders
-  onDefaultSessionFoldersChange: (settings: DefaultSessionFolders) => void
-  newSessionBackend: NewSessionBackendSetting
-  onNewSessionBackendChange: (backend: NewSessionBackendSetting) => void
-  accentTheme: AccentTheme
-  onAccentThemeChange: (theme: AccentTheme) => void
-  appearance: AppearanceSetting
-  onAppearanceChange: (appearance: AppearanceSetting) => void
-  settingsSync: SettingsProfileState
-  oracleResponseStyle: OracleResponseStyle
-  onOracleResponseStyleChange: (style: OracleResponseStyle) => void
-  notificationScope: NotificationScope
-  onNotificationScopeChange: (scope: NotificationScope) => void
-  statusline: StatuslineSettings
-  onStatuslineChange: (settings: StatuslineSettings) => void
-  shortcuts: ShortcutDefinition[]
-  shortcutOverrides: Partial<Record<ShortcutId, ShortcutBinding>>
-  onShortcutsChange: (
-    overrides: Partial<Record<ShortcutId, ShortcutBinding>>,
-  ) => void
-  updateRegistration?: ServiceWorkerRegistration
-  updatingApp: boolean
-  /** The element to open at, such as Oracle's model; the top when unset. */
-  initialSection?: string
-}) {
-  const [enabled, setEnabled] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string>()
-  const [checkingUpdate, setCheckingUpdate] = useState(false)
-  const [updateMessage, setUpdateMessage] = useState<string>()
-  const [testingNotification, setTestingNotification] = useState(false)
-  const [testMessage, setTestMessage] = useState<string>()
-  const [runtimeModels, setRuntimeModels] = useState<
-    Partial<Record<AgentProvider, RuntimeModelOption[]>>
-  >({})
-  const [runtimeCatalogsComplete, setRuntimeCatalogsComplete] = useState<
-    Partial<Record<AgentProvider, boolean>>
-  >({})
-  const [runtimeLoading, setRuntimeLoading] = useState(false)
-  const oracle = useOracleSettings(open)
-  const [hubCopilotModels, setHubCopilotModels] = useState<RuntimeModelOption[]>()
-  const [hubCopilotError, setHubCopilotError] = useState<string>()
-  const [runtimeErrors, setRuntimeErrors] = useState<
-    Partial<Record<AgentProvider, string>>
-  >({})
-  const supported = pushNotificationsSupported()
-  const ios =
-    typeof navigator !== 'undefined' &&
-    /iPad|iPhone|iPod/.test(navigator.userAgent)
-  const requiresInstall = ios && !installedAsApp()
-  const permissionBlocked =
-    supported &&
-    typeof Notification !== 'undefined' &&
-    Notification.permission === 'denied'
-
-  useEffect(() => {
-    if (!open || !supported || requiresInstall) {
-      return
-    }
-    let active = true
-    setLoading(true)
-    setError(undefined)
-    void activePushSubscription()
-      .then((subscription) => {
-        if (active) {
-          setEnabled(Boolean(subscription))
-        }
-      })
-      .catch((caught: unknown) => {
-        if (active) {
-          console.warn('Unable to load notification mute settings:', caught)
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [open, requiresInstall, supported])
-
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-    let active = true
-    const providers: AgentProvider[] = ['copilot', 'claude']
-    const sources = providers.flatMap((provider) => {
-      const providerComputers = computers.filter(
-        (candidate) =>
-          candidate.online &&
-          computerProviders(candidate).some(
-            (capability) =>
-              capability.id === provider && capability.available,
-          ),
-      )
-      return providerComputers.map((computer) => ({ provider, computer }))
-    })
-    setRuntimeLoading(true)
-    setRuntimeModels({})
-    setHubCopilotModels(undefined)
-    setHubCopilotError(undefined)
-    setRuntimeCatalogsComplete({})
-    setRuntimeErrors(
-      Object.fromEntries(
-        providers
-          .filter(
-            (provider) =>
-              !sources.some((source) => source.provider === provider),
-          )
-          .map((provider) => [
-            provider,
-            `${providerName(provider)} is not available on an online computer.`,
-          ]),
-      ),
-    )
-    void Promise.allSettled(
-      sources.map(async ({ provider, computer }) => ({
-        provider,
-        options: await getProviderRuntimeOptions(computer.id, provider),
-      })),
-    ).then((results) => {
-      if (!active) {
-        return
-      }
-      const models: Partial<Record<AgentProvider, RuntimeModelOption[]>> = {}
-      const complete: Partial<Record<AgentProvider, boolean>> = {}
-      const errors: Partial<Record<AgentProvider, string>> = {}
-      for (const provider of providers) {
-        const hasOfflineProviderComputer = computers.some(
-          (computer) => !computer.isLocal && !computer.online,
-        )
-        // Discovery only asks computers that advertise the provider, and a
-        // node can synthesize Copilot-only metadata it never confirmed. Any
-        // online computer left unasked is therefore an unknown rather than a
-        // no, and a saved model must not be retired on an unknown.
-        const queried = new Set(
-          sources
-            .filter((source) => source.provider === provider)
-            .map((source) => source.computer.id),
-        )
-        const hasUnqueriedProviderComputer = computers.some(
-          (computer) => computer.online && !queried.has(computer.id),
-        )
-        const providerResults = results.filter(
-          (_result, index) => sources[index].provider === provider,
-        )
-        const catalogs = providerResults.flatMap((result) =>
-          result.status === 'fulfilled'
-            ? [result.value.options.models]
-            : [],
-        )
-        if (catalogs.length > 0) {
-          models[provider] = mergeRuntimeModelOptions(catalogs)
-          complete[provider] =
-            !hasOfflineProviderComputer &&
-            !hasUnqueriedProviderComputer &&
-            providerResults.every((result) => result.status === 'fulfilled')
-        } else if (providerResults.length === 0) {
-          errors[provider] =
-            `${providerName(provider)} is not available on an online computer.`
-        } else {
-          const failure = providerResults.find(
-            (result) => result.status === 'rejected',
-          )
-          errors[provider] =
-            failure?.status === 'rejected'
-              ? failure.reason instanceof Error
-                ? failure.reason.message
-                : String(failure.reason)
-              : `Unable to load ${providerName(provider)} models.`
-        }
-      }
-      // Oracle runs on the hub, so its choices come from the hub's own catalog.
-      const hubCatalog = results.find(
-        (_result, index) =>
-          sources[index].provider === 'copilot' && sources[index].computer.isLocal,
-      )
-      setHubCopilotModels(
-        hubCatalog?.status === 'fulfilled' ? hubCatalog.value.options.models : [],
-      )
-      setHubCopilotError(
-        hubCatalog?.status === 'rejected'
-          ? hubCatalog.reason instanceof Error
-            ? hubCatalog.reason.message
-            : String(hubCatalog.reason)
-          : undefined,
-      )
-      setRuntimeModels(models)
-      setRuntimeCatalogsComplete(complete)
-      setRuntimeErrors(errors)
-      setRuntimeLoading(false)
-    })
-    return () => {
-      active = false
-    }
-  }, [computers, open])
-
-  useEffect(() => {
-    let changed = false
-    const next = { ...defaultRuntimes }
-    for (const provider of ['copilot', 'claude'] as const) {
-      const models = runtimeModels[provider]
-      if (!models || !runtimeCatalogsComplete[provider]) {
-        continue
-      }
-      const normalized = normalizedRuntimeSelection(
-        defaultRuntimes[provider],
-        models,
-      )
-      if (
-        normalized &&
-        !sameRuntimeSelection(normalized, defaultRuntimes[provider])
-      ) {
-        next[provider] = normalized
-        changed = true
-      }
-    }
-    if (changed) {
-      onDefaultRuntimesChange(next)
-    }
-  }, [
-    defaultRuntimes,
-    onDefaultRuntimesChange,
-    runtimeCatalogsComplete,
-    runtimeModels,
-  ])
-
-  // Opened from somewhere in particular, such as Oracle's model, it starts
-  // there; otherwise at the top. The catalogs above it load afterwards and,
-  // stacked on a phone, would push it away, so it stays with that part as
-  // the settings grow until you scroll, tap or type yourself.
-  useEffect(() => {
-    if (!open || !initialSection) return
-    const section = initialSection
-    let observer: ResizeObserver | undefined
-    let dialog: HTMLElement | null | undefined
-    const stopFollowing = () => {
-      observer?.disconnect()
-      observer = undefined
-    }
-    const frame = window.requestAnimationFrame(() => {
-      scrollSettingsTo(section, { focus: true })
-      dialog = document.getElementById(section)?.closest<HTMLElement>('.app-settings-dialog')
-      const sections = dialog?.querySelector('.app-settings-dialog__sections')
-      if (!dialog || !sections || typeof ResizeObserver === 'undefined') return
-      for (const type of settingsTakeoverEvents) {
-        dialog.addEventListener(type, stopFollowing, { passive: true })
-      }
-      observer = new ResizeObserver(() => scrollSettingsTo(section))
-      observer.observe(sections)
-    })
-    return () => {
-      window.cancelAnimationFrame(frame)
-      stopFollowing()
-      for (const type of settingsTakeoverEvents) dialog?.removeEventListener(type, stopFollowing)
-    }
-  }, [initialSection, open])
-
-  if (!open) {
-    return null
-  }
-
-  async function retryHubCopilotModels() {
-    const hub = computers.find((computer) => computer.isLocal)
-    if (!hub) {
-      return
-    }
-    setHubCopilotModels(undefined)
-    setHubCopilotError(undefined)
-    try {
-      setHubCopilotModels((await getProviderRuntimeOptions(hub.id, 'copilot')).models)
-    } catch (caught) {
-      setHubCopilotModels([])
-      setHubCopilotError(caught instanceof Error ? caught.message : String(caught))
-    }
-  }
-
-  async function toggle() {
-    setSubmitting(true)
-    setError(undefined)
-    try {
-      if (enabled) {
-        await disablePushNotifications()
-        setEnabled(false)
-      } else {
-        await enablePushNotifications()
-        setEnabled(true)
-      }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  async function checkForUpdate() {
-    setCheckingUpdate(true)
-    setUpdateMessage(undefined)
-    try {
-      const registration = await checkForPwaUpdate()
-      if (registration) {
-        onUpdateReady(registration.registration)
-        setUpdateMessage('An update is ready to install.')
-      } else {
-        setUpdateMessage('Agentic Remote is up to date.')
-      }
-    } catch (caught) {
-      setUpdateMessage(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setCheckingUpdate(false)
-    }
-  }
-
-  async function testNotification() {
-    setTestingNotification(true)
-    setTestMessage(undefined)
-    try {
-      const result = await sendTestPushNotification()
-      setTestMessage(
-        result.sent > 0
-          ? `Test notification sent to ${result.sent} device${
-              result.sent === 1 ? '' : 's'
-            }.`
-          : 'No active notification subscriptions were found.',
-      )
-    } catch (caught) {
-      setTestMessage(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setTestingNotification(false)
-    }
-  }
-
-  return (
-    <DialogFrame
-      className="app-settings-dialog"
-      eyebrow="Application"
-      onClose={onClose}
-      title="App settings"
-    >
-      <nav aria-label="Settings sections" className="app-settings-nav">
-        {settingsGroups.map((group) => (
-          <button
-            key={group.id}
-            onClick={() => scrollSettingsTo(group.id, { focus: true })}
-            type="button"
-          >
-            {group.label}
-          </button>
-        ))}
-      </nav>
-      <div className="app-settings-dialog__sections">
-      <section
-        aria-labelledby="settings-models-heading"
-        className="app-settings-group"
-        id="settings-models"
-      >
-        <h3 id="settings-models-heading" tabIndex={-1}>Models</h3>
-        <div className="app-settings-group__body">
-          <section className="app-settings-section">
-            <div className="app-settings-section__title">
-              <h4>New sessions</h4>
-              <SettingScope synced />
-            </div>
-            <p className="dialog-message">
-              New sessions, including those Oracle starts, use these provider
-              settings. Oracle keeps the context size for a model you name when
-              that model offers it. Existing sessions keep their current model,
-              effort, context, and agent mode.
-            </p>
-            {(['copilot', 'claude'] as const).map((provider) => (
-              <DefaultRuntimeControls
-                error={runtimeErrors[provider]}
-                key={provider}
-                loading={runtimeLoading}
-                models={runtimeModels[provider] || []}
-                onChange={(selection) =>
-                  onDefaultRuntimesChange({
-                    ...defaultRuntimes,
-                    [provider]: selection,
-                  })
-                }
-                provider={provider}
-                selection={defaultRuntimes[provider]}
-              />
-            ))}
-            <label className="field">
-              <span>Start new sessions in</span>
-              <select
-                aria-label="How new sessions start"
-                className="dialog-select"
-                onChange={(event) =>
-                  onNewSessionBackendChange(event.target.value as NewSessionBackendSetting)}
-                value={newSessionBackend}
-              >
-                <option value="terminal">Terminal (tmux)</option>
-                <option value="sdk">Copilot SDK</option>
-              </select>
-            </label>
-            <p className="dialog-message">
-              New Session starts here, and you can still change it for one
-              session. Oracle has its own setting.
-            </p>
-          </section>
-        </div>
-      </section>
-      <section
-        aria-labelledby="settings-folders-heading"
-        className="app-settings-group"
-        id="settings-folders"
-      >
-        <h3 id="settings-folders-heading" tabIndex={-1}>Folders</h3>
-        <p className="dialog-message">
-          Where new sessions start on each computer, and where Oracle starts
-          the sessions it hands work to. Existing sessions keep their folders.
-          A blank folder is the computer&apos;s home directory, and a blank
-          Oracle folder follows yours. Oracle can change its own when you ask.
-        </p>
-        <div className="app-settings-group__body app-settings-group__body--folders">
-          {computers.map((computer) => (
-            <div
-              aria-label={`Session folders on ${computer.name}`}
-              className="settings-computer-folders"
-              key={computer.id}
-              role="group"
-            >
-              <strong className="settings-computer-folders__name">{computer.name}</strong>
-              <DefaultSessionFolderControl
-                computer={computer}
-                offlineNote={false}
-                onChange={(path) => {
-                  const next = { ...defaultSessionFolders }
-                  if (path) {
-                    next[computer.id] = path
-                  } else {
-                    delete next[computer.id]
-                  }
-                  onDefaultSessionFoldersChange(next)
-                }}
-                title="New sessions"
-                value={defaultSessionFolders[computer.id]}
-              />
-              {oracle.settings && !oracle.unavailable ? (
-                <DefaultSessionFolderControl
-                  blankLabel="Same as new sessions"
-                  computer={computer}
-                  label="Oracle's session folder"
-                  offlineNote={false}
-                  onChange={(path) => void oracle.saveFolder(computer.id, path)}
-                  purpose="Oracle"
-                  selectHint="where Oracle starts new sessions"
-                  title="Oracle"
-                  value={oracle.settings.sessionFolders?.[computer.id]}
-                />
-              ) : null}
-              {!computer.online ? (
-                <small className="default-session-folder__offline">
-                  Connect to browse this computer.
-                </small>
-              ) : null}
-            </div>
-          ))}
-        </div>
-        <OracleSettingsStatus oracle={oracle} part="folders" />
-      </section>
-      <section
-        aria-labelledby="settings-oracle-heading"
-        className="app-settings-group"
-        id="settings-oracle"
-      >
-        <h3 id="settings-oracle-heading" tabIndex={-1}>Oracle</h3>
-        <div className="app-settings-group__body">
-          <OracleModelSettings
-            models={hubCopilotModels}
-            modelsError={hubCopilotError}
-            onRetryModels={retryHubCopilotModels}
-            oracle={oracle}
-          />
-          <DreamerSettings active={open} />
-          {oracle.settings && !oracle.unavailable ? (
-            <section className="app-settings-section" id="settings-oracle-style">
-              <div className="app-settings-section__title">
-                <h4>Response style</h4>
-                <SettingScope synced />
-              </div>
-              <p className="dialog-message">
-                How much Oracle writes. Every style keeps errors, uncertainty,
-                what Oracle did, and anything waiting for you.
-              </p>
-              <label className="field">
-                <span>Response style</span>
-                <select
-                  aria-label="Oracle response style"
-                  className="dialog-select"
-                  onChange={(event) =>
-                    onOracleResponseStyleChange(event.target.value as OracleResponseStyle)}
-                  value={oracleResponseStyle}
-                >
-                  <option value="concise">Concise</option>
-                  <option value="balanced">Balanced</option>
-                  <option value="detailed">Detailed</option>
-                </select>
-              </label>
-            </section>
-          ) : null}
-          <section className="app-settings-section">
-            <div className="app-settings-section__title">
-              <h4>Notify me about</h4>
-              <SettingScope synced />
-            </div>
-            <fieldset className="notification-scope-options">
-              <legend>What notifies you</legend>
-              {notificationScopeOptions.map((option) => (
-                <label className="notification-scope-option" key={option.id}>
-                  <input
-                    aria-describedby={`notification-scope-${option.id}`}
-                    aria-label={option.name}
-                    checked={notificationScope === option.id}
-                    name="notification-scope"
-                    onChange={() => onNotificationScopeChange(option.id)}
-                    type="radio"
-                  />
-                  <span>
-                    <strong>{option.name}</strong>
-                    <small id={`notification-scope-${option.id}`}>{option.description}</small>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
-          </section>
-        </div>
-      </section>
-      <section
-        aria-labelledby="settings-notifications-heading"
-        className="app-settings-group"
-        id="settings-notifications"
-      >
-        <h3 id="settings-notifications-heading" tabIndex={-1}>Notifications</h3>
-        <div className="app-settings-group__body">
-        <section className="app-settings-section">
-          <div className="app-settings-section__title">
-            <h4>This device</h4>
-            <SettingScope synced={false} />
-          </div>
-        {!supported ? (
-          <p className="dialog-message">
-            Push notifications are not supported in this browser.
-          </p>
-        ) : requiresInstall ? (
-          <p className="dialog-message">
-            On iPhone, open this page in Safari, choose Share → Add to Home
-            Screen, then open the installed app to enable notifications.
-          </p>
-        ) : permissionBlocked ? (
-          <p className="dialog-message">
-            Notifications are blocked. On iPhone, open Settings → Notifications
-            → Agentic Remote and allow notifications.
-          </p>
-        ) : (
-          <>
-            <p className="dialog-message">
-              Let this device receive what you chose above. Individual sessions
-              can be muted from their bell icon.
-            </p>
-            <button
-              className={
-                enabled
-                  ? 'secondary-button app-settings-section__action'
-                  : 'primary-button app-settings-section__action'
-              }
-              disabled={loading || submitting}
-              onClick={() => void toggle()}
-              type="button"
-            >
-              {loading
-                ? 'Checking…'
-                : submitting
-                  ? 'Updating…'
-                  : enabled
-                    ? 'Disable notifications'
-                    : 'Enable notifications'}
-            </button>
-            {enabled ? (
-              <button
-                className="secondary-button app-settings-section__action"
-                disabled={testingNotification}
-                onClick={() => void testNotification()}
-                type="button"
-              >
-                {testingNotification ? 'Sending…' : 'Send test notification'}
-              </button>
-            ) : null}
-            {testMessage ? (
-              <p className="app-settings-section__result" role="status">
-                {testMessage}
-              </p>
-            ) : null}
-          </>
-        )}
-        {error ? <p className="form-error">{error}</p> : null}
-        </section>
-        </div>
-      </section>
-      <section
-        aria-labelledby="settings-interface-heading"
-        className="app-settings-group"
-        id="settings-interface"
-      >
-        <h3 id="settings-interface-heading" tabIndex={-1}>Interface</h3>
-        <div className="app-settings-group__body">
-          <section className="app-settings-section">
-            <div className="app-settings-section__title">
-              <h4>Appearance</h4>
-              <SettingScope synced />
-            </div>
-            <fieldset className="appearance-options">
-              <legend>Reading surfaces</legend>
-              {appearanceOptions.map((option) => (
-                <label className="appearance-option" data-appearance={option.id} key={option.id}>
-                  <input
-                    aria-label={`${option.name} appearance`}
-                    checked={appearance === option.id}
-                    name="appearance"
-                    onChange={() => onAppearanceChange(option.id)}
-                    type="radio"
-                  />
-                  <span aria-hidden="true" className="appearance-option__preview" />
-                  <strong>{option.name}</strong>
-                </label>
-              ))}
-            </fieldset>
-            <p className="dialog-message">
-              System follows each device&apos;s light or dark setting. The accent
-              colors buttons, focus, and activity.
-            </p>
-            <div
-              aria-label="Accent color"
-              className="accent-theme-list"
-              role="radiogroup"
-            >
-              {accentThemes.map((theme) => (
-                <label
-                  className={`accent-theme-option ${
-                    accentTheme === theme.id
-                      ? 'accent-theme-option--selected'
-                      : ''
-                  }`}
-                  key={theme.id}
-                >
-                  <input
-                    aria-label={`${theme.name} accent`}
-                    checked={accentTheme === theme.id}
-                    name="accent-theme"
-                    onChange={() => onAccentThemeChange(theme.id)}
-                    type="radio"
-                  />
-                  <span
-                    aria-hidden="true"
-                    className="accent-theme-option__swatch"
-                    style={{ '--accent-choice': theme.color } as CSSProperties}
-                  />
-                  <strong>{theme.name}</strong>
-                </label>
-              ))}
-            </div>
-          </section>
-          <section className="app-settings-section">
-            <div className="app-settings-section__title">
-              <h4>Status line</h4>
-              <SettingScope synced />
-            </div>
-            <p className="dialog-message">
-              Choose the session and runtime details shown above the composer.
-            </p>
-            <StatuslineControls
-              onChange={onStatuslineChange}
-              settings={statusline}
-            />
-          </section>
-          <section className="app-settings-section app-settings-section--wide">
-            <div className="app-settings-section__title">
-              <h4>Keyboard shortcuts</h4>
-              <SettingScope synced={false} />
-            </div>
-            <p className="dialog-message">
-              Available on a keyboard, outside dialogs and the message box. Choose
-              one to give it different keys.
-            </p>
-            <ShortcutEditor
-              onChange={onShortcutsChange}
-              overrides={shortcutOverrides}
-              shortcuts={shortcuts}
-            />
-            <ul className="shortcut-list">
-              <li>
-                <span>Recall previous message</span>
-                <kbd>{'\u2191'}</kbd>
-              </li>
-            </ul>
-            <p className="dialog-message">
-              Recall works in the message box itself, so it is not one of the keys
-              above.
-            </p>
-          </section>
-        </div>
-      </section>
-      <section
-        aria-labelledby="settings-app-heading"
-        className="app-settings-group"
-        id="settings-app"
-      >
-        <h3 id="settings-app-heading" tabIndex={-1}>App</h3>
-        <div className="app-settings-group__body">
-          <section className="app-settings-section" id="settings-sync">
-            <h4>Settings sync</h4>
-            <p className="dialog-message">
-              Appearance, accent, status line, new-session models and folders,
-              session sort, computer order, Oracle&apos;s response style, and
-              what notifies you follow you to every device that opens this hub.
-              Keyboard shortcuts, panel placement and widths, and drafts stay
-              on this device.
-            </p>
-            <p className="app-settings-section__result" role="status">
-              {settingsSyncMessage(settingsSync)}
-            </p>
-          </section>
-          {shellSettingsAvailable() && (
-            <section className="app-settings-section">
-              <h4>Hub connection</h4>
-              <p className="dialog-message">
-                This app is connected to a hub you chose when you installed it.
-                Change it if the hub moved or you entered the wrong address.
-              </p>
-              <button
-                className="secondary-button"
-                onClick={() => openShellSettings()}
-                type="button"
-              >
-                Change hub…
-              </button>
-            </section>
-          )}
-          <section className="app-settings-section">
-            <h4>App updates</h4>
-            <p className="dialog-message">
-              Version {__APP_VERSION__}. Updates are checked automatically when the
-              app opens and returns to the foreground.
-            </p>
-            {updateRegistration ? (
-              <p className="dialog-message">
-                A new Agentic Remote version is ready.
-              </p>
-            ) : null}
-            <button
-              className="secondary-button app-settings-section__action"
-              disabled={checkingUpdate || updatingApp}
-              onClick={
-                updateRegistration
-                  ? onApplyUpdate
-                  : () => void checkForUpdate()
-              }
-              type="button"
-            >
-              {updatingApp
-                ? 'Updating…'
-                : checkingUpdate
-                  ? 'Checking…'
-                  : updateRegistration
-                    ? 'Update now'
-                    : 'Check for updates'}
-            </button>
-            {updateMessage ? (
-              <p className="app-settings-section__result" role="status">
-                {updateMessage}
-              </p>
-            ) : null}
-          </section>
-        </div>
-      </section>
-      </div>
     </DialogFrame>
   )
 }
@@ -5312,92 +2228,6 @@ function EmptyConversation({ onCreate, onKnowledge }: {
   )
 }
 
-/** One waiting message, draggable so the queue can be put in order. */
-function SortableQueuedPrompt({
-  prompt,
-  index,
-  editing,
-  busy,
-  suspended,
-  retained,
-  steering,
-  onEdit,
-  onRemove,
-}: {
-  prompt: QueuedPrompt
-  index: number
-  editing: boolean
-  busy: boolean
-  suspended: boolean
-  retained: boolean
-  steering: boolean
-  onEdit: () => void
-  onRemove: () => void
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: `queued:${prompt.id}`, disabled: retained })
-  // A retained session's queue is kept exactly as it was until Reopen.
-  const retainedTitle = retained ? 'Reopen this session to change its queue' : undefined
-  return (
-    <div
-      className={`queued-prompt${editing ? ' queued-prompt--editing' : ''}${
-        isDragging ? ' sortable-dragging' : ''
-      }`}
-      ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
-    >
-      <span
-        aria-label={`Reorder queued prompt ${index + 1}`}
-        className="drag-handle"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical size={13} />
-      </span>
-      <span>
-        {steering && (
-          <strong
-            className="queued-prompt__steer"
-            title="Waits for an empty terminal composer, then joins the running turn at the next safe input point"
-          >
-            Steer ·{' '}
-          </strong>
-        )}
-        {prompt.content}
-      </span>
-      <button
-        aria-label={`Edit queued prompt ${index + 1}`}
-        className={`icon-button${editing ? ' icon-button--active' : ''}`}
-        // The composer is closed while a session is put down, so opening a
-        // message for rewriting there gave a banner over a box that could not
-        // be typed in.
-        disabled={busy || suspended || retained}
-        onClick={onEdit}
-        title={retainedTitle ?? (suspended ? 'Resume this session to rewrite it' : undefined)}
-        type="button"
-      >
-        <Pencil size={14} />
-      </button>
-      <button
-        aria-label={`Remove queued prompt ${index + 1}`}
-        className="icon-button icon-button--danger"
-        disabled={busy || retained}
-        onClick={onRemove}
-        title={retainedTitle}
-        type="button"
-      >
-        <X size={15} />
-      </button>
-    </div>
-  )
-}
-
 function StatuslineDialog({
   open,
   settings,
@@ -5419,256 +2249,6 @@ function StatuslineDialog({
       title="Status line"
     >
       <StatuslineControls onChange={onChange} settings={settings} />
-    </DialogFrame>
-  )
-}
-
-function RuntimeDialog({
-  open,
-  session,
-  onClose,
-  onConfigured,
-}: {
-  open: boolean
-  session?: ManagedSession
-  onClose: () => void
-  onConfigured: (session: ManagedSession) => void
-}) {
-  const [options, setOptions] = useState<RuntimeOptions>()
-  const [configuration, setConfiguration] = useState<ConfigureRuntimeInput>()
-  const [loading, setLoading] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string>()
-  const [runtimeStatus, setRuntimeStatus] =
-    useState<ManagedSession['status']>()
-  const computerId = session?.computerId
-  const sessionId = session?.id
-  const sessionStatus = session?.status
-
-  useEffect(() => {
-    if (!open || !computerId || !sessionId) {
-      return
-    }
-    let active = true
-    setLoading(true)
-    setOptions(undefined)
-    setConfiguration(undefined)
-    setRuntimeStatus(sessionStatus)
-    setError(undefined)
-    void getRuntimeOptions(computerId, sessionId)
-      .then((loaded) => {
-        if (!active) {
-          return
-        }
-        const model =
-          loaded.models.find((entry) => entry.id === loaded.current.model) ||
-          loaded.models[0]
-        setOptions(loaded)
-        setRuntimeStatus(loaded.status || sessionStatus)
-        if (model) {
-          setConfiguration({
-            model: model.id,
-            reasoningEffort:
-              isRuntimeReasoningEffort(loaded.current.reasoningEffort) &&
-              model.reasoningEfforts.includes(
-                loaded.current.reasoningEffort,
-              )
-                ? loaded.current.reasoningEffort
-                : model.reasoningEfforts[0],
-            contextTier:
-              loaded.current.contextTier === 'long_context' &&
-              model.contextTiers.includes('long_context')
-                ? 'long_context'
-                : 'default',
-            mode:
-              loaded.current.mode === 'plan' ||
-              loaded.current.mode === 'autopilot'
-                ? loaded.current.mode
-                : 'interactive',
-          })
-        }
-      })
-      .catch((caught: unknown) => {
-        if (active) {
-          setError(caught instanceof Error ? caught.message : String(caught))
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false)
-        }
-      })
-    return () => {
-      active = false
-    }
-  }, [computerId, open, sessionId, sessionStatus])
-
-  if (!open || !session) {
-    return null
-  }
-  const targetSession = session
-
-  const selectedModel = options?.models.find(
-    (model) => model.id === configuration?.model,
-  )
-
-  async function submit(event: FormEvent) {
-    event.preventDefault()
-    if (!configuration) {
-      return
-    }
-    if (runtimeStatus !== 'idle') {
-      setError('Runtime settings can only change while the session is idle')
-      return
-    }
-    setSubmitting(true)
-    setError(undefined)
-    try {
-      onConfigured(
-        await configureRuntime(
-          targetSession.computerId,
-          targetSession.id,
-          configuration,
-        ),
-      )
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <DialogFrame
-      eyebrow={`${providerName(session.provider)} runtime`}
-      onClose={onClose}
-      title="Model and context"
-    >
-      {loading ? <p className="dialog-message">Loading runtime options…</p> : null}
-      {!loading && options?.models.length === 0 ? (
-        <p className="form-error">No runtime models are available.</p>
-      ) : null}
-      {configuration && selectedModel ? (
-        <form onSubmit={submit}>
-          <label className="field">
-            <span>Model</span>
-            <select
-              className="dialog-select"
-              onChange={(event) => {
-                const model = options?.models.find(
-                  (entry) => entry.id === event.target.value,
-                )
-                if (!model) {
-                  return
-                }
-                setConfiguration({
-                  model: model.id,
-                  reasoningEffort: model.reasoningEfforts[0],
-                  contextTier: model.contextTiers.includes('long_context')
-                    ? configuration.contextTier
-                    : 'default',
-                  mode: configuration.mode,
-                })
-              }}
-              value={configuration.model}
-            >
-              {options?.models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedModel.reasoningEfforts.length > 0 ? (
-            <label className="field">
-              <span>Reasoning effort</span>
-              <select
-                className="dialog-select"
-                onChange={(event) => {
-                  if (isRuntimeReasoningEffort(event.target.value)) {
-                    setConfiguration({
-                      ...configuration,
-                      reasoningEffort: event.target.value,
-                    })
-                  }
-                }}
-                value={configuration.reasoningEffort}
-              >
-                {selectedModel.reasoningEfforts.map((effort) => (
-                  <option key={effort} value={effort}>
-                    {effort}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <label className="field">
-            <span>Context size</span>
-            <select
-              className="dialog-select"
-              onChange={(event) =>
-                setConfiguration({
-                  ...configuration,
-                  contextTier: event.target.value as
-                    | 'default'
-                    | 'long_context',
-                })
-              }
-              value={configuration.contextTier}
-            >
-              {selectedModel.contextTiers.map((tier) => (
-                <option key={tier} value={tier}>
-                  {contextSizeLabel(selectedModel, tier)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Agent mode</span>
-            <select
-              className="dialog-select"
-              onChange={(event) =>
-                setConfiguration({
-                  ...configuration,
-                  mode: event.target.value as
-                    | 'interactive'
-                    | 'plan'
-                    | 'autopilot',
-                })
-              }
-              value={configuration.mode || 'interactive'}
-            >
-              <option value="interactive">Interactive</option>
-              <option value="plan">Plan</option>
-              <option value="autopilot">
-                {session.provider === 'claude' ? 'Auto' : 'Autopilot'}
-              </option>
-            </select>
-          </label>
-          <p className="runtime-dialog__hint">
-            {session.provider === 'claude'
-              ? 'Claude settings apply to the next turn. Change settings only while the agent is idle.'
-              : 'Tmux sessions restart their Copilot pane with the same session ID. Change settings only while the agent is idle.'}
-          </p>
-          {runtimeStatus !== 'idle' ? (
-            <p className="form-error" role="status">
-              Finish or stop the current response before changing runtime
-              settings.
-            </p>
-          ) : null}
-          {error ? <p className="form-error">{error}</p> : null}
-          <button
-            className="primary-button dialog__submit"
-            disabled={submitting || runtimeStatus !== 'idle'}
-            type="submit"
-          >
-            {submitting ? 'Applying…' : 'Apply runtime settings'}
-          </button>
-        </form>
-      ) : null}
-      {!loading && error && !configuration ? (
-        <p className="form-error">{error}</p>
-      ) : null}
     </DialogFrame>
   )
 }
@@ -7206,12 +3786,28 @@ function fallbackSessionKey(
   return fallback ? sessionKey(fallback) : undefined
 }
 
-function App() {
+function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClient }) {
+  const desktopRail = usePreviewFeature('desktopRail')
+  const notificationPanel = usePreviewFeature('notificationPanel')
+  const schedulerView = usePreviewFeature('schedulerView')
+  const hostMonitorView = usePreviewFeature('hostMonitorView')
+  const notifications = useNotifications(notificationPanel)
+  const [scheduleLink, setScheduleLink] = useState(() => readScheduleLink(window.location.href))
+  const [shellView, setShellView] = useState<string>()
+  const initialScheduleLink = useRef(scheduleLink)
+  useEffect(() => {
+    if (!schedulerView || !initialScheduleLink.current) return
+    setScheduleLink(initialScheduleLink.current)
+    setShellView('scheduler')
+    initialScheduleLink.current = undefined
+  }, [schedulerView])
+  const composerRefresh = usePreviewFeature('composerRefresh')
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
   const [computers, setComputers] = useState<ComputerSummary[]>([])
   const managerListenersRef = useRef(new Set<(event: ManagerEvent) => void>())
+  const [scheduleProposalEpoch, setScheduleProposalEpoch] = useState(0)
   const authoritativeRefreshRef = useRef<() => Promise<void>>(async () => undefined)
   const authoritativeRefreshGeneration = useRef(0)
   const [refreshState, setRefreshState] = useState<'fresh' | 'refreshing' | 'stale'>('fresh')
@@ -7515,6 +4111,7 @@ function App() {
   // one simply because it finished last.
   const snapshotGeneration = useRef(0)
   const snapshotApplied = useRef(0)
+  const computerRecordsSnapshotApplied = useRef(0)
   // The newest refresh that actually reached each computer.
   const computerSnapshotApplied = useRef(new Map<string, number>())
   // Computers whose sessions the most recent list actually reached. A computer
@@ -7527,6 +4124,8 @@ function App() {
   // Sessions somebody said outright are gone, as opposed to ones a list did
   // not mention. Absence and removal are different things.
   const removedSessions = useRef(new Set<string>())
+  // Tombstones that exist only because their computer was unpaired; pairing it again lifts them.
+  const unpairedTombstones = useRef(new Map<string, Set<string>>())
   // Of those, the ones closed to reopen: coming back lifts their removal.
   const closedSessionKeys = useRef(new Set<string>())
   // One reorder at a time for a session, so a second drag does not take its
@@ -7673,9 +4272,11 @@ function App() {
   >([])
   const [sessionCreationError, setSessionCreationError] = useState<string>()
   const [computersOpen, setComputersOpen] = useState(false)
+  const settingsNavigation = usePreviewFeature('settingsNavigation')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const navigationWidth = sidebarWidth + (desktopRail && desktopLayout ? 64 : 0)
   const oracleDockReservedLeft =
-    sidebarWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
+    navigationWidth + (knowledgeMode === 'docked' ? READER_WIDTH_MIN : 0)
   const oracleDockAvailable =
     desktopLayout &&
     viewportWidth - oracleDockReservedLeft >=
@@ -7761,7 +4362,6 @@ function App() {
   // Preferences that follow you to every device on this hub. This device's
   // copy renders at once; the hub's profile and other devices' changes
   // arrive through the client.
-  const [settingsClient] = useState(createSettingsProfileClient)
   const settingsProfile = useSyncExternalStore(
     settingsClient.subscribe,
     settingsClient.getState,
@@ -7996,6 +4596,7 @@ function App() {
   const recordingStreamRef = useRef<MediaStream | undefined>(undefined)
   const recordingChunksRef = useRef<Blob[]>([])
   const recordingSessionRef = useRef<ManagedSession | undefined>(undefined)
+  const recordingIntakeSequenceRef = useRef(0)
   const recordingTimerRef = useRef<number | undefined>(undefined)
   const recordingStartedAtRef = useRef(0)
   const discardRecordingRef = useRef(false)
@@ -8723,6 +5324,16 @@ function App() {
   const notificationStateRef = useRef<Map<string, SessionNotificationState>>(
     new Map(),
   )
+  const scheduleShellNotifierRef = useRef(new ScheduleShellNotifier())
+  const raiseScheduleShellNotificationRef = useRef((_record: import('../shared/notification-center').NotificationRecord) => {})
+  raiseScheduleShellNotificationRef.current = (record) => {
+    if (!nativeShell()) return
+    const notification = scheduleShellNotifierRef.current.next(record, {
+      scope: notificationScopeRef.current, mutedKeys: mutedSessions, activeKey: selectedKey,
+      documentVisible: document.visibilityState === 'visible',
+    })
+    if (notification) sendShellNotification(notification)
+  }
   useEffect(() => {
     if (!nativeShell()) {
       return
@@ -8774,6 +5385,13 @@ function App() {
     hasRunningBackgroundAgent(selectedBackgroundTasks)
   const selectedHasActiveBackgroundTasks =
     hasActiveBackgroundTasks(selectedBackgroundTasks)
+  const foregroundHandoff = useForegroundHandoff(
+    selected, selected ? sessionEventSequenceRef.current.get(sessionKey(selected)) || 0 : 0,
+  )
+  const selectedForegroundTurnActive = useMemo(
+    () => foregroundHandoff.active || Boolean(selected && hasForegroundTurn(selected, selectedBackgroundTasks)),
+    [foregroundHandoff.active, selected, selectedBackgroundTasks],
+  )
   const selectedQueueAvailable =
     selected?.status === 'running' ||
     (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
@@ -8832,6 +5450,7 @@ function App() {
     setCloseRequest(undefined)
   }
   const hasBlockingUi =
+    Boolean(shellView) ||
     newSessionOpen ||
     Boolean(closeRequestSession) ||
     recentlyClosedOpen ||
@@ -10312,7 +6931,7 @@ function App() {
         // without it a deep link to its ancestor has no way through.
         recordReplacementLinks(loadedSessions)
         claimReplacedSessions(reconciled)
-        applyComputerSnapshot(loadedComputers, startedAtSequence)
+        applyComputerSnapshot(loadedComputers, startedAtSequence, asked)
         // A live removal can arrive before this list does, so the address may
         // name a session that has already been replaced, possibly more than
         // once. Falling through to `sessions[0]` would open something the
@@ -10757,7 +7376,7 @@ function App() {
       // first. Selection is only set when nothing has been chosen yet, so
       // this never moves a reader who is already somewhere.
       applyInitialSelection(reconciledForClaim, answeredFor)
-      applyComputerSnapshot(loadedComputers, startedAtSequence)
+      applyComputerSnapshot(loadedComputers, startedAtSequence, asked)
       // A session that changed while the refresh was in flight is described
       // more recently by the event than by the snapshot, exactly as the two
       // reconciliations above assume. A clear moves the mute to a replacement
@@ -10769,8 +7388,13 @@ function App() {
       // A replacement selected while the refresh was in flight is missing
       // from the snapshot by definition, and dropping it would jump the
       // reader to an unrelated session.
+      // Removed while this refresh ran (for example, its computer was found
+      // unpaired by the snapshot above): it is gone, not newly changed.
+      const selectedRemovedSinceRefresh = Boolean(selectedAtRefresh &&
+        removedSessions.current.has(sessionKey(selectedAtRefresh)) &&
+        changedSinceRefresh(sessionKey(selectedAtRefresh)))
       const selectedStillExists =
-        selectedAtRefresh &&
+        selectedAtRefresh && !selectedRemovedSinceRefresh &&
         (snapshotSessions.some(
           (session) => sessionKey(session) === sessionKey(selectedAtRefresh),
         ) ||
@@ -10825,6 +7449,7 @@ function App() {
           // The archived record was deleted and its removal event never
           // arrived here; the list and the detail now agree it is gone.
           removedSessions.current.add(goneKey)
+          claimTombstone(goneKey)
           setSessions((current) => current.filter((session) => sessionKey(session) !== goneKey))
           if (selectedRef.current && sessionKey(selectedRef.current) === goneKey) {
             setSelectedKey(
@@ -10934,6 +7559,7 @@ function App() {
         if (current.readyState === WebSocket.OPEN) current.send(JSON.stringify(request))
       })
       socket.onopen = () => {
+        publishFeatureEvent({ type: 'hub.connected' })
         reportOraclePresenceRef.current()
         reconnectDelay = 1_000
         sessionKnowledgeRootRef.current.refresh()
@@ -10942,16 +7568,22 @@ function App() {
         void syncSessionOrderRef.current()
         // Settings events are not replayed either.
         void settingsClient.sync()
+        setScheduleProposalEpoch((current) => current + 1)
         void refreshAllAuthoritativeState(setSessionLoadError).catch(() => undefined)
       }
       socket.onmessage = (message) => {
         const event = patches.receive(JSON.parse(message.data as string) as HubWireEvent)
         if (!event) return
+        publishFeatureEvent(event)
         if (isManagerEvent(event)) {
           // The manager's conversation, not session lifecycle: it must not
           // move the transcript sequence either.
           for (const listener of managerListenersRef.current) listener(event)
           raiseOracleShellNotificationRef.current(event)
+        } else if (event.type === 'schedule-proposals.changed' || event.type === 'schedules.changed') {
+          setScheduleProposalEpoch((current) => current + 1)
+        } else if (event.type === 'schedule.run.notification') {
+          raiseScheduleShellNotificationRef.current(event.notification)
         } else if (event.type === 'session.knowledge.updated') {
           sessionKnowledgeRootRef.current.applyUpdate(event.binding)
         } else if (event.type === 'session.order.updated') {
@@ -11003,6 +7635,7 @@ function App() {
           // is not what settles it, and a delayed clear response must not put
           // it back.
           removedSessions.current.add(removedKey)
+          claimTombstone(removedKey)
           if (event.closed) {
             closedSessionKeys.current.add(removedKey)
             void recentlyClosedRef.current.refresh()
@@ -11110,6 +7743,7 @@ function App() {
           // The hub filters retired clients before publishing this event.
           // A new pairing may be announced by another tab without a refresh.
           forgottenComputers.current.delete(event.computer.id)
+          liftUnpairedTombstones(event.computer.id)
           eventSequenceRef.current = nextSessionEventSequence()
           // Only the computer record is newer, not its sessions. A paired node
           // going offline is an ordinary update, and treating it as reason to
@@ -11126,20 +7760,7 @@ function App() {
             event.computerId,
             eventSequenceRef.current,
           )
-          // Its sessions go with it, so nothing held for them can ever be
-          // settled again. Left behind, the text of a prompt that failed
-          // stayed in this browser's storage for good.
-          for (const key of Object.keys(restoredDraftStamps.current)) {
-            if (key.slice(0, key.indexOf(':')) === event.computerId) {
-              forgetRestoredDraft(key)
-              handledFailures.current.delete(key)
-              restoredFailures.current.delete(key)
-              unshownFailures.current.delete(key)
-            }
-          }
-          for (const key of acceptedSubmissionTokens.current.keys()) {
-            if (key.startsWith(`${event.computerId}:`)) acceptedSubmissionTokens.current.delete(key)
-          }
+          discardComputerLocalState(event.computerId)
           computersRef.current = computersRef.current.filter(
             (computer) => computer.id !== event.computerId,
           )
@@ -11148,19 +7769,8 @@ function App() {
           // computer that has been unpaired, so a tab still listing one would
           // offer a document it can no longer fetch.
           forgetComputerKnowledge(event.computerId)
-          setSideQuestions(withoutSideQuestions((key) => key.startsWith(`${event.computerId}:`)))
-          // Nothing on a computer that has gone is still on its way.
-          for (const key of [...pendingReplacements.current]) {
-            if (key.slice(0, key.indexOf(':')) === event.computerId) {
-              pendingReplacements.current.delete(key)
-              settleAttachmentTargetWaiters(key, undefined)
-            }
-          }
           for (const session of sessionsRef.current) {
-            if (session.computerId === event.computerId) {
-              removedSessions.current.add(sessionKey(session))
-              submissionAnchors.current.delete(sessionKey(session))
-            }
+            if (session.computerId === event.computerId) tombstoneUnpairedSession(event.computerId, sessionKey(session))
           }
           setSessions((current) =>
             current.filter((session) => session.computerId !== event.computerId),
@@ -11172,18 +7782,7 @@ function App() {
               ),
             ),
           )
-          updateComposerDrafts(
-            Object.keys(composerDraftsRef.current).filter(
-              (key) => key.startsWith(`${event.computerId}:`),
-            ),
-            (current) =>
-            Object.fromEntries(
-              Object.entries(current).filter(
-                ([key]) => !key.startsWith(`${event.computerId}:`),
-              ),
-            ),
-          )
-        } else {
+        } else if (event.type === 'error') {
           // A prompt that was handed over and then failed to send is gone from
           // the queue and was never in the composer, so the text comes back
           // here or nowhere. Anything typed since is newer and is left alone.
@@ -11872,13 +8471,14 @@ function App() {
   function navigateMessageHistory(
     direction: -1 | 1,
     force = false,
+    messageId?: string,
   ): boolean {
     if (!selected || !selectedKey) {
       return false
     }
-    const messages = selected.messages
-      .filter((message) => message.role === 'user' && message.content.trim())
-      .map((message) => message.content)
+    const userTurns = selected.messages
+      .filter((message) => message.role === 'user' && !message.appGenerated && message.content.trim())
+    const messages = userTurns.map((message) => message.content)
     if (messages.length === 0) {
       return false
     }
@@ -11897,10 +8497,11 @@ function App() {
             draftPastes:
               existing?.draftPastes ?? composerDrafts[selectedKey]?.pastes ?? [],
           }
-    const nextIndex = Math.min(
+    const nextIndex = messageId ? userTurns.findIndex((message) => message.id === messageId) : Math.min(
       Math.max(history.index + direction, 0),
       messages.length,
     )
+    if (nextIndex < 0) return false
     history.index = nextIndex
     composerHistoryRef.current[selectedKey] = history
     const value =
@@ -11911,6 +8512,7 @@ function App() {
       true,
       nextIndex === messages.length ? history.draftPastes : [],
     )
+    if (messageId) return true
     window.requestAnimationFrame(() => {
       if (
         selectedRef.current &&
@@ -11957,6 +8559,8 @@ function App() {
     const targetKey = followsLineage
       ? followReplacementsRef.current(rawTargetKey)
       : rawTargetKey
+    // A transcription or upload can finish after its session (or computer) is gone.
+    if (removedSessions.current.has(targetKey)) return
     updateComposerDrafts([targetKey], (current) => {
       const existing = durableComposerDraft(
         targetKey,
@@ -12806,6 +9410,7 @@ function App() {
       return true
     }
     const dialogs: [boolean, () => void][] = [
+      [Boolean(shellView), closeShellView],
       [Boolean(closeRequestSession), () => setCloseRequest(undefined)],
       [recentlyClosedOpen, () => setRecentlyClosedOpen(false)],
       [newSessionOpen, closeNewSession],
@@ -13532,7 +10137,11 @@ function App() {
   function applyComputerSnapshot(
     loaded: ComputerSummary[],
     startedAtSequence: number,
+    generation: number,
   ) {
+    const forgotten = new Set<string>()
+    if (generation <= computerRecordsSnapshotApplied.current) return forgotten
+    computerRecordsSnapshotApplied.current = generation
     const changedAt = (id: string) => Math.max(
       computerEventSequenceRef.current.get(id) || 0,
       computerRecordSequenceRef.current.get(id) || 0,
@@ -13542,19 +10151,21 @@ function App() {
     )
     for (const computer of accepted) {
       forgottenComputers.current.delete(computer.id)
+      liftUnpairedTombstones(computer.id)
     }
     const listedIds = new Set(loaded.map((computer) => computer.id))
     const knownIds = new Set([
       ...computersRef.current.map((computer) => computer.id),
       ...rootsRef.current.map((root) => root.computerId),
+      ...sessionsRef.current.map((session) => session.computerId),
     ])
     for (const id of knownIds) {
       if (
         !listedIds.has(id) &&
-        changedAt(id) <= startedAtSequence &&
-        !forgottenComputers.current.has(id)
+        changedAt(id) <= startedAtSequence
       ) {
-        forgetComputerKnowledge(id)
+        forgotten.add(id)
+        if (!forgottenComputers.current.has(id)) forgetComputerKnowledge(id)
       }
     }
     let reconciled = accepted
@@ -13565,6 +10176,8 @@ function App() {
     }
     computersRef.current = reconciled
     setComputers(reconciled)
+    discardUnpairedComputers(forgotten)
+    return forgotten
   }
 
   /**
@@ -14243,10 +10856,14 @@ function App() {
         sessionsRef.current = upsertSession(sessionsRef.current, updated)
         setSessions((current) => upsertSession(current, updated))
       }
+      if (composerRefresh && !isCommand && !shouldEnqueue && !queuedInstead) {
+        foregroundHandoff.accepted(updated, sessionEventSequenceRef.current.get(liveKey) || 0)
+      }
     } catch (caught) {
       if (!composerMounted.current) {
         return
       }
+      foregroundHandoff.clear()
       const liveKey = followReplacementsRef.current(targetKey)
       if (
         liveKey === targetKey &&
@@ -14348,11 +10965,17 @@ function App() {
     }
   }
 
+  /** Unpairing discards a computer's drafts, even if it is paired again before queued work runs. */
+  function unpairedSince(computerId: string, intakeSequence: number) {
+    return (computerEventSequenceRef.current.get(computerId) || 0) > intakeSequence
+  }
+
   async function transcribeFile(
     file: File,
     targetSession: ManagedSession | undefined = selected,
+    intakeSequence = eventSequenceRef.current,
   ) {
-    if (!targetSession) {
+    if (!targetSession || unpairedSince(targetSession.computerId, intakeSequence)) {
       return
     }
     const targetKey = sessionKey(targetSession)
@@ -14360,6 +10983,7 @@ function App() {
     setError(undefined)
     try {
       const result = await transcribeAudio(file)
+      if (unpairedSince(targetSession.computerId, intakeSequence)) return
       appendComposerForKey(targetKey, result.transcript)
       if (
         selectedRef.current &&
@@ -14424,6 +11048,7 @@ function App() {
       mediaRecorderRef.current = recorder
       recordingChunksRef.current = []
       recordingSessionRef.current = selected
+      recordingIntakeSequenceRef.current = eventSequenceRef.current
       discardRecordingRef.current = false
       recorder.addEventListener('dataavailable', (event) => {
         if (event.data.size > 0) {
@@ -14445,8 +11070,9 @@ function App() {
         const file = new File(chunks, `recording.${extension}`, {
           type: mimeType,
         })
+        const intakeSequence = recordingIntakeSequenceRef.current
         const releaseIntake = holdAttachmentIntake()
-        void queueAttachmentWork(() => transcribeFile(file, targetSession))
+        void queueAttachmentWork(() => transcribeFile(file, targetSession, intakeSequence))
           .then(releaseIntake, releaseIntake)
       })
       recorder.addEventListener('error', () => {
@@ -14557,7 +11183,9 @@ function App() {
       { message: string; retryable: boolean }
     >(),
     releaseIntake?: () => void,
+    intakeSequence = eventSequenceRef.current,
   ) {
+    if (unpairedSince(targetSession.computerId, intakeSequence)) return
     const targetKey = sessionKey(targetSession)
     const liveKey = followReplacementsRef.current(targetKey)
     const lineageAvailable =
@@ -14568,6 +11196,7 @@ function App() {
     }
     if (!liveTarget && files.some((file) => !isAudioFile(file))) {
       liveTarget = await waitForAttachmentTarget(targetSession)
+      if (unpairedSince(targetSession.computerId, intakeSequence)) return
     }
     if (!liveTarget && files.some((file) => !isAudioFile(file))) {
       clipboardPasteBatchesRef.current.delete(liveKey)
@@ -14630,7 +11259,7 @@ function App() {
             !removedSessions.current.has(targetKey) ||
             followReplacementsRef.current(targetKey) !== targetKey
           ) {
-            await transcribeFile(item.file, targetSession)
+            await transcribeFile(item.file, targetSession, intakeSequence)
           }
         } finally {
           for (const key of new Set([
@@ -14689,6 +11318,7 @@ function App() {
       setError('Stop recording before attaching files.')
       return Promise.resolve()
     }
+    const intakeSequence = eventSequenceRef.current
     if (deduplicateClipboard) {
       const ownerKey = followReplacementsRef.current(sessionKey(targetSession))
       const now = Date.now()
@@ -14758,6 +11388,7 @@ function App() {
               targetSession,
               preflightErrors,
               releaseIntake,
+              intakeSequence,
             )
           }
         } finally {
@@ -14772,7 +11403,7 @@ function App() {
     }
     const releaseIntake = holdAttachmentIntake()
     const work = queueAttachmentWork(() =>
-      processAttachedFiles(files, targetSession, undefined, releaseIntake),
+      processAttachedFiles(files, targetSession, undefined, releaseIntake, intakeSequence),
     )
     void work.then(releaseIntake, releaseIntake)
     return work
@@ -16155,6 +12786,7 @@ function App() {
         closedSessionKeys.current.add(closedKey)
       }
       removedSessions.current.add(closedKey)
+      claimTombstone(closedKey)
       forgetAttachments(closedKey)
       updateComposerDrafts([closedKey], (current) => {
         const { [closedKey]: _removed, ...remaining } = current
@@ -16414,9 +13046,146 @@ function App() {
     })()
   }
 
+  function closeShellView() {
+    setShellView(undefined)
+    if (!desktopLayout) setSidebarOpen(true)
+  }
+  const shellNavigation = <ShellNavigation displayName={profile.displayName} onNewSession={openNewSession}
+    oracleAvailable={oracleIndicator.available}
+    unreadCount={notifications.unreadCount} offscreen={!desktopLayout && !sidebarOpen}
+    onSettings={() => { setSidebarOpen(false); setSettingsSection(undefined); setSettingsOpen(true) }}
+    onOpen={(id) => { if (id === 'scheduler') setScheduleLink(undefined); setSidebarOpen(false); setShellView(id) }}
+    onOracle={() => { setSidebarOpen(false); setOracleFocusRequest((request) => request + 1); setOracleOpen(true) }} />
+
+  function computerAdded(computer: ComputerSummary) {
+    forgottenComputers.current.delete(computer.id)
+    liftUnpairedTombstones(computer.id)
+    eventSequenceRef.current = nextSessionEventSequence()
+    computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
+    computersRef.current = upsertComputer(computersRef.current, computer)
+    setComputers(computersRef.current)
+  }
+
+  function computerRemoved(computerId: string) {
+    eventSequenceRef.current = nextSessionEventSequence()
+    computerEventSequenceRef.current.set(computerId, eventSequenceRef.current)
+    computersRef.current = computersRef.current.filter((computer) => computer.id !== computerId)
+    setComputers(computersRef.current)
+    forgetComputerKnowledge(computerId)
+    // The removal event may never arrive (socket down), so fence late responses
+    // and drop browser-held state here exactly as a snapshot removal does.
+    discardUnpairedComputers(new Set([computerId]))
+  }
+
+
+  /**
+   * Browser-held state for a computer that is no longer paired: its sessions
+   * go with it, so nothing held for them can ever be settled again. Left
+   * behind, the text of a prompt that failed stayed in this browser's storage
+   * for good, and side answers stayed on screen. Shared by the removal event
+   * and a connection check that finds the computer unpaired.
+   */
+  function discardComputerLocalState(computerId: string) {
+    const owned = (key: string) => key.startsWith(`${computerId}:`)
+    for (const key of Object.keys(restoredDraftStamps.current)) {
+      if (owned(key)) {
+        forgetRestoredDraft(key)
+        handledFailures.current.delete(key)
+        restoredFailures.current.delete(key)
+        unshownFailures.current.delete(key)
+      }
+    }
+    for (const key of acceptedSubmissionTokens.current.keys()) {
+      if (owned(key)) acceptedSubmissionTokens.current.delete(key)
+    }
+    setSideQuestions(withoutSideQuestions(owned))
+    // Nothing on a computer that has gone is still on its way.
+    for (const key of [...pendingReplacements.current]) {
+      if (owned(key)) {
+        pendingReplacements.current.delete(key)
+        settleAttachmentTargetWaiters(key, undefined)
+      }
+    }
+    for (const session of sessionsRef.current) {
+      if (session.computerId === computerId) {
+        submissionAnchors.current.delete(sessionKey(session))
+        forgetAttachments(sessionKey(session))
+      }
+    }
+    updateComposerDrafts(
+      Object.keys(composerDraftsRef.current).filter(owned),
+      (current) => Object.fromEntries(Object.entries(current).filter(([key]) => !owned(key))),
+    )
+  }
+
+  /**
+   * Sessions, task caches and browser-held state for computers a snapshot
+   * found unpaired. Shared by every snapshot (connection check, reconnect,
+   * startup), so whichever one wins still cleans up.
+   */
+  function tombstoneUnpairedSession(computerId: string, key: string) {
+    if (removedSessions.current.has(key)) return
+    removedSessions.current.add(key)
+    const keys = unpairedTombstones.current.get(computerId) ?? new Set<string>()
+    keys.add(key)
+    unpairedTombstones.current.set(computerId, keys)
+  }
+
+  /** A deletion or close owns the tombstone from now on, so pairing again does not lift it. */
+  function claimTombstone(key: string) {
+    unpairedTombstones.current.get(key.slice(0, key.indexOf(':')))?.delete(key)
+  }
+
+  function liftUnpairedTombstones(computerId: string) {
+    for (const key of unpairedTombstones.current.get(computerId) ?? []) removedSessions.current.delete(key)
+    unpairedTombstones.current.delete(computerId)
+  }
+
+  function discardUnpairedComputers(forgotten: ReadonlySet<string>) {
+    if (!forgotten.size) return
+    // Only a newer computer event can keep a computer; a newer session event does not re-pair its owner.
+    const keepSession = (session: ManagedSession) => !forgotten.has(session.computerId)
+    const keepTasks = (key: string) => !forgotten.has(key.slice(0, key.indexOf(':')))
+    // Fence older responses even if the same computer is paired again before they finish.
+    const removedAtSequence = nextSessionEventSequence()
+    eventSequenceRef.current = removedAtSequence
+    for (const id of forgotten) computerEventSequenceRef.current.set(id, removedAtSequence)
+    for (const id of forgotten) discardComputerLocalState(id)
+    for (const session of sessionsRef.current) {
+      if (!keepSession(session)) {
+        const key = sessionKey(session)
+        tombstoneUnpairedSession(session.computerId, key)
+        sessionEventSequenceRef.current.set(key, removedAtSequence)
+      }
+    }
+    for (const key of new Set([
+      ...Object.keys(backgroundTaskSnapshotsRef.current),
+      ...backgroundTaskRequestsRef.current.keys(),
+    ])) {
+      if (!keepTasks(key)) {
+        backgroundTaskEventSequenceRef.current.set(key, removedAtSequence)
+        if (backgroundTaskRequestsRef.current.has(key)) queuedBackgroundTaskRefreshesRef.current.add(key)
+      }
+    }
+    sessionsRef.current = sessionsRef.current.filter(keepSession)
+    setSessions((current) => current.filter(keepSession))
+    const tasks = (current: Record<string, BackgroundTaskSnapshot>) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => keepTasks(key)))
+    backgroundTaskSnapshotsRef.current = tasks(backgroundTaskSnapshotsRef.current)
+    setBackgroundTaskSnapshots(tasks)
+  }
+
+  async function checkComputerConnections() {
+    const generation = ++snapshotGeneration.current
+    const startedAtSequence = eventSequenceRef.current
+    const loaded = await listComputers()
+    applyComputerSnapshot(loaded, startedAtSequence, generation)
+    return computersRef.current
+  }
+
   return (
     <div
-      className={`app-shell ${
+      className={`app-shell ${desktopRail ? 'app-shell--rail' : ''} ${
         keyboardOpen ? 'app-shell--keyboard-open' : ''
       } ${signInExpired ? 'app-shell--signed-out' : ''} ${
         oracleOpen &&
@@ -16461,6 +13230,7 @@ function App() {
         tabIndex={0}
       />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
+        {desktopLayout ? shellNavigation : null}
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>
           <button
             aria-label="Back to sessions"
@@ -16530,6 +13300,9 @@ function App() {
             >
               <SessionNavigation
                 managedSessions={managedSessionKeys}
+                onOpenScheduleRun={(target) => {
+                  setScheduleLink(target); setSidebarOpen(false); setShellView('scheduler')
+                }}
                 backgroundTasks={backgroundTaskSnapshots}
                 view={navigationView}
                 query={sessionQuery}
@@ -16794,7 +13567,7 @@ function App() {
           </button>
         ) : null}
         <div className="sidebar-settings">
-          <button
+          {!desktopRail && <button
             aria-label="App settings"
             className="sidebar-settings__button"
             onClick={() => {
@@ -16809,7 +13582,7 @@ function App() {
               <strong>App settings</strong>
               <small>Notifications, updates, and display</small>
             </span>
-          </button>
+          </button>}
           {/* On a phone the session list covers the conversation and its
               Oracle bubble, so Oracle is offered here too; CSS shows this
               copy only there. */}
@@ -16825,12 +13598,18 @@ function App() {
           <button
             aria-label="Manage computers"
             className="icon-button manage-computers-button"
-            onClick={() => setComputersOpen(true)}
+            onClick={() => {
+              if (settingsNavigation) {
+                setSettingsSection('settings-computers')
+                setSettingsOpen(true)
+              } else setComputersOpen(true)
+            }}
             type="button"
           >
             <MonitorCog aria-hidden="true" size={18} />
           </button>
         </div>
+        {!desktopLayout ? shellNavigation : null}
       </aside>
 
       {sidebarOpen ? (
@@ -16855,7 +13634,17 @@ function App() {
             <Menu size={21} />
           </button>
           <div className="conversation-header__title">
-            <strong>{selected?.title || 'Agentic Remote'}</strong>
+            <strong>
+              {selected ? (
+                <span className="conversation-header__origin">
+                  <SessionOriginBadge compact provenance={selected.provenance} />
+                  <SessionOriginRunLink provenance={selected.provenance} onOpenRun={(target) => {
+                    setScheduleLink(target); setShellView('scheduler')
+                  }} />
+                </span>
+              ) : null}
+              {selected?.title || 'Agentic Remote'}
+            </strong>
             {selected ? (
               <span className="conversation-header__meta">
                 {/* The description shrinks; the folder does not. On a phone
@@ -17313,6 +14102,9 @@ function App() {
                 {selectedRunningBackgroundTasks === 1 ? '' : 's'} running
               </button>
             ) : null}
+            {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
+              <SubagentCount snapshot={selectedBackgroundTasks} onOpen={openBackgroundTasks} />
+            ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
             ) : null}
@@ -17337,163 +14129,32 @@ function App() {
         ) : null}
 
         {selected ? (
-          <footer className="composer-area">
-            <div className="composer-context">
-            {selected.queuedDispatch || queuedEditUnconfirmed ? (
-              <div className="queued-edit-banner queued-edit-banner--dispatch" id="queued-dispatch-warning" role="status">
-                <span>
-                  {selected.queuedDispatch?.message ||
-                    'Queued delivery is pending or unconfirmed. Do not send the rewrite again until you have checked the provider.'}
-                </span>
-                {selected.queuedDispatch?.state === 'uncertain' ? (
-                  <button
-                    className="queued-edit-banner__save"
-                    disabled={Boolean(queueActionId) || sending || selectedRetained}
-                    onClick={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
-                    type="button"
-                  >
-                    Discard unconfirmed queue item
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-            {selected.queueState ? (
-              <div
-                className={`queued-edit-banner queued-edit-banner--queue-${selected.queueState.state}`}
-                role={selected.queueState.state === 'error' ? 'alert' : 'status'}
-              >
-                <span>{selected.queueState.message}</span>
-              </div>
-            ) : null}
-            {selected.queuedPrompts?.length ? (
-              <section
-                aria-description={
-                  selectedRetained
-                    ? 'Messages retained until this session is reopened'
-                    : selectedQueueHeadIsSteering
-                      ? 'The next message is waiting for a safe terminal composer to join the running turn'
-                      : 'Messages waiting for later delivery'
-                }
-                aria-label={
-                  selectedRetained
-                    ? 'Retained prompts'
-                    : selectedQueueHeadIsSteering
-                      ? 'Steering prompts'
-                      : 'Queued prompts'
-                }
-                className="queued-prompts"
-              >
-                <header>
-                  <strong>
-                    {selectedRetained
-                      ? 'Retained until reopened'
-                      : selectedQueueHeadIsSteering
-                        ? 'Steering when ready'
-                        : 'Queued for later'}
-                  </strong>
-                  <span>{selected.queuedPrompts.length}</span>
-                </header>
-                <DndContext
-                  collisionDetection={closestCenter}
-                  id="prompt-queue"
-                  onDragEnd={(event) => void queueDragEnded(event)}
-                  sensors={sensors}
-                >
-                  <SortableContext
-                    items={selected.queuedPrompts.map(
-                      (prompt) => `queued:${prompt.id}`,
-                    )}
-                    strategy={verticalListSortingStrategy}
-                  >
-                    <div className="queued-prompts__list">
-                      {selected.queuedPrompts.map((prompt, index) => (
-                        <SortableQueuedPrompt
-                          busy={Boolean(queueActionId) || sending || Boolean(selected.queuedDispatch)}
-                          editing={editingQueuedPromptId === prompt.id}
-                          index={index}
-                          key={prompt.id}
-                          onEdit={() => editQueuedPrompt(prompt)}
-                          onRemove={() =>
-                            void manageQueuedPrompt(prompt.id, false)
-                          }
-                          suspended={selected.suspended === true}
-                          retained={selectedRetained}
-                          prompt={prompt}
-                          steering={index === 0 && selectedQueueHeadIsSteering}
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
-                </DndContext>
-              </section>
-            ) : null}
-            {editingQueuedPromptId ? (
-              <div className="queued-edit-banner">
-                <Pencil size={13} />
-                <span>
-                  Editing a queued message.{' '}
-                  {phoneEnterCreatesNewline() ? (
-                    <strong>Save to queue</strong>
-                  ) : (
-                    <strong>Enter</strong>
-                  )}{' '}
-                  puts it back in the queue without moving it.
-                  {selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                    ? ' Send now delivers only this message.'
-                    : ''}
-                </span>
-                <button
-                  className="queued-edit-banner__save"
-                  disabled={!composer.trim() || Boolean(queueActionId) ||
-                    uploadingFile || transcribing ||
-                    Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
-                  onClick={() => void saveQueuedPromptEdit()}
-                  title="Put this back in the queue"
-                  type="button"
-                >
-                  Save to queue
-                </button>
-                <button
-                  aria-label="Stop editing this queued message"
-                  className="icon-button"
-                  disabled={Boolean(queueActionId)}
-                  onClick={cancelQueuedPromptEdit}
-                  title="Leave it as it was (Escape)"
-                  type="button"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            ) : null}
-            {selectedKey && composerDrafts[selectedKey]?.deliveryUncertain &&
-              !selected.queuedDispatch && !queuedEditUnconfirmed ? (
-              <div className="error-banner" id="composer-delivery-warning" role="status">
-                <span>
-                  Delivery could not be confirmed. Your message was restored; it may
-                  already have been sent or queued. Check the conversation and queue
-                  before sending again.
-                </span>
-              </div>
-            ) : null}
-            {composerStorageError ? (
-              <div className="error-banner" id="composer-storage-warning" role="alert">
-                <span>{composerStorageError}</span>
-              </div>
-            ) : null}
-            {acceptanceReceiptMissing ? (
-              <div className="error-banner" id="composer-acceptance-warning" role="status">
-                <span>
-                  {missingAcceptanceOwners.length === 1
-                    ? 'This send was accepted, but the browser has no saved receipt. '
-                    : 'These sends were accepted, but the browser has no saved receipts. '}
-                  Affected: {missingAcceptanceOwners.join('; ')}.
-                  {' '}Keep this tab open. Reloading may restore the submitted text as
-                  unconfirmed; check the conversation before sending it again.
-                </span>
-              </div>
-            ) : null}
-            </div>
-            {askingAside && selectedSideThread ? (
+          <Composer
+            selected={selected}
+            selectedRetained={selectedRetained}
+            selectedQueueHeadIsSteering={selectedQueueHeadIsSteering}
+            selectedQueueAvailable={selectedQueueAvailable}
+            foregroundTurnActive={selectedForegroundTurnActive}
+            selectedComputerOnline={selectedComputerOnline}
+            supportsQueuedPromptDispatch={selectedProviderCapability?.supportsQueuedPromptDispatch === true}
+            providerCapability={selectedProviderCapability}
+            queueActionId={queueActionId}
+            sending={sending}
+            editingQueuedPromptId={editingQueuedPromptId}
+            queuedEditUnconfirmed={queuedEditUnconfirmed}
+            composer={composer}
+            expandedComposer={terminalDraftExpandedContent}
+            uploadingFile={uploadingFile}
+            transcribing={transcribing}
+            deliveryUncertain={Boolean(selectedKey && composerDrafts[selectedKey]?.deliveryUncertain)}
+            composerStorageError={composerStorageError}
+            acceptanceReceiptMissing={acceptanceReceiptMissing}
+            missingAcceptanceOwners={missingAcceptanceOwners}
+            askingAside={askingAside}
+            sideQuestionDraft={sideQuestionDraft}
+            sideQuestionPending={sideQuestionPending}
+            sideQuestionHasEntries={Boolean(selectedSideThread?.entries.length)}
+            sideQuestionPanel={askingAside && selectedSideThread ? (
               <SideQuestionPanel
                 entries={selectedSideThread.entries}
                 markdownComponents={mermaidComponents}
@@ -17514,431 +14175,96 @@ function App() {
                   : `Reconnect ${selected.computerName} to ask about this session.`}
               />
             ) : null}
-            <div
-              className={`composer ${
-                selectedQueueAvailable && !askingAside ? 'composer--running' : ''
-              } ${askingAside ? 'composer--aside' : ''}`}
-              // A file is for the session; while the bar asks aside it would
-              // land in the draft it is keeping out of sight. The drop is
-              // still taken here, so the browser does not open the file.
-              onDragOver={(event) => {
-                if (event.dataTransfer.types.includes('Files')) {
-                  event.preventDefault()
-                  if (askingAside) event.dataTransfer.dropEffect = 'none'
-                }
-              }}
-              onDrop={askingAside ? (event) => event.preventDefault() : audioDropped}
-            >
-              {showCommandMenu ? (
-                <div className="command-menu" role="listbox" aria-label="Commands">
-                  {commandSuggestions.map((command, index) => (
-                    <button
-                      aria-selected={index === selectedCommandIndex}
-                      className={`command-menu__item ${
-                        index === selectedCommandIndex
-                          ? 'command-menu__item--selected'
-                          : ''
-                      }`}
-                      key={command.name}
-                      onClick={() => selectCommand(command)}
-                      role="option"
-                      type="button"
-                    >
-                      <Command size={14} />
-                      <span>
-                        <strong>/{command.name}</strong>
-                        <small>{command.description}</small>
-                      </span>
-                      {command.inputHint ? <em>{command.inputHint}</em> : null}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              {!askingAside && selectedAttachments.length > 0 ? (
-                <ul
-                  aria-label="Attachments"
-                  aria-live="polite"
-                  className="composer-attachments"
-                >
-                  {selectedAttachments.map((attachment) => (
-                    <li
-                      aria-label={`${attachment.name} attachment`}
-                      className={`composer-attachment composer-attachment--${attachment.status}`}
-                      key={attachment.id}
-                    >
-                      <FileText aria-hidden="true" size={18} />
-                      <span className="composer-attachment__details">
-                        <strong>{attachment.name}</strong>
-                        <small>
-                          {attachment.error ||
-                            (attachment.status === 'uploading'
-                              ? 'Uploading…'
-                              : 'Attached')}
-                          {' · '}
-                          {attachmentSize(attachment.size)}
-                        </small>
-                      </span>
-                      {attachment.status === 'failed' && attachment.retryable ? (
-                        <button
-                          aria-label={`Retry ${attachment.name}`}
-                          className="composer-attachment__action"
-                          disabled={uploadingFile || transcribing}
-                          onClick={() => void retryAttachment(attachment)}
-                          type="button"
-                        >
-                          <RefreshCw size={15} />
-                        </button>
-                      ) : null}
-                      <button
-                        aria-label={`Remove ${attachment.name}`}
-                        className="composer-attachment__action"
-                        disabled={
-                          attachment.status === 'uploading' ||
-                          sending ||
-                          queueActionId !== undefined
-                        }
-                        onClick={() => removeAttachment(attachment)}
-                        type="button"
-                      >
-                        <X size={15} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              <div className="composer-text-panel">
-                <textarea
-                  aria-label={askingAside ? 'Side question' : 'Message'}
-                  aria-describedby={askingAside ? undefined :
-                    [
-                      selected.queuedDispatch || queuedEditUnconfirmed
-                        ? 'queued-dispatch-warning'
-                        : selectedKey && composerDrafts[selectedKey]?.deliveryUncertain
-                          ? 'composer-delivery-warning'
-                          : undefined,
-                      composerStorageError ? 'composer-storage-warning' : undefined,
-                      acceptanceReceiptMissing ? 'composer-acceptance-warning' : undefined,
-                    ].filter(Boolean).join(' ') || undefined
-                  }
-                  // A suspended session has nothing running to send to. The
-                  // conversation stays here to be read; writing to it is what
-                  // resuming is for.
-                  // Asking aside reads the saved conversation, which a
-                  // suspended session still has.
-                  disabled={(selected.suspended === true || Boolean(selected.interruption || selected.archivedAt)) && !askingAside}
-                  maxLength={askingAside ? SIDE_QUESTION_MAX_LENGTH : undefined}
-                  onBeforeInput={askingAside ? undefined : composerBeforeInput}
-                  onCut={askingAside ? undefined : composerCut}
-                  onChange={(event) => {
-                    if (askingAside) {
-                      const draft = event.target.value
-                      updateSideThread(sessionKey(selected), (thread) => ({ ...thread, draft }))
-                      return
-                    }
-                    composerChanged(
-                      event.target.value,
-                      (event.nativeEvent as InputEvent).inputType,
-                    )
-                  }}
-                  onKeyDown={askingAside ? sideQuestionKeyDown : composerKeyDown}
-                  onPaste={askingAside ? undefined : composerPasted}
-                  placeholder={
-                    askingAside
-                      ? selectedSideThread?.entries.length
-                        ? 'Ask a follow-up…'
-                        : 'Ask about this conversation…'
-                      : selected.archivedAt
-                      ? 'Archived - reopen to send'
-                      : selected.interruption
-                      ? 'Interrupted - reopen to send'
-                      : selected.suspended
-                      ? 'Suspended · resume to send'
-                      : editingQueuedPromptId
-                        ? phoneEnterCreatesNewline()
-                          ? 'Editing a queued message · Save puts it back'
-                          : 'Editing a queued message · Enter puts it back'
-                        : `Message agent on ${selected.computerName}…`
-                  }
-                  ref={composerRef}
-                  rows={1}
-                  value={sideQuestionDraft ?? composer}
-                />
-              </div>
-              <input
-                accept="audio/*,.aac,.csv,.doc,.docx,.flac,.gif,.jpeg,.jpg,.json,.kql,.m4a,.md,.mp3,.mp4,.ofx,.ogg,.pdf,.png,.qfx,.tsv,.txt,.wav,.webm,.webp,.xls,.xlsx,.yaml,.yml"
-                aria-label="File attachment"
-                className="composer-audio-input"
-                onChange={audioFileChanged}
-                ref={audioInputRef}
-                multiple
-                type="file"
-              />
-              {recording ? (
-                <div className="recording-panel" role="status">
-                  <button
-                    className="recording-panel__cancel"
-                    onClick={() => stopRecording(true)}
-                    type="button"
-                  >
-                    Cancel
-                  </button>
-                  <span className="recording-panel__status">
-                    <i />
-                    Recording {recordingDuration(recordingSeconds)}
-                  </span>
-                  <button
-                    className="recording-panel__stop"
-                    onClick={() => stopRecording()}
-                    type="button"
-                  >
-                    <Square fill="currentColor" size={12} />
-                    Stop & transcribe
-                  </button>
-                </div>
-              ) : askingAside ? (
-                <div className="composer-actions">
-                  <span className="composer-actions__spacer" />
-                  <button
-                    aria-label="Ask side question"
-                    className="send-button send-button--aside"
-                    disabled={!sideQuestionDraft?.trim() || sideQuestionPending ||
-                      !selectedComputerOnline}
-                    onClick={submitSideQuestion}
-                    title={sideQuestionPending
-                      ? 'Waiting for the answer to the last side question'
-                      : 'Ask without sending anything to the session'}
-                    type="button"
-                  >
-                    <MessageCircleQuestion size={18} />
-                    <span className="send-button__label">Ask</span>
-                  </button>
-                  {selected.status === 'running' ? (
-                    <button
-                      aria-label="Stop response"
-                      className="send-button send-button--stop"
-                      disabled={cancelling}
-                      onClick={() => void stopSelectedSession()}
-                      type="button"
-                    >
-                      <Square fill="currentColor" size={15} />
-                    </button>
-                  ) : null}
-                </div>
-              ) : (
-                <div className="composer-actions">
-                  <button
-                    aria-label={
-                      transcribing
-                        ? 'Transcribing audio'
-                        : uploadingFile
-                          ? 'Uploading file'
-                          : 'Attach file or audio recording'
-                    }
-                    className="send-button composer-attachment-button"
-                    disabled={transcribing || uploadingFile}
-                    onClick={() => audioInputRef.current?.click()}
-                    type="button"
-                  >
-                    {transcribing || uploadingFile ? (
-                      <LoaderCircle
-                        className="activity-message__spinner"
-                        size={17}
-                      />
-                    ) : (
-                      <Paperclip size={17} />
-                    )}
-                  </button>
-                  <button
-                    aria-label="Start microphone recording"
-                    className="send-button composer-record-button"
-                    disabled={transcribing || uploadingFile}
-                    onClick={() => void startRecording()}
-                    title="Record and transcribe"
-                    type="button"
-                  >
-                    <Mic size={17} />
-                  </button>
-                  <span className="composer-actions__spacer" />
-                  {selectedQueueAvailable ? (
-                    <button
-                      aria-description="Queues this message for later delivery"
-                      aria-label="Queue message"
-                      className="send-button send-button--queue"
-                      disabled={!composer.trim() || sending || transcribing ||
-                        uploadingFile || Boolean(queueActionId) ||
-                        Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
-                      onClick={() => void submitMessage(true)}
-                      title="Queue for later delivery"
-                      type="button"
-                    >
-                      <ListPlus size={17} />
-                    </button>
-                  ) : null}
-                  <button
-                    aria-label={
-                      readonlyResourceCommand
-                        ? readonlyResourceCommand.tab === 'skills' ? 'Open skills' : 'Open MCP servers'
-                        : editingQueuedPromptId
-                        ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                          ? 'Send edited message'
-                          : 'Put this back in the queue'
-                        : 'Send message'
-                    }
-                    className="send-button"
-                    disabled={!composer.trim() || sending || transcribing ||
-                      uploadingFile ||
-                      (!readonlyResourceCommand && (
-                      Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
-                      queuedEditUnconfirmed || selected.suspended === true || Boolean(selected.interruption || selected.archivedAt) ||
-                      Boolean(editingQueuedPromptId &&
-                        selectedProviderCapability?.supportsQueuedPromptDispatch === true &&
-                        (selected.status === 'running' || selected.status === 'waiting'))))}
-                    onClick={() => void submitMessage()}
-                    title={
-                      readonlyResourceCommand
-                        ? 'Open the read-only resource view without sending a prompt'
-                        : editingQueuedPromptId
-                        ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                          ? 'Send this queued message now'
-                          : 'Put this back in the queue'
-                        : selected.status === 'running'
-                          ? 'Send into the current response'
-                          : 'Send immediately'
-                    }
-                    type="button"
-                  >
-                    {readonlyResourceCommand ? <Search size={19} /> : <ArrowUp size={19} strokeWidth={2.4} />}
-                    <span className="send-button__label">
-                      {readonlyResourceCommand ? 'View' : editingQueuedPromptId
-                        ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                          ? 'Send now'
-                          : 'Save'
-                        : 'Send'}
-                    </span>
-                  </button>
-                  {selected.status === 'running' ? (
-                    <button
-                      aria-label="Stop response"
-                      className="send-button send-button--stop"
-                      disabled={cancelling}
-                      onClick={() => void stopSelectedSession()}
-                      type="button"
-                    >
-                      <Square fill="currentColor" size={15} />
-                    </button>
-                  ) : null}
-                </div>
-              )}
-            </div>
-            {!askingAside && composer && composerDraftRecovered && !composerStorageError ? (
-              <p
-                aria-label="Session draft status"
-                className="composer-draft-status"
-                role="status"
-              >
-                Recovered saved draft
-              </p>
-            ) : null}
-            {(statusline.provider ||
-              (statusline.model && selected.runtime?.model) ||
-              (statusline.effort && selected.runtime?.reasoningEffort) ||
-              (statusline.contextTier && selected.runtime?.contextTier) ||
-              (statusline.contextUsage &&
-                selected.runtime?.contextTokens !== undefined &&
-                selected.runtime.contextTokenLimit)) ? (
-              <button
-                aria-label="Configure model, effort, and context"
-                className="composer-runtime"
-                data-testid="composer-runtime"
-                onClick={() => setRuntimeOpen(true)}
-                type="button"
-              >
-                <SlidersHorizontal aria-hidden="true" size={12} />
-                {statusline.provider ? (
-                  <span>
-                    {providerName(selected.provider)}
-                    {executionModeName(selected.executionMode)
-                      ? ` · ${executionModeName(selected.executionMode)}`
-                      : ''}
-                  </span>
-                ) : null}
-                {statusline.model && selected.runtime?.model ? (
-                  <span>{selected.runtime.model}</span>
-                ) : null}
-                {statusline.effort && selected.runtime?.reasoningEffort ? (
-                  <span>effort {selected.runtime.reasoningEffort}</span>
-                ) : null}
-                {statusline.contextTier && selected.runtime?.contextTier ? (
-                  <span>
-                    {selected.runtime.contextTokenLimit
-                      ? `${compactTokens(
-                          selected.runtime.contextTokenLimit,
-                        )} context`
-                      : 'auto context'}
-                  </span>
-                ) : null}
-                {statusline.contextUsage &&
-                selected.runtime?.contextTokens !== undefined &&
-                selected.runtime.contextTokenLimit ? (
-                  <span>
-                      ctx {selected.runtime.contextEstimated ? '~' : ''}
-                      {compactTokens(selected.runtime.contextTokens)}/
-                      {compactTokens(selected.runtime.contextTokenLimit)} (
-                      {Math.round(
-                        (selected.runtime.contextTokens /
-                          selected.runtime.contextTokenLimit) *
-                          100,
-                      )}
-                      %)
-                  </span>
-                ) : null}
-              </button>
-            ) : null}
-            <p className="composer-hint">
-              {askingAside
-                ? (
-                  <>
-                    <span className="composer-hint__desktop">
-                      {sideQuestionPending
-                        ? 'Answering… you can type your follow-up · Esc back to your message'
-                        : 'Enter asks · Shift+Enter newline · Esc back to your message'}
-                    </span>
-                    <span className="composer-hint__mobile">
-                      {sideQuestionPending
-                        ? 'Answering… you can type your follow-up'
-                        : 'Tap Ask · Return adds a line'}
-                    </span>
-                  </>
-                )
-                : recording
-                ? `Recording ${recordingDuration(recordingSeconds)}…`
-                : transcribing
-                ? 'Transcribing audio…'
-                : uploadingFile
-                  ? 'Uploading file…'
-                  : (
-                    <>
-                      <span className="composer-hint__desktop">
-                        {editingQueuedPromptId
-                          ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                            ? 'Enter saves it back · ↑ sends this queued edit now · Esc leaves it as it was'
-                            : 'Enter saves it back · Shift+Enter newline · Esc leaves it as it was'
-                          : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue for later'}
-                      </span>
-                      <span className="composer-hint__mobile">
-                        {editingQueuedPromptId
-                          ? selectedProviderCapability?.supportsQueuedPromptDispatch === true
-                            ? 'Save keeps its place · ↑ sends this queued edit now · Return adds a line'
-                            : 'Tap Save to put it back · Return adds a line'
-                          : 'Tap Send · Return adds a line'}
-                      </span>
-                    </>
-                  )}
-              {selected.queuedCount
-                ? ` · ${selected.queuedCount} queued`
-                : ''}
-            </p>
-          </footer>
+            showCommandMenu={showCommandMenu}
+            commandSuggestions={commandSuggestions}
+            selectedCommandIndex={selectedCommandIndex}
+            selectedAttachments={selectedAttachments}
+            recording={recording}
+            recordingSeconds={recordingSeconds}
+            cancelling={cancelling}
+            readonlyResourceCommand={readonlyResourceCommand}
+            composerDraftRecovered={composerDraftRecovered}
+            statusline={statusline}
+            phoneEnterCreatesNewline={phoneEnterCreatesNewline()}
+            composerRef={composerRef}
+            audioInputRef={audioInputRef}
+            sensors={sensors}
+            attachmentSize={attachmentSize}
+            recordingDuration={recordingDuration}
+            compactTokens={compactTokens}
+            onQueueDragEnd={(event) => void queueDragEnded(event)}
+            onEditQueuedPrompt={editQueuedPrompt}
+            onRemoveQueuedPrompt={(promptId) => void manageQueuedPrompt(promptId, false)}
+            onDiscardUnconfirmed={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
+            onSaveQueuedPromptEdit={() => void saveQueuedPromptEdit()}
+            onCancelQueuedPromptEdit={cancelQueuedPromptEdit}
+            // A file is for the session; while the bar asks aside it would
+            // land in the draft it is keeping out of sight. The drop is
+            // still taken here, so the browser does not open the file.
+            onDragOver={(event) => {
+              if (event.dataTransfer.types.includes('Files')) {
+                event.preventDefault()
+                if (askingAside) event.dataTransfer.dropEffect = 'none'
+              }
+            }}
+            onDrop={askingAside ? (event) => event.preventDefault() : audioDropped}
+            onSelectCommand={selectCommand}
+            onRetryAttachment={(attachment) => void retryAttachment(attachment)}
+            onRemoveAttachment={removeAttachment}
+            onBeforeInput={composerBeforeInput}
+            onCut={composerCut}
+            onChange={(event) => {
+              if (askingAside) {
+                const draft = event.target.value
+                updateSideThread(sessionKey(selected), (thread) => ({ ...thread, draft }))
+                return
+              }
+              composerChanged(event.target.value, (event.nativeEvent as InputEvent).inputType)
+            }}
+            onKeyDown={askingAside ? sideQuestionKeyDown : composerKeyDown}
+            onPaste={composerPasted}
+            onFileChange={audioFileChanged}
+            onStopRecording={stopRecording}
+            onSubmitSideQuestion={submitSideQuestion}
+            onStopSession={() => void stopSelectedSession()}
+            onOpenAttachmentInput={() => audioInputRef.current?.click()}
+            onStartRecording={() => void startRecording()}
+            onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
+            onOpenRuntime={() => setRuntimeOpen(true)}
+            onRecallSentMessage={(id) => { navigateMessageHistory(-1, true, id) }}
+            onUseSentMessage={() => {
+              if (!selectedKey || !composerDraftsRef.current[selectedKey]) return false
+              const history = composerHistoryRef.current[selectedKey]
+              if (!history || history.index >= history.messages.length) return false
+              // Invalidate the parked preview before serializing the visible draft.
+              const committed = updateComposerDrafts([selectedKey], (current) => ({ ...current }), true)
+              if (committed) focusComposer(selectedKey)
+              return committed
+            }}
+            onCancelSentMessage={() => {
+              if (!selectedKey) return
+              const history = composerHistoryRef.current[selectedKey]
+              if (!history) return
+              setComposerForKey(selectedKey, history.draft, false, history.draftPastes)
+              focusComposer(selectedKey)
+            }}
+            sessionActions={[
+              { label: 'Background tasks', onClick: openBackgroundTasks, disabled: !selectedSupportsBackgroundTasks },
+              { label: 'Skills', onClick: () => openSessionResources('skills') },
+              { label: 'MCP servers', onClick: () => openSessionResources('mcp') },
+              ...(selectedProviderCapability?.supportsSessionRetention
+                ? [{ label: 'Session retention', onClick: () => setRetentionOpen(true), disabled: !selectedComputerOnline }] : []),
+              { label: 'Rename', onClick: () => setRenameOpen(true), disabled: !selectedComputerOnline },
+              { label: selectedNotificationsMuted ? 'Unmute notifications' : 'Mute notifications', onClick: () => void toggleSelectedSessionMute(), disabled: mutingSession },
+              ...(selected.provider !== 'claude' && selected.executionMode === 'sdk' && selectedProviderCapability?.supportsTmuxMigration
+                ? [{ label: 'Move session to tmux', onClick: () => void moveSelectedSessionToTmux(), disabled: movingToTmux || selectedLifecycleBlocked || selectedSuspending }] : []),
+              { label: 'Restart', onClick: () => void restartSelectedSession(), disabled: restarting || selectedRestartBlocked },
+              ...(selectedShowsRecovery
+                ? [{ label: 'Recover conversation', onClick: () => void recoverSelectedConversation(), disabled: !selectedCanRecover || recovering }] : []),
+              { label: 'Clear conversation', onClick: () => void clearSelectedConversation(), disabled: clearing || selectedLifecycleBlocked },
+              { label: 'Close session', onClick: () => requestSessionClose(), disabled: selectedClosing || !selectedComputerOnline },
+            ]}
+          />
         ) : null}
       </main>
 
@@ -18223,36 +14549,10 @@ function App() {
       />
       <ComputersDialog
         computers={computers}
-        onAdded={(computer) => {
-          // Pairing it again is authoritative, and the socket may not be the
-          // one that says so. Without this the mark set when it was removed
-          // would outlive it and go on discarding its answers.
-          forgottenComputers.current.delete(computer.id)
-          eventSequenceRef.current = nextSessionEventSequence()
-          computerRecordSequenceRef.current.set(computer.id, eventSequenceRef.current)
-          computersRef.current = upsertComputer(computersRef.current, computer)
-          setComputers(computersRef.current)
-        }}
+        onAdded={computerAdded}
         onClose={() => setComputersOpen(false)}
-        onRemoved={(computerId) => {
-          eventSequenceRef.current = nextSessionEventSequence()
-          computerEventSequenceRef.current.set(computerId, eventSequenceRef.current)
-          computersRef.current = computersRef.current.filter(
-            (computer) => computer.id !== computerId,
-          )
-          setComputers(computersRef.current)
-          forgetComputerKnowledge(computerId)
-          setSessions((current) =>
-            current.filter((session) => session.computerId !== computerId),
-          )
-          setBackgroundTaskSnapshots((current) =>
-            Object.fromEntries(
-              Object.entries(current).filter(
-                ([key]) => !key.startsWith(`${computerId}:`),
-              ),
-            ),
-          )
-        }}
+        onRemoved={computerRemoved}
+        onCheckConnection={checkComputerConnections}
         open={computersOpen}
       />
       <StatuslineDialog
@@ -18285,6 +14585,15 @@ function App() {
         />
       ) : null}
       <AppSettingsDialog
+        onDisplayNameChange={(name) => saveSetting('displayName', name)}
+        onComputerAdded={computerAdded}
+        onComputerRemoved={computerRemoved}
+        onCheckComputerConnections={checkComputerConnections}
+        onOpenHostMonitor={hostMonitorView ? () => {
+          setSettingsOpen(false)
+          setSidebarOpen(false)
+          setShellView('host')
+        } : undefined}
         accentTheme={accentTheme}
         initialSection={settingsSection}
         onApplyUpdate={() => void applyPwaUpdate()}
@@ -18296,6 +14605,8 @@ function App() {
         onOracleResponseStyleChange={(next) => saveSetting('oracleResponseStyle', next)}
         notificationScope={profile.notificationScope ?? 'all'}
         onNotificationScopeChange={(next) => saveSetting('notificationScope', next)}
+        schedulerAllowAllForOracle={profile.schedulerAllowAllForOracle === true}
+        onSchedulerAllowAllForOracleChange={(next) => saveSetting('schedulerAllowAllForOracle', next)}
         onClose={() => setSettingsOpen(false)}
         computers={computers}
         defaultRuntimes={defaultRuntimes}
@@ -18314,6 +14625,23 @@ function App() {
         updateRegistration={updateRegistration}
         updatingApp={updatingApp}
       />
+      {shellView === 'notifications' && <NotificationPanel enabled={notificationPanel} notifications={notifications}
+        onClose={closeShellView} onOpen={(record) => {
+          const target = record.kind.startsWith('schedule.run.') ? readScheduleLink(record.url) : undefined
+          if (target && schedulerView) { setScheduleLink(target); setShellView('scheduler') }
+          else if (record.kind === 'oracle.message') { setOracleOpen(true); setShellView(undefined) }
+          else if (record.sessionId && record.computerId && openManagedSession({ computerId: record.computerId, sessionId: record.sessionId })) setShellView(undefined)
+        }} />}
+      {shellView === 'host' && <HostMonitorView computers={computers} enabled={hostMonitorView}
+        onClose={closeShellView} onOpenSession={(computerId, sessionId) => {
+          if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
+        }} />}
+      {shellView === 'scheduler' && <SchedulerView key={`${scheduleLink?.scheduleId ?? shellView}:${scheduleLink?.runId ?? ''}`} enabled={schedulerView} computers={computers}
+        initialScheduleId={scheduleLink?.scheduleId} initialRunId={scheduleLink?.runId}
+        onOpenOracle={oracleIndicator.available ? () => { setShellView(undefined); setOracleOpen(true) } : undefined}
+        onClose={closeShellView} onOpenSession={(computerId, sessionId) => {
+          if (openManagedSession({ computerId, sessionId })) setShellView(undefined)
+        }} />}
       <RuntimeDialog
         onClose={() => setRuntimeOpen(false)}
         onConfigured={(session) => {
@@ -18439,6 +14767,7 @@ function App() {
       ) : null}
       <ManagerAssistant
         connectionEpoch={0}
+        scheduleProposalEpoch={scheduleProposalEpoch}
         controlRef={oracleControlRef}
         defaults={managerDefaults}
         onIndicatorChange={setOracleIndicator}
@@ -18460,7 +14789,7 @@ function App() {
         reservedLeft={
           effectiveOraclePlacement === 'docked'
             ? oracleDockReservedLeft
-            : sidebarWidth
+            : navigationWidth
         }
         openSessions={sessions.filter((session) => session.isOpen !== false).length}
         subscribe={subscribeManager}
@@ -18470,4 +14799,11 @@ function App() {
   )
 }
 
-export default App
+export default function App() {
+  const [settingsClient] = useState(createSettingsProfileClient)
+  return (
+    <PreviewFeaturesProvider settingsClient={settingsClient}>
+      <AppWorkspace settingsClient={settingsClient} />
+    </PreviewFeaturesProvider>
+  )
+}

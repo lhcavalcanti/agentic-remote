@@ -404,6 +404,86 @@ beforeEach(() => {
   vi.spyOn(TmuxTerminalSessionController.prototype, 'ownerStopped').mockResolvedValue(false)
 })
 
+describe('AgentService launch identity', () => {
+  it.each([false, true])('coalesces owning session creation, including terminal sessions (%s)', async (terminalBacked) => {
+    const directory = path.resolve(`.launch-sdk-test-${randomUUID()}`)
+    await mkdir(directory, { mode: 0o700 })
+    directories.push(directory)
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+    const client = new FakeCopilotClient()
+    const createTerminal = vi.fn(async () => ({ sessionName: 'synthetic', windowId: '1' }))
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client, async () => [], async () => undefined,
+      async () => [], undefined,
+      { create: createTerminal, has: async () => false, send: async () => false, cancel: async () => false },
+    )
+    await service.start()
+    const create = () => service.createSession(
+      directory, terminalBacked, false, 'copilot', undefined, undefined, undefined, undefined, 'run:one',
+    )
+    const created = await Promise.all([create(), create(), create()])
+    expect(created[1].id).toBe(created[0].id)
+    expect(created[2].id).toBe(created[0].id)
+    expect(client.createdConfigs).toHaveLength(terminalBacked ? 0 : 1)
+    expect(createTerminal).toHaveBeenCalledTimes(terminalBacked ? 1 : 0)
+    expect(await service.reconcileLaunch('run:one')).toMatchObject({ sessionId: created[0].id, receipts: [] })
+  })
+
+  it('accepts one identified SDK prompt and binds its terminal outcome to its root turn', async () => {
+    const directory = path.resolve(`.launch-sdk-test-${randomUUID()}`)
+    await mkdir(directory, { mode: 0o700 })
+    directories.push(directory)
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client, async () => [], async () => undefined, async () => [],
+    )
+    await service.start()
+    const created = await service.createSession(
+      directory, false, false, 'copilot', undefined, undefined, undefined, undefined, 'root-run',
+    )
+    await service.sendMessage(created.id, 'Exactly once', true, undefined, false, 'root-delivery')
+    await service.sendMessage(created.id, 'Exactly once', true, undefined, false, 'root-delivery')
+    await vi.waitFor(() => expect(client.session.sentPrompts).toEqual(['Exactly once']))
+    expect(service.getSession(created.id)?.foregroundTurnActive).toBe(true)
+    expect((await service.reconcileLaunch('root-run'))?.receipts[0]).toMatchObject({
+      deliveryId: 'root-delivery', rootTurnId: expect.any(String),
+    })
+    client.session.resolveSessionIdle()
+    await vi.waitFor(async () => expect((await service.reconcileLaunch('root-run'))?.receipts[0])
+      .toMatchObject({ state: 'delivered', outcome: 'succeeded' }))
+    await vi.waitFor(() => expect(service.getSession(created.id)?.messages.find((message) => message.role === 'user'))
+      .toMatchObject({ content: 'Exactly once', deliveryConfirmed: true }))
+    await vi.waitFor(() => expect(service.getSession(created.id)?.foregroundTurnActive).toBe(false))
+  })
+})
+
+describe('AgentService unknown termination', () => {
+  it('does not turn a cancellation request and SDK transport failure into a stopped root outcome', async () => {
+    const directory = path.resolve(`.launch-sdk-test-${randomUUID()}`)
+    await mkdir(directory, { mode: 0o700 })
+    directories.push(directory)
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client, async () => [], async () => undefined, async () => [],
+    )
+    await service.start()
+    const created = await service.createSession(
+      directory, false, false, 'copilot', undefined, undefined, undefined, undefined, 'uncertain-run',
+    )
+    await service.sendMessage(created.id, 'Root', true, undefined, false, 'uncertain-root')
+    await vi.waitFor(() => expect(client.session.sentPrompts).toEqual(['Root']))
+    const cancellation = service.cancelWithAck(created.id, 100)
+    await vi.waitFor(() => expect(service.store.get(created.id)?.launchStopping).toBe(true))
+    client.session.disconnectPendingWaits(new Error('Synthetic transport failure without a terminal provider event'))
+    expect(await cancellation).toMatchObject({ outcome: 'unknown' })
+    await vi.waitFor(async () => expect((await service.reconcileLaunch('uncertain-run'))?.receipts[0])
+      .toMatchObject({ outcome: 'unknown' }))
+    expect((await service.reconcileLaunch('uncertain-run'))?.termination).toBeUndefined()
+  })
+})
+
 describe('AgentService startup diagnostics', () => {
   it('logs only sanitized SDK runtime diagnostic fields after startup', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
@@ -2464,6 +2544,37 @@ describe('AgentService deletion', () => {
       ])
   })
 
+  it.each(['stopped', 'unknown'] as const)('suspends a fenced SDK launch after %s cancellation without reopening work', async (outcome) => {
+    const directory = path.resolve(`.launch-suspend-test-${randomUUID()}`)
+    await mkdir(directory, { mode: 0o700 })
+    directories.push(directory)
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', directory)
+    const client = new FakeCopilotClient()
+    client.models = [configurableModel()]
+    const events = outcome === 'stopped' ? [{
+      id: 'idle', type: 'session.idle', timestamp: new Date().toISOString(), parentId: null, data: {},
+    } as SessionEvent] : []
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')), client, async () => [], async () => undefined, async () => events,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    const accepted = await service.store.acceptIdentifiedPrompt(created.id, 'follower', 'Synthetic follower', true)
+    expect(await service.cancelWithAck(created.id, 10)).toMatchObject({ outcome })
+    await expect(service.suspendSession(created.id)).resolves.toMatchObject({ suspended: true, launchStopping: true })
+    expect(client.session.disconnectCount).toBe(1)
+    await expect(service.sendMessage(created.id, 'Must not start', true)).rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.dispatchQueuedPrompt(created.id, accepted.queuedPrompts![0].id, 'Must not start'))
+      .rejects.toMatchObject({ statusCode: 409 })
+    await expect(service.resumeSession(created.id)).rejects.toMatchObject({ statusCode: 409 })
+    expect(service.getSession(created.id)?.suspended).toBe(true)
+    expect(client.resumedSessionIds).toEqual([])
+    await service.cancelWithAck(created.id, 1)
+    await expect(service.closeSession(created.id)).resolves.toMatchObject({ closedAt: expect.any(String) })
+    await service.deleteSession(created.id)
+    expect(service.getSession(created.id)).toBeUndefined()
+  })
+
   it('serializes concurrent repeated suspension without tearing down twice', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-suspend-concurrent-'))
     directories.push(directory)
@@ -3897,8 +4008,45 @@ describe('AgentService deletion', () => {
         }),
       ],
     })
+
     expect(service.store.get(client.session.sessionId)?.status).toBe('idle')
     await service.stop()
+  })
+
+  it.each([false, true])('exposes foreground activity independently from running background agents (foreground=%s)', async (foreground) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-foreground-projection-'))
+    directories.push(directory)
+    const events = [
+      { type: 'assistant.turn_start', id: 'root-start', timestamp: '2026-09-07T20:00:00Z', data: {} },
+      {
+        type: 'subagent.started', id: 'agent-start', agentId: 'background-agent',
+        timestamp: '2026-09-07T20:00:01Z',
+        data: { toolCallId: 'background-call', agentType: 'explore', description: 'Continuing background work' },
+      },
+      ...(!foreground ? [{
+        type: 'assistant.turn_end', id: 'root-end', timestamp: '2026-09-07T20:00:02Z', data: {},
+      }] : []),
+    ] as SessionEvent[]
+    const store = new SessionStore(path.join(directory, 'state'))
+    const service = new AgentService(
+      store, new FakeCopilotClient(), async () => [], async () => undefined, async () => events,
+    )
+    await store.initialize()
+    await store.create({
+      id: 'foreground-projection', cwd: directory, title: 'Foreground check', status: 'idle',
+      updatedAt: '2026-09-07T20:00:00Z', isOpen: true, messages: [],
+    }, { backend: 'terminal', managedOpen: true })
+    service['externalSessionIds'].add('foreground-projection')
+    try {
+      await service['takeInTranscript'](
+        'foreground-projection', store.observeTranscript('foreground-projection'), 'events-v1', {},
+      )
+      expect(service.getSession('foreground-projection')).toMatchObject({
+        status: 'running', foregroundTurnActive: foreground,
+      })
+    } finally {
+      await service.stop()
+    }
   })
 
   it('refuses to cancel a task projected from a terminal session', async () => {
@@ -10494,6 +10642,8 @@ describe('AgentService deletion', () => {
       terminal,
     )
     await service.start()
+    const published: ServerEvent[] = []
+    service.on('event', (event: ServerEvent) => published.push(event))
     await service.store.updateStatus(client.session.sessionId, 'running')
 
     const queued = await service.sendMessage(
@@ -10534,8 +10684,12 @@ describe('AgentService deletion', () => {
     )
     expect(service.store.get(client.session.sessionId)).toMatchObject({
       status: 'running',
+      foregroundTurnActive: true,
       queuedCount: 1,
       queuedPrompts: [{ content: '/usage' }],
+    })
+    expect(published.findLast((event) => event.type === 'session.upserted')).toMatchObject({
+      session: { foregroundTurnActive: true, queuedCount: 1 },
     })
 
     events = JSON.parse(
@@ -10555,6 +10709,7 @@ describe('AgentService deletion', () => {
     expect(terminal.send).toHaveBeenCalledTimes(1)
     expect(service.store.get(client.session.sessionId)).toMatchObject({
       status: 'running',
+      foregroundTurnActive: true,
       queuedCount: 1,
     })
 
@@ -10581,6 +10736,7 @@ describe('AgentService deletion', () => {
     // it reports what it printed and leaves the session idle.
     expect(service.store.get(client.session.sessionId)).toMatchObject({
       status: 'idle',
+      foregroundTurnActive: false,
       queuedCount: 0,
       queuedPrompts: [],
     })

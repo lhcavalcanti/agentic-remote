@@ -2,7 +2,9 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Ellipsis } from 'lucide-react'
 
-export function SessionActions({ children }: { children: ReactNode }) {
+export function SessionActions({
+  children, label = 'Session actions', description = 'Manage this session', className = '',
+}: { children: ReactNode; label?: string; description?: string; className?: string }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -25,7 +27,7 @@ export function SessionActions({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className="session-actions"
+      className={`session-actions${className ? ` ${className}` : ''}`}
       onKeyDown={(event) => {
         if (event.key === 'Escape' && open) {
           event.preventDefault()
@@ -39,18 +41,18 @@ export function SessionActions({ children }: { children: ReactNode }) {
       <button
         aria-controls={panelId}
         aria-expanded={open}
-        aria-label="Session actions"
+        aria-label={label}
         className={`icon-button ${open ? 'icon-button--active' : ''}`}
         onClick={() => setOpen(!open)}
         ref={triggerRef}
-        title="Session actions"
+        title={label}
         type="button"
       >
         <Ellipsis size={20} />
       </button>
       {open ? (
         <div
-          aria-label="Session actions"
+          aria-label={label}
           className="session-actions__panel"
           id={panelId}
           onClick={(event) => {
@@ -67,7 +69,7 @@ export function SessionActions({ children }: { children: ReactNode }) {
           }}
           role="group"
         >
-          <p>Manage this session</p>
+          <p>{description}</p>
           {children}
         </div>
       ) : null}

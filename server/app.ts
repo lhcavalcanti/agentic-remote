@@ -7,8 +7,11 @@ import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
+import { parseFeatureFlag, readHubFeatureFlags } from '../shared/feature-flags.js'
+import type { SchedulerChanged } from '../shared/schedules.js'
 import type {
   HubEvent,
+  ManagedSession,
   VoiceBackendCapability,
 } from '../shared/contracts.js'
 import {
@@ -23,10 +26,11 @@ import { ComputerManager } from './computer-manager.js'
 import { ComputerRegistry } from './computer-registry.js'
 import { registerHubRoutes } from './hub-routes.js'
 import { ManagerAgent } from './manager-agent.js'
-import { JournalRecorder } from './manager-journal.js'
+import { JournalRecorder, recordScheduleProposals } from './manager-journal.js'
 import { registerManagerRoutes } from './manager-routes.js'
 import { createManagerSdkClient, managerRuntimeSettings } from './manager-runtime.js'
 import { ManagerStore } from './manager-store.js'
+import { sessionProvenanceProjection } from './session-provenance.js'
 import { ManagerProactiveCoordinator } from './manager-proactive-coordinator.js'
 import { ManagerProactiveInbox } from './manager-proactive-inbox.js'
 import { OracleTaskStore, unfinishedOracleTaskSessions } from './oracle-task-store.js'
@@ -39,6 +43,9 @@ import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
 import { resolveDataDirectory } from './paths.js'
 import { PushNotificationService } from './push-notification-service.js'
+import { NotificationStore } from './notification-store.js'
+import { NotificationCenterService } from './notification-center-service.js'
+import { registerNotificationRoutes } from './notification-routes.js'
 import { ProviderSessionService } from './provider-session-service.js'
 import { registerPushRoutes } from './push-routes.js'
 import {
@@ -86,6 +93,19 @@ import {
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 import { registerDreamerRoutes } from './dreamer-routes.js'
 import { DreamerService } from './dreamer-service.js'
+import { HostTelemetrySampler } from './host-telemetry/sampler.js'
+import { HostTelemetryService } from './host-telemetry/service.js'
+import { HostAlertMonitor } from './host-telemetry/alerts.js'
+import type { ProcessScanContext } from './host-telemetry/processes.js'
+import { registerHostTelemetryRoutes } from './host-telemetry/routes.js'
+import { SchedulerStore } from './scheduler-store.js'
+import { SchedulerDispatcher, type ScheduleLauncher } from './scheduler-dispatcher.js'
+import { registerSchedulerRoutes } from './scheduler-routes.js'
+import { recordScheduleReplacement, SessionScheduleLauncher } from './schedule-launcher.js'
+import { configuredScheduleWorktreeRoots, ScheduleWorktreeService } from './schedule-worktrees.js'
+import { ScheduleNotificationService } from './schedule-notification-service.js'
+import { SkillSettingsService } from './skill-settings.js'
+import { registerSkillSettingsRoutes } from './skill-settings-routes.js'
 
 export type ServerRole = 'hub' | 'node'
 
@@ -119,6 +139,10 @@ export interface BuildAppOptions {
   cliCanary?: boolean
   /** Records the startup work that runs while the server becomes ready. */
   startupPhases?: StartupPhases
+  skillSettings?: SkillSettingsService
+  hostTelemetryFactory?: (dataDirectory: string, processContext: ProcessScanContext) => HostTelemetryService
+  /** Runner integration seam; ignored without the hub scheduler flag. */
+  scheduleLauncher?: ScheduleLauncher
 }
 
 function errorStatusCode(error: unknown): number | undefined {
@@ -143,6 +167,7 @@ export async function buildApp(
   identity: NodeIdentityStore
   manager?: ComputerManager
   pushService?: PushNotificationService
+  notificationCenter?: NotificationCenterService
   transcriptionService?: TranscriptionService
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
@@ -154,9 +179,16 @@ export async function buildApp(
   voiceEngineFactory?: VoiceEngineFactory
   voiceCapability: VoiceBackendCapability
   dreamerService?: DreamerService
+  scheduler?: SchedulerDispatcher
+  scheduleNotifications?: ScheduleNotificationService
   proactiveCoordinator?: ManagerProactiveCoordinator
+  hostTelemetry?: HostTelemetryService
+  hostAlerts?: HostAlertMonitor
 }> {
   const role = options.role ?? 'hub'
+  const hubFlags = role === 'hub' ? readHubFeatureFlags(process.env) : undefined
+  const hostMonitorEnabled = hubFlags?.hostMonitor ??
+    parseFeatureFlag('AGENTIC_REMOTE_FEATURE_HOST_MONITOR', process.env.AGENTIC_REMOTE_FEATURE_HOST_MONITOR)
   let publicDirectory: string | undefined
   let appVersion: AppVersion | undefined
   if (role === 'hub' && options.serveStatic) {
@@ -173,7 +205,9 @@ export async function buildApp(
     }
   }
   const app = Fastify({ logger: options.logger ?? true })
+  if (hubFlags) app.log.info({ hubFlags }, 'Hub feature flags')
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
+  const startupPhases = options.startupPhases ?? silentStartupPhases
   const voiceSelection = readOracleVoiceSelection()
   let voiceConfig: OracleVoiceConfig = { enabled: false }
   let voiceConfigurationError: string | undefined
@@ -235,7 +269,19 @@ export async function buildApp(
       ),
     )
   const identity = options.identity ?? new NodeIdentityStore(dataDirectory)
+  const skillSettings = options.skillSettings ?? new SkillSettingsService({
+    folders: () => [...service.listSessions(), ...service.listHistory()].map((session) => session.cwd),
+  })
   await identity.initialize()
+  const processContext: ProcessScanContext = {
+    listSessionPaneRoots: () => service.listSessionPaneRoots?.() ?? Promise.resolve([]),
+  }
+  const hostTelemetry = hostMonitorEnabled
+    ? options.hostTelemetryFactory?.(dataDirectory, processContext) ??
+      new HostTelemetryService(new HostTelemetrySampler({ dataDirectory }), processContext)
+    : undefined
+  const hostTelemetryLifetime = hostTelemetry ? new AbortController() : undefined
+  const scheduleWorktrees = new ScheduleWorktreeService(dataDirectory, configuredScheduleWorktreeRoots())
 
   // Registered before any routes: route plugins capture the error handler
   // present when their scope is created, so a later call would leave them
@@ -264,8 +310,10 @@ export async function buildApp(
       explicitStatusCode < 600
     ) {
       noteRefusalReason(request, refusalReasonFromError(error, explicitStatusCode))
+      const code = error !== null && typeof error === 'object' ? Reflect.get(error, 'code') : undefined
       return reply.code(explicitStatusCode).send({
         error: error instanceof Error ? error.message : 'Request failed',
+        ...(typeof code === 'string' ? { code } : {}),
         ...(submission ? { submission } : {}),
         ...(explicitUncertainty === undefined
           ? {}
@@ -291,6 +339,10 @@ export async function buildApp(
     })
   })
 
+  if (hostTelemetryLifetime) {
+    // Terminate host streams before the generic WebSocket closer waits on unread peers.
+    app.addHook('preClose', async () => hostTelemetryLifetime.abort())
+  }
   await app.register(fastifyWebsocket, {
     options: {
       maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
@@ -306,10 +358,16 @@ export async function buildApp(
     identity,
     localTranscription,
     voiceService,
+    hostTelemetry,
+    hostTelemetryLifetime?.signal,
+    scheduleWorktrees,
+    skillSettings,
   )
 
   let manager: ComputerManager | undefined
   let pushService: PushNotificationService | undefined
+  let notificationCenter: NotificationCenterService | undefined
+  let hostAlerts: HostAlertMonitor | undefined
   let transcriptionService: TranscriptionService | undefined
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
@@ -319,13 +377,26 @@ export async function buildApp(
   let managerStore: ManagerStore | undefined
   let managerStoreReady = false
   let dreamerService: DreamerService | undefined
+  let scheduler: SchedulerDispatcher | undefined
+  let scheduleNotifications: ScheduleNotificationService | undefined
+  const isScheduledSession = (session: ManagedSession): boolean => Boolean(scheduler && (
+    scheduler.store.ownsSession(session.computerId, session.id, session.launchId) ||
+    managerStore?.sessionOrigin(session.computerId, session.id) === 'schedule'
+  ))
+  let scheduleJournal: Promise<unknown> = Promise.resolve()
   let proactiveCoordinator: ManagerProactiveCoordinator | undefined
   let proactiveInbox: ManagerProactiveInbox | undefined
   let oracleTaskStore: OracleTaskStore | undefined
   let dreamerUnavailable: string | undefined
   let managerStructuredMemory = new ManagerStructuredMemoryRuntime('off')
   let managerUnavailable: string | undefined
+  let forwardScheduleProvenance: ((event: HubEvent) => void) | undefined
   let forwardToJournal: ((event: HubEvent) => void) | undefined
+  let forwardToSessionProvenance: ((event: HubEvent) => void) | undefined
+  let releaseSessionProvenance: (() => void) | undefined
+  let releaseScheduleProvenance: (() => void) | undefined
+  let reconcileCachedSessionProvenance: (() => void) | undefined
+  const provenanceWrites = new Set<Promise<void>>()
   let forwardToProactive: ((event: HubEvent) => void) | undefined
   let forwardHubToDreamer: ((event: HubEvent) => void) | undefined
   let forwardManagerToDreamer: (() => void) | undefined
@@ -336,6 +407,7 @@ export async function buildApp(
         service,
         identity,
         new ComputerRegistry(dataDirectory),
+        scheduleWorktrees,
       )
     await manager.initialize()
     knowledgeStore = options.knowledgeStore ?? new KnowledgeStore(dataDirectory)
@@ -354,13 +426,60 @@ export async function buildApp(
     pushService =
       options.pushService ?? new PushNotificationService(dataDirectory)
     await pushService.initialize()
-    pushService.attach(manager)
+    if (hubFlags?.scheduler) {
+      managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      await startupPhases.run('scheduler.provenance', () => managerStore!.initialize())
+      managerStoreReady = true
+      // Suppression needs ancestry immediately; Oracle's journal batches independently.
+      forwardScheduleProvenance = (event) => {
+        void recordScheduleReplacement(managerStore!, event).catch((error: unknown) => {
+          app.log.warn({ err: error }, 'Schedule replacement provenance could not be saved')
+        })
+      }
+      manager.on('event', forwardScheduleProvenance)
+      const scheduleStore = new SchedulerStore(dataDirectory, {
+        warn: (message) => app.log.warn(message),
+      })
+      scheduler = new SchedulerDispatcher(scheduleStore,
+        options.scheduleLauncher ?? new SessionScheduleLauncher(manager, scheduleStore, managerStore), {
+        targetOnline: (computerId) => manager!.listComputers().some((computer) => computer.id === computerId && computer.online),
+        warn: (message) => app.log.warn(message),
+      })
+      await startupPhases.run('scheduler.initialize', () => scheduleStore.initialize())
+    }
+    if (hubFlags?.notificationCenter) {
+      const store = new NotificationStore(dataDirectory, {
+        warn: (message) => app.log.warn(message),
+      })
+      await startupPhases.run('notifications.initialize', () => store.initialize())
+      notificationCenter = new NotificationCenterService(store, {
+        mutedSessions: () => pushService!.settings().mutedSessions,
+        readSession: (computerId, sessionId) => manager!.readSession(computerId, sessionId),
+        isScheduledSession,
+      })
+      for (const computer of manager.listComputers()) {
+        await notificationCenter.hub({ type: 'computer.updated', computer }, true)
+      }
+      if (hostTelemetry) {
+        const localTelemetry = hostTelemetry
+        hostAlerts = new HostAlertMonitor({
+          computers: () => manager!.listComputers(),
+          resolve: (computerId) => manager!.hostTelemetryTarget(computerId, localTelemetry),
+          notifications: notificationCenter,
+          warn: () => app.log.warn('Host resource alert observation failed'),
+        })
+      }
+    }
+    if (notificationCenter) pushService.setRecorder(notificationCenter)
+    else pushService.setRecorder?.(undefined)
     const presence = new ClientPresence()
     const profile = settingsProfileStore
     pushService.setPolicy({
       scope: () => profile.snapshot().values.notificationScope,
       oracleWatched: () => presence.oracleWatched(),
+      isScheduledSession,
     })
+    pushService.attach(manager)
     const managerSettings = managerRuntimeSettings()
     managerStructuredMemory = await initializeManagerStructuredMemory(
       path.join(dataDirectory, 'manager'),
@@ -380,10 +499,10 @@ export async function buildApp(
     } else if (!agent) {
       managerUnavailable = 'Oracle needs the built-in Copilot session service.'
     } else {
-      managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      managerStore ??= new ManagerStore(path.join(dataDirectory, 'manager'))
       // The manager is an addition to the hub; a hub whose manager cannot
       // start still serves everything else.
-      const initialized = await managerStore.initialize().then(() => true, (error: unknown) => {
+      const initialized = managerStoreReady || await managerStore.initialize().then(() => true, (error: unknown) => {
         app.log.error({ err: error }, 'The manager agent could not start')
         managerUnavailable = `Oracle could not start: ${error instanceof Error ? error.message : String(error)}`
         return false
@@ -415,6 +534,9 @@ export async function buildApp(
         store: managerStore,
         recorder,
         hub: manager,
+        hostTelemetryTarget: async (computerId) => hostTelemetry
+          ? manager!.hostTelemetryTarget(computerId, hostTelemetry)
+          : undefined,
         clientFactory: createManagerSdkClient,
         excludeFromDiscovery: (ids) => agent.excludeFromDiscovery(ids),
         model: managerSettings.model,
@@ -425,6 +547,10 @@ export async function buildApp(
         progressContext: () => dreamerService?.progressView(),
         // App settings → Models, read as each Oracle session starts.
         newSessionRuntimes: () => settingsProfileStore?.snapshot().values.newSessionRuntimes,
+        ...(hubFlags?.scheduler ? {
+          scheduler: () => scheduler?.store,
+          schedulerAllowAllForOracle: () => settingsProfileStore?.snapshot().values.schedulerAllowAllForOracle === true,
+        } : {}),
         structuredMemory: managerStructuredMemory,
         recordProactiveOutcomes: (input) => {
           if (!proactiveCoordinator) {
@@ -516,6 +642,133 @@ export async function buildApp(
     } else {
       dreamerUnavailable = 'Dreamer is unavailable because Oracle is not running on this hub.'
     }
+    if (scheduler) {
+      const store = scheduler.store
+      scheduleNotifications = new ScheduleNotificationService(store, {
+        source: manager,
+        admit: notificationCenter ? (event) => notificationCenter!.hub(event) : undefined,
+        admitBatch: notificationCenter ? (events) => notificationCenter!.scheduleNotifications(events) : undefined,
+        mutedSessions: () => pushService!.settings().mutedSessions,
+        warn: (error) => app.log.error({ err: error }, 'Could not deliver a schedule outcome'),
+      })
+      pushService.attachScheduleNotifications(scheduleNotifications)
+      store.on('proposal', () => {
+        const proposals = store.proposals()
+        const persisted = store.persistedProposalStatuses()
+        scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals, persisted))
+          .catch((error: unknown) => app.log.error({ err: error }, 'Could not journal schedule proposals'))
+      })
+    }
+    if (!managerStoreReady) {
+      managerStore = new ManagerStore(path.join(dataDirectory, 'manager'))
+      try {
+        await startupPhases.run('sessions.provenance', () => managerStore!.initializeSessionRegistry())
+        managerStoreReady = true
+      } catch (error) {
+        app.log.error({ err: error }, 'Session origin metadata could not initialize')
+      }
+    }
+    if (managerStoreReady && managerStore) {
+      const store = managerStore
+      const projection = sessionProvenanceProjection(store, scheduler?.store)
+      const fingerprint = (computerId: string, sessionId: string) => JSON.stringify(
+        projection.project<Pick<ManagedSession, 'computerId' | 'id' | 'provenance'>>({ computerId, id: sessionId }).provenance,
+      )
+      const published = new Map<string, string | undefined>()
+      const pending = new Map<string, { session?: ManagedSession; retired: boolean; writes: number; discovering: boolean }>()
+      const tracking = (key: string) => {
+        let state = pending.get(key)
+        if (!state) {
+          state = { retired: false, writes: 0, discovering: false }
+          pending.set(key, state)
+        }
+        return state
+      }
+      const trackProvenanceWork = (key: string, state: ReturnType<typeof tracking>, persistence: Promise<void>) => {
+        state.writes++
+        const work = persistence.catch((error: unknown) => app.log.error({ err: error }, 'Session origin could not be recorded or published'))
+          .finally(() => {
+            state.writes--
+            if (!state.writes) pending.delete(key)
+            provenanceWrites.delete(work)
+          })
+        provenanceWrites.add(work)
+      }
+      const publishAfter = (computerId: string, sessionId: string) => {
+        const key = `${computerId}:${sessionId}`
+        if (!published.has(key) || store.isSessionRetired(computerId, sessionId)) return
+        const state = tracking(key)
+        const needsPublication = () => !state.retired && published.has(key) &&
+          !store.isSessionRetired(computerId, sessionId) &&
+          published.get(key) !== fingerprint(computerId, sessionId)
+        trackProvenanceWork(key, state, store.flush().then(() => {
+          if (!needsPublication()) return
+          // Metadata-only publication must never fetch transcripts or wait for a node.
+          const current = manager!.listCachedSessions?.().find((session) =>
+            session.computerId === computerId && session.id === sessionId)
+          const latest = state.session
+          const session = latest && (!current || latest.revision === undefined || current.revision === undefined ||
+            latest.revision >= current.revision) ? latest : current
+          if (!session || !needsPublication()) return
+          published.set(key, fingerprint(computerId, sessionId))
+          manager!.emit('event', { type: 'session.upserted', session, summary: true })
+        }))
+      }
+      releaseSessionProvenance = store.onSessionProvenanceChanged((sessions) => {
+        for (const { computerId, sessionId } of sessions) publishAfter(computerId, sessionId)
+      })
+      if (scheduler) {
+        const schedules = scheduler.store
+        const refreshScheduleProvenance = ({ scheduleId }: SchedulerChanged) => {
+          for (const session of manager!.listCachedSessions?.() ?? []) {
+            const provenance = store.sessionProvenance(session.computerId, session.id)
+            if (provenance?.origin === 'schedule' && provenance.scheduleId === scheduleId) {
+              publishAfter(session.computerId, session.id)
+            }
+          }
+        }
+        schedules.on('changed', refreshScheduleProvenance)
+        releaseScheduleProvenance = () => { schedules.off('changed', refreshScheduleProvenance) }
+      }
+      forwardToSessionProvenance = (event) => {
+        if (event.type === 'session.upserted') {
+          const { computerId, id } = event.session
+          const key = `${computerId}:${id}`
+          const state = pending.get(key)
+          if (state) { state.session = event.session; state.retired = false }
+          published.set(key, fingerprint(computerId, id))
+          if (store.sessionOrigin(computerId, id)) return
+          const discovery = tracking(key)
+          if (discovery.discovering) return
+          discovery.discovering = true
+          discovery.session = event.session
+          trackProvenanceWork(key, discovery, store.recordDiscoveredSession(event.session))
+        } else if (event.type === 'session.removed') {
+          const key = `${event.computerId}:${event.sessionId}`
+          const state = pending.get(key)
+          if (state) state.retired = true
+          published.delete(key)
+          if (event.replacedBy && !forwardToJournal) {
+            // Oracle carries replacements synchronously; the store deduplicates the schedule path.
+            const successor = `${event.computerId}:${event.replacedBy}`
+            trackProvenanceWork(successor, tracking(successor),
+              store.recordSessionReplacement(event.computerId, event.sessionId, event.replacedBy))
+          }
+        } else if (event.type === 'computer.removed') {
+          const prefix = `${event.computerId}:`
+          for (const [key, state] of pending) if (key.startsWith(prefix)) state.retired = true
+          for (const key of published.keys()) if (key.startsWith(prefix)) published.delete(key)
+        }
+      }
+      manager.on('event', forwardToSessionProvenance)
+      // Deferred to readiness so a hub that fails to build never starts registry writes.
+      reconcileCachedSessionProvenance = () => {
+        for (const session of manager!.listCachedSessions?.() ?? []) {
+          forwardToSessionProvenance!({ type: 'session.upserted', session, summary: true })
+        }
+      }
+    }
+    if (notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     await registerHubRoutes(
       app,
       manager,
@@ -539,8 +792,19 @@ export async function buildApp(
           ? 'Oracle voice is unavailable.'
           : voiceCapability.reason,
       },
+      notificationCenter,
+      scheduler?.store,
+      scheduleNotifications,
+      isScheduledSession,
+      managerStoreReady ? managerStore : undefined,
     )
-    if (managerAgent) pushService.attachOracle(managerAgent)
+    if (!notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
+    app.get('/api/features', async (_request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return { hubFlags }
+    })
+    registerSkillSettingsRoutes(app, '/api/computers/:computerId/skills',
+      (id) => manager!.skillSettingsTarget(id!, skillSettings))
     await registerManagerRoutes(
       app,
       managerAgent,
@@ -554,6 +818,15 @@ export async function buildApp(
       dreamerUnavailable ?? 'Dreamer is unavailable on this hub.',
     )
     await registerPushRoutes(app, pushService)
+    if (hostTelemetry) {
+      const localTelemetry = hostTelemetry
+      const computers = manager
+      registerHostTelemetryRoutes(app, '/api/computers/:computerId/host', (id) =>
+        computers.hostTelemetryTarget(id!, localTelemetry), hostTelemetryLifetime?.signal)
+    }
+    await registerNotificationRoutes(app, notificationCenter)
+    if (scheduler) await registerSchedulerRoutes(app, scheduler,
+      () => settingsProfileStore?.snapshot().values.schedulerAllowAllForOracle === true)
     const delegate = transcriptionComputerName()
     transcriptionService = delegate
       ? new DelegatedTranscriptionService({
@@ -568,6 +841,18 @@ export async function buildApp(
     app.get('/api/version', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
       return appVersion ?? { version: identity.info.version }
+    })
+    app.get('/api/diagnostics/health', async (_request, reply) => {
+      reply.header('cache-control', 'no-store')
+      return {
+        hub: { id: identity.info.id, name: identity.info.name, version: identity.info.version, role: 'hub' },
+        release: appVersion,
+        startup: startupPhases.snapshot?.() ?? [],
+        computers: manager!.listComputers().map(({ id, name, isLocal, version, online }) => ({
+          id, name, role: isLocal ? 'hub' : 'node', version, online,
+        })),
+        hubFlags,
+      }
     })
     // Hub-local: browsers reach only the hub, so it sees every browser-facing
     // refusal, including those a node returned through it.
@@ -612,8 +897,20 @@ export async function buildApp(
     : undefined
   // Ready only once the service has started, so the probe never races the
   // recovery of sessions that were open before a restart.
-  const startupPhases = options.startupPhases ?? silentStartupPhases
   app.addHook('onReady', async () => {
+    reconcileCachedSessionProvenance?.()
+    if (hostTelemetry) {
+      await startupPhases.run('hostTelemetry.start', async () => hostTelemetry.start())
+    }
+    if (hostAlerts) await startupPhases.run('hostAlerts.start', async () => hostAlerts.start())
+    if (scheduler) await startupPhases.run('scheduler.start', async () => {
+      await scheduler!.start()
+      const proposals = scheduler!.store.proposals()
+      const persisted = scheduler!.store.persistedProposalStatuses()
+      scheduleJournal = scheduleJournal.then(() => recordScheduleProposals(managerStore!, proposals, persisted))
+      await scheduleJournal
+    })
+    if (scheduleNotifications) await startupPhases.run('scheduler.notifications.start', () => scheduleNotifications!.start())
     cliCanary?.start()
     // The manager never keeps the hub from becoming ready.
     const starting = managerAgent
@@ -630,8 +927,18 @@ export async function buildApp(
   })
 
   app.addHook('onClose', async () => {
+    await hostAlerts?.stop()
+    hostTelemetry?.stop()
+    await scheduler?.stop()
+    await scheduleNotifications?.stop()
+    await scheduleJournal
     await cliCanary?.stop()
+    if (forwardScheduleProvenance) manager?.off('event', forwardScheduleProvenance)
     if (forwardToJournal) manager?.off('event', forwardToJournal)
+    if (forwardToSessionProvenance) manager?.off('event', forwardToSessionProvenance)
+    releaseSessionProvenance?.()
+    releaseScheduleProvenance?.()
+    await Promise.all(provenanceWrites)
     if (forwardToProactive) manager?.off('event', forwardToProactive)
     if (forwardHubToDreamer) manager?.off('event', forwardHubToDreamer)
     if (forwardManagerToDreamer) managerAgent?.off('event', forwardManagerToDreamer)
@@ -639,8 +946,10 @@ export async function buildApp(
     await proactiveCoordinator?.stop()
     await dreamerService?.stop()
     await managerAgent?.stop()
+    await managerStore?.flush()
     manager?.stop()
     pushService?.stop()
+    await notificationCenter?.flush()
     await (transcriptionService ?? localTranscription).stop()
     await service.stop()
   })
@@ -651,6 +960,7 @@ export async function buildApp(
     identity,
     manager,
     pushService,
+    notificationCenter,
     transcriptionService: transcriptionService ?? localTranscription,
     knowledgeStore,
     sessionKnowledgeStore,
@@ -662,6 +972,10 @@ export async function buildApp(
     voiceEngineFactory,
     voiceCapability,
     dreamerService,
+    scheduler,
+    scheduleNotifications,
     proactiveCoordinator,
+    hostTelemetry,
+    hostAlerts,
   }
 }

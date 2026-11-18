@@ -263,29 +263,40 @@ export class ManagerStore {
     this.journal = (await this.readLines<JournalEntry>('journal.jsonl'))
       .filter((entry) => Number.isInteger(entry?.seq))
     this.journalSeq = this.journal.reduce((highest, entry) => Math.max(highest, entry.seq), 0)
-    let proposalJournal: unknown
+    let proposalJournalText: string | undefined
     try {
-      proposalJournal = JSON.parse(await readFile(path.join(this.directory, 'proposal-journal.json'), 'utf8'))
+      proposalJournalText = await readFile(path.join(this.directory, 'proposal-journal.json'), 'utf8')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
     this.proposalJournal = new Map()
-    if (proposalJournal !== undefined) {
-      if (!proposalJournal || typeof proposalJournal !== 'object' || Array.isArray(proposalJournal) ||
-        Reflect.get(proposalJournal, 'version') !== 1) throw new Error('Invalid Oracle proposal journal index')
-      const proposals: unknown = Reflect.get(proposalJournal, 'proposals')
-      if (!proposals || typeof proposals !== 'object' || Array.isArray(proposals)) throw new Error('Invalid Oracle proposal journal index')
-      for (const [id, statuses] of Object.entries(proposals)) {
-        if (!Array.isArray(statuses) || !statuses.every((status: unknown) => typeof status === 'string')) {
-          throw new Error('Invalid Oracle proposal journal index')
+    let validProposalJournal = false
+    if (proposalJournalText !== undefined) {
+      try {
+        const proposalJournal: unknown = JSON.parse(proposalJournalText)
+        if (!proposalJournal || typeof proposalJournal !== 'object' || Array.isArray(proposalJournal) ||
+          Reflect.get(proposalJournal, 'version') !== 1) throw new Error('Invalid Oracle proposal journal index')
+        const proposals: unknown = Reflect.get(proposalJournal, 'proposals')
+        if (!proposals || typeof proposals !== 'object' || Array.isArray(proposals)) throw new Error('Invalid Oracle proposal journal index')
+        const loaded = new Map<string, Set<string>>()
+        for (const [id, statuses] of Object.entries(proposals)) {
+          if (!Array.isArray(statuses) || !statuses.every((status: unknown) => typeof status === 'string')) {
+            throw new Error('Invalid Oracle proposal journal index')
+          }
+          loaded.set(id, new Set(statuses as string[]))
         }
-        this.proposalJournal.set(id, new Set(statuses as string[]))
+        this.proposalJournal = loaded
+        validProposalJournal = true
+      } catch {
+        await rename(path.join(this.directory, 'proposal-journal.json'),
+          path.join(this.directory, `proposal-journal.json.corrupt-${randomUUID()}`))
+        console.warn('Manager proposal-journal.json was corrupt; quarantined and using the legacy journal cutoff')
       }
     }
     // State from before the index existed may have rotated proposal statuses away. Only
     // proposals created before that loaded window are ambiguous; later ones are always new.
     const oldest = this.journal[0]
-    this.legacyProposalCutoff = proposalJournal === undefined && oldest && oldest.seq > 1
+    this.legacyProposalCutoff = !validProposalJournal && oldest && oldest.seq > 1
       ? Date.parse(oldest.at)
       : undefined
   }

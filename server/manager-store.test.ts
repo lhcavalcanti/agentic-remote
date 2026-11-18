@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagerMessage } from '../shared/manager.js'
 import { ManagerStore } from './manager-store.js'
 
@@ -308,6 +308,26 @@ describe('ManagerStore', () => {
       registry['c:live'] = { computerId: 'c', sessionId: 'live', title: 'Live', origin: 'manager', firstSeenAt: 'x' }
     })
     expect(Object.keys(store.registry()).sort()).toEqual(['c:live', 'c:r2', 'c:r3'])
+  })
+
+  it.each(['{broken', '{"version":1,"proposals":{"old":"invalid"}}'])('quarantines a corrupt proposal journal and retains the legacy cutoff: %s', async (corrupt) => {
+    const seed = await open({ journalLimit: 2, journalKeep: 1 })
+    for (let index = 0; index < 3; index++) await seed.appendJournal([{ kind: 'status', computerId: 'c', sessionId: 's', to: 'idle' }])
+    await writeFile(path.join(seed.directory, 'proposal-journal.json'), corrupt)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const store = await open()
+      const files = await readdir(store.directory)
+      expect(files.filter((name) => /^proposal-journal\.json\.corrupt-[a-f0-9-]{36}$/.test(name))).toHaveLength(1)
+      expect(warn).toHaveBeenCalledOnce()
+      const entry = { kind: 'schedule-proposal' as const, proposalId: 'old', proposalStatus: 'pending', title: 'Old proposal' }
+      expect(await store.appendProposalJournal([{ entry, createdAt: new Date(clock - 1000).toISOString(), persistedStatus: 'pending' }])).toEqual([])
+      expect(await store.appendProposalJournal([{
+        entry: { ...entry, proposalStatus: 'approved' }, createdAt: new Date(clock - 1000).toISOString(), persistedStatus: 'pending',
+      }])).toHaveLength(1)
+      await open()
+      expect(warn).toHaveBeenCalledOnce()
+    } finally { warn.mockRestore() }
   })
 
   it('sets a corrupt state file aside instead of failing to start', async () => {

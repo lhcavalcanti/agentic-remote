@@ -199,6 +199,8 @@ Schedule-definition and proposal invalidations both refetch pending proposals an
 
 Open recurring cards recompute at the next occurrence boundary as well as expiry, one-off-time and foreground boundaries. Their displayed next run therefore remains a future occurrence without refetching unchanged schedule definitions.
 
+The Oracle proposal journal index is recovery metadata, not a hub-startup prerequisite. Invalid JSON or invalid index structure is quarantined as `proposal-journal.json.corrupt-<uuid>` with one warning. Loading then uses the existing legacy journal-window cutoff: already-persisted old statuses are not recreated after rotation, but new transitions still journal normally. Read/rename permission failures remain explicit errors; no automatic rewrite or migration of a valid journal is performed.
+
 ## Canonical run notifications
 
 The canonical classifier resolves `notify` from the immutable definition accepted for the run, not today's edited schedule. A run outcome produces one stable identity from schedule ID, run ID and outcome. Needs-input is an attention outcome; a stopped run uses the interrupted kind. Pending, launching, running and stopping are not outcomes.

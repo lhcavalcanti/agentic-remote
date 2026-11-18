@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
@@ -71,6 +71,20 @@ async function run(notify: 'never' | 'always') {
 }
 
 describe('hub schedule notification integration', () => {
+  it('starts the scheduler hub after quarantining a corrupt proposal journal only once', async () => {
+    const managerDirectory = path.join(directory, 'manager')
+    await mkdir(managerDirectory)
+    await writeFile(path.join(managerDirectory, 'proposal-journal.json'), '{broken')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await hub()
+    expect((await runtime.app.inject({ url: '/api/health', headers })).statusCode).toBe(200)
+    expect((await readdir(managerDirectory)).filter((name) => name.startsWith('proposal-journal.json.corrupt-'))).toHaveLength(1)
+    expect(warn.mock.calls.filter(([message]) => String(message).includes('proposal-journal'))).toHaveLength(1)
+    await runtime.app.close()
+    await hub()
+    expect(warn.mock.calls.filter(([message]) => String(message).includes('proposal-journal'))).toHaveLength(1)
+  })
+
   it.each([false, true])('preserves an unclaimed full-history outcome through startup admission, including failed replay=%s', async (failReplay) => {
     const seedNow = Date.now() - 24 * 60 * 60_000
     const dueAt = new Date(Date.now() - 60_000).toISOString()

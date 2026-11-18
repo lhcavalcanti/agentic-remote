@@ -182,27 +182,33 @@ export class SchedulerDispatcher {
     // advancing the durable cursor fences it just as pruning old run rows does.
     const tail: Date[] = []
     let after = cursor + 1
-    let late = false
+    let skipped = 0
+    let latestSkipped: Date | undefined
     for (;;) {
       const batch = occurrencesBetween(schedule.recurrence, schedule.timezone, new Date(after), new Date(now + 1), 1000)
-      late ||= Boolean(batch.length && batch[0].getTime() < now - SCHEDULER_LATE_MS)
+      const missed = batch.filter((at) => at.getTime() < now - SCHEDULER_LATE_MS)
+      skipped += missed.length
+      latestSkipped = missed.at(-1) ?? latestSkipped
       tail.push(...batch)
       if (tail.length > SCHEDULE_RUN_LIMIT) tail.splice(0, tail.length - SCHEDULE_RUN_LIMIT)
       if (batch.length < 1000) break
       after = batch.at(-1)!.getTime() + 1
     }
-    if (late && schedule.catchUp === 'once') {
+    if (!tail.length) return
+    if (skipped && schedule.catchUp === 'once') {
       const latest = tail.at(-1)!
       const run = await this.store.admit(schedule.id, latest.toISOString(), 'catch-up', 'pending',
         new Date(now).toISOString(), undefined, schedule.revision)
       if (run) await this.overlap(run)
     } else {
-      for (const at of tail) {
-        const missed = at.getTime() < now - SCHEDULER_LATE_MS
-        const run = await this.store.admit(schedule.id, at.toISOString(), 'schedule',
-          missed ? 'missed' : 'pending', at.toISOString(),
-          missed ? 'Occurrence was more than ten minutes late' : undefined, schedule.revision)
-        if (run && !missed) await this.overlap(run)
+      if (latestSkipped) {
+        await this.store.admit(schedule.id, latestSkipped.toISOString(), 'schedule', 'missed', latestSkipped.toISOString(),
+          `Skipped ${skipped} overdue occurrence${skipped === 1 ? '' : 's'} more than ten minutes late`, schedule.revision)
+      }
+      for (const at of tail.filter((entry) => entry.getTime() >= now - SCHEDULER_LATE_MS)) {
+        const run = await this.store.admit(schedule.id, at.toISOString(), 'schedule', 'pending',
+          at.toISOString(), undefined, schedule.revision)
+        if (run) await this.overlap(run)
       }
     }
     await this.store.advanceCursor(schedule.id, new Date(now).toISOString())

@@ -112,6 +112,16 @@ export const scheduleRunSchema = z.object({
   computerId: identifier,
   createdAt: timestamp.optional(),
   retryUntil: timestamp.optional(),
+  attention: z.object({
+    episode: z.number().int().min(1).max(100_000),
+    active: z.boolean(),
+    bound: z.boolean(),
+    requests: z.record(z.string().regex(/^[a-f0-9]{64}$/), z.number().int().min(1)),
+    sessionId: z.string().min(1).optional(),
+    sessionStatus: z.enum(['idle', 'running', 'waiting', 'error']).optional(),
+    sessionRevision: z.number().int().nonnegative().optional(),
+  }).refine((attention) => Object.keys(attention.requests).length <= attention.episode * 2 &&
+    Object.values(attention.requests).every((episode) => episode <= attention.episode), 'Invalid attention request history').optional(),
   startedAt: timestamp.optional(),
   endedAt: timestamp.optional(),
   summary: z.string().optional(),

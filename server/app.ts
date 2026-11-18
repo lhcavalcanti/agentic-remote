@@ -645,6 +645,7 @@ export async function buildApp(
     if (scheduler) {
       const store = scheduler.store
       scheduleNotifications = new ScheduleNotificationService(store, {
+        source: manager,
         admit: notificationCenter ? (event) => notificationCenter!.hub(event) : undefined,
         admitBatch: notificationCenter ? (events) => notificationCenter!.scheduleNotifications(events) : undefined,
         mutedSessions: () => pushService!.settings().mutedSessions,

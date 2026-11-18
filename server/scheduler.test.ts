@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ScheduleCreate, ScheduleRun } from '../shared/schedules.js'
 import { classifyScheduleNotification } from './notification-classifier.js'
+import { ScheduleNotificationService } from './schedule-notification-service.js'
 import {
   NoopScheduleLauncher, SchedulerDispatcher, ScheduleTargetUnavailableError,
   SCHEDULER_LATE_MS, type ScheduleLauncher, type ScheduleReconciliation, type ScheduleStopAcknowledgement,
@@ -91,6 +92,41 @@ afterEach(async () => {
 })
 
 describe('scheduler durable store', () => {
+  it('bounds public manual-trigger identities by retained history even while its due cursor is stationary', async () => {
+    const { store: seed, schedule, directory } = await retainedHistory('never', 'failed')
+    const saved = JSON.parse(await readFile(seed.statePath, 'utf8'))
+    saved.runs.forEach((run: ScheduleRun, index: number) => {
+      run.occurrenceAt = `2026-11-14T08:00:00.${String(index).padStart(15, '0')}Z`
+    })
+    saved.occurrences = Object.fromEntries(saved.runs.map((run: ScheduleRun) =>
+      [occurrenceKey(run.scheduleId, run.occurrenceAt), run.id]))
+    await writeFile(seed.statePath, JSON.stringify(saved))
+    const store = new SchedulerStore(directory)
+    await store.initialize()
+    await store.admit(schedule.id, '2026-11-14T08:00:00.999999999999999Z', 'manual', 'failed')
+    const bounded = JSON.parse(await readFile(store.statePath, 'utf8'))
+    expect(Object.keys(bounded.occurrences)).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(Object.keys(bounded.runSchedules)).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(store.cursor(schedule.id)).toBe(saved.cursors[schedule.id])
+  })
+
+  it('prunes cursor-fenced evicted occurrences, snapshots and notification claims without permitting replay', async () => {
+    const { store, schedule, first, directory } = await retainedHistory('always', 'failed')
+    const ids = store.allRuns().flatMap((run) => classifyScheduleNotification(schedule, run, INITIAL).map((notification) => notification.id))
+    await store.claimNotifications(ids)
+    await store.advanceCursor(schedule.id, new Date(Date.parse(INITIAL) + 1000).toISOString())
+    await store.admit(schedule.id, '2026-11-14T08:00:01.001Z', 'manual')
+    const saved = JSON.parse(await readFile(store.statePath, 'utf8'))
+    expect(Object.keys(saved.occurrences)).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(Object.keys(saved.runSchedules)).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(saved.notificationFences).toHaveLength(SCHEDULE_RUN_LIMIT - 1)
+    const restored = new SchedulerStore(directory)
+    await restored.initialize()
+    expect(restored.hasOccurrence(schedule.id, first.occurrenceAt)).toBe(true)
+    await expect(restored.admit(schedule.id, first.occurrenceAt, 'schedule')).resolves.toBeUndefined()
+    expect(restored.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
+  })
+
   it('defers legacy and archived sessionless worktree allocations before publishing terminal runs', async () => {
     const { store, schedule, directory } = await fixture({ workspace: 'worktree', enabled: false })
     const run = (await store.admit(schedule.id, INITIAL, 'manual'))!
@@ -192,7 +228,7 @@ describe('scheduler durable store', () => {
     expect(() => store.getRun(first.id)).toThrow('not found')
     const restarted = new SchedulerStore(directory)
     await restarted.initialize()
-    expect(restarted.notificationReplay().claimed.has(notification.id)).toBe(true)
+    expect(restarted.notificationReplay().claimed.has(notification.id)).toBe(false)
     expect(await restarted.admit(schedule.id, first.occurrenceAt, 'manual')).toBeUndefined()
   })
 
@@ -278,6 +314,62 @@ describe('scheduler durable store', () => {
 })
 
 describe('hub schedule dispatcher', () => {
+  it('coalesces a skipped downtime range into one missed notification and fences the entire range', async () => {
+    const { dispatcher, store, schedule, launcher, directory } = await fixture({ catchUp: 'skip' })
+    const notifications = new ScheduleNotificationService(store, { mutedSessions: () => [] })
+    const announced = vi.fn()
+    notifications.on('event', announced)
+    try {
+      vi.setSystemTime(new Date(Date.parse(INITIAL) + 10 * 24 * 60 * 60_000 + 11 * 60_000))
+      await notifications.start()
+      await dispatcher.start()
+      await notifications.flush()
+      expect(store.allRuns()).toHaveLength(1)
+      expect(store.allRuns()[0]).toMatchObject({ status: 'missed', error: expect.stringContaining('240') })
+      expect(announced).toHaveBeenCalledOnce()
+      expect(launcher.launch).not.toHaveBeenCalled()
+      const old = '2026-11-14T09:00:00.000Z'
+      expect(store.hasOccurrence(schedule.id, old)).toBe(true)
+      await expect(store.admit(schedule.id, old, 'schedule')).resolves.toBeUndefined()
+      await settle(dispatcher)
+      await notifications.flush()
+      expect(announced).toHaveBeenCalledOnce()
+      const restored = new SchedulerStore(directory)
+      await restored.initialize()
+      expect(restored.hasOccurrence(schedule.id, old)).toBe(true)
+      await expect(restored.admit(schedule.id, old, 'schedule')).resolves.toBeUndefined()
+    } finally { await notifications.stop() }
+  })
+
+  it.each([false, true])('does no full-state clone, serialization or disk write on an unchanged multi-schedule tick (running: %s)', async (running) => {
+    const { dispatcher, store, schedule } = await fixture()
+    await store.create(createInput({ name: 'Another review' }))
+    await dispatcher.start()
+    if (running) {
+      await dispatcher.runNow(schedule.id)
+      await settle(dispatcher)
+    }
+    const persist = vi.spyOn(store as unknown as { persist(): Promise<void> }, 'persist')
+    const clone = globalThis.structuredClone
+    const stringify = JSON.stringify
+    let clones = 0
+    let serializations = 0
+    vi.spyOn(globalThis, 'structuredClone').mockImplementation((value, options) => {
+      if (value && typeof value === 'object' && 'cursors' in value && 'runs' in value) clones++
+      return clone(value, options)
+    })
+    vi.spyOn(JSON, 'stringify').mockImplementation(((value, ...args) => {
+      if (value && typeof value === 'object' && 'cursors' in value && 'runs' in value) serializations++
+      return Reflect.apply(stringify, JSON, [value, ...args])
+    }) as typeof JSON.stringify)
+    vi.setSystemTime(new Date(Date.parse(INITIAL) + 30_000))
+    await dispatcher.tick()
+    await dispatcher.tick()
+    expect(clones).toBe(0)
+    expect(serializations).toBe(0)
+    expect(persist).not.toHaveBeenCalled()
+  })
+
   it('lets an archive queued before the launch transition stop a pending drain atomically', async () => {
     let archive: Promise<unknown> | undefined
     const state = await fixture({}, () => {
@@ -492,7 +584,7 @@ describe('hub schedule dispatcher', () => {
     await settle(dispatcher)
     const first = store.allRuns()
     if (catchUp === 'skip') {
-      expect(first.map((run) => run.status)).toEqual(['missed', 'missed', 'missed'])
+      expect(first.map((run) => run.status)).toEqual(['missed'])
       expect(launcher.launch).not.toHaveBeenCalled()
     } else {
       expect(first).toHaveLength(1)
@@ -502,7 +594,7 @@ describe('hub schedule dispatcher', () => {
     vi.setSystemTime(new Date('2026-11-14T14:11:00.000Z'))
     await settle(dispatcher)
     expect(store.allRuns().filter((run) => run.trigger === 'catch-up')).toHaveLength(catchUp === 'once' ? 2 : 0)
-    expect(store.allRuns().filter((run) => run.status === 'missed')).toHaveLength(catchUp === 'skip' ? 6 : 0)
+    expect(store.allRuns().filter((run) => run.status === 'missed')).toHaveLength(catchUp === 'skip' ? 2 : 0)
   })
 
   it.each([SCHEDULER_LATE_MS, SCHEDULER_LATE_MS + 1])('uses an exact ten-minute late boundary (%s ms)', async (late) => {

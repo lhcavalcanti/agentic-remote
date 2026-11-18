@@ -92,6 +92,24 @@ afterEach(async () => {
 })
 
 describe('scheduler durable store', () => {
+  it('bounds public manual-trigger identities by retained history even while its due cursor is stationary', async () => {
+    const { store: seed, schedule, directory } = await retainedHistory('never', 'failed')
+    const saved = JSON.parse(await readFile(seed.statePath, 'utf8'))
+    saved.runs.forEach((run: ScheduleRun, index: number) => {
+      run.occurrenceAt = `2026-11-14T08:00:00.${String(index).padStart(15, '0')}Z`
+    })
+    saved.occurrences = Object.fromEntries(saved.runs.map((run: ScheduleRun) =>
+      [occurrenceKey(run.scheduleId, run.occurrenceAt), run.id]))
+    await writeFile(seed.statePath, JSON.stringify(saved))
+    const store = new SchedulerStore(directory)
+    await store.initialize()
+    await store.admit(schedule.id, '2026-11-14T08:00:00.999999999999999Z', 'manual', 'failed')
+    const bounded = JSON.parse(await readFile(store.statePath, 'utf8'))
+    expect(Object.keys(bounded.occurrences)).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(Object.keys(bounded.runSchedules)).toHaveLength(SCHEDULE_RUN_LIMIT)
+    expect(store.cursor(schedule.id)).toBe(saved.cursors[schedule.id])
+  })
+
   it('prunes cursor-fenced evicted occurrences, snapshots and notification claims without permitting replay', async () => {
     const { store, schedule, first, directory } = await retainedHistory('always', 'failed')
     const ids = store.allRuns().flatMap((run) => classifyScheduleNotification(schedule, run, INITIAL).map((notification) => notification.id))
@@ -342,7 +360,7 @@ describe('hub schedule dispatcher', () => {
     })
     vi.spyOn(JSON, 'stringify').mockImplementation(((value, ...args) => {
       if (value && typeof value === 'object' && 'cursors' in value && 'runs' in value) serializations++
-      return stringify(value, ...args)
+      return Reflect.apply(stringify, JSON, [value, ...args])
     }) as typeof JSON.stringify)
     vi.setSystemTime(new Date(Date.parse(INITIAL) + 30_000))
     await dispatcher.tick()

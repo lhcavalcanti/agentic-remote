@@ -320,7 +320,10 @@ describe('ManagerStore', () => {
       const files = await readdir(store.directory)
       expect(files.filter((name) => /^proposal-journal\.json\.corrupt-[a-f0-9-]{36}$/.test(name))).toHaveLength(1)
       expect(warn).toHaveBeenCalledOnce()
-      const entry = { kind: 'schedule-proposal' as const, proposalId: 'old', proposalStatus: 'pending', title: 'Old proposal' }
+      const entry = {
+        kind: 'schedule-proposal' as const, proposalId: 'old', proposalStatus: 'pending', title: 'Old proposal',
+        computerId: 'c', sessionId: 's',
+      }
       expect(await store.appendProposalJournal([{ entry, createdAt: new Date(clock - 1000).toISOString(), persistedStatus: 'pending' }])).toEqual([])
       expect(await store.appendProposalJournal([{
         entry: { ...entry, proposalStatus: 'approved' }, createdAt: new Date(clock - 1000).toISOString(), persistedStatus: 'pending',

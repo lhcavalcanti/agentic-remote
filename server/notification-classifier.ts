@@ -77,6 +77,7 @@ export function classifyHubNotification(
 ): NotificationRecord[] {
   if (event.type === 'schedule.run.notification') return [event.notification]
   if (event.type === 'session.upserted') {
+    // The scheduler's owning-session bridge admits attention; ordinary delivery must not duplicate it.
     if (scheduledSession) return []
     const session = event.session
     const key = JSON.stringify(['session', session.computerId, session.id])
@@ -242,24 +243,86 @@ export function classifyHostNotification(
   return records
 }
 
+type ScheduleAttention = NonNullable<ScheduleRun['attention']>
+export type ScheduleAttentionSession = Pick<ManagedSession,
+  'computerId' | 'id' | 'launchId' | 'status' | 'revision' | 'pendingPermission' | 'pendingUserInput'>
+const attentionClosed = (status: ScheduleRun['status']) => ['stopping', 'stopped', 'missed', 'interrupted'].includes(status)
+
+function attentionSeed(run: ScheduleRun, notified: boolean): ScheduleAttention {
+  return run.attention ?? {
+    episode: run.status === 'needs-input' || notified ? 1 : 0,
+    active: run.status === 'needs-input', bound: false, requests: {},
+  }
+}
+
+export function scheduleAttentionAfterStatus(run: ScheduleRun, status: ScheduleRun['status'], notified = false): ScheduleRun['attention'] {
+  if (status === run.status) return run.attention
+  if (status === 'needs-input') {
+    const attention = attentionSeed(run, notified)
+    return attention.active ? attention : { ...attention, episode: attention.episode + 1, active: true, bound: false }
+  }
+  if (run.attention || run.status === 'needs-input') return { ...attentionSeed(run, notified), active: false }
+  return undefined
+}
+
+/** Request aliases merge the session signal with its later generic run transition. */
+export function scheduleAttentionFromSession(run: ScheduleRun, session: ScheduleAttentionSession, notified = false): ScheduleRun['attention'] {
+  if (attentionClosed(run.status)) return undefined
+  const before = attentionSeed(run, notified)
+  if (before.sessionId === session.id && before.sessionRevision !== undefined &&
+      session.revision !== undefined && session.revision < before.sessionRevision) return undefined
+  const requests = [
+    ...(session.pendingPermission && !session.pendingPermission.stale
+      ? [notificationIdentity('session.needs-input', session.computerId, session.id, 'permission', session.pendingPermission.requestId)] : []),
+    ...(session.pendingUserInput && !session.pendingUserInput.stale
+      ? [notificationIdentity('session.needs-input', session.computerId, session.id, 'question', session.pendingUserInput.requestId)] : []),
+  ]
+  const fresh = requests.filter((id) => !Object.hasOwn(before.requests, id))
+  let attention: ScheduleAttention
+  if (requests.length) {
+    if (!fresh.length) return undefined
+    attention = {
+      ...before, episode: before.episode + (!before.active || before.bound ? 1 : 0),
+      active: true, bound: true, requests: { ...before.requests },
+    }
+    for (const id of fresh) attention.requests[id] = attention.episode
+  } else if (session.status === 'waiting' && !session.pendingPermission && !session.pendingUserInput) {
+    if (before.active || (before.sessionId === session.id && before.sessionStatus === 'waiting')) return undefined
+    attention = { ...before, episode: before.episode + 1, active: true, bound: false }
+  } else {
+    if (!before.active || (!run.attention && run.status !== 'needs-input')) return undefined
+    attention = { ...before, active: false }
+  }
+  attention.sessionId = session.id
+  attention.sessionStatus = session.status
+  attention.sessionRevision = session.revision
+  return attention
+}
+
 /** The accepted run definition, never today's edited schedule, owns policy. */
 export function classifyScheduleNotification(schedule: Schedule, run: ScheduleRun, now: string): NotificationRecord[] {
-  const outcome = run.status === 'stopped' ? 'interrupted' : run.status
-  if (!['succeeded', 'failed', 'needs-input', 'missed', 'interrupted'].includes(outcome) ||
-      schedule.notify === 'never' || (schedule.notify === 'attention' && outcome === 'succeeded')) return []
-  const kind = `schedule.run.${outcome}` as NotificationKind
-  const severity = outcome === 'succeeded' ? 'info' : outcome === 'failed' ? 'error' : 'warning'
-  const label = outcome === 'needs-input' ? 'needs input' : outcome
-  const params = new URLSearchParams({ schedule: schedule.id, run: run.id, computer: run.computerId })
-  if (run.sessionId) params.set('session', run.sessionId)
-  return [record(kind, [schedule.id, run.id, outcome], {
-    computerId: run.computerId, ...(run.sessionId ? { sessionId: run.sessionId } : {}),
-    title: `${notificationBrief(schedule.name)} · ${label}`,
-    body: notificationBrief(outcome === 'needs-input' ? 'Open the scheduled session to continue.'
-      : (outcome === 'succeeded' ? run.summary : run.error || run.summary) || `Scheduled run ${label}.`),
-    severity, createdAt: outcome === 'needs-input' ? now : run.endedAt ?? now,
-    url: `/?${params}`, coalesceKey: JSON.stringify(['schedule', schedule.id]),
-  })]
+  if (schedule.notify === 'never') return []
+  const outcomes: string[] = [run.status === 'stopped' ? 'interrupted' : run.status]
+  if (run.attention?.active && run.status !== 'needs-input' && !attentionClosed(run.status)) outcomes.push('needs-input')
+  return outcomes.filter((outcome) => ['succeeded', 'failed', 'needs-input', 'missed', 'interrupted'].includes(outcome) &&
+    !(schedule.notify === 'attention' && outcome === 'succeeded')).map((outcome) => {
+    const kind = `schedule.run.${outcome}` as NotificationKind
+    const severity = outcome === 'succeeded' ? 'info' : outcome === 'failed' ? 'error' : 'warning'
+    const label = outcome === 'needs-input' ? 'needs input' : outcome
+    const sessionId = run.sessionId ?? run.attention?.sessionId
+    const params = new URLSearchParams({ schedule: schedule.id, run: run.id, computer: run.computerId })
+    if (sessionId) params.set('session', sessionId)
+    const identity = [schedule.id, run.id, outcome]
+    if (outcome === 'needs-input' && (run.attention?.episode ?? 1) > 1) identity.push(String(run.attention!.episode))
+    return record(kind, identity, {
+      computerId: run.computerId, ...(sessionId ? { sessionId } : {}),
+      title: `${notificationBrief(schedule.name)} · ${label}`,
+      body: notificationBrief(outcome === 'needs-input' ? 'Open the scheduled session to continue.'
+        : (outcome === 'succeeded' ? run.summary : run.error || run.summary) || `Scheduled run ${label}.`),
+      severity, createdAt: outcome === 'needs-input' ? now : run.endedAt ?? now,
+      url: `/?${params}`, coalesceKey: JSON.stringify(['schedule', schedule.id]),
+    })
+  })
 }
 
 /** Oracle's work inbox is not consumed or acknowledged by notification reads. */

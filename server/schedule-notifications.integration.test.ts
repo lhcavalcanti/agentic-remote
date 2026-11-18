@@ -71,6 +71,27 @@ async function run(notify: 'never' | 'always') {
 }
 
 describe('hub schedule notification integration', () => {
+  it.each(['on', 'off'] as const)('delivers later scheduled attention without ordinary duplicates with center %s', async (centerFlag) => {
+    vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', centerFlag)
+    await hub()
+    const { run: admitted, session } = await run('always')
+    await runtime.scheduler!.store.changeRun(admitted.id, { status: 'running', sessionId: session.id })
+    const announced = vi.fn()
+    runtime.scheduleNotifications!.on('event', announced)
+    runtime.manager!.emit('event', { type: 'session.upserted', session: { ...session, revision: 1 } })
+    for (const [revision, requestId] of [[2, 'p1'], [3, 'p2']] as const) {
+      runtime.manager!.emit('event', { type: 'session.upserted', session: {
+        ...session, revision, status: 'waiting', pendingPermission: { requestId, title: 'Allow next step?', options: [] },
+      } })
+      await runtime.scheduleNotifications!.flush()
+      await runtime.notificationCenter?.flush()
+    }
+    await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(2))
+    expect(announced).toHaveBeenCalledTimes(2)
+    expect(announced.mock.calls.every(([event]) => event.notification.kind === 'schedule.run.needs-input')).toBe(true)
+    if (runtime.notificationCenter) expect(await runtime.notificationCenter.store.list()).toHaveLength(2)
+  })
+
   it('starts the scheduler hub after quarantining a corrupt proposal journal only once', async () => {
     const managerDirectory = path.join(directory, 'manager')
     await mkdir(managerDirectory)
@@ -338,10 +359,11 @@ describe('hub schedule notification integration', () => {
     const settled = runtime.scheduler!.store.getRun(runId)
     expect(settled).toMatchObject({ status: 'succeeded', rootPromptReceipt: 'real-runner-root',
       rootPromptAcceptance: { outcome: 'succeeded' } })
-    const expected = notify === 'never' ? 0 : 1
+    const expected = notify === 'never' ? 0 : 2
     expect(await runtime.notificationCenter!.store.list()).toHaveLength(expected)
     await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(expected))
-    if (expected) expect((await runtime.notificationCenter!.store.list())[0].kind).toBe('schedule.run.succeeded')
+    if (expected) expect((await runtime.notificationCenter!.store.list()).map((record) => record.kind).sort())
+      .toEqual(['schedule.run.needs-input', 'schedule.run.succeeded'])
     expect((await runtime.app.inject({ method: 'POST', url: `/api/schedules/proposals/${runProposal.id}/approve`, headers })).statusCode).toBe(200)
     expect(create).toHaveBeenCalledOnce()
     const archived = await runtime.scheduler!.store.setArchived(schedule.id, schedule.revision, true)

@@ -62,7 +62,7 @@ beforeEach(async () => {
   push.attach(events)
   service = new ScheduleNotificationService(schedules, {
     admit: (event) => center.hub(event), admitBatch: (batch) => center.scheduleNotifications(batch),
-    mutedSessions: () => muted, now: () => now,
+    mutedSessions: () => muted, now: () => now, source: events,
   })
   push.attachScheduleNotifications(service)
   const shell = new ScheduleShellNotifier()
@@ -92,14 +92,153 @@ async function run(policy: Schedule['notify'] = 'always') {
 }
 
 describe('canonical schedule notifications across channels', () => {
-  it('reclaims obsolete fences at capacity without replaying retained outcomes', async () => {
+  it('drains attention ingress and its generated delivery before stopping', async () => {
+    const { run: admitted } = await run()
+    await schedules.changeRun(admitted.id, { status: 'running', sessionId: 'attention-session' })
+    events.emit('event', { type: 'session.upserted', session: {
+      id: 'attention-session', computerId: admitted.computerId, computerName: 'Fictional Studio',
+      title: 'Scheduled review', cwd: '/fictional/repo', updatedAt: new Date(now).toISOString(),
+      launchId: admitted.launchId, status: 'waiting', revision: 1, messages: [],
+      pendingPermission: { requestId: 'queued-before-stop', title: 'Allow?', options: [] },
+    } })
+    await service.stop()
+    expect(published).toHaveLength(1)
+  })
+
+  it('announces every new needs-input transition once, including across restart', async () => {
+    const { run: admitted } = await run()
+    await schedules.changeRun(admitted.id, { status: 'needs-input', sessionId: 'attention-session' })
+    await settled()
+    await schedules.changeRun(admitted.id, { status: 'running' })
+    await schedules.changeRun(admitted.id, { status: 'needs-input' })
+    await settled()
+    expect(published).toHaveLength(2)
+    expect(new Set(published.map((event) => event.notification.id)).size).toBe(2)
+    expect(sender).toHaveBeenCalledTimes(2)
+    expect(native).toHaveLength(2)
+    await service.stop()
+    const restored = new SchedulerStore(directory, { now: () => now })
+    await restored.initialize()
+    const replay = new ScheduleNotificationService(restored, { mutedSessions: () => [], now: () => now })
+    const announced = vi.fn()
+    replay.on('event', announced)
+    try {
+      await replay.start()
+      expect(announced).not.toHaveBeenCalled()
+    } finally { await replay.stop() }
+  })
+
+  it.each(['always', 'attention', 'never'] as const)('routes successive permission/question attention through only the canonical %s path', async (policy) => {
+    const { run: admitted } = await run(policy)
+    await schedules.changeRun(admitted.id, { status: 'running', sessionId: 'attention-session' })
+    const session: ManagedSession = {
+      id: 'attention-session', computerId: admitted.computerId, computerName: 'Fictional Studio',
+      title: 'Scheduled review', cwd: '/fictional/repo', updatedAt: new Date(now).toISOString(),
+      launchId: admitted.launchId, status: 'running', revision: 1, messages: [],
+    }
+    const emit = (update: Partial<ManagedSession>) => events.emit('event', { type: 'session.upserted', session: { ...session, ...update } })
+    emit({})
+    emit({ revision: 2, status: 'waiting', pendingPermission: { requestId: 'p1', title: 'First permission', options: [] } })
+    await settled()
+    await schedules.changeRun(admitted.id, { status: 'needs-input' })
+    await settled()
+    expect(published).toHaveLength(policy === 'never' ? 0 : 1)
+    emit({ revision: 3, status: 'waiting', pendingPermission: { requestId: 'p1', title: 'First permission again', options: [] } })
+    emit({ revision: 4, status: 'waiting', pendingPermission: { requestId: 'p2', title: 'Second permission', options: [] } })
+    await settled()
+    emit({ revision: 5 })
+    await settled()
+    await schedules.changeRun(admitted.id, { status: 'running' })
+    emit({ revision: 6, status: 'waiting', pendingUserInput: { requestId: 'q1', question: 'Where next?', choices: [], allowFreeform: true } })
+    await settled()
+    await schedules.changeRun(admitted.id, { status: 'needs-input' })
+    await settled()
+    const count = policy === 'never' ? 0 : 3
+    expect(published).toHaveLength(count)
+    expect(sender).toHaveBeenCalledTimes(count)
+    expect(native).toHaveLength(count)
+    expect(await records.list()).toHaveLength(count)
+    expect(published.every((event) => event.notification.kind === 'schedule.run.needs-input')).toBe(true)
+    emit({ revision: 2, status: 'waiting', pendingPermission: { requestId: 'p1', title: 'Stale replay', options: [] } })
+    await settled()
+    expect(published).toHaveLength(count)
+  })
+
+  it('merges a generic attention alert with its later request identity and ignores stale requests', async () => {
+    const { run: admitted } = await run()
+    await schedules.changeRun(admitted.id, { status: 'needs-input', sessionId: 'attention-session' })
+    await settled()
+    const session: ManagedSession = {
+      id: 'attention-session', computerId: admitted.computerId, computerName: 'Fictional Studio',
+      title: 'Scheduled review', cwd: '/fictional/repo', updatedAt: new Date(now).toISOString(),
+      launchId: admitted.launchId, status: 'waiting', messages: [],
+    }
+    events.emit('event', { type: 'session.upserted', session: {
+      ...session, revision: 1, pendingPermission: { requestId: 'p1', title: 'Allow?', options: [] },
+    } })
+    await settled()
+    expect(published).toHaveLength(1)
+    events.emit('event', { type: 'session.upserted', session: { ...session, revision: 2, status: 'running' } })
+    await schedules.changeRun(admitted.id, { status: 'running' })
+    events.emit('event', { type: 'session.upserted', session: {
+      ...session, revision: 3, pendingPermission: { requestId: 'stale', title: 'Old request', options: [], stale: true },
+    } })
+    await settled()
+    expect(published).toHaveLength(1)
+    events.emit('event', { type: 'session.upserted', session: {
+      ...session, revision: 4, pendingPermission: { requestId: 'p2', title: 'Next permission', options: [] },
+    } })
+    await settled()
+    expect(published).toHaveLength(2)
+    expect(schedules.notificationReplay().claimed.size).toBe(2)
+  })
+
+  it('keeps canonical attention available for a retained completed scheduled session', async () => {
+    const { run: admitted } = await run()
+    await schedules.changeRun(admitted.id, { status: 'succeeded', sessionId: 'attention-session' })
+    await settled()
+    events.emit('event', { type: 'session.upserted', session: {
+      id: 'attention-session', computerId: admitted.computerId, computerName: 'Fictional Studio',
+      title: 'Scheduled review', cwd: '/fictional/repo', updatedAt: new Date(now).toISOString(),
+      launchId: admitted.launchId, status: 'waiting', revision: 1, messages: [],
+      pendingUserInput: { requestId: 'follow-up', question: 'Continue?', choices: [], allowFreeform: true },
+    } })
+    await settled()
+    expect(published.map((event) => event.notification.kind)).toEqual(['schedule.run.succeeded', 'schedule.run.needs-input'])
+    expect(sender).toHaveBeenCalledTimes(2)
+    expect(native).toHaveLength(2)
+  })
+
+  it.each(['interrupted', 'stopped'] as const)('does not reopen canonical attention after the run is %s', async (status) => {
+    const { run: admitted } = await run()
+    await schedules.changeRun(admitted.id, { status, sessionId: 'attention-session' })
+    await settled()
+    const before = published.length
+    events.emit('event', { type: 'session.upserted', session: {
+      id: 'attention-session', computerId: admitted.computerId, computerName: 'Fictional Studio',
+      title: 'Scheduled review', cwd: '/fictional/repo', updatedAt: new Date(now).toISOString(),
+      launchId: admitted.launchId, status: 'waiting', revision: 1, messages: [],
+      pendingPermission: { requestId: 'after-stop', title: 'Old action', options: [] },
+    } })
+    await settled()
+    expect(published).toHaveLength(before)
+  })
+
+  it.each([false, true])('reclaims obsolete fences at capacity without replaying retained outcomes (attention: %s)', async (attention) => {
     await service.stop()
     const schedule = await schedules.create(input())
     const first = (await schedules.admit(schedule.id, new Date(now).toISOString(), 'manual', 'failed'))!
     const second = (await schedules.admit(schedule.id, new Date(now + 1).toISOString(), 'manual', 'failed'))!
     const firstId = classifyScheduleNotification(schedule, first, new Date(now).toISOString())[0].id
     const state = JSON.parse(await readFile(schedules.statePath, 'utf8'))
-    state.notificationFences = [firstId, ...Array.from({ length: 99_999 }, (_, index) => index.toString(16).padStart(64, '0'))]
+    const previousAttention = attention ? [
+      notificationIdentity('schedule.run.needs-input', schedule.id, first.id, 'needs-input'),
+      notificationIdentity('schedule.run.needs-input', schedule.id, first.id, 'needs-input', '2'),
+    ] : []
+    if (attention) state.runs[0].attention = { episode: 2, active: false, bound: false, requests: {} }
+    if (attention) state.notificationOwners = Object.fromEntries(previousAttention.map((id) => [id, first.id]))
+    state.notificationFences = [firstId, ...previousAttention,
+      ...Array.from({ length: 99_999 - previousAttention.length }, (_, index) => index.toString(16).padStart(64, '0'))]
     await writeFile(schedules.statePath, JSON.stringify(state))
     const restored = new SchedulerStore(directory, { now: () => now })
     await restored.initialize()
@@ -112,7 +251,8 @@ describe('canonical schedule notifications across channels', () => {
       expect(warn).not.toHaveBeenCalled()
       expect(announced).toHaveBeenCalledOnce()
       expect(announced.mock.calls[0][0].notification.id).toBe(classifyScheduleNotification(schedule, second, new Date(now).toISOString())[0].id)
-      expect(restored.notificationReplay().claimed.size).toBe(2)
+      expect(restored.notificationReplay().claimed.size).toBe(2 + previousAttention.length)
+      expect(previousAttention.every((id) => restored.notificationReplay().claimed.has(id))).toBe(true)
       await replay.start()
       expect(announced).toHaveBeenCalledOnce()
     } finally { await replay.stop() }

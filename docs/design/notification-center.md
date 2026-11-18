@@ -15,7 +15,7 @@ The existing push ingress first admits hub and Oracle signals to the canonical c
 | Existing error event with `notify: true` | `host.alert` |
 | Known online computer → offline | `computer.offline` |
 
-`schedule.run.*` is reserved; nothing emits it yet. The internal per-kind channel preference structure defaults to the current behavior and has no settings mutation API.
+`schedule.run.*` records come only from the hub's canonical scheduler notification service. Nodes cannot publish `schedule.run.notification`, even when feature flags are enabled. The internal per-kind channel preference structure defaults to the current behavior and has no settings mutation API.
 
 Session identities hash the kind, computer ID, session ID, and request ID (including permission/question namespace) or durable root user-message ID. A failed queued delivery also includes its existing durable recovery decision token. Transcript-free roster summaries preserve the last root ID and never trigger detail reads. For non-summary events that need an anchor, the hub reads the passive session endpoint outside the commit/publication queue, without opening or resuming anything. Reads coalesce per session, with at most two physical reads, 32 queued reads, and a one-second deadline including queue time. A non-abortable timed-out request retains its physical slot until it settles; late results are discarded. Over-capacity or timed-out enrichment leaves the anchor unknown rather than delaying unrelated notifications. A newer passive response cannot supply a different turn's root to an older event. If no root ID can be established, it does not invent a completion from a timestamp or status alone. Initial terminal history is not a new completion. Revision fences discard older snapshots.
 

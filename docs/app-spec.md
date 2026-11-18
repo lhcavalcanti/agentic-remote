@@ -2168,6 +2168,8 @@ people sharing a hub share its profile. See
   seconds, so a frozen phone cannot hold notifications back.
 - In a browser or installed PWA, Oracle notifications MUST open Oracle
   (`/?oracle=open`), and opening Oracle MUST clear them.
+- Browser/PWA notification clicks MUST open only HTTP(S) URLs on the app's origin. Malformed, non-HTTP(S), or off-origin targets MUST fall back to the app root.
+- Canonical schedule notifications MUST originate at the hub scheduler. Nodes MUST NOT forward hub-only schedule notification events, including while hub feature flags are disabled.
 - One event MUST belong to one category, so a single event never sends both a
   session and an Oracle notification.
 - The native shell has no Web Push. It MUST apply the same scope and Oracle

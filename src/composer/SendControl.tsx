@@ -93,7 +93,8 @@ export function SendControl({
         <div
           aria-label="Message delivery" className="composer-send-menu" id={id} ref={root} role="menu"
           onBlur={(event) => {
-            if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) close(false)
+            // WebKit can blur to null before a tapped menu item's click.
+            if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) close(false)
           }}
           onKeyDown={(event) => {
             if (event.key === 'Escape') {

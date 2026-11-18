@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "7dc66f4edd190785780d350d34f1fa8e321f6595",
+  "built_at_commit": "97782f2d56addd2d93979894a1bc5dd49e04a51f",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -298790,7 +298790,7 @@
       "relation": "contains",
       "source": "vite_config",
       "source_file": "vite.config.ts",
-      "source_location": "L258",
+      "source_location": "L285",
       "target": "vite_config_assetfilenames",
       "weight": 1.0
     },
@@ -298801,7 +298801,7 @@
       "relation": "contains",
       "source": "vite_config",
       "source_file": "vite.config.ts",
-      "source_location": "L251",
+      "source_location": "L278",
       "target": "vite_config_assetsinlinelimit",
       "weight": 1.0
     },
@@ -298823,7 +298823,7 @@
       "relation": "contains",
       "source": "vite_config",
       "source_file": "vite.config.ts",
-      "source_location": "L217",
+      "source_location": "L244",
       "target": "vite_config_generatebundle",
       "weight": 1.0
     },
@@ -298834,7 +298834,7 @@
       "relation": "contains",
       "source": "vite_config",
       "source_file": "vite.config.ts",
-      "source_location": "L167",
+      "source_location": "L194",
       "target": "vite_config_oraclevoiceassetnames",
       "weight": 1.0
     },
@@ -298845,7 +298845,7 @@
       "relation": "contains",
       "source": "vite_config",
       "source_file": "vite.config.ts",
-      "source_location": "L174",
+      "source_location": "L201",
       "target": "vite_config_packageversion",
       "weight": 1.0
     },
@@ -298856,7 +298856,7 @@
       "relation": "contains",
       "source": "vite_config",
       "source_file": "vite.config.ts",
-      "source_location": "L205",
+      "source_location": "L232",
       "target": "vite_config_resolveid",
       "weight": 1.0
     },
@@ -404329,7 +404329,7 @@
       "label": "assetFileNames()",
       "norm_label": "assetfilenames()",
       "source_file": "vite.config.ts",
-      "source_location": "L258"
+      "source_location": "L285"
     },
     {
       "_callable": true,
@@ -404341,7 +404341,7 @@
       "label": "assetsInlineLimit()",
       "norm_label": "assetsinlinelimit()",
       "source_file": "vite.config.ts",
-      "source_location": "L251"
+      "source_location": "L278"
     },
     {
       "_origin": "ast",
@@ -404364,7 +404364,7 @@
       "label": "generateBundle()",
       "norm_label": "generatebundle()",
       "source_file": "vite.config.ts",
-      "source_location": "L217"
+      "source_location": "L244"
     },
     {
       "_origin": "ast",
@@ -404375,7 +404375,7 @@
       "label": "oracleVoiceAssetNames",
       "norm_label": "oraclevoiceassetnames",
       "source_file": "vite.config.ts",
-      "source_location": "L167"
+      "source_location": "L194"
     },
     {
       "_origin": "ast",
@@ -404386,7 +404386,7 @@
       "label": "packageVersion",
       "norm_label": "packageversion",
       "source_file": "vite.config.ts",
-      "source_location": "L174"
+      "source_location": "L201"
     },
     {
       "_callable": true,
@@ -404398,7 +404398,7 @@
       "label": "resolveId()",
       "norm_label": "resolveid()",
       "source_file": "vite.config.ts",
-      "source_location": "L205"
+      "source_location": "L232"
     },
     {
       "_origin": "ast",

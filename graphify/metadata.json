@@ -1499,7 +1499,7 @@
     "tsconfig.json": "242dae217ea032b973140c1c150c29dbca637930596881e1e7b8abf82b0bfe3b",
     "tsconfig.node.json": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8",
     "tsconfig.server.json": "c3022e22834e731724ffa817c01bd2e4654184f9031945ffcbff4f489dca93bb",
-    "vite.config.ts": "7b99ae33651d9c7f5eb9e3b56607bc2793b008b82e23060b79c682ef840b4064"
+    "vite.config.ts": "9e2b989c7e4a2b0f7c887a3c0ae78c714e77f1f4e506dee1e51145133cc12cb1"
   },
   "mode": "local-ast-only",
   "nodes": 8829,
@@ -1743,13 +1743,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "313d17abfc206fa6ebce911b79cea42e6c5dd90acc1d6e4b117f8eb69ec2819b",
+    "GRAPH_REPORT.md": "cc368c658f826d7e6f869061d20201bd5f95832c6bc602d16dc947ff4f5b72fa",
     "communities.json": "5e2d801535b6c263db3468157d6187dd7c947c18b998f46b61a5158558fe6ae5",
-    "graph.html": "e1e92502854520c8d2bf8c15f303f47d83f4f4c4f3acc7c58e7d01be992e4c3e",
-    "graph.json": "8ed303e5692d83878e4784946096f69a8b3dbb18d6526fdbbe68f9e30ba537cc"
+    "graph.html": "8969654fad7f9cf3dd644f1584c9e4b7274f554f34685f29379f18dd341d8293",
+    "graph.json": "54cec831026fc200c7161670767675a270f91987a1920a7a5dc34312bc06c570"
   },
   "schema_version": 1,
-  "source_commit": "7dc66f4edd190785780d350d34f1fa8e321f6595",
-  "source_fingerprint": "530d49c740c164914d12da5c26725472de6fff03d398b7232879b35fb2ce42b3",
+  "source_commit": "97782f2d56addd2d93979894a1bc5dd49e04a51f",
+  "source_fingerprint": "3fcb44f6275c7a0fcf758ba6419c6ef5fa27ab92f09b9ffeba6ace36a01e89b6",
   "working_tree_changes": []
 }

@@ -62,6 +62,10 @@ function EffectiveState() {
   return <output aria-label="Effective previews">{JSON.stringify({ composer, notifications })}</output>
 }
 
+function SchedulerDraft() {
+  return usePreviewFeature('schedulerView') ? <input aria-label="Schedule draft" /> : null
+}
+
 function settings(client: SettingsProfileClient) {
   return render(
     <PreviewFeaturesProvider settingsClient={client}>
@@ -72,6 +76,28 @@ function settings(client: SettingsProfileClient) {
 }
 
 describe('Preview features settings', () => {
+  it('keeps an open scheduler draft through failed refreshes but honors a successful disable', async () => {
+    vi.mocked(fetchHubFeatureFlags)
+      .mockResolvedValueOnce({ ...defaultHubFeatureFlags, scheduler: true })
+      .mockRejectedValueOnce(new Error('Transient focus refresh failure'))
+      .mockRejectedValueOnce(new Error('Transient reconnect failure'))
+      .mockResolvedValueOnce(defaultHubFeatureFlags)
+    const server = hub({ previewFeatures: { schedulerView: true } })
+    render(<PreviewFeaturesProvider settingsClient={await server.client()}><SchedulerDraft /></PreviewFeaturesProvider>)
+    const draft = await screen.findByRole('textbox', { name: 'Schedule draft' })
+    fireEvent.change(draft, { target: { value: 'Keep this unfinished schedule' } })
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    expect(draft).toBeInTheDocument()
+    expect(draft).toHaveValue('Keep this unfinished schedule')
+    await act(async () => { await dispatchAuthoritativeRefresh() })
+    expect(draft).toBeInTheDocument()
+    expect(draft).toHaveValue('Keep this unfinished schedule')
+    await act(async () => { window.dispatchEvent(new Event('online')) })
+    expect(screen.queryByRole('textbox', { name: 'Schedule draft' })).not.toBeInTheDocument()
+    expect(server.snapshot().values.previewFeatures).toEqual({ schedulerView: true })
+    expect(server.transport.update).not.toHaveBeenCalled()
+  })
+
   it('starts off and persists a toggle through the hub profile and a remount', async () => {
     const server = hub()
     const view = settings(await server.client())

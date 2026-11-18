@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto'
 import { nextOccurrences, occurrencesBetween } from '../shared/schedule-recurrence.js'
-import { SCHEDULE_DELETED_SESSION_REASON, type Schedule, type ScheduleRun, type SchedulerChanged } from '../shared/schedules.js'
+import type { Schedule, ScheduleRun, SchedulerChanged } from '../shared/schedules.js'
 import { holdsSlot, isInFlight, SCHEDULE_RUN_LIMIT, SchedulerStore } from './scheduler-store.js'
 
 export const SCHEDULER_CONCURRENCY = 2
@@ -14,14 +14,14 @@ export interface ScheduleReconciliation {
   rootPromptReceipt?: string
   rootPromptAcceptance?: ScheduleRun['rootPromptAcceptance']
   worktree?: ScheduleRun['worktree']
-  /** Completion/stopped proves quiescence; interrupted may instead report authoritative session deletion. */
+  /** terminated proves quiescence of foreground, queued, and provider-owned background work. */
   outcome?: 'succeeded' | 'failed' | 'stopped' | 'interrupted'
   summary?: string
   error?: string
 }
 export interface ScheduleStopAcknowledgement {
   /** stopped proves termination, not merely acceptance of an abort request. */
-  outcome: 'stopped' | 'deleted' | 'unknown'
+  outcome: 'stopped' | 'unknown'
   sessionId?: string
 }
 export interface ScheduleLauncher {
@@ -341,8 +341,6 @@ export class SchedulerDispatcher {
     if (this.store.isRunAbandoned(run.id)) return
     if (ack.outcome === 'stopped' && (!ack.sessionId || !stopping.sessionId || ack.sessionId === stopping.sessionId)) {
       await this.finish(stopping, 'stopped')
-    } else if (ack.outcome === 'deleted' && ack.sessionId && (!stopping.sessionId || ack.sessionId === stopping.sessionId)) {
-      await this.finish(stopping, 'interrupted', SCHEDULE_DELETED_SESSION_REASON)
     } else await this.store.changeRun(run.id, { outcomeUnknown: true })
   }
 

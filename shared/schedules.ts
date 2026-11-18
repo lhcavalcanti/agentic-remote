@@ -8,7 +8,7 @@ export const SCHEDULE_PROMPT_MAX_LENGTH = 20_000
 export const SCHEDULE_MIN_SPACING_MINUTES = 15
 export const CLAUDE_SCHEDULE_UNAVAILABLE_REASON = 'Claude Agent schedules are unavailable because this adapter cannot prove background work has stopped.'
 export const SCHEDULE_ABANDONED_REASON = 'Run abandoned by explicit confirmation. Work may still be running; inspect the owning computer. This launch identity will not be resumed.'
-export const SCHEDULE_DELETED_SESSION_REASON = 'The owning computer confirms that this session was deleted. Any remaining background work requires manual review.'
+export const SCHEDULE_DELETED_SESSION_REASON = 'The owning computer reports that this session was deleted but not that its work stopped, so its slot stays reserved. Abandon the run to release it.'
 export function scheduleProviderUnavailableReason(provider: 'copilot' | 'claude'): string | undefined {
   return provider === 'claude' ? CLAUDE_SCHEDULE_UNAVAILABLE_REASON : undefined
 }

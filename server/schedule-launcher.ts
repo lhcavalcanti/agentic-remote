@@ -227,9 +227,13 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     if (launch.launchId !== run.launchId) return { state: 'unknown', error: 'Mismatched launch evidence' }
     const expectedSession = run.sessionId ?? run.rootPromptAcceptance?.sessionId
     if (expectedSession && expectedSession !== launch.sessionId) return { state: 'unknown', error: 'Mismatched session evidence' }
-    if (launch.deleted) return this.terminal(run, {
-      state: 'terminated', outcome: 'interrupted', sessionId: launch.sessionId, error: SCHEDULE_DELETED_SESSION_REASON,
-    }, false, 'Session deletion does not prove background termination; cleanup requires manual review')
+    if (launch.deleted) {
+      // Deleting the session record does not prove its provider work stopped.
+      if (launch.termination?.outcome === 'stopped' && launch.termination.sessionId === launch.sessionId) {
+        return this.terminal(run, { state: 'terminated', outcome: 'stopped', sessionId: launch.sessionId })
+      }
+      return { state: 'unknown', sessionId: launch.sessionId, error: SCHEDULE_DELETED_SESSION_REASON }
+    }
     let receipt = launch.receipts.find((entry) => entry.deliveryId === `${run.launchId}:root` && entry.sessionId === launch.sessionId)
     if (receipt && run.rootPromptReceipt && receipt.promptId !== run.rootPromptReceipt) {
       return { state: 'unknown', error: 'Mismatched root-prompt evidence' }
@@ -332,10 +336,13 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
     const expectedSession = run.sessionId ?? run.rootPromptAcceptance?.sessionId
     if (expectedSession && expectedSession !== launch.sessionId) return { outcome: 'unknown' }
     if (launch.deleted) {
-      const result = await this.terminal(run, { state: 'terminated', outcome: 'interrupted', error: SCHEDULE_DELETED_SESSION_REASON },
-        false, 'Session deletion does not prove background termination; cleanup requires manual review')
+      if (launch.termination?.outcome !== 'stopped' || launch.termination.sessionId !== launch.sessionId) {
+        return { outcome: 'unknown', sessionId: launch.sessionId }
+      }
+      const result = await this.terminal(run, { state: 'terminated', outcome: 'stopped' })
+      if (this.store.isLaunchAbandoned(run.launchId)) return { outcome: 'unknown' }
       if (result.worktree) await this.store.changeRun(run.id, { worktree: result.worktree })
-      return { outcome: 'deleted', sessionId: launch.sessionId }
+      return { outcome: 'stopped', sessionId: launch.sessionId }
     }
     await this.store.changeRun(run.id, { sessionId: launch.sessionId })
     const ack = await this.sessions.cancelWithAck({ computerId: run.computerId, id: launch.sessionId })

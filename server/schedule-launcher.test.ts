@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedSession, PendingPermission } from '../shared/contracts.js'
 import type { LaunchReconciliation, PromptAcceptanceReceipt, TerminationAcknowledgement } from '../shared/launch-identity.js'
-import type { ScheduleCreate } from '../shared/schedules.js'
+import { SCHEDULE_DELETED_SESSION_REASON, type ScheduleCreate } from '../shared/schedules.js'
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import { AgentService, type CopilotClientLike } from './agent-service.js'
 import { ComputerManager } from './computer-manager.js'
@@ -124,7 +124,7 @@ async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' 
 }
 
 describe('schedule runner', () => {
-  it('settles an owner-confirmed deleted session without requiring its trimmed root receipt or removing its worktree', async () => {
+  it('keeps the slot of an owner-deleted session until termination is proven or the run is abandoned', async () => {
     const f = await fixture({ workspace: 'worktree' })
     await f.runner.launch(f.run, f.schedule)
     await f.store.changeRun(f.run.id, { status: 'running', startedAt: at })
@@ -132,12 +132,31 @@ describe('schedule runner', () => {
     const dispatcher = new SchedulerDispatcher(f.store, f.runner)
     dispatchers.push(dispatcher)
     await dispatcher.start()
-    expect(f.store.getRun(f.run.id)).toMatchObject({
-      status: 'interrupted', error: expect.stringMatching(/deleted/i), worktree: { state: 'deferred' },
+    // The fixture's old start also exceeds its runtime, so a stop is requested; deletion alone cannot settle it.
+    expect(f.store.getRun(f.run.id)).toMatchObject({ status: 'stopping', outcomeUnknown: true })
+    expect(await f.runner.reconcile(f.store.getRun(f.run.id))).toMatchObject({
+      state: 'unknown', sessionId: 'session-one', error: SCHEDULE_DELETED_SESSION_REASON,
     })
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(true)
+    await dispatcher.abandonRun(f.run.id)
     expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
     expect(f.host.cleanupScheduleWorktree).not.toHaveBeenCalled()
     expect(f.host.sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it('settles an owner-deleted session as stopped when its termination was acknowledged', async () => {
+    const f = await fixture()
+    await f.runner.launch(f.run, f.schedule)
+    await f.store.changeRun(f.run.id, { status: 'running', startedAt: at })
+    f.setLaunch({
+      launchId: f.run.launchId, sessionId: 'session-one', deleted: true, receipts: [],
+      termination: { sessionId: 'session-one', outcome: 'stopped', checkedAt: at, scope: 'provider-owned' },
+    })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    expect(f.store.getRun(f.run.id)).toMatchObject({ status: 'stopped' })
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
   })
 
   it.each(['create-failure', 'restart'] as const)('allows explicit abandonment of an uncertain %s and fences later owner evidence after deletion', async (stage) => {
@@ -839,12 +858,12 @@ describe('schedule runner', () => {
     expect(f.host.createSession).toHaveBeenCalledTimes(1)
   })
 
-  it('retains uncertain and offline launches but settles confirmed deletion without relaunching', async () => {
+  it('retains uncertain, offline and unproven deleted launches without relaunching', async () => {
     const f = await fixture()
     expect(await f.runner.reconcile(f.run)).toEqual({ state: 'absent' })
     expect(await f.runner.reconcile({ ...f.run, status: 'launching' })).toEqual({ state: 'unknown' })
     f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', deleted: true, receipts: [] })
-    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'terminated', outcome: 'interrupted' })
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'unknown', error: SCHEDULE_DELETED_SESSION_REASON })
     vi.mocked(f.host.reconcileLaunch!).mockRejectedValue(new Error('Offline'))
     expect(await f.runner.reconcile({ ...f.run, status: 'launching', startedAt: at }))
       .toMatchObject({ state: 'unknown', error: expect.stringContaining('slot remains reserved') })

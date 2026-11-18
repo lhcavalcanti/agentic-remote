@@ -1,6 +1,6 @@
 # Hub notification records
 
-The hub enables this API-only service with `AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on`. The shared hub flag reader owns the startup-only, default-off decision; `/api/features` reports its effective state. With the flag off, the hub creates no notification directory, starts no notification service, and returns `404` from every notification endpoint. Nodes never instantiate it. The default-off `notificationPanel` Interface preview adds the client panel; no new native notification producer is added.
+The hub enables this service with `AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on`. The shared hub flag reader owns the startup-only, default-off decision; `/api/features` reports its effective state. With the flag off, the hub creates no notification directory, starts no notification service, and returns `404` from every notification endpoint. Nodes never instantiate it. The default-off `notificationPanel` Interface preview adds the client panel; no new native notification producer is added.
 
 ## Classification and delivery
 
@@ -15,7 +15,7 @@ The existing push ingress first admits hub and Oracle signals to the canonical c
 | Existing error event with `notify: true` | `host.alert` |
 | Known online computer → offline | `computer.offline` |
 
-`schedule.run.*` is reserved; nothing emits it yet. The internal per-kind channel preference structure defaults to the current behavior and has no settings mutation API.
+Scheduled run outcomes emit `schedule.run.*` records (see [Client panel preview](#client-panel-preview) and the [scheduler contract](scheduler.md)). The internal per-kind channel preference structure defaults to the current behavior and has no settings mutation API.
 
 Session identities hash the kind, computer ID, session ID, and request ID (including permission/question namespace) or durable root user-message ID. A failed queued delivery also includes its existing durable recovery decision token. Transcript-free roster summaries preserve the last root ID and never trigger detail reads. For non-summary events that need an anchor, the hub reads the passive session endpoint outside the commit/publication queue, without opening or resuming anything. Reads coalesce per session, with at most two physical reads, 32 queued reads, and a one-second deadline including queue time. A non-abortable timed-out request retains its physical slot until it settles; late results are discarded. Over-capacity or timed-out enrichment leaves the anchor unknown rather than delaying unrelated notifications. A newer passive response cannot supply a different turn's root to an older event. If no root ID can be established, it does not invent a completion from a timestamp or status alone. Initial terminal history is not a new completion. Revision fences discard older snapshots.
 

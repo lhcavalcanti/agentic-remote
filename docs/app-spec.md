@@ -2132,7 +2132,7 @@ people sharing a hub share its profile. See
 
 ## 10. Notifications
 
-- The optional default-off hub notification center MUST follow the [durable notification contract](design/notification-center.md). It is API-only until its panel ships; enabling it MUST NOT change push or native-shell delivery policy.
+- The optional default-off hub notification center MUST follow the [durable notification contract](design/notification-center.md). The default-off `notificationPanel` Interface preview adds the client panel and requires the hub flag; enabling either MUST NOT change push or native-shell delivery policy.
 
 - Notification settings MUST be discoverable under App settings.
 - **What notifies you** is synced (§9.3) and the hub applies it to every

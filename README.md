@@ -290,7 +290,7 @@ Hub features default off: `notificationCenter` (`AGENTIC_REMOTE_FEATURE_NOTIFICA
 
 App settings → Interface → **Preview features** holds the client opt-ins, all off by default and synced across devices on this hub. A preview cannot enable a server feature: dependent toggles show **Turned off on this hub** while their hub flag is off. These flags reserve rollout controls; enabling one does not add a feature that is not implemented yet.
 
-The scheduler flag enables the hub-only durable schedule/run store, dispatcher, and `/api/schedules` API; it adds no UI or Oracle tools. The session runner is not connected yet, so the default implementation never starts a session. See [Scheduler](docs/design/scheduler.md) for the launcher integration seam, recovery/stop guarantees, and API contract.
+The scheduler flag enables the hub-only durable schedule/run store, dispatcher, `/api/schedules` API, and the runner that starts scheduled sessions on the target computer. Oracle's schedule tools only propose changes; each one runs after you approve that exact proposal. Scheduled sessions ask for permissions and folder trust by default, and Allow-all needs explicit confirmation. The Scheduler view is the separate `schedulerView` preview. See [Scheduler](docs/design/scheduler.md) for the runner, recovery/stop guarantees, notifications, and API contract.
 
 ## Access through Microsoft Dev Tunnels
 

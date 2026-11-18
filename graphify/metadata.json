@@ -768,7 +768,7 @@
     "e2e/ui-locks.pw.ts-snapshots/desktop-notification-panel-chromium-linux.png": "6225a47bdc10cc0a3b4ca2b4cb93fbd7d655a6ce978d0409ad16c373b06a461d",
     "e2e/ui-locks.pw.ts-snapshots/desktop-oracle-panel-chromium-linux.png": "f320407a68ee2257bd46ac1f2428d16d52abd436f9ba696c59087d9ce66f07af",
     "e2e/ui-locks.pw.ts-snapshots/desktop-oracle-schedule-approval-chromium-linux.png": "3cecda700f6cc1d77ef52a947acd207424ac8f27b5912647366160f18259369f",
-    "e2e/ui-locks.pw.ts-snapshots/desktop-preview-features-chromium-linux.png": "4bda4aa247e3e6979ab2aa921cbc801306b9095b487f2247f079b50bda94fae1",
+    "e2e/ui-locks.pw.ts-snapshots/desktop-preview-features-chromium-linux.png": "f72e7f6dd95f7d03c82929a71a02cb45448f7031f04e299c8a574028930eb8bc",
     "e2e/ui-locks.pw.ts-snapshots/desktop-runtime-dialog-chromium-linux.png": "a8ef1c0ac4092ff2b3c9a11c90dcbc4d21efa19b3d734f65869dbeff1ce2cdfe",
     "e2e/ui-locks.pw.ts-snapshots/desktop-scheduler-chromium-linux.png": "88fbe06e74334c1e66915eddff5bf2c2941138e9b0d2aedf499fb64c57b0a0d8",
     "e2e/ui-locks.pw.ts-snapshots/desktop-scheduler-form-chromium-linux.png": "65a205717a8f908b0e084efe5a89d6ff94763f42ce0405ffb83981eed68a771f",
@@ -809,7 +809,7 @@
     "e2e/ui-locks.pw.ts-snapshots/foldable-notification-panel-chromium-linux.png": "4ce7b8983948692cc9d811ce59bfb625971c26e6ccd4bf3b3521685d18b4ce9d",
     "e2e/ui-locks.pw.ts-snapshots/foldable-oracle-panel-chromium-linux.png": "7eb7547edb31855d6a15c88c2968493c404135a5614fc0b7b139f02651c8767a",
     "e2e/ui-locks.pw.ts-snapshots/foldable-oracle-schedule-approval-chromium-linux.png": "13fda0891ae714de2431bead0d6c2a54f6a1d37f4063491f2a6565e8f55f60db",
-    "e2e/ui-locks.pw.ts-snapshots/foldable-preview-features-chromium-linux.png": "a14d764b1463efd3876a92efacdb69ffad1de72a298b3e90dd7115aab252daca",
+    "e2e/ui-locks.pw.ts-snapshots/foldable-preview-features-chromium-linux.png": "8d33f7a1b3b6a2115742c8460c228b5ec2672a354f9836ce3a2393a23b5bce09",
     "e2e/ui-locks.pw.ts-snapshots/foldable-runtime-dialog-chromium-linux.png": "26bbfed5d970144f2d6e8cc5799f64dce179fd48e16c1c90fb6b3614b47f6ee8",
     "e2e/ui-locks.pw.ts-snapshots/foldable-scheduler-chromium-linux.png": "1d6d2f35334a6fc694b83a33e5b9c52d8252cab7ca61a491de84d7cf89d2b2f8",
     "e2e/ui-locks.pw.ts-snapshots/foldable-scheduler-form-chromium-linux.png": "ea264b8e9cd85cbfe53d494850f624ec9551f30acd9f7afa2af556fef7015e25",
@@ -1737,13 +1737,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "34bdaaf26a69a6f493f7bef2b64188d8e5dd890419953b979c898dbee032751a",
+    "GRAPH_REPORT.md": "9920b2e0b5786b95a06ae3f3dd86518fe06941f3cef04f456acb8aaf27953e5f",
     "communities.json": "35252e742c34e80e71f09960d8adbce8f59ee29d95c05c4e1fb7ef2e1fa11ab9",
-    "graph.html": "8342aa9503077e76a5964149920f3431119fb5228fa6e7a604f1724c1b5857c6",
-    "graph.json": "0c9d97f83101fdd214154e2692fbf0bcb60ae85ea8751475490770343e2e211b"
+    "graph.html": "9b1de93ab2aa68777425432bf53bfc1df2a55cd1e3f97dde06dc574f84d41f0c",
+    "graph.json": "99abde52fa073824d46240ba514eaa8d60dbab1f20bde034bfe7665b6d8c2b8c"
   },
   "schema_version": 1,
-  "source_commit": "2302d04674ff7b1466418f2ba4c8de52555b454e",
-  "source_fingerprint": "e859e0fc80ab1d85eae8e7544dfccbf95356189683ad986401c90986807cfd3a",
+  "source_commit": "a0d8547b0765b2067e704d5e7f7a3e4cc3f048e0",
+  "source_fingerprint": "d863d0bf5c75fbcdd0fae9ab4ae7938529f6fcb1d816d9758a9e7ceb19f3e91a",
   "working_tree_changes": []
 }

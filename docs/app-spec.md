@@ -2134,6 +2134,7 @@ people sharing a hub share its profile. See
 
 - The optional default-off hub notification center MUST follow the [durable notification contract](design/notification-center.md). It is API-only until its panel ships; enabling it MUST NOT change push or native-shell delivery policy.
 - A notification admission failure MUST be logged without dropping core session, computer, error, or Oracle socket events. A failed write MUST NOT produce a notification invalidation claiming durable success.
+- Failure to persist notification read marks after a successful session open MUST be logged without failing the session access.
 
 - Notification settings MUST be discoverable under App settings.
 - **What notifies you** is synced (§9.3) and the hub applies it to every

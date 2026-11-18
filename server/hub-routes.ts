@@ -439,6 +439,13 @@ export async function registerHubRoutes(
     })
   }
   const policy = originPolicy()
+  const markSessionNotificationsRead = async (computerId: string, sessionId: string): Promise<void> => {
+    try {
+      await notifications?.sessionOpened(computerId, sessionId)
+    } catch (error) {
+      app.log.error({ err: error, computerId, sessionId }, 'Session opened but its notifications could not be marked read')
+    }
+  }
   // Assigned once the socket set exists further down. Until then a committed
   // order is still persisted and returned; only the push to other clients is
   // skipped, which is what a client's own response already told it.
@@ -704,7 +711,7 @@ export async function registerHubRoutes(
           request.params.sessionId,
         )
       if (request.query.passive !== '1') {
-        await notifications?.sessionOpened(request.params.computerId, request.params.sessionId)
+        await markSessionNotificationsRead(request.params.computerId, request.params.sessionId)
       }
       return { session }
     },
@@ -863,7 +870,7 @@ export async function registerHubRoutes(
         request.params.computerId,
         request.params.sessionId,
       )
-      await notifications?.sessionOpened(request.params.computerId, request.params.sessionId)
+      await markSessionNotificationsRead(request.params.computerId, request.params.sessionId)
       return { session }
     },
   )

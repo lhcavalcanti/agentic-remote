@@ -201,6 +201,34 @@ describe('hub notification center', () => {
     }
   })
 
+  it.each([
+    ['GET', '', 'getSession'],
+    ['POST', '/open', 'activateSession'],
+  ] as const)('keeps %s session access successful when notification read marks cannot be saved', async (method, suffix, access) => {
+    const { runtime } = await hub('on')
+    const current = session('opened')
+    const read = vi.spyOn(runtime.manager!, access).mockResolvedValue(current)
+    const failure = new Error('Synthetic read-mark persistence failure')
+    const mark = vi.spyOn(runtime.notificationCenter!, 'sessionOpened').mockRejectedValue(failure)
+    const logged = vi.spyOn(runtime.app.log, 'error')
+    try {
+      const response = await runtime.app.inject({
+        method, url: `/api/computers/computer/sessions/opened${suffix}`, headers: trusted,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ session: { id: 'opened', computerId: 'computer' } })
+      expect(read).toHaveBeenCalledExactlyOnceWith('computer', 'opened')
+      expect(mark).toHaveBeenCalledExactlyOnceWith('computer', 'opened')
+      expect(logged).toHaveBeenCalledWith(
+        { err: failure, computerId: 'computer', sessionId: 'opened' }, expect.stringContaining('marked read'),
+      )
+    } finally {
+      read.mockRestore()
+      mark.mockRestore()
+      logged.mockRestore()
+    }
+  })
+
   it('commits the in-app record before external delivery and resolves transcript-free outcomes passively', async () => {
     const { runtime, sender, emit, list } = await hub('on')
     await runtime.pushService!.subscribe({

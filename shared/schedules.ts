@@ -6,6 +6,10 @@ import { scheduleWorktreeInputSchema, scheduleWorktreeRecordSchema } from './sch
 export const DEFAULT_SCHEDULE_TIMEZONE = 'America/Los_Angeles'
 export const SCHEDULE_PROMPT_MAX_LENGTH = 20_000
 export const SCHEDULE_MIN_SPACING_MINUTES = 15
+export const CLAUDE_SCHEDULE_UNAVAILABLE_REASON = 'Claude schedules are unavailable because Claude cannot prove background work has stopped.'
+export function scheduleProviderUnavailableReason(provider: 'copilot' | 'claude'): string | undefined {
+  return provider === 'claude' ? CLAUDE_SCHEDULE_UNAVAILABLE_REASON : undefined
+}
 
 export function isValidScheduleTimezone(timezone: string): boolean {
   if (!timezone || timezone.trim() !== timezone || /^[+-]/.test(timezone)) return false

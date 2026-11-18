@@ -11,7 +11,7 @@ import {
   type ScheduleProposal, type ScheduleProposalInput, type ScheduleProposalsChanged,
 } from '../shared/schedule-proposals.js'
 import {
-  scheduleCreateSchema, scheduleRunSchema, scheduleSchema, scheduleUpdateSchema,
+  scheduleCreateSchema, scheduleRunSchema, scheduleSchema, scheduleUpdateSchema, scheduleProviderUnavailableReason,
   type Schedule, type ScheduleCreate, type ScheduleRun, type ScheduleRunPage,
   type ScheduleRunStatus, type ScheduleUpdate, type SchedulerChanged,
 } from '../shared/schedules.js'
@@ -156,6 +156,11 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   private checkRecurrence(schedule: Schedule): void {
     const result = validateRecurrence(schedule.recurrence, schedule.timezone, new Date(this.now()))
     if (!result.valid) throw failure(result.errors.join('; '), 400)
+  }
+
+  private checkProvider(schedule: Schedule): void {
+    const reason = scheduleProviderUnavailableReason(schedule.target.provider)
+    if (reason) throw failure(reason, 400)
   }
 
   proposals(): ScheduleProposal[] { return structuredClone(this.state.proposals) }
@@ -323,6 +328,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       })
     }
     if (schedule.archived && schedule.enabled) throw failure('An archived schedule cannot be enabled', 409)
+    if (proposal.operation !== 'disable' && proposal.operation !== 'archive') this.checkProvider(schedule)
     if (schedule.target.permissionPolicy === 'allow-all' && !allowAll &&
         proposal.operation !== 'disable' && proposal.operation !== 'archive') {
       throw failure('The hub does not permit allow-all for Oracle schedules', 403)
@@ -348,6 +354,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       const schedule = scheduleSchema.parse({
         ...parsed, id: randomUUID(), revision: 1, archived: false, createdBy, createdAt: at, updatedAt: at,
       })
+      this.checkProvider(schedule)
       this.checkRecurrence(schedule)
       this.checkName(next, schedule)
       next.schedules.push(schedule)
@@ -369,6 +376,8 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     return this.commit((next) => {
       const previous = this.requireSchedule(next, id, revision)
       const schedule = scheduleSchema.parse({ ...previous, ...changes, revision: revision + 1, updatedAt: this.now() })
+      const disablingOnly = changes.enabled === false && Object.keys(changes).every((key) => key === 'enabled' || key === 'archived')
+      if (!disablingOnly) this.checkProvider(schedule)
       if (schedule.archived && schedule.enabled) throw failure('An archived schedule cannot be enabled', 409)
       if (changes.recurrence !== undefined || changes.timezone !== undefined) this.checkRecurrence(schedule)
       this.checkName(next, schedule)

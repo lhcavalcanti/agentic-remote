@@ -1,7 +1,7 @@
 import type { HubEvent, ManagedSession } from '../shared/contracts.js'
 import { chmod, lstat } from 'node:fs/promises'
 import type { LaunchReconciliation, PromptAcceptanceReceipt } from '../shared/launch-identity.js'
-import type { Schedule, ScheduleRun } from '../shared/schedules.js'
+import { scheduleProviderUnavailableReason, type Schedule, type ScheduleRun } from '../shared/schedules.js'
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import type { ComputerManager } from './computer-manager.js'
 import { registryKey, type ManagerStore } from './manager-store.js'
@@ -85,6 +85,8 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
   }
 
   async launch(run: ScheduleRun, schedule: Schedule): Promise<void> {
+    const providerReason = scheduleProviderUnavailableReason(schedule.target.provider)
+    if (providerReason) throw new ScheduleLaunchRefusedError(providerReason)
     const computer = this.host.listComputers().find((entry) => entry.id === run.computerId)
     if (!computer?.online) throw new ScheduleTargetUnavailableError('Target computer is offline')
     const capability = computer.providers?.find((entry) => entry.id === schedule.target.provider)
@@ -184,6 +186,10 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
 
   async reconcile(run: ScheduleRun): Promise<ScheduleReconciliation> {
     const schedule = this.store.scheduleForRun(run.id)
+    const providerReason = scheduleProviderUnavailableReason(schedule.target.provider)
+    if (providerReason && run.status === 'pending' && !run.startedAt && !run.sessionId && !run.rootPromptReceipt) {
+      return { state: 'terminated', outcome: 'failed', error: providerReason }
+    }
     const computer = this.host.listComputers().find((entry) => entry.id === run.computerId)
     if (run.status === 'pending' && !run.startedAt && computer?.online &&
         !computer.providers?.some((provider) => provider.id === schedule.target.provider && provider.supportsLaunchIdentity)) {
@@ -218,6 +224,7 @@ export class SessionScheduleLauncher implements ScheduleLauncher {
       return this.terminal(run, { ...details, state: 'terminated', outcome: 'stopped' })
     }
     if (launch.deleted) return { ...details, state: 'unknown', error: 'Launch session was deleted without termination acknowledgement' }
+    if (providerReason) return { ...details, state: 'unknown', error: providerReason }
     let session = await this.sessions.observeSession({ computerId: run.computerId, id: launch.sessionId })
     if (session.id !== launch.sessionId || session.computerId !== run.computerId) {
       return { ...details, state: 'unknown', error: 'Mismatched session evidence' }

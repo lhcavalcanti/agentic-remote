@@ -176,16 +176,10 @@ export class NotificationStore extends EventEmitter<{
   /** Classifies and admits in the same serialized durable transaction. */
   ingest(classify: (cursors: NotificationCursors) => NotificationRecord[]): Promise<void> {
     return this.commit((next) => {
-      let seenCount = Object.keys(next.seen).length
       for (const candidate of classify(next.cursors)) {
         const record = recordSchema.parse(candidate) as NotificationRecord
         if (next.seen[record.id] || Date.parse(record.createdAt) < this.now() - NOTIFICATION_RETENTION_MS) continue
-        if (seenCount >= DEDUPE_LIMIT) {
-          // Never evict a live dedupe fence to accept a replay as new.
-          throw new Error('Notification deduplication capacity reached')
-        }
         next.seen[record.id] = record.createdAt
-        seenCount += 1
         next.records.push(record)
       }
     })
@@ -259,6 +253,14 @@ export class NotificationStore extends EventEmitter<{
       .slice(-CURSOR_LIMIT))
     for (const [id, at] of Object.entries(next.seen)) {
       if (Date.parse(at) < cutoff) delete next.seen[id]
+    }
+    const excess = Object.keys(next.seen).length - DEDUPE_LIMIT
+    if (excess > 0) {
+      // Retained read/dismissed records must keep their identity fences.
+      const retained = new Set(next.records.map((record) => record.id))
+      const oldest = Object.keys(next.seen).filter((id) => !retained.has(id))
+        .sort((left, right) => Date.parse(next.seen[left]) - Date.parse(next.seen[right]) || left.localeCompare(right))
+      for (const id of oldest.slice(0, excess)) delete next.seen[id]
     }
   }
 

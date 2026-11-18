@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import {
   scheduleArchivedSchema, scheduleCreateSchema, scheduleEnabledSchema, scheduleIdParamsSchema,
-  scheduleListSchema, scheduleRevisionSchema, scheduleRunListSchema, scheduleUpdateSchema, scheduleActionSchema,
+  scheduleListSchema, scheduleRevisionSchema, scheduleRunListSchema, scheduleUpdateSchema, scheduleActionSchema, scheduleAbandonSchema,
 } from '../shared/schedules.js'
 import type { SchedulerDispatcher } from './scheduler-dispatcher.js'
 
@@ -46,6 +46,10 @@ export async function registerSchedulerRoutes(
   app.post('/api/schedules/runs/:id/stop', async (request) => {
     scheduleActionSchema.parse(request.body ?? {})
     return { run: await scheduler.stopRun(scheduleIdParamsSchema.parse(request.params).id) }
+  })
+  app.post('/api/schedules/runs/:id/abandon', async (request) => {
+    scheduleAbandonSchema.parse(request.body)
+    return { run: await scheduler.abandonRun(scheduleIdParamsSchema.parse(request.params).id) }
   })
   app.get('/api/schedules/:id', async (request, reply) => {
     reply.header('cache-control', 'no-store')

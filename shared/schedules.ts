@@ -6,6 +6,12 @@ import { scheduleWorktreeInputSchema, scheduleWorktreeRecordSchema } from './sch
 export const DEFAULT_SCHEDULE_TIMEZONE = 'America/Los_Angeles'
 export const SCHEDULE_PROMPT_MAX_LENGTH = 20_000
 export const SCHEDULE_MIN_SPACING_MINUTES = 15
+export const CLAUDE_SCHEDULE_UNAVAILABLE_REASON = 'Claude Agent schedules are unavailable because this adapter cannot prove background work has stopped.'
+export const SCHEDULE_ABANDONED_REASON = 'Run abandoned by explicit confirmation. Work may still be running; inspect the owning computer. This launch identity will not be resumed.'
+export const SCHEDULE_DELETED_SESSION_REASON = 'The owning computer confirms that this session was deleted. Any remaining background work requires manual review.'
+export function scheduleProviderUnavailableReason(provider: 'copilot' | 'claude'): string | undefined {
+  return provider === 'claude' ? CLAUDE_SCHEDULE_UNAVAILABLE_REASON : undefined
+}
 
 export function isValidScheduleTimezone(timezone: string): boolean {
   if (!timezone || timezone.trim() !== timezone || /^[+-]/.test(timezone)) return false
@@ -126,6 +132,8 @@ export const scheduleRunSchema = z.object({
   endedAt: timestamp.optional(),
   summary: z.string().optional(),
   error: z.string().optional(),
+  outcomeUnknown: z.boolean().optional(),
+  abandonedAt: timestamp.optional(),
 }).strict()
 
 export const scheduleCreateSchema = scheduleSchema.omit({
@@ -145,6 +153,7 @@ export const scheduleUpdateSchema = scheduleSchema.omit({
 }).strict()
 export const scheduleRevisionSchema = z.object({ revision: z.number().int().min(1) }).strict()
 export const scheduleActionSchema = z.object({}).strict()
+export const scheduleAbandonSchema = z.object({ confirm: z.literal(true) }).strict()
 export const scheduleEnabledSchema = scheduleRevisionSchema.extend({ enabled: z.boolean() }).strict()
 export const scheduleArchivedSchema = scheduleRevisionSchema.extend({ archived: z.boolean() }).strict()
 export const scheduleIdParamsSchema = z.object({ id: identifier }).strict()

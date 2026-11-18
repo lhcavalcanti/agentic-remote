@@ -40,6 +40,16 @@ function cards({ flag = true, preview = true, active = true } = {}) {
   return render(<PreviewFeaturesContext value={context(flag, preview)}><ScheduleProposalCards active={active} /></PreviewFeaturesContext>)
 }
 describe('schedule confirmation cards', () => {
+  it('explains and blocks an unsupported legacy Claude proposal without hiding Reject', async () => {
+    vi.mocked(listScheduleProposals).mockResolvedValue([scheduleProposalSchema.parse({
+      ...proposal, payload: { ...proposal.payload, target: { ...base.target, provider: 'claude' } },
+    })])
+    cards()
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeDisabled()
+    expect(screen.getByText(/Claude.*background/i)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled()
+  })
+
   it.each([
     ['daily', 'Daily', 'Sat, Sep 5'], ['weekdays', 'Weekdays', 'Mon, Sep 7'],
   ] as const)('advances the next %s occurrence while the approval stays open', async (type, label, nextDay) => {

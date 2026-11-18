@@ -1,6 +1,6 @@
 import { randomInt } from 'node:crypto'
 import { nextOccurrences, occurrencesBetween } from '../shared/schedule-recurrence.js'
-import type { Schedule, ScheduleRun, SchedulerChanged } from '../shared/schedules.js'
+import { SCHEDULE_DELETED_SESSION_REASON, type Schedule, type ScheduleRun, type SchedulerChanged } from '../shared/schedules.js'
 import { holdsSlot, isInFlight, SCHEDULE_RUN_LIMIT, SchedulerStore } from './scheduler-store.js'
 
 export const SCHEDULER_CONCURRENCY = 2
@@ -14,14 +14,14 @@ export interface ScheduleReconciliation {
   rootPromptReceipt?: string
   rootPromptAcceptance?: ScheduleRun['rootPromptAcceptance']
   worktree?: ScheduleRun['worktree']
-  /** terminated proves quiescence of foreground, queued, and provider-owned background work. */
+  /** Completion/stopped proves quiescence; interrupted may instead report authoritative session deletion. */
   outcome?: 'succeeded' | 'failed' | 'stopped' | 'interrupted'
   summary?: string
   error?: string
 }
 export interface ScheduleStopAcknowledgement {
   /** stopped proves termination, not merely acceptance of an abort request. */
-  outcome: 'stopped' | 'unknown'
+  outcome: 'stopped' | 'deleted' | 'unknown'
   sessionId?: string
 }
 export interface ScheduleLauncher {
@@ -145,8 +145,16 @@ export class SchedulerDispatcher {
         await this.drain()
         this.planWake()
       }
+
       return this.store.getRun(id)
     })
+  }
+
+  async abandonRun(id: string): Promise<ScheduleRun> {
+    // Must not wait behind an unresolved provider stop/create operation.
+    const run = await this.store.abandonRun(id)
+    this.wake()
+    return run
   }
 
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {
@@ -258,6 +266,7 @@ export class SchedulerDispatcher {
   private async afterLaunch(id: string, error?: unknown): Promise<void> {
     await this.exclusive(async () => {
       if (!this.active) return
+      if (this.store.isRunAbandoned(id)) return
       const run = this.store.getRun(id)
       if (!isInFlight(run)) return
       if (error instanceof ScheduleLaunchRefusedError) {
@@ -275,9 +284,9 @@ export class SchedulerDispatcher {
   private async unavailable(run: ScheduleRun, error: string): Promise<void> {
     const deadline = run.trigger === 'schedule' ? run.occurrenceAt : run.createdAt ?? run.occurrenceAt
     if (this.now() - Date.parse(deadline) > SCHEDULER_LATE_MS) await this.finish(run, 'missed', error)
-    else if (run.status !== 'pending' || run.error !== error || !run.retryUntil) {
+    else if (run.status !== 'pending' || run.error !== error || !run.retryUntil || run.outcomeUnknown) {
       await this.store.changeRun(run.id, {
-        status: 'pending', startedAt: undefined, error,
+        status: 'pending', startedAt: undefined, error, outcomeUnknown: undefined,
         retryUntil: new Date(Date.parse(deadline) + SCHEDULER_LATE_MS).toISOString(),
       })
     }
@@ -287,7 +296,9 @@ export class SchedulerDispatcher {
     let result: ScheduleReconciliation
     try { result = await this.launcher.reconcile(run) }
     catch { result = { state: 'unknown' } }
+    if (this.store.isRunAbandoned(run.id)) return
     const details = {
+      outcomeUnknown: result.state === 'unknown' || (run.status === 'stopping' && !['terminated', 'absent'].includes(result.state)) ? true : undefined,
       ...(result.sessionId ? { sessionId: result.sessionId } : {}),
       ...(result.rootPromptReceipt ? { rootPromptReceipt: result.rootPromptReceipt } : {}),
       ...(result.rootPromptAcceptance ? { rootPromptAcceptance: result.rootPromptAcceptance } : {}),
@@ -300,7 +311,7 @@ export class SchedulerDispatcher {
     } else if (result.state === 'absent') {
       if (run.status !== 'pending' && !this.launches.has(run.id)) {
         await this.finish(run, run.status === 'stopping' ? 'stopped' : 'interrupted', 'Owning computer confirms this launch is absent')
-      }
+      } else if (run.status === 'pending') await this.store.changeRun(run.id, { outcomeUnknown: undefined })
     } else if (run.status === 'stopping') {
       await this.store.changeRun(run.id, details)
     } else if (run.status === 'pending' && result.state === 'unknown' &&
@@ -322,18 +333,21 @@ export class SchedulerDispatcher {
       await this.finish(run, 'stopped')
       return
     }
-    const stopping = run.status === 'stopping' ? run : await this.store.changeRun(run.id, { status: 'stopping' })
+    const stopping = run.status === 'stopping' ? run : await this.store.changeRun(run.id, { status: 'stopping', outcomeUnknown: true })
     if (this.launches.has(run.id) && !stopping.sessionId) return
     let ack: ScheduleStopAcknowledgement
     try { ack = await this.launcher.stop(stopping) }
     catch { ack = { outcome: 'unknown' } }
+    if (this.store.isRunAbandoned(run.id)) return
     if (ack.outcome === 'stopped' && (!ack.sessionId || !stopping.sessionId || ack.sessionId === stopping.sessionId)) {
       await this.finish(stopping, 'stopped')
-    }
+    } else if (ack.outcome === 'deleted' && ack.sessionId && (!stopping.sessionId || ack.sessionId === stopping.sessionId)) {
+      await this.finish(stopping, 'interrupted', SCHEDULE_DELETED_SESSION_REASON)
+    } else await this.store.changeRun(run.id, { outcomeUnknown: true })
   }
 
   private async finish(run: ScheduleRun, status: ScheduleRun['status'], error?: string): Promise<void> {
-    await this.store.changeRun(run.id, { status, endedAt: this.at(), ...(error ? { error } : {}) })
+    await this.store.changeRun(run.id, { status, endedAt: this.at(), outcomeUnknown: undefined, ...(error ? { error } : {}) })
   }
 
   private wake(): void {

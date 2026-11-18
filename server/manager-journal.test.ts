@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -268,13 +268,18 @@ describe('JournalRecorder', () => {
     expect(restarted.journalSince(2).map((entry) => entry.proposalStatus)).toEqual(['rejected'])
   })
 
-  it('does not silently discard a corrupt proposal journal fence index', async () => {
+  it('quarantines a corrupt proposal journal fence index instead of discarding it', async () => {
     const target = path.join(root, 'manager', 'proposal-journal.json')
     const damaged = '{"version":1,"proposals":{"old":"not-an-array"}}'
     await writeFile(target, damaged)
     const restarted = new ManagerStore(path.join(root, 'manager'))
-    await expect(restarted.initialize()).rejects.toThrow('Invalid Oracle proposal journal index')
-    expect(await readFile(target, 'utf8')).toBe(damaged)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await restarted.initialize()
+    const quarantined = (await readdir(path.join(root, 'manager')))
+      .filter((name) => /^proposal-journal\.json\.corrupt-[a-f0-9-]{36}$/.test(name))
+    expect(quarantined).toHaveLength(1)
+    expect(await readFile(path.join(root, 'manager', quarantined[0]), 'utf8')).toBe(damaged)
+    await expect(readFile(target, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('takes in the sessions that already exist without reporting them as new', async () => {

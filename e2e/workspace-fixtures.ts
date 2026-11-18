@@ -5,7 +5,7 @@ import { skillToggleSchema, type SkillSettingsSnapshot } from '../shared/skill-s
 import type { NotificationRecord } from '../shared/notification-center'
 import { hostMetricNames, type HostSnapshot, type HostMinuteAggregate, type HostProcesses } from '../shared/host-telemetry'
 import {
-  scheduleActionSchema, scheduleArchivedSchema, scheduleCreateSchema, scheduleEnabledSchema, scheduleListSchema,
+  scheduleActionSchema, scheduleAbandonSchema, SCHEDULE_ABANDONED_REASON, scheduleArchivedSchema, scheduleCreateSchema, scheduleEnabledSchema, scheduleListSchema,
   scheduleRevisionSchema, scheduleRunListSchema, scheduleSchema, scheduleUpdateSchema, type Schedule, type ScheduleRun,
 } from '../shared/schedules'
 import { validateRecurrence } from '../shared/schedule-recurrence'
@@ -546,6 +546,7 @@ export const fixtureEndpoints = [
   'GET /api/schedules/runs',
   'GET /api/schedules/runs/:id',
   'POST /api/schedules/runs/:id/stop',
+  'POST /api/schedules/runs/:id/abandon',
   'GET /api/schedules/proposals',
   'POST /api/schedules/proposals/:id/approve',
   'POST /api/schedules/proposals/:id/reject',
@@ -968,7 +969,7 @@ export async function setupWorkspaceFixture(
         (/^\/api\/schedules\/[^/]+$/.test(path) && ['GET', 'PATCH', 'DELETE'].includes(method)) ||
         (/^\/api\/schedules\/[^/]+\/(?:enabled|archived|run)$/.test(path) && method === 'POST') ||
         (/^\/api\/schedules\/(?:[^/]+\/runs|runs\/[^/]+)$/.test(path) && method === 'GET') ||
-        (/^\/api\/schedules\/runs\/[^/]+\/stop$/.test(path) && method === 'POST')
+        (/^\/api\/schedules\/runs\/[^/]+\/(?:stop|abandon)$/.test(path) && method === 'POST')
       if (!known) { await reject(route, `Unmocked schedule request: ${method} ${path}`); return }
       if (!options.scheduler) { await respond({ error: 'Scheduler is disabled' }, 404); return }
       const parts = path.split('/').slice(3)
@@ -1009,6 +1010,17 @@ export async function setupWorkspaceFixture(
           const run = scheduled.runs.find((run) => run.id === parts[1])
           if (!run) { await respond({ error: 'Schedule run not found' }, 404); return }
           if (parts.length === 2 && method === 'GET') { await respond({ run }); return }
+          if (parts.length === 3 && parts[2] === 'abandon' && method === 'POST') {
+            scheduleAbandonSchema.parse(input)
+            if (!run.abandonedAt) {
+              if (!run.outcomeUnknown || !['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status)) {
+                await respond({ error: 'Only a run with an unknown outcome can be abandoned' }, 409); return
+              }
+              run.status = 'interrupted'; run.abandonedAt = FIXTURE_NOW; run.endedAt = FIXTURE_NOW
+              run.error = SCHEDULE_ABANDONED_REASON; changed(run.scheduleId, run.id)
+            }
+            await respond({ run }); return
+          }
           if (parts.length === 3 && parts[2] === 'stop' && method === 'POST') {
             scheduleActionSchema.parse(input)
             if (['pending', 'launching', 'running', 'needs-input', 'stopping'].includes(run.status)) {

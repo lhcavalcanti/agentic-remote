@@ -8,7 +8,6 @@ import type { LaunchReconciliation, PromptAcceptanceReceipt, TerminationAcknowle
 import type { ScheduleCreate } from '../shared/schedules.js'
 import { deliveryUncertaintyFromError } from '../shared/submission-error.js'
 import { AgentService, type CopilotClientLike } from './agent-service.js'
-import { ClaudeAgentService, type ClaudeSdk } from './claude-agent-service.js'
 import { ComputerManager } from './computer-manager.js'
 import type { ComputerRegistry } from './computer-registry.js'
 import { JournalRecorder } from './manager-journal.js'
@@ -59,7 +58,9 @@ async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' 
   const directory = path.join(process.cwd(), `.schedule-launcher-${randomUUID()}`)
   await mkdir(directory)
   directories.push(directory)
-  const store = new SchedulerStore(directory)
+  // The fixture's manual run uses a canonical instant, so the schedule's due cursor starts there; the run itself uses the test clock.
+  let setupClock: number | undefined = Date.parse(at)
+  const store = new SchedulerStore(directory, { now: () => setupClock ?? Date.now() })
   await store.initialize()
   const registry = new ManagerStore(path.join(directory, 'manager'))
   await registry.initialize()
@@ -68,6 +69,7 @@ async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' 
     target: { computerId: 'hub', folder: '/fictional/repo', provider: 'copilot' },
     recurrence: { type: 'daily', time: '09:00' }, enabled: false, ...changes,
   }, createdBy)
+  setupClock = undefined
   const run = (await store.admit(schedule.id, at, 'manual'))!
   const receipt: PromptAcceptanceReceipt = {
     deliveryId: `${run.launchId}:root`, sessionId: 'session-one', promptId: 'root-one',
@@ -122,9 +124,111 @@ async function fixture(changes: Partial<ScheduleCreate> = {}, createdBy: 'user' 
 }
 
 describe('schedule runner', () => {
+  it('settles an owner-confirmed deleted session without requiring its trimmed root receipt or removing its worktree', async () => {
+    const f = await fixture({ workspace: 'worktree' })
+    await f.runner.launch(f.run, f.schedule)
+    await f.store.changeRun(f.run.id, { status: 'running', startedAt: at })
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', deleted: true, receipts: [] })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    expect(f.store.getRun(f.run.id)).toMatchObject({
+      status: 'interrupted', error: expect.stringMatching(/deleted/i), worktree: { state: 'deferred' },
+    })
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+    expect(f.host.cleanupScheduleWorktree).not.toHaveBeenCalled()
+    expect(f.host.sendMessage).toHaveBeenCalledOnce()
+  })
+
+  it.each(['create-failure', 'restart'] as const)('allows explicit abandonment of an uncertain %s and fences later owner evidence after deletion', async (stage) => {
+    const f = await fixture()
+    const cause = new Error('SDK creation failed after the create boundary')
+    if (stage === 'create-failure') vi.mocked(f.host.createSession).mockRejectedValue(cause)
+    else await f.store.changeRun(f.run.id, { status: 'launching', startedAt: new Date().toISOString() })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id)).toMatchObject({ status: 'launching', outcomeUnknown: true }))
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(true)
+    if (stage === 'create-failure') expect(deliveryUncertaintyFromError(cause)).toBe(true)
+    const abandoned = await dispatcher.abandonRun(f.run.id)
+    expect(abandoned).toMatchObject({ status: 'interrupted', abandonedAt: expect.any(String), error: expect.stringMatching(/abandon/i) })
+    expect(holdsSlot(abandoned)).toBe(false)
+    const archived = await f.store.setArchived(f.schedule.id, f.schedule.revision, true)
+    await f.store.delete(f.schedule.id, archived.revision)
+    const restored = new SchedulerStore(f.directory)
+    await restored.initialize()
+    expect(restored.isLaunchAbandoned(f.run.launchId)).toBe(true)
+    f.setLaunch({ launchId: f.run.launchId, sessionId: 'late-session', receipts: [] })
+    const runner = new SessionScheduleLauncher(f.host, restored, f.registry)
+    expect(await runner.reconcile(abandoned)).toMatchObject({ state: 'terminated', outcome: 'interrupted', error: expect.stringMatching(/abandon/i) })
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
+    expect(f.host.createSession).toHaveBeenCalledTimes(stage === 'create-failure' ? 1 : 0)
+  })
+
+  it('does not adopt or send a root to a late create response after abandonment and schedule deletion', async () => {
+    const f = await fixture()
+    let created!: (session: ManagedSession) => void
+    vi.mocked(f.host.createSession).mockImplementation(() => new Promise((resolve) => { created = resolve }))
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(created).toBeTypeOf('function'))
+    await dispatcher.tick()
+    expect(f.store.getRun(f.run.id)).toMatchObject({ outcomeUnknown: true })
+    await dispatcher.abandonRun(f.run.id)
+    const archived = await f.store.setArchived(f.schedule.id, f.schedule.revision, true)
+    await f.store.delete(f.schedule.id, archived.revision)
+    created(session({ launchId: f.run.launchId }))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await dispatcher.tick()
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
+    expect(f.store.allRuns()).toEqual([])
+    expect(f.registry.registry()['hub:session-one']).toBeUndefined()
+    expect(f.store.isLaunchAbandoned(f.run.launchId)).toBe(true)
+  })
+
+  it('rechecks abandonment after the final worktree write before issuing create', async () => {
+    const f = await fixture({ workspace: 'worktree' })
+    let release!: () => void
+    let prepared = false
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const change = f.store.changeRun.bind(f.store)
+    vi.spyOn(f.store, 'changeRun').mockImplementation(async (id, changes) => {
+      const result = await change(id, changes)
+      if (changes.worktree?.state === 'ready') { prepared = true; await gate }
+      return result
+    })
+    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    try {
+      await vi.waitFor(() => expect(prepared).toBe(true))
+      await dispatcher.abandonRun(f.run.id)
+    } finally { release() }
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.store.getRun(f.run.id)).toMatchObject({ status: 'interrupted', worktree: { state: 'deferred' } })
+  })
+
+  it('definitively refuses Claude before creating a session and releases the slot', async () => {
+    const f = await fixture()
+    const unsupported = { ...f.schedule, target: { ...f.schedule.target, provider: 'claude' as const } }
+    await expect(f.runner.launch(f.run, unsupported)).rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
+    const dispatcher = new SchedulerDispatcher(f.store, {
+      launch: (run) => f.runner.launch(run, unsupported),
+      reconcile: (run) => f.runner.reconcile(run), stop: (run) => f.runner.stop(run),
+    })
+    dispatchers.push(dispatcher)
+    await dispatcher.start()
+    await vi.waitFor(() => expect(f.store.getRun(f.run.id)).toMatchObject({ status: 'failed', error: expect.stringMatching(/Claude.*background/i) }))
+    expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.host.sendMessage).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['hub', 'copilot', 'long_context'], ['worker', 'copilot', 'long_context'],
-    ['hub', 'claude', 'default'], ['worker', 'claude', 'default'],
   ] as const)('launches on %s with supported %s/%s runtime, ask policies, identity and durable provenance', async (computerId, provider, context) => {
     const f = await fixture({ target: {
       computerId, folder: '/fictional/repo', provider, model: 'fictional-model',
@@ -246,13 +350,16 @@ describe('schedule runner', () => {
     ['model', true], ['model', false], ['effort', true], ['effort', false], ['context', true], ['context', false],
   ] as const)('fails an authoritative unsupported %s selection before creation with local=%s', async (field, isLocal) => {
     const f = await fixture({ target: {
-      computerId: isLocal ? 'hub' : 'worker', folder: '/fictional/repo', provider: 'claude',
+      computerId: isLocal ? 'hub' : 'worker', folder: '/fictional/repo', provider: 'copilot',
       model: field === 'model' ? 'missing' : 'fictional-model',
       ...(field === 'effort' ? { effort: 'max' } : {}),
       ...(field === 'context' ? { context: 'long_context' } : {}),
     } })
     const [computer] = f.host.listComputers()
     f.host.listComputers = () => [{ ...computer, isLocal }]
+    if (field === 'context') vi.mocked(f.host.providerRuntimeOptions).mockResolvedValue({
+      models: [{ id: 'fictional-model', name: 'Fictional model', reasoningEfforts: ['high'], contextTiers: ['default'] }],
+    })
     const dispatcher = new SchedulerDispatcher(f.store, f.runner)
     dispatchers.push(dispatcher)
     await dispatcher.start()
@@ -272,30 +379,18 @@ describe('schedule runner', () => {
     ['local 503', true, Object.assign(new Error('Catalog unavailable'), { statusCode: 503 })],
     ['local throttling', true, Object.assign(new Error('Catalog throttled'), { status: 429 })],
     ['remote SDK failure', false, new Error('Remote catalog query failed')],
-  ] as const)('retries Claude catalog lookup without accepting a prompt twice: %s', async (_label, isLocal, error) => {
+  ] as const)('retries catalog lookup without accepting a prompt twice: %s', async (_label, isLocal, error) => {
     const f = await fixture({ target: {
       computerId: isLocal ? 'hub' : 'worker', folder: '/fictional/repo',
-      provider: 'claude', model: 'fictional-model',
+      provider: 'copilot', model: 'fictional-model',
     } })
     const [computer] = f.host.listComputers()
     f.host.listComputers = () => [{ ...computer, isLocal }]
-    const ownerStore = new SessionStore(path.join(f.directory, 'claude-catalog-owner'))
-    await ownerStore.initialize()
-    const models = vi.fn(async () => [{
-      value: 'fictional-model', displayName: 'Fictional model', description: 'Fictional catalog',
-      supportedEffortLevels: ['high'],
-    }])
-    const owner = new ClaudeAgentService(ownerStore, '/bin/true', {
-      query: (() => Object.assign((async function* () { yield* [] })(), { supportedModels: models })) as unknown as ClaudeSdk['query'],
-      deleteSession: vi.fn(), getSessionInfo: vi.fn(), renameSession: vi.fn(),
-    }, async () => ({ loggedIn: true }))
     let now = Date.now()
     const dispatcher = new SchedulerDispatcher(f.store, f.runner, { now: () => now })
     dispatchers.push(dispatcher)
     try {
-      await owner.providerRuntimeOptions('claude')
-      models.mockRejectedValueOnce(error).mockRejectedValueOnce(error)
-      vi.mocked(f.host.providerRuntimeOptions).mockImplementation((_computer, provider) => owner.providerRuntimeOptions(provider))
+      vi.mocked(f.host.providerRuntimeOptions).mockRejectedValueOnce(error).mockRejectedValueOnce(error)
       await dispatcher.start()
       await vi.waitFor(() => {
         expect(f.host.providerRuntimeOptions).toHaveBeenCalledTimes(1)
@@ -311,6 +406,7 @@ describe('schedule runner', () => {
       })
       expect(f.store.getRun(f.run.id)).toMatchObject({ launchId: f.run.launchId, retryUntil: deadline })
       expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
+      expect(f.store.getRun(f.run.id).outcomeUnknown).toBeUndefined()
       expect(f.store.getRun(f.run.id).rootPromptAcceptance).toBeUndefined()
       expect(f.host.createSession).not.toHaveBeenCalled()
       expect(f.host.sendMessage).not.toHaveBeenCalled()
@@ -324,13 +420,11 @@ describe('schedule runner', () => {
       })
       expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
       expect(f.store.allRuns()).toHaveLength(1)
-      expect(models).toHaveBeenCalledTimes(4)
+      expect(f.host.providerRuntimeOptions).toHaveBeenCalledTimes(3)
       expect(f.host.createSession).toHaveBeenCalledOnce()
       expect(f.host.sendMessage).toHaveBeenCalledOnce()
     } finally {
       await dispatcher.stop()
-      await owner.stop()
-      await ownerStore.close()
     }
   })
 
@@ -338,7 +432,7 @@ describe('schedule runner', () => {
     ['statusCode', 403], ['status', 422],
   ] as const)('fails an explicit catalog refusal reported through %s=%s', async (field, status) => {
     const f = await fixture({ target: {
-      computerId: 'hub', folder: '/fictional/repo', provider: 'claude', model: 'fictional-model',
+      computerId: 'hub', folder: '/fictional/repo', provider: 'copilot', model: 'fictional-model',
     } })
     vi.mocked(f.host.providerRuntimeOptions).mockRejectedValue(Object.assign(new Error('The owner refused catalog access'), { [field]: status }))
     const dispatcher = new SchedulerDispatcher(f.store, f.runner)
@@ -385,24 +479,18 @@ describe('schedule runner', () => {
     expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
   })
 
-  it.each(['copilot', 'claude'] as const)('fails a definitive %s owner directory check before creation and releases its slot', async (provider) => {
+  it.each(['copilot'] as const)('fails a definitive %s owner directory check before creation and releases its slot', async (provider) => {
     const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider } })
     const folder = path.join(f.directory, 'vanished-folder')
     await mkdir(folder)
     const ownerStore = new SessionStore(path.join(f.directory, 'directory-owner'))
     await ownerStore.initialize()
     const sdkCreate = vi.fn()
-    const owner = provider === 'copilot'
-      ? new AgentService(ownerStore, { createSession: sdkCreate, stop: vi.fn(async () => []) } as unknown as CopilotClientLike)
-      : new ClaudeAgentService(ownerStore, '/bin/true', {
-          query: (() => Object.assign((async function* () { yield* [] })(), { supportedModels: async () => [] })) as unknown as ClaudeSdk['query'],
-          deleteSession: vi.fn(), getSessionInfo: vi.fn(), renameSession: vi.fn(),
-        }, async () => ({ loggedIn: true }))
+    const owner = new AgentService(ownerStore, { createSession: sdkCreate, stop: vi.fn(async () => []) } as unknown as CopilotClientLike)
     const createStored = vi.spyOn(ownerStore, 'create')
     const dispatcher = new SchedulerDispatcher(f.store, f.runner)
     dispatchers.push(dispatcher)
     try {
-      if (provider === 'claude') await owner.providerRuntimeOptions('claude')
       vi.mocked(f.host.validateSessionDirectory).mockImplementation(async () => {
         await rm(folder, { recursive: true })
         return folder
@@ -534,46 +622,22 @@ describe('schedule runner', () => {
     await expect(f.runner.launch(f.run, f.schedule)).rejects.toBe(error)
   })
 
-  it('preserves Claude default-model creation with an explicit effort', async () => {
-    const f = await fixture({ target: { computerId: 'hub', folder: '/fictional/repo', provider: 'claude', effort: 'high' } })
-    await f.runner.launch(f.run, f.schedule)
-    expect(f.host.createSession).toHaveBeenCalledWith('hub', expect.objectContaining({ provider: 'claude', reasoningEffort: 'high' }))
+  it('refuses Claude even when only a default model and explicit effort are requested', async () => {
+    const f = await fixture()
+    await expect(f.runner.launch(f.run, { ...f.schedule, target: { ...f.schedule.target, provider: 'claude', effort: 'high' } }))
+      .rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
+    expect(f.host.createSession).not.toHaveBeenCalled()
   })
 
-  it.each([false, true])('rejects unsupported Claude long context using owner metadata with explicit model=%s', async (explicitModel) => {
-    const f = await fixture({ target: {
-      computerId: 'hub', folder: '/fictional/repo', provider: 'claude', context: 'long_context',
+  it.each([false, true])('rejects Claude before querying runtime metadata with explicit model=%s', async (explicitModel) => {
+    const f = await fixture()
+    await expect(f.runner.launch(f.run, { ...f.schedule, target: {
+      ...f.schedule.target, provider: 'claude', context: 'long_context',
       ...(explicitModel ? { model: 'fictional-model' } : {}),
-    } })
-    const ownerStore = new SessionStore(path.join(f.directory, 'claude-owner'))
-    await ownerStore.initialize()
-    const catalog = vi.fn(() => Object.assign((async function* () { yield* [] })(), {
-      supportedModels: async () => [{
-        value: 'fictional-model', displayName: 'Fictional model', description: 'Fictional catalog',
-        supportedEffortLevels: ['high'],
-      }],
-    }))
-    const owner = new ClaudeAgentService(ownerStore, '/bin/true', {
-      query: catalog as unknown as ClaudeSdk['query'],
-      deleteSession: vi.fn(), getSessionInfo: vi.fn(), renameSession: vi.fn(),
-    }, async () => ({ loggedIn: true }))
-    vi.mocked(f.host.providerRuntimeOptions).mockImplementation((_computer, provider) => owner.providerRuntimeOptions(provider))
-    const dispatcher = new SchedulerDispatcher(f.store, f.runner)
-    dispatchers.push(dispatcher)
-    try {
-      await dispatcher.start()
-      await vi.waitFor(() => expect(f.store.getRun(f.run.id).status).toBe('failed'))
-      expect(f.store.getRun(f.run.id).error).toMatch(/context.*not supported/i)
-      expect(holdsSlot(f.store.getRun(f.run.id))).toBe(false)
-      expect(f.host.providerRuntimeOptions).toHaveBeenCalledExactlyOnceWith('hub', 'claude')
-      expect(catalog).toHaveBeenCalledOnce()
-      expect(f.host.createSession).not.toHaveBeenCalled()
-      expect(f.host.allocateScheduleWorktree).not.toHaveBeenCalled()
-    } finally {
-      await dispatcher.stop()
-      await owner.stop()
-      await ownerStore.close()
-    }
+    } })).rejects.toBeInstanceOf(ScheduleLaunchRefusedError)
+    expect(f.host.providerRuntimeOptions).not.toHaveBeenCalled()
+    expect(f.host.createSession).not.toHaveBeenCalled()
+    expect(f.host.allocateScheduleWorktree).not.toHaveBeenCalled()
   })
 
   it('persists allocation intent before the RPC and reconciles a lost response into deferred ownership', async () => {
@@ -775,12 +839,12 @@ describe('schedule runner', () => {
     expect(f.host.createSession).toHaveBeenCalledTimes(1)
   })
 
-  it('retains uncertain launches, offline errors and deleted sessions without relaunching', async () => {
+  it('retains uncertain and offline launches but settles confirmed deletion without relaunching', async () => {
     const f = await fixture()
     expect(await f.runner.reconcile(f.run)).toEqual({ state: 'absent' })
     expect(await f.runner.reconcile({ ...f.run, status: 'launching' })).toEqual({ state: 'unknown' })
     f.setLaunch({ launchId: f.run.launchId, sessionId: 'session-one', deleted: true, receipts: [] })
-    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'unknown' })
+    expect(await f.runner.reconcile(f.run)).toMatchObject({ state: 'terminated', outcome: 'interrupted' })
     vi.mocked(f.host.reconcileLaunch!).mockRejectedValue(new Error('Offline'))
     expect(await f.runner.reconcile({ ...f.run, status: 'launching', startedAt: at }))
       .toMatchObject({ state: 'unknown', error: expect.stringContaining('slot remains reserved') })

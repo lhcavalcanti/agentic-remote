@@ -127,6 +127,57 @@ describe('scheduler durable store', () => {
     expect(restored.allRuns()).toHaveLength(SCHEDULE_RUN_LIMIT)
   })
 
+  it('abandons only uncertain runs atomically and never accepts later updates into the abandoned identity', async () => {
+    const { store, schedule, directory } = await fixture()
+    const run = (await store.admit(schedule.id, INITIAL, 'manual'))!
+    expect(JSON.parse(await readFile(store.statePath, 'utf8'))).not.toHaveProperty('abandonedLaunches')
+    await expect(store.abandonRun(run.id)).rejects.toMatchObject({ statusCode: 409 })
+    await store.beginLaunch(run.id, INITIAL)
+    const persist = vi.spyOn(store as unknown as { persist(state: unknown): Promise<void> }, 'persist')
+      .mockRejectedValueOnce(new Error('Fence write failed'))
+    await expect(store.abandonRun(run.id)).rejects.toThrow('Fence write failed')
+    expect(store.getRun(run.id).status).toBe('launching')
+    expect(store.isLaunchAbandoned(run.launchId)).toBe(false)
+    persist.mockRestore()
+    const abandoned = await store.abandonRun(run.id)
+    expect(await store.changeRun(run.id, { status: 'running', sessionId: 'late-session', rootPromptReceipt: 'late-root' })).toEqual(abandoned)
+    expect(await store.abandonRun(run.id)).toEqual(abandoned)
+    const restored = new SchedulerStore(directory)
+    await restored.initialize()
+    expect(restored.isLaunchAbandoned(run.launchId)).toBe(true)
+    expect(restored.ownsSession(run.computerId, 'late-session', run.launchId)).toBe(true)
+    expect(holdsSlot(restored.getRun(run.id))).toBe(false)
+  })
+
+  it.each(['create', 'update', 'create-proposal', 'update-proposal'] as const)(
+    'rejects unsupported Claude scheduling through %s', async (operation) => {
+      const { store, schedule } = await fixture()
+      const target = { ...schedule.target, provider: 'claude' as const }
+      const attempt = operation === 'create' ? store.create(createInput({ name: 'Claude review', target }))
+        : operation === 'update' ? store.update(schedule.id, { revision: schedule.revision, target })
+          : operation === 'create-proposal' ? store.propose({ operation: 'create', payload: createInput({ name: 'Claude proposal', target }) })
+            : store.propose({ operation: 'update', scheduleId: schedule.id, baseRevision: schedule.revision, payload: { target } })
+      await expect(attempt).rejects.toThrow(/Claude.*background/i)
+      expect(store.get(schedule.id).target.provider).toBe('copilot')
+    },
+  )
+
+  it('loads legacy Claude schedules without migration and permits safe disable/archive', async () => {
+    const { store, schedule, directory } = await fixture()
+    const state = JSON.parse(await readFile(store.statePath, 'utf8'))
+    state.schedules[0].target.provider = 'claude'
+    await writeFile(store.statePath, JSON.stringify(state))
+    const restored = new SchedulerStore(directory)
+    await restored.initialize()
+    expect(restored.get(schedule.id).target.provider).toBe('claude')
+    await expect(restored.update(schedule.id, { revision: 1, name: 'Still unsupported' })).rejects.toThrow(/Claude.*background/i)
+    const proposal = await restored.propose({ operation: 'disable', scheduleId: schedule.id, baseRevision: 1, payload: {} })
+    expect((await restored.approveProposal(proposal.id)).status).toBe('applied')
+    const archived = await restored.setArchived(schedule.id, 2, true)
+    await restored.delete(schedule.id, archived.revision)
+    expect(restored.list()).toEqual([])
+  })
+
   it('defers legacy and archived sessionless worktree allocations before publishing terminal runs', async () => {
     const { store, schedule, directory } = await fixture({ workspace: 'worktree', enabled: false })
     const run = (await store.admit(schedule.id, INITIAL, 'manual'))!
@@ -368,6 +419,23 @@ describe('hub schedule dispatcher', () => {
     expect(clones).toBe(0)
     expect(serializations).toBe(0)
     expect(persist).not.toHaveBeenCalled()
+  })
+
+  it('does not make confirmed abandonment wait behind a provider stop and ignores its later acknowledgement', async () => {
+    const { dispatcher, launcher, schedule, store } = await fixture({ enabled: false })
+    await dispatcher.start()
+    const run = await dispatcher.runNow(schedule.id)
+    await settle(dispatcher)
+    let release!: () => void
+    launcher.stop.mockImplementation(() => new Promise((resolve) => { release = () => resolve({ outcome: 'stopped' }) }))
+    const stopping = dispatcher.stopRun(run.id)
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    expect(store.getRun(run.id)).toMatchObject({ status: 'stopping', outcomeUnknown: true })
+    try {
+      expect(await dispatcher.abandonRun(run.id)).toMatchObject({ status: 'interrupted', abandonedAt: expect.any(String) })
+      expect(holdsSlot(store.getRun(run.id))).toBe(false)
+    } finally { release() }
+    expect(await stopping).toMatchObject({ status: 'interrupted', abandonedAt: expect.any(String) })
   })
 
   it('lets an archive queued before the launch transition stop a pending drain atomically', async () => {
@@ -939,7 +1007,7 @@ describe('hub schedule dispatcher', () => {
     const first = await dispatcher.runNow(schedule.id)
     await settle(dispatcher)
     const queued = await dispatcher.runNow(schedule.id)
-    await store.update(schedule.id, { revision: 1, target: { computerId: 'other', folder: '/other', provider: 'claude' } })
+    await store.update(schedule.id, { revision: 1, target: { computerId: 'other', folder: '/other', provider: 'copilot' } })
     launcher.states.set(first.launchId, { state: 'terminated', outcome: 'succeeded' })
     await settle(dispatcher)
     expect(store.getRun(queued.id).computerId).toBe('studio')
@@ -955,7 +1023,7 @@ describe('hub schedule dispatcher', () => {
     await dispatcher.start()
     const older = await dispatcher.runNow(schedule.id)
     await store.update(schedule.id, {
-      revision: 1, target: { computerId: 'other', folder: '/other/project', provider: 'claude' },
+      revision: 1, target: { computerId: 'other', folder: '/other/project', provider: 'copilot' },
     })
     const newer = await dispatcher.runNow(schedule.id)
     await settle(dispatcher)

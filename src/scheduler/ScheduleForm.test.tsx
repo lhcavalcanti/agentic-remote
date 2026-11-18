@@ -19,6 +19,21 @@ beforeEach(() => {
   vi.mocked(getProviderRuntimeOptions).mockReset().mockResolvedValue({ models: [model] })
 })
 
+it('explains why Claude schedules are unavailable and permits retargeting a legacy definition', async () => {
+  const onSave = vi.fn().mockResolvedValue(undefined)
+  render(<ScheduleForm initial={{ ...definition, target: { ...definition.target, provider: 'claude' } }}
+    computers={[computer]} pending={false} onSave={onSave} onCancel={vi.fn()} />)
+  expect(screen.getByRole('alert').textContent).toMatch(/Claude.*background/i)
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  expect(screen.getByRole('button', { name: 'Save schedule' })).toHaveProperty('disabled', true)
+  fireEvent.click(screen.getByRole('button', { name: 'Target' }))
+  expect(screen.getByRole('option', { name: /Claude Agent/ })).toHaveProperty('disabled', true)
+  fireEvent.change(screen.getByRole('combobox', { name: 'Provider' }), { target: { value: 'copilot' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }))
+  await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+})
+
 it.each([false, true])('keeps worktree roots bound to their computer (retargeted: %s)', async (retargeted) => {
   const other = { ...computer, id: 'other', name: 'Other computer', isLocal: false }
   const onSave = vi.fn().mockResolvedValue(undefined)
@@ -35,10 +50,10 @@ it.each([false, true])('keeps worktree roots bound to their computer (retargeted
 
 it.each([
   { provider: 'copilot', effort: 'high' },
-  { provider: 'claude', context: 'long_context' },
+  { provider: 'copilot', context: 'long_context' },
   { provider: 'copilot', model: 'removed-model' },
   { provider: 'copilot', model: 'fictional-model', effort: 'max' },
-  { provider: 'claude', model: 'fictional-model', context: 'long_context' },
+  { provider: 'copilot', model: 'fictional-model', context: 'long_context' },
 ] satisfies Partial<ScheduleTarget>[])('requires a compatible model for saved runtime overrides: %j', async (runtime) => {
   const onSave = vi.fn().mockResolvedValue(undefined)
   render(<ScheduleForm initial={{ ...definition, target: { ...definition.target, ...runtime } }}

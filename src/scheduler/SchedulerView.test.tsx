@@ -27,6 +27,33 @@ beforeEach(() => {
     path === '/api/schedules/proposals' ? { proposals: [] } : path === '/api/schedules' ? { schedules: [schedule] } : path.includes('/runs') ? { runs: [] } : { schedule })
 })
 
+it('requires confirmation before abandoning an unknown run and explains that work may still be running', async () => {
+  let run: ScheduleRun = {
+    id: 'uncertain', scheduleId: schedule.id, computerId: computer.id, launchId: 'uncertain-launch',
+    occurrenceAt: schedule.createdAt, trigger: 'manual', status: 'launching', outcomeUnknown: true,
+  }
+  vi.mocked(request).mockImplementation(async (path, init) => {
+    if (path === '/api/schedules/runs/uncertain/abandon' && init?.method === 'POST') {
+      expect(JSON.parse(init.body as string)).toEqual({ confirm: true })
+      run = { ...run, status: 'interrupted', abandonedAt: schedule.updatedAt, error: 'Run abandoned; work may still be running.' }
+      return { run }
+    }
+    if (path === '/api/schedules/proposals') return { proposals: [] }
+    return path === '/api/schedules' ? { schedules: [schedule] } : { runs: [run] }
+  })
+  render(<SchedulerView computers={[computer]} enabled initialScheduleId={schedule.id} onClose={vi.fn()} onOpenSession={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Abandon run' }))
+  expect(screen.getByText(/does not stop.*work/i)).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Confirm abandon run' })).toHaveProperty('disabled', true)
+  fireEvent.click(screen.getByRole('button', { name: 'Keep run' }))
+  expect(vi.mocked(request).mock.calls.some(([path, init]) => path.endsWith('/abandon') && init?.method === 'POST')).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: 'Abandon run' }))
+  fireEvent.click(screen.getByRole('checkbox', { name: /work may still be running/i }))
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm abandon run' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Abandon run' })).toBeNull())
+  expect(within(screen.getByRole('region', { name: 'Run history for Morning review' })).getByText('abandoned')).toBeTruthy()
+})
+
 async function startDelayedEditReload() {
   const other = { ...schedule, id: 'other', name: 'Other review' }
   let resolveReload!: (value: { schedule: Schedule }) => void

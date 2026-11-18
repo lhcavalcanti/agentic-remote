@@ -91,6 +91,29 @@ describe('SessionLauncher', () => {
     })
   })
 
+  it('rechecks the caller fence after asynchronous trust before identified root delivery', async () => {
+    let active = true
+    vi.spyOn(launcher, 'trustFolder').mockImplementation(async () => { active = false; return true })
+    await expect(launcher.deliverPrompt({
+      session: session(), folderTrust: 'auto-approve',
+      assertActive: () => { if (!active) throw new Error('Run was abandoned') },
+    }, 'Fictional root', { deliveryId: 'root' })).rejects.toThrow('abandoned')
+    expect(host.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the caller fence before automatically approving folder trust', async () => {
+    let active = true
+    vi.mocked(host.readSession).mockImplementation(async () => {
+      active = false
+      return session({ pendingPermission: trustPermission() })
+    })
+    await expect(launcher.trustFolder({
+      session: session(), folderTrust: 'auto-approve',
+      assertActive: () => { if (!active) throw new Error('Run was abandoned') },
+    })).rejects.toThrow('abandoned')
+    expect(host.replyPermission).not.toHaveBeenCalled()
+  })
+
   it('names and records the caller provenance before any delivery or trust action', async () => {
     const launch = await launcher.createSession(launchInput({
       title: 'Review app',

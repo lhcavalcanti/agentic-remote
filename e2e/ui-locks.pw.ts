@@ -9,8 +9,64 @@ import {
   type UISceneName,
 } from './ui-scenes'
 import { FIXTURE_NOW, SELECTED_SESSION_ID, createWorkspaceFixtureState, setupWorkspaceFixture } from './workspace-fixtures'
+import { scheduleSchema, scheduleRunSchema } from '../shared/schedules'
 
 test.use(uiContextOptions)
+
+for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' || entry.name === 'phone')) {
+  test.describe(`schedule abandonment ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    test('confirms uncertain schedule abandonment without claiming provider termination', async ({ page, baseURL }) => {
+      const state = createWorkspaceFixtureState()
+      state.settings.values = { previewFeatures: { schedulerView: true, desktopRail: true } }
+      state.settings.revision = 1
+      const schedule = scheduleSchema.parse({
+        id: 'uncertain-review', name: 'Fictional recovery review', prompt: 'Review fictional notes.',
+        target: { computerId: 'fixture-studio', folder: '/home/demo/field-notes', provider: 'copilot' },
+        recurrence: { type: 'daily', time: '09:00' }, timezone: 'UTC', workspace: 'checkout',
+        overlap: 'skip', catchUp: 'skip', maxRuntimeMin: 60, notify: 'attention', enabled: false,
+        archived: false, revision: 1, createdBy: 'user', createdAt: FIXTURE_NOW, updatedAt: FIXTURE_NOW,
+      })
+      const run = scheduleRunSchema.parse({
+        id: 'uncertain-review-run', scheduleId: schedule.id, launchId: 'uncertain-review-launch',
+        computerId: 'fixture-studio', occurrenceAt: FIXTURE_NOW, trigger: 'manual',
+        status: 'launching', outcomeUnknown: true, error: 'The owning computer cannot confirm this launch.',
+      })
+      const fixture = await setupWorkspaceFixture(page, {
+        baseUrl: baseURL!, state, knowledgeMode: 'hidden', scheduler: { schedules: [schedule], runs: [run] },
+      })
+      try {
+        const url = new URL(fixture.url)
+        url.searchParams.set('schedule', schedule.id)
+        url.searchParams.set('run', run.id)
+        await page.goto(url.href)
+        const scheduler = page.getByRole('dialog', { name: 'Scheduler', exact: true })
+        await scheduler.getByRole('button', { name: 'Abandon run', exact: true }).click()
+        await expect(scheduler.getByRole('button', { name: 'Confirm abandon run', exact: true })).toBeDisabled()
+        await expect(scheduler.getByRole('alert')).toContainText('does not stop provider work')
+        expect(fixture.requests.filter((request) => request.path.endsWith('/abandon'))).toEqual([])
+        if (viewport.name === 'phone') {
+          await page.setViewportSize({ width: 320, height: 844 })
+          await expect(async () => { await assertNoHorizontalOverflow(page) }).toPass({ timeout: 5000 })
+          await page.setViewportSize(viewport.viewport)
+        }
+        await scheduler.getByRole('group', { name: 'Abandon this run?' }).scrollIntoViewIfNeeded()
+        await expect(scheduler.getByRole('button', { name: 'Confirm abandon run', exact: true })).toBeInViewport()
+        await expect(scheduler).toHaveScreenshot(`scheduler-abandon-${viewport.name}.png`)
+        await scheduler.getByRole('button', { name: 'Keep run', exact: true }).click()
+        expect(fixture.requests.filter((request) => request.path.endsWith('/abandon'))).toEqual([])
+        await scheduler.getByRole('button', { name: 'Abandon run', exact: true }).click()
+        await scheduler.getByRole('checkbox', { name: 'I understand work may still be running.', exact: true }).check()
+        const submitted = page.waitForRequest((request) => new URL(request.url()).pathname.endsWith('/abandon') && request.method() === 'POST')
+        await scheduler.getByRole('button', { name: 'Confirm abandon run', exact: true }).click()
+        expect((await submitted).postDataJSON()).toEqual({ confirm: true })
+        await expect(scheduler.getByRole('region', { name: `Run history for ${schedule.name}` })).toContainText('abandoned')
+        await expect(scheduler.getByRole('button', { name: 'Abandon run', exact: true })).toHaveCount(0)
+        await assertNoHorizontalOverflow(page)
+      } finally { fixture.assertHealthy() }
+    })
+  })
+}
 
 test('native shell receives one canonical scheduled outcome without enabling scheduler preview', async ({ page, baseURL }) => {
   await page.addInitScript(() => {

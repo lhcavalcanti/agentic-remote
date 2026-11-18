@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ComputerSummary, RuntimeModelOption } from '../../shared/contracts'
 import { nextOccurrences, validateRecurrence } from '../../shared/schedule-recurrence'
-import { DEFAULT_SCHEDULE_TIMEZONE, scheduleCreateSchema, type Schedule, type ScheduleRecurrence, type ScheduleTarget } from '../../shared/schedules'
+import { DEFAULT_SCHEDULE_TIMEZONE, CLAUDE_SCHEDULE_UNAVAILABLE_REASON, scheduleProviderUnavailableReason, scheduleCreateSchema, type Schedule, type ScheduleRecurrence, type ScheduleTarget } from '../../shared/schedules'
 import { getProviderRuntimeOptions } from '../api'
 import { contextSizeLabel } from '../session-setup/runtime-presentation'
 import { editableSchedule, scheduleError, scheduleTime } from './format'
@@ -46,6 +46,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
   const [step, setStep] = useState<'Details' | 'Target' | 'Policies'>('Details')
   const [clock] = useState(() => new Date())
   const { recurrence, target } = draft
+  const providerError = scheduleProviderUnavailableReason(target.provider)
   const targetPaired = computers.some((computer) => computer.id === target.computerId)
   const catalog = runtimeCatalog?.computerId === target.computerId && runtimeCatalog.provider === target.provider ? runtimeCatalog : undefined
   const models = catalog?.models ?? []
@@ -55,12 +56,12 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
     let active = true
     const scope = { computerId: target.computerId, provider: target.provider }
     setRuntimeCatalog(scope)
-    if (!targetPaired) return
+    if (!targetPaired || providerError) return
     void getProviderRuntimeOptions(target.computerId, target.provider).then((options) => {
       if (active) setRuntimeCatalog({ ...scope, models: options.models })
     }).catch((caught) => { if (active) setRuntimeCatalog({ ...scope, error: scheduleError(caught) }) })
     return () => { active = false }
-  }, [target.computerId, target.provider, targetPaired])
+  }, [target.computerId, target.provider, targetPaired, providerError])
   const preview = useMemo(() => {
     try { return { dates: nextOccurrences(recurrence, draft.timezone, clock, 5), error: undefined } }
     catch (caught) { return { dates: [], error: caught instanceof Error ? caught.message : 'Invalid recurrence' } }
@@ -75,6 +76,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
     event.preventDefault()
     onClearSaveError?.()
     setError(undefined)
+    if (providerError) { setStep('Target'); setError(providerError); return }
     if (!targetPaired) { setStep('Target'); setError('Choose a paired computer before saving this schedule.'); return }
     if (!target.model && (target.effort || target.context === 'long_context')) {
       setStep('Target'); setError('Choose an explicit model for effort or long context, or reset those options to defaults.'); return
@@ -105,7 +107,8 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
       {(['Details', 'Target', 'Policies'] as const).map((name) =>
         <button type="button" aria-pressed={step === name} key={name} onClick={() => setStep(name)}>{name}</button>)}
     </div>
-    {targetPaired && !modelsLoaded && <p role="status" className="schedule-caption">
+    {providerError && <p role="alert" className="error-banner">{providerError}</p>}
+    {targetPaired && !providerError && !modelsLoaded && <p role="status" className="schedule-caption">
       {modelsError ? `Runtime options could not be verified: ${modelsError}.` : 'Runtime options could not yet be verified (catalog loading).'} You can still save other edits.
     </p>}
     <fieldset disabled={pending} hidden={step !== 'Details'}>
@@ -149,7 +152,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
           {computers.map((computer) => <option key={computer.id} value={computer.id}>{computer.name} · {computer.isLocal ? 'Hub' : 'Node'}{computer.online ? '' : ' · Offline'}</option>)}</select></label>
         <label className="field">Provider<select className="dialog-select" value={target.provider} onChange={(event) =>
           update('target', { ...target, provider: event.target.value as ScheduleTarget['provider'], model: undefined, effort: undefined, context: undefined })}>
-          <option value="copilot">GitHub Copilot</option><option value="claude">Claude Agent</option></select></label>
+          <option value="copilot">GitHub Copilot</option><option value="claude" disabled>Claude Agent (unavailable)</option></select></label>
         <label className="field schedule-wide">Folder<input className="dialog-input" placeholder="/path/inside/allowed/roots" value={target.folder} onChange={(event) => updateTarget('folder', event.target.value)} /></label>
         {targetPaired && <FolderPicker key={target.computerId} computerId={target.computerId} value={target.folder} onSelect={(path) => updateTarget('folder', path)} />}
         <label className="field">Model<select className="dialog-select" value={target.model ?? ''} onChange={(event) => {
@@ -168,6 +171,7 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
         <label className="field">Mode<select className="dialog-select" value={target.mode} onChange={(event) => updateTarget('mode', event.target.value as ScheduleTarget['mode'])}>
           <option value="autopilot">Autopilot</option><option value="interactive">Interactive</option><option value="plan">Plan</option></select></label>
       </div>
+      <p className="schedule-caption">{CLAUDE_SCHEDULE_UNAVAILABLE_REASON}</p>
       <p className="schedule-caption">The owning computer enforces allowed roots and launch capabilities. Older computers must be updated before they can run schedules.</p>
     </fieldset>
     <fieldset disabled={pending} hidden={step !== 'Policies'}>
@@ -187,11 +191,11 @@ export function ScheduleForm({ initial, computers, editing, pending, saveError, 
       {target.permissionPolicy === 'allow-all' && <label className="schedule-confirm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />I explicitly allow all tool permissions for this schedule. This can change files and run commands unattended.</label>}
       <p className="schedule-caption">Ask and folder trust are independent. Worktree isolation does not grant permissions or broaden allowed roots.</p>
     </fieldset>
-    {error && !saveError && <p role="alert" className="error-banner">{error}</p>}
+    {error && !saveError && !providerError && <p role="alert" className="error-banner">{error}</p>}
     <div className="schedule-form__actions">
       <button type="button" className="secondary-button" disabled={pending} onClick={onCancel}>Cancel edit</button>
       {step !== 'Policies' ? <button type="button" className="primary-button" onClick={() => setStep(step === 'Details' ? 'Target' : 'Policies')}>Next: {step === 'Details' ? 'Target' : 'Policies'}</button> :
-        <button type="submit" className="primary-button" disabled={pending || !targetPaired || (target.permissionPolicy === 'allow-all' && !confirmed)}>{pending ? 'Saving…' : 'Save schedule'}</button>}
+        <button type="submit" className="primary-button" disabled={pending || Boolean(providerError) || !targetPaired || (target.permissionPolicy === 'allow-all' && !confirmed)}>{pending ? 'Saving…' : 'Save schedule'}</button>}
     </div>
   </form>
 }

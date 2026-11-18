@@ -1,6 +1,6 @@
 import { nextOccurrences } from '../shared/schedule-recurrence'
 import type { ScheduleProposal } from '../shared/schedule-proposals'
-import type { Schedule, ScheduleRecurrence } from '../shared/schedules'
+import { scheduleProviderUnavailableReason, type Schedule, type ScheduleRecurrence } from '../shared/schedules'
 
 export type ProposalSchedule = Omit<Schedule, 'id' | 'revision' | 'createdBy' | 'createdAt' | 'updatedAt' | 'archived'>
 const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -66,6 +66,10 @@ export function proposalTiming(schedule: ProposalSchedule, operation: SchedulePr
 export function proposalUnavailableReason(proposal: ScheduleProposal, base: Schedule | undefined, now: number): string | undefined {
   if (Date.parse(proposal.expiresAt) <= now) return 'This proposal expired. Request a fresh proposal.'
   const schedule = proposalSchedule(proposal, base)
+  if (schedule && proposal.operation !== 'disable' && proposal.operation !== 'archive') {
+    const reason = scheduleProviderUnavailableReason(schedule.target.provider)
+    if (reason) return reason
+  }
   if (schedule?.recurrence.type === 'once' && ['create', 'update', 'enable'].includes(proposal.operation) &&
       Date.parse(schedule.recurrence.at) <= now) return 'The one-off time has passed. Request a fresh proposal with a future time.'
 }

@@ -14,7 +14,7 @@ import {
   type ScheduleProposal, type ScheduleProposalInput, type ScheduleProposalsChanged,
 } from '../shared/schedule-proposals.js'
 import {
-  scheduleCreateSchema, scheduleRunSchema, scheduleSchema, scheduleUpdateSchema,
+  scheduleCreateSchema, scheduleRunSchema, scheduleSchema, scheduleUpdateSchema, scheduleProviderUnavailableReason, SCHEDULE_ABANDONED_REASON,
   type Schedule, type ScheduleCreate, type ScheduleRun, type ScheduleRunPage,
   type ScheduleRunStatus, type ScheduleUpdate, type SchedulerChanged,
 } from '../shared/schedules.js'
@@ -34,6 +34,10 @@ const stateSchema = z.object({
   notificationFences: z.array(z.string().regex(/^[a-f0-9]{64}$/)).max(100_000).default([]),
   notificationOwners: z.record(z.string().regex(/^[a-f0-9]{64}$/), z.string().min(1))
     .refine((owners) => Object.keys(owners).length <= 100_000, 'Notification ownership capacity reached').optional(),
+  abandonedLaunches: z.array(z.object({
+    launchId: scheduleRunSchema.shape.launchId, runId: z.string().min(1).max(200),
+    computerId: z.string().min(1).max(200), sessionId: z.string().min(1).max(200).optional(), at: timestamp,
+  }).strict()).max(100_000).optional(),
 }).strict()
 type State = z.infer<typeof stateSchema>
 const empty = (): State => ({ version: 1, revision: 0, schedules: [], runs: [], runSchedules: {}, cursors: {}, occurrences: {}, proposals: [], notificationFences: [] })
@@ -63,6 +67,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
   private loadedProposalStatuses = new Map<string, ScheduleProposal['status']>()
   private poisoned = false
   private directoryIdentity?: { dev: number; ino: number }
+  private abandonedIndex = { length: -1, launches: new Map<string, string>(), runs: new Set<string>(), sessions: new Set<string>() }
 
   constructor(
     dataDirectory: string,
@@ -135,6 +140,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
         new Set(next.proposals.map((proposal) => proposal.id)).size !== next.proposals.length ||
         fences.size !== next.notificationFences.length ||
         Object.keys(next.notificationOwners || {}).some((id) => !fences.has(id)) ||
+        new Set(next.abandonedLaunches?.map((entry) => entry.launchId)).size !== (next.abandonedLaunches?.length ?? 0) ||
         new Set(next.runs.map((run) => run.id)).size !== next.runs.length || launches.size !== next.runs.length ||
         Object.keys(next.runSchedules).length !== next.runs.length ||
         new Set(Object.values(next.occurrences)).size !== Object.keys(next.occurrences).length ||
@@ -165,12 +171,35 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     if (!result.valid) throw failure(result.errors.join('; '), 400)
   }
 
+  private checkProvider(schedule: Schedule): void {
+    const reason = scheduleProviderUnavailableReason(schedule.target.provider)
+    if (reason) throw failure(reason, 400)
+  }
+
   proposals(): ScheduleProposal[] { return structuredClone(this.state.proposals) }
   /** Proposal statuses as read from disk, before this process changed any (e.g. startup expiry). */
   persistedProposalStatuses(): ReadonlyMap<string, ScheduleProposal['status']> { return new Map(this.loadedProposalStatuses) }
   ownsSession(computerId: string, sessionId: string, launchId?: string): boolean {
+    const abandoned = this.abandonmentIndex()
     return this.state.runs.some((run) => run.computerId === computerId &&
-      ((launchId !== undefined && run.launchId === launchId) || run.sessionId === sessionId))
+      ((launchId !== undefined && run.launchId === launchId) || run.sessionId === sessionId)) ||
+      (launchId !== undefined && abandoned.launches.get(launchId) === computerId) ||
+      abandoned.sessions.has(JSON.stringify([computerId, sessionId]))
+  }
+  isLaunchAbandoned(launchId: string): boolean { return this.abandonmentIndex().launches.has(launchId) }
+  isRunAbandoned(runId: string): boolean { return this.abandonmentIndex().runs.has(runId) }
+  private abandonmentIndex() {
+    const fences = this.state.abandonedLaunches ?? []
+    // Fences are append-only and immutable, including across schedule deletion.
+    if (this.abandonedIndex.length !== fences.length) {
+      this.abandonedIndex = { length: fences.length, launches: new Map(), runs: new Set(), sessions: new Set() }
+      for (const fence of fences) {
+        this.abandonedIndex.launches.set(fence.launchId, fence.computerId)
+        this.abandonedIndex.runs.add(fence.runId)
+        if (fence.sessionId) this.abandonedIndex.sessions.add(JSON.stringify([fence.computerId, fence.sessionId]))
+      }
+    }
+    return this.abandonedIndex
   }
 
   notificationReplay(): { runs: Array<{ run: ScheduleRun; schedule: Schedule }>; claimed: Set<string> } {
@@ -336,6 +365,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       })
     }
     if (schedule.archived && schedule.enabled) throw failure('An archived schedule cannot be enabled', 409)
+    if (proposal.operation !== 'disable' && proposal.operation !== 'archive') this.checkProvider(schedule)
     if (schedule.target.permissionPolicy === 'allow-all' && !allowAll &&
         proposal.operation !== 'disable' && proposal.operation !== 'archive') {
       throw failure('The hub does not permit allow-all for Oracle schedules', 403)
@@ -361,6 +391,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       const schedule = scheduleSchema.parse({
         ...parsed, id: randomUUID(), revision: 1, archived: false, createdBy, createdAt: at, updatedAt: at,
       })
+      this.checkProvider(schedule)
       this.checkRecurrence(schedule)
       this.checkName(next, schedule)
       next.schedules.push(schedule)
@@ -382,6 +413,8 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     return this.commit((next) => {
       const previous = this.requireSchedule(next, id, revision)
       const schedule = scheduleSchema.parse({ ...previous, ...changes, revision: revision + 1, updatedAt: this.now() })
+      const disablingOnly = changes.enabled === false && Object.keys(changes).every((key) => key === 'enabled' || key === 'archived')
+      if (!disablingOnly) this.checkProvider(schedule)
       if (schedule.archived && schedule.enabled) throw failure('An archived schedule cannot be enabled', 409)
       if (changes.recurrence !== undefined || changes.timezone !== undefined) this.checkRecurrence(schedule)
       this.checkName(next, schedule)
@@ -526,6 +559,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
     return this.commit((next) => {
       const position = next.runs.findIndex((run) => run.id === id)
       if (position < 0) throw failure('Schedule run not found', 404)
+      if (next.runs[position].abandonedAt) return { result: next.runs[position] }
       const previous = next.runs[position]
       const notified = !previous.attention && next.notificationFences.includes(
         notificationIdentity('schedule.run.needs-input', previous.scheduleId, previous.id, 'needs-input'))
@@ -554,6 +588,31 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
       const updated = attention(run, next)
       if (updated) next.runs[position] = scheduleRunSchema.parse({ ...run, attention: updated })
       return { result: undefined, scheduleId: run.scheduleId, runId: run.id }
+    })
+  }
+
+  abandonRun(id: string): Promise<ScheduleRun> {
+    return this.commit((next) => {
+      const position = next.runs.findIndex((run) => run.id === id)
+      if (position < 0) throw failure('Schedule run not found', 404)
+      const previous = next.runs[position]
+      if (previous.abandonedAt) return { result: previous }
+      if (!isInFlight(previous) || !previous.outcomeUnknown) throw failure('Only a run with an unknown outcome can be abandoned', 409)
+      const fences = next.abandonedLaunches ?? []
+      if (fences.length >= 100_000) throw failure('Abandoned launch fencing capacity reached', 409)
+      const at = this.now()
+      const run = scheduleRunSchema.parse({
+        ...previous, status: 'interrupted', endedAt: at, abandonedAt: at, error: SCHEDULE_ABANDONED_REASON,
+        ...(previous.worktree ? { worktree: {
+          ...previous.worktree, state: 'deferred', reason: 'Abandoned without termination proof; cleanup requires manual review',
+        } } : {}),
+      })
+      next.abandonedLaunches = [...fences, {
+        launchId: run.launchId, runId: run.id, computerId: run.computerId, at,
+        ...(run.sessionId ? { sessionId: run.sessionId } : {}),
+      }]
+      next.runs[position] = run
+      return { result: run, scheduleId: run.scheduleId, runId: id }
     })
   }
 
@@ -614,7 +673,7 @@ export class SchedulerStore extends EventEmitter<{ changed: [event: SchedulerCha
         ...previous,
         ...(schedule.archived
           ? { status: 'stopped', endedAt: startedAt, error: 'Schedule was archived before launch' }
-          : { status: 'launching', startedAt, error: undefined, retryUntil: undefined }),
+          : { status: 'launching', startedAt, error: undefined, retryUntil: undefined, outcomeUnknown: true }),
       })
       next.runs[position] = run
       return { result: run, scheduleId: run.scheduleId, runId: id }

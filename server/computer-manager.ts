@@ -1488,10 +1488,14 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       })
       return
     }
-    this.emit('event', {
-      ...event,
-      computerId: computer.id,
-    })
+    // Hub-only events, including canonical schedule notifications, are not
+    // part of the node ServerEvent protocol even if a peer sends one.
+    if (event.type === 'error') {
+      this.emit('event', {
+        ...event,
+        computerId: computer.id,
+      })
+    }
   }
 
   private localComputer(): ComputerSummary {

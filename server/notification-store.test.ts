@@ -89,6 +89,36 @@ describe('NotificationStore', () => {
     expect((await restarted.list()).some((entry) => entry.id === record(0).id)).toBe(false)
   })
 
+  it('evicts the oldest unpinned dedupe identities deterministically at capacity and keeps admitting durable state', async () => {
+    const { directory, store } = await setup()
+    const stamp = new Date(now - 1000).toISOString()
+    await store.ingest(() => Array.from({ length: 10_000 }, (_, index) => record(index, stamp)))
+    await store.markRead(record(9999).id)
+    const before = JSON.parse(await readFile(store.statePath, 'utf8'))
+    const pinned = new Set([
+      ...before.records.slice(2).map((entry: NotificationRecord) => entry.id), record(10_000).id, record(10_001).id,
+    ])
+    const evicted = Object.keys(before.seen).filter((id) => !pinned.has(id)).sort().slice(0, 2)
+    await store.ingest((cursors) => {
+      cursors.pressure = { status: 'idle', rootPromptId: 'new-root', touchedAt: new Date(now).toISOString() }
+      return [record(10_000), record(10_001)]
+    })
+    const saved = JSON.parse(await readFile(store.statePath, 'utf8'))
+    expect(Object.keys(saved.seen)).toHaveLength(10_000)
+    expect(evicted.every((id) => saved.seen[id] === undefined)).toBe(true)
+    expect(saved.records).toHaveLength(NOTIFICATION_LIMIT)
+    expect(saved.records.every((entry: NotificationRecord) => saved.seen[entry.id])).toBe(true)
+    expect(saved.cursors.pressure).toMatchObject({ status: 'idle', rootPromptId: 'new-root' })
+    const warn = vi.fn()
+    const restarted = new NotificationStore(directory, { now: () => now, warn })
+    await restarted.initialize()
+    await restarted.ingest(() => [record(9999, stamp), record(10_000)])
+    expect(warn).not.toHaveBeenCalled()
+    expect(await restarted.list()).toHaveLength(NOTIFICATION_LIMIT)
+    expect((await restarted.list()).find((entry) => entry.id === record(9999).id)?.readAt).toBeDefined()
+    expect((await restarted.list()).filter((entry) => entry.id === record(10_000).id)).toHaveLength(1)
+  })
+
   it('expires records after 30 days on startup and reads, and rejects aged replays', async () => {
     const { directory, store } = await setup()
     await store.ingest(() => [record(1, new Date(now - NOTIFICATION_RETENTION_MS - 1).toISOString()), record(2)])

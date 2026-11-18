@@ -13,7 +13,7 @@ import type { ManagerAgent } from './manager-agent.js'
 import { NotificationCenterService } from './notification-center-service.js'
 import { NotificationStore } from './notification-store.js'
 import { PushNotificationService } from './push-notification-service.js'
-import type { NotificationCursors } from './notification-classifier.js'
+import { notificationIdentity, type NotificationCursors } from './notification-classifier.js'
 
 const trusted = { host: 'hub.example.test', origin: 'https://hub.example.test' }
 const directories: string[] = []
@@ -164,6 +164,71 @@ describe('hub notification center', () => {
     expect(await list('?unread=true')).toHaveLength(0)
   })
 
+  it('still publishes core hub and Oracle events once when notification admission fails', async () => {
+    const { runtime, emit, oracle } = await hub('on')
+    await runtime.app.ready()
+    const socket = await runtime.app.injectWS('/api/events', { headers: trusted })
+    const received: HubEvent[] = []
+    socket.on('message', (raw) => received.push(JSON.parse(String(raw)) as HubEvent))
+    const failure = new Error('Synthetic poisoned notification store')
+    const ingest = vi.spyOn(runtime.notificationCenter!.store, 'ingest').mockRejectedValue(failure)
+    const logged = vi.spyOn(runtime.app.log, 'error')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      emit({ type: 'session.upserted', session: { ...session('live'), revision: 1 } })
+      emit({ type: 'session.upserted', session: { ...session('live'), revision: 2, status: 'idle' } })
+      emit({ type: 'computer.updated', computer: { id: 'computer', name: 'Worker', online: false, isLocal: false } })
+      emit({ type: 'error', computerId: 'computer', notify: true, message: 'Synthetic health alert' })
+      oracle.emit('event', { type: 'manager.message', message: {
+        id: 'reply-failed-store', role: 'user', content: 'Status?', state: 'done', createdAt: now,
+      } })
+      await runtime.notificationCenter!.flush()
+      await vi.waitFor(() => {
+        expect(received.filter((event) => event.type === 'session.upserted' && event.session.id === 'live' && !event.summary)
+          .map((event) => event.type === 'session.upserted' && event.session.status)).toEqual(['running', 'idle'])
+        expect(received.filter((event) => event.type === 'computer.updated' && event.computer.id === 'computer')).toHaveLength(1)
+        expect(received.filter((event) => event.type === 'error' && event.message === 'Synthetic health alert')).toHaveLength(1)
+        expect(received.filter((event) => event.type === 'manager.message' && event.message.id === 'reply-failed-store')).toHaveLength(1)
+      })
+      expect(received.some((event) => event.type === 'notifications.changed')).toBe(false)
+      expect(await runtime.notificationCenter!.store.list()).toEqual([])
+      expect(logged).toHaveBeenCalledWith({ err: failure }, expect.stringContaining('notification'))
+    } finally {
+      socket.terminate()
+      ingest.mockRestore()
+      logged.mockRestore()
+      warning.mockRestore()
+    }
+  })
+
+  it.each([
+    ['GET', '', 'getSession'],
+    ['POST', '/open', 'activateSession'],
+  ] as const)('keeps %s session access successful when notification read marks cannot be saved', async (method, suffix, access) => {
+    const { runtime } = await hub('on')
+    const current = session('opened')
+    const read = vi.spyOn(runtime.manager!, access).mockResolvedValue(current)
+    const failure = new Error('Synthetic read-mark persistence failure')
+    const mark = vi.spyOn(runtime.notificationCenter!, 'sessionOpened').mockRejectedValue(failure)
+    const logged = vi.spyOn(runtime.app.log, 'error')
+    try {
+      const response = await runtime.app.inject({
+        method, url: `/api/computers/computer/sessions/opened${suffix}`, headers: trusted,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ session: { id: 'opened', computerId: 'computer' } })
+      expect(read).toHaveBeenCalledExactlyOnceWith('computer', 'opened')
+      expect(mark).toHaveBeenCalledExactlyOnceWith('computer', 'opened')
+      expect(logged).toHaveBeenCalledWith(
+        { err: failure, computerId: 'computer', sessionId: 'opened' }, expect.stringContaining('marked read'),
+      )
+    } finally {
+      read.mockRestore()
+      mark.mockRestore()
+      logged.mockRestore()
+    }
+  })
+
   it('commits the in-app record before external delivery and resolves transcript-free outcomes passively', async () => {
     const { runtime, sender, emit, list } = await hub('on')
     await runtime.pushService!.subscribe({
@@ -182,6 +247,40 @@ describe('hub notification center', () => {
     expect(await list()).toHaveLength(1)
     await vi.waitFor(() => expect(sender).toHaveBeenCalledOnce())
     expect(passive).toHaveBeenCalledWith(active.computerId, active.id)
+  })
+
+  it('continues recording session outcomes and sending pushes after the dedupe cache reaches capacity', async () => {
+    const { runtime, sender, emit, list } = await hub('on')
+    await runtime.app.ready()
+    await runtime.notificationCenter!.flush()
+    const store = runtime.notificationCenter!.store
+    await store.ingest(() => Array.from({ length: 10_000 }, (_, index): NotificationRecord => ({
+      id: notificationIdentity('host.alert', 'old-fixture', String(index)), kind: 'host.alert', severity: 'info',
+      title: 'Old fixture', body: 'Synthetic retained alert', url: '/', createdAt: now, coalesceKey: 'fixture', muted: false,
+    })))
+    await runtime.pushService!.subscribe({
+      endpoint: 'https://push.example.test/device', expirationTime: null,
+      keys: { p256dh: 'public', auth: 'auth' },
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    sender.mockImplementation(async () => {
+      const state = JSON.parse(await readFile(store.statePath, 'utf8'))
+      expect(state.records.some((entry: NotificationRecord) => entry.kind === 'session.completed' && entry.sessionId === 'after-cap')).toBe(true)
+      expect(Object.keys(state.seen)).toHaveLength(10_000)
+      return { statusCode: 201, headers: {}, body: '' }
+    })
+    try {
+      for (let turn = 0; turn < 2; turn += 1) {
+        const active = { ...session('after-cap'), revision: turn * 2 + 1,
+          messages: [{ ...session('after-cap').messages[0], id: `root-${turn}` }] }
+        emit({ type: 'session.upserted', session: active })
+        emit({ type: 'session.upserted', session: { ...active, revision: active.revision + 1, status: 'idle' } })
+      }
+      expect(await list('?sessionId=after-cap')).toHaveLength(2)
+      await vi.waitFor(() => expect(sender).toHaveBeenCalledTimes(2))
+      const state = JSON.parse(await readFile(store.statePath, 'utf8'))
+      expect(state.cursors[JSON.stringify(['session', 'computer', 'after-cap'])]).toMatchObject({ revision: 4, status: 'idle' })
+    } finally { warning.mockRestore() }
   })
 
   it('does not bind an old terminal snapshot to a newer passive root prompt', async () => {

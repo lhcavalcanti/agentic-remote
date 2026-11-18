@@ -123,8 +123,16 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const target = new URL(event.notification.data?.url || '/', self.location.origin)
-    .href
+  let target = new URL('/', self.location.origin).href
+  try {
+    const value = event.notification.data?.url
+    const url = new URL(typeof value === 'string' ? value : '/', self.location.origin)
+    if (url.origin === self.location.origin && (url.protocol === 'https:' || url.protocol === 'http:')) {
+      target = url.href
+    }
+  } catch {
+    // A malformed or off-origin notification link opens the app instead.
+  }
   event.waitUntil(
     self.clients
       .matchAll({ type: 'window', includeUncontrolled: true })

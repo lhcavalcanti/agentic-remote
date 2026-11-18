@@ -15,6 +15,7 @@ function session(id: string, replacedSessionIds?: string[]): SessionDetail {
 }
 
 const managers: ComputerManager[] = []
+const connections: RemoteNodeClient[] = []
 const releases: (() => void)[] = []
 const remote = new Map<string, {
   active: () => Promise<SessionDetail[]>
@@ -23,7 +24,8 @@ const remote = new Map<string, {
 
 beforeEach(() => {
   remote.clear()
-  vi.spyOn(RemoteNodeClient.prototype, 'connect').mockImplementation(() => {})
+  connections.length = 0
+  vi.spyOn(RemoteNodeClient.prototype, 'connect').mockImplementation(function (this: RemoteNodeClient) { connections.push(this) })
   vi.spyOn(RemoteNodeClient.prototype, 'stop').mockImplementation(() => {})
   vi.spyOn(RemoteNodeClient.prototype, 'getInfo').mockImplementation(async function (this: RemoteNodeClient) {
     if (this.computer.id === 'pending') return { id: 'worker', name: 'Worker', version: 'fixture' }
@@ -43,6 +45,7 @@ afterEach(() => {
   releases.splice(0).forEach((release) => release())
   managers.splice(0).forEach((manager) => manager.stop())
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
 })
 
 async function fixture() {
@@ -83,6 +86,28 @@ async function fixture() {
 }
 
 describe('ComputerManager passive session metadata', () => {
+  it.each(['off', 'on'])('rejects hub-only schedule notifications from nodes with hub flags %s', async (flag) => {
+    vi.stubEnv('AGENTIC_REMOTE_FEATURE_SCHEDULER', flag)
+    vi.stubEnv('AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER', flag)
+    const { manager } = await fixture()
+    const node = connections.find((client) => client.computer.id === 'worker')!
+    const forwarded = vi.fn()
+    manager.on('event', forwarded)
+    node.emit('event', {
+      type: 'schedule.run.notification',
+      notification: {
+        id: 'a'.repeat(64), kind: 'schedule.run.succeeded', severity: 'info',
+        title: 'Synthetic forged schedule', body: 'Not a hub outcome', url: '/\\evil.example',
+        createdAt: '2026-11-17T00:00:00.000Z', coalesceKey: 'forged', muted: false,
+      },
+    } as unknown as ServerEvent)
+    expect(forwarded).not.toHaveBeenCalled()
+    node.emit('event', { type: 'error', message: 'Ordinary node alert', notify: true })
+    expect(forwarded).toHaveBeenCalledExactlyOnceWith({
+      type: 'error', message: 'Ordinary node alert', notify: true, computerId: 'worker',
+    })
+  })
+
   it('lists known open sessions without contacting cached or unanswered nodes', async () => {
     const { manager, service, worker, unrelated } = await fixture()
     worker.active.mockResolvedValue([session('known'), { ...session('closed-remote'), isOpen: false }])

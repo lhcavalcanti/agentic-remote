@@ -2133,6 +2133,9 @@ people sharing a hub share its profile. See
 ## 10. Notifications
 
 - The optional default-off hub notification center MUST follow the [durable notification contract](design/notification-center.md). The default-off `notificationPanel` Interface preview adds the client panel and requires the hub flag; enabling either MUST NOT change push or native-shell delivery policy.
+- A notification admission failure MUST be logged without dropping core session, computer, error, or Oracle socket events. A failed write MUST NOT produce a notification invalidation claiming durable success.
+- Failure to persist notification read marks after a successful session open MUST be logged without failing the session access.
+- Notification-center deduplication MUST be bounded to 10,000 identities and 30 days. At capacity it MUST evict the oldest identity fences not needed by retained records, breaking timestamp ties by identity, rather than reject new notifications. Retained read/dismissed records MUST keep their identity fences; deduplication outside the retained horizon is not guaranteed.
 
 - Notification settings MUST be discoverable under App settings.
 - **What notifies you** is synced (§9.3) and the hub applies it to every
@@ -2165,6 +2168,8 @@ people sharing a hub share its profile. See
   seconds, so a frozen phone cannot hold notifications back.
 - In a browser or installed PWA, Oracle notifications MUST open Oracle
   (`/?oracle=open`), and opening Oracle MUST clear them.
+- Browser/PWA notification clicks MUST open only HTTP(S) URLs on the app's origin. Malformed, non-HTTP(S), or off-origin targets MUST fall back to the app root.
+- Canonical schedule notifications MUST originate at the hub scheduler. Nodes MUST NOT forward hub-only schedule notification events, including while hub feature flags are disabled.
 - One event MUST belong to one category, so a single event never sends both a
   session and an Oracle notification.
 - The native shell has no Web Push. It MUST apply the same scope and Oracle

@@ -27,6 +27,8 @@ async function git(folder: string, ...args: string[]) {
 }
 
 beforeEach(async () => {
+  // Fixtures live in the checkout; allow it explicitly instead of relying on the host's environment.
+  vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ROOTS', process.cwd())
   directory = path.join(process.cwd(), `.schedule-worktrees-${randomUUID()}`)
   repository = path.join(directory, 'repo')
   root = path.join(directory, 'allowed')
@@ -44,6 +46,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   await rm(directory, { recursive: true, force: true })
 })
 

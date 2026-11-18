@@ -39,6 +39,18 @@ describe('hub feature flags', () => {
 })
 
 describe('preview feature authority', () => {
+  it('retains known opt-ins and ignores unknown preview names without mutating the input', () => {
+    const previews = { composerRefresh: true, schedulerView: false, futurePreview: true, futureOptions: { enabled: true } }
+    expect(parseSettingValue('previewFeatures', previews)).toEqual({
+      ok: true, value: { composerRefresh: true, schedulerView: false },
+    })
+    expect(settingsValuesFrom({ appearance: 'light', previewFeatures: previews })).toEqual({
+      appearance: 'light', previewFeatures: { composerRefresh: true, schedulerView: false },
+    })
+    expect(previews.futureOptions).toEqual({ enabled: true })
+    expect(parseSettingValue('previewFeatures', { futurePreview: true })).toEqual({ ok: true, value: {} })
+  })
+
   it('defaults off even when every hub feature is enabled', () => {
     expect(Object.values(effectivePreviewFeatures(undefined, {
       notificationCenter: true, hostMonitor: true, scheduler: true,
@@ -73,7 +85,7 @@ describe('preview feature authority', () => {
   it('validates partial boolean preferences and drops malformed cached settings', () => {
     expect(parseSettingValue('previewFeatures', { composerRefresh: true, schedulerView: false }))
       .toEqual({ ok: true, value: { composerRefresh: true, schedulerView: false } })
-    for (const invalid of [null, [], true, { unknown: true }, { composerRefresh: 'on' }]) {
+    for (const invalid of [null, [], true, { composerRefresh: 'on' }]) {
       expect(parseSettingValue('previewFeatures', invalid).ok).toBe(false)
       expect(settingsValuesFrom({ previewFeatures: invalid })).toEqual({})
     }

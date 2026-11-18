@@ -1336,10 +1336,14 @@ export async function registerHubRoutes(
     const entry = {
       computerId,
       promise: Promise.all(previous).then(async () => {
-        await admitted
+        try {
+          await admitted
+        } catch (error) {
+          app.log.error({ err: error }, 'Could not persist the notification for a hub event')
+        }
         publications.broadcast(outgoing)
       }).catch((error: unknown) => {
-        app.log.error({ err: error }, 'Could not persist the notification for a hub event')
+        app.log.error({ err: error }, 'Could not broadcast a hub event')
       }),
     }
     broadcasts.set(key, entry)

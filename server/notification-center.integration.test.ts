@@ -164,6 +164,43 @@ describe('hub notification center', () => {
     expect(await list('?unread=true')).toHaveLength(0)
   })
 
+  it('still publishes core hub and Oracle events once when notification admission fails', async () => {
+    const { runtime, emit, oracle } = await hub('on')
+    await runtime.app.ready()
+    const socket = await runtime.app.injectWS('/api/events', { headers: trusted })
+    const received: HubEvent[] = []
+    socket.on('message', (raw) => received.push(JSON.parse(String(raw)) as HubEvent))
+    const failure = new Error('Synthetic poisoned notification store')
+    const ingest = vi.spyOn(runtime.notificationCenter!.store, 'ingest').mockRejectedValue(failure)
+    const logged = vi.spyOn(runtime.app.log, 'error')
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      emit({ type: 'session.upserted', session: { ...session('live'), revision: 1 } })
+      emit({ type: 'session.upserted', session: { ...session('live'), revision: 2, status: 'idle' } })
+      emit({ type: 'computer.updated', computer: { id: 'computer', name: 'Worker', online: false, isLocal: false } })
+      emit({ type: 'error', computerId: 'computer', notify: true, message: 'Synthetic health alert' })
+      oracle.emit('event', { type: 'manager.message', message: {
+        id: 'reply-failed-store', role: 'user', content: 'Status?', state: 'done', createdAt: now,
+      } })
+      await runtime.notificationCenter!.flush()
+      await vi.waitFor(() => {
+        expect(received.filter((event) => event.type === 'session.upserted' && event.session.id === 'live' && !event.summary)
+          .map((event) => event.type === 'session.upserted' && event.session.status)).toEqual(['running', 'idle'])
+        expect(received.filter((event) => event.type === 'computer.updated' && event.computer.id === 'computer')).toHaveLength(1)
+        expect(received.filter((event) => event.type === 'error' && event.message === 'Synthetic health alert')).toHaveLength(1)
+        expect(received.filter((event) => event.type === 'manager.message' && event.message.id === 'reply-failed-store')).toHaveLength(1)
+      })
+      expect(received.some((event) => event.type === 'notifications.changed')).toBe(false)
+      expect(await runtime.notificationCenter!.store.list()).toEqual([])
+      expect(logged).toHaveBeenCalledWith({ err: failure }, expect.stringContaining('notification'))
+    } finally {
+      socket.terminate()
+      ingest.mockRestore()
+      logged.mockRestore()
+      warning.mockRestore()
+    }
+  })
+
   it('commits the in-app record before external delivery and resolves transcript-free outcomes passively', async () => {
     const { runtime, sender, emit, list } = await hub('on')
     await runtime.pushService!.subscribe({

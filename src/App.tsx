@@ -327,6 +327,7 @@ import {
   hubSignInExpired,
   subscribeHubSignIn,
 } from './hub-sign-in'
+import { isHubUnreachable } from './hub-reachability'
 import { SignInExpiredNotice } from './SignInExpiredNotice'
 import { innermostDialogFrame, subscribeDialogFrames } from './components/dialog-stack'
 import {
@@ -3786,6 +3787,13 @@ function fallbackSessionKey(
   return fallback ? sessionKey(fallback) : undefined
 }
 
+// After the page returns (unlock, wake), requests can fail before the network or
+// tunnel is back. Such failures only mark the data stale and retry; an error is
+// shown only if the hub stays unreachable this long after the page returned.
+const HUB_UNREACHABLE_GRACE_MS = 30_000
+const HUB_UNREACHABLE_MESSAGE = "Can't reach the hub. Retrying automatically…"
+const HUB_RECONNECTING_MESSAGE = 'reconnecting to the hub'
+
 function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClient }) {
   const desktopRail = usePreviewFeature('desktopRail')
   const notificationPanel = usePreviewFeature('notificationPanel')
@@ -7163,6 +7171,24 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     // Set while reconnects wait for the sign-in to be renewed.
     let paused = false
     let reconnectDelay = 1_000
+    // A refresh the page asked for on returning that could not reach the hub.
+    let resumeRetry: number | undefined
+    let resumeDelay = 1_000
+    let resumeSince: number | undefined
+    // The error that refresh showed, cleared once the hub answers again.
+    let resumeError: string | undefined
+    const stopResumeRetry = () => {
+      if (resumeRetry !== undefined) window.clearTimeout(resumeRetry)
+      resumeRetry = undefined
+      resumeDelay = 1_000
+    }
+    const clearResumeError = () => {
+      if (resumeError === undefined) return
+      const shown = resumeError
+      resumeError = undefined
+      // Only its own message: anything shown since is newer news.
+      setError((current) => current === shown ? undefined : current)
+    }
 
     const refreshSnapshot = async (
       onListingFailed?: (caught: unknown) => void,
@@ -7499,7 +7525,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     // session's detail, Oracle and Dreamer only leave the data stale; Oracle
     // and Dreamer also report their own failures.
     const refreshAllAuthoritativeState = async (
-      onSessionListFailed?: (message: string) => void,
+      onSessionListFailed?: (message: string, caught: unknown) => void,
     ) => {
       const generation = authoritativeRefreshGeneration.current + 1
       authoritativeRefreshGeneration.current = generation
@@ -7514,6 +7540,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             if (authoritativeRefreshGeneration.current === generation) {
               onSessionListFailed?.(
                 caught instanceof Error ? caught.message : String(caught),
+                caught,
               )
             }
           }).then((refreshedSessions) =>
@@ -7528,12 +7555,15 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         if (failed) throw failed.reason
         if (authoritativeRefreshGeneration.current === generation) {
           setRefreshState('fresh')
+          // The hub answered, so a pending retry is moot and its error stale.
+          stopResumeRetry()
+          clearResumeError()
         }
       } catch (caught) {
         if (authoritativeRefreshGeneration.current !== generation) return
         const message = caught instanceof Error ? caught.message : String(caught)
         setRefreshState('stale')
-        setRefreshMessage(message)
+        setRefreshMessage(isHubUnreachable(caught) ? HUB_RECONNECTING_MESSAGE : message)
         throw caught
       }
     }
@@ -7811,10 +7841,34 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       }
     }
 
+    const refreshAfterResume = (since: number) => {
+      resumeRetry = undefined
+      void refreshAllAuthoritativeState((message, caught) => {
+        if (isHubUnreachable(caught)) {
+          if (Date.now() - since < HUB_UNREACHABLE_GRACE_MS) return
+          message = HUB_UNREACHABLE_MESSAGE
+        }
+        resumeError = message
+        setError(message)
+      }).catch((caught: unknown) => {
+        if (stopped || !isHubUnreachable(caught) || document.visibilityState !== 'visible' ||
+            resumeSince !== since) return
+        resumeRetry = window.setTimeout(() => refreshAfterResume(since), resumeDelay)
+        resumeDelay = Math.min(resumeDelay * 2, 10_000)
+      })
+    }
     const handleVisibility = () => {
+      stopResumeRetry()
       if (document.visibilityState === 'visible') {
-        void refreshAllAuthoritativeState(setError).catch(() => undefined)
+        resumeSince = Date.now()
+        refreshAfterResume(resumeSince)
       }
+    }
+    // The browser reports its network back: retry now rather than after the backoff.
+    const handleOnline = () => {
+      if (resumeRetry === undefined || resumeSince === undefined) return
+      window.clearTimeout(resumeRetry)
+      refreshAfterResume(resumeSince)
     }
     // Renewed, perhaps in another tab: catch up on what was refused meanwhile.
     const handleSignIn = () => {
@@ -7835,8 +7889,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       handleCoordinatedAuthoritativeRefresh,
     )
     document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('online', handleOnline)
     return () => {
       stopped = true
+      stopResumeRetry()
+      window.removeEventListener('online', handleOnline)
       if (authoritativeRefreshRef.current === refreshAllAuthoritativeState) {
         authoritativeRefreshRef.current = async () => undefined
       }

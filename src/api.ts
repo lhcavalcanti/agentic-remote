@@ -79,6 +79,7 @@ import type {
   SettingsUpdateResult,
 } from '../shared/settings-profile'
 import { HubSignInExpiredError, hubFetch } from './hub-sign-in'
+import { hubUnreachable } from './hub-reachability'
 import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
 
 async function responseError(
@@ -184,9 +185,9 @@ async function hubSnapshotRequest<TResult>(path: string): Promise<TResult> {
     })
   } catch (error) {
     if (timedOut) {
-      throw new Error(
+      throw hubUnreachable(new Error(
         'Agentic Remote did not answer within 15 seconds. Check the hub service and tunnel, then retry.',
-      )
+      ))
     }
     throw error
   } finally {

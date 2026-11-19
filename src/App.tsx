@@ -7970,9 +7970,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       }
     }
 
-    // Session-list failures the hub answered with still show at once.
+    // Session-list failures the hub answered with still show at once, and so
+    // does any failure once the page hides again and recovery has stopped.
     const reportResumeListingFailure = (message: string, caught: unknown) => {
-      if (!isHubUnreachable(caught)) setError(message)
+      if (resumeSince === undefined || !isHubUnreachable(caught)) setError(message)
     }
     const refreshAfterResume = () => {
       resumeRetry = undefined

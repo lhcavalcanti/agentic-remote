@@ -4075,6 +4075,26 @@ describe('App', () => {
     expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
   })
 
+  it('still reports a returning refresh that cannot reach the hub once the page hides again', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    let failListing!: (error: unknown) => void
+    vi.mocked(listSessionListing)
+      .mockImplementationOnce(() => new Promise((_, reject) => { failListing = reject }))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(failListing).toBeDefined())
+    visibility.mockReturnValue('hidden')
+    fireEvent(document, new Event('visibilitychange'))
+    await act(async () => { failListing(new TypeError('Failed to fetch')) })
+    expect((await screen.findAllByText('Failed to fetch')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .not.toHaveTextContent('reconnecting to the hub')
+  })
+
   it('reports an unreachable hub only after the grace period and clears it once the hub answers', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],

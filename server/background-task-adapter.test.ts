@@ -1451,6 +1451,26 @@ describe('background task adapter', () => {
     })
   })
 
+  it("ends a subagent's shell when the CLI's own task records say its agent finished", () => {
+    const agentRecord = (status: string, completedAt?: string) => ({
+      tasks: [{
+        type: 'agent', id: 'agent-1', status, startedAt: '2026-09-03T08:00:00.000Z',
+        ...(completedAt ? { completedAt } : {}),
+      }],
+    })
+    const tasks = backgroundTasksFromEvents([
+      lifecycleEvent('listed', 'session.background_tasks_changed', '2026-09-03T08:00:00.000Z', agentRecord('running')),
+      ...subagentShell('agent-1', '7', '2026-09-03T08:01:00.000Z'),
+      lifecycleEvent('finished', 'session.background_tasks_changed', '2026-09-03T08:05:00.000Z',
+        agentRecord('completed', '2026-09-03T08:05:00.000Z')),
+    ] as unknown as SessionEvent[], { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === 'agent-1')).toMatchObject({ status: 'completed' })
+    expect(tasks.find((task) => task.id === '7')).toMatchObject({
+      status: 'failed', completedAt: '2026-09-03T08:05:00.000Z',
+    })
+  })
+
   it("keeps a subagent's shell seen running after the agent stopped, and a detached one", () => {
     const tasks = backgroundTasksFromEvents([
       lifecycleEvent('start', 'subagent.started', '2026-09-03T08:00:00.000Z', {

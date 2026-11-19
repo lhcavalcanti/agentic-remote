@@ -1136,8 +1136,9 @@ export function backgroundTasksFromEvents(
     ids: Set<string>
     /** The subagent that started the shell, when one did. */
     owner?: string
-    /** Log position of the latest event that showed the shell still running. */
+    /** Log position and time of the latest event that showed it running. */
     seenRunningOrder?: number
+    seenRunningAt?: string
   }
   // A per-execution handle that stays with a shell through metadata refreshes,
   // provider-id rekeys and native handoffs, even before a synchronous launch
@@ -1499,6 +1500,13 @@ export function backgroundTasksFromEvents(
           shellIdentityOf(current)
         }
       }
+      if (current.type === 'agent') {
+        if (!isTerminalTaskStatus(current.status)) {
+          agentEndedOrder.delete(current.id)
+        } else if (!previous || !isTerminalTaskStatus(previous.status)) {
+          agentEndedOrder.set(current.id, eventOrder)
+        }
+      }
       tasks.set(current.id, current)
       aliases.set(current.id, current.id)
       // The CLI has reported this task itself, so nothing about it is being
@@ -1749,6 +1757,7 @@ export function backgroundTasksFromEvents(
           toolCallId, materialized: false, ids: new Set(),
           owner: event.agentId || eventString(data, 'agentId'),
           seenRunningOrder: eventOrder,
+          seenRunningAt: event.timestamp,
         }
         if (toolCallId && shellId) {
           identity.start = {
@@ -1978,7 +1987,10 @@ export function backgroundTasksFromEvents(
         if (current?.type === 'shell' && isLiveTaskStatus(current.status) && data.success === true) {
           shellTaskOutput(current, data.result)
           const observed = shellInstances.get(current)
-          if (observed) observed.seenRunningOrder = eventOrder
+          if (observed) {
+            observed.seenRunningOrder = eventOrder
+            observed.seenRunningAt = event.timestamp
+          }
         }
         continue
       }
@@ -2019,7 +2031,10 @@ export function backgroundTasksFromEvents(
           assumedBackground.delete(current.id)
           assumedOwners.delete(current.id)
           const handedOff = shellInstances.get(current)
-          if (handedOff) handedOff.seenRunningOrder = eventOrder
+          if (handedOff) {
+            handedOff.seenRunningOrder = eventOrder
+            handedOff.seenRunningAt = event.timestamp
+          }
         }
         // Only a real handoff renames the task after the shell it created. An
         // ordinary command reports the same id when it finishes, and taking
@@ -2182,17 +2197,23 @@ export function backgroundTasksFromEvents(
     if (!identity?.owner) continue
     const ownerId = taskIdAlias(aliases, identity.owner)
     const owner = tasks.get(ownerId)
-    const ownerEnded = agentEndedOrder.get(ownerId)
     if (
       owner?.type !== 'agent' ||
       !isTerminalTaskStatus(owner.status) ||
       !owner.completedAt ||
-      ownerEnded === undefined ||
       identity.seenRunningOrder === undefined ||
-      ownerEnded <= identity.seenRunningOrder
+      !identity.seenRunningAt
     ) {
       continue
     }
+    const ownerEnded = agentEndedOrder.get(ownerId)
+    const stoppedSinceSeen = ownerEnded !== undefined
+      ? ownerEnded > identity.seenRunningOrder
+      // Ended where no position is kept: the clock is all there is, and a tie
+      // counts as after, since any later sighting of the shell undoes it
+      // while the other way round nothing would.
+      : Date.parse(owner.completedAt) >= Date.parse(identity.seenRunningAt)
+    if (!stoppedSinceSeen) continue
     task.status = 'failed'
     task.completedAt = owner.completedAt
     task.error = task.error || 'Ended without reporting completion'

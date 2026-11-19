@@ -1280,8 +1280,8 @@
     "shell/src/settings.ts": "ea2a3f73315ca61015d012bd67519c19a7dd9814c7d315534e9c21269eb4c5f4",
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
-    "src/App.test.tsx": "a21c1b6baba53ded17787cf9162c9640a303b92f2fecfbf4e7e65343a719b619",
-    "src/App.tsx": "7ae5efe4de54fa3689cd4ae2fd7b70ed86fd783b35539b271b1accac707599d4",
+    "src/App.test.tsx": "df795eb9df8aa7d2356524b8d90a4ea7b30fe30251c2a44bce3b870825e2eb85",
+    "src/App.tsx": "d8ff616c5b763878eea4fb734907e5f452ea426cf6e3d1d5c276ed91c1b6c6f7",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -1753,13 +1753,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ca501af1e98a07f97a3966f33b7cb08140c62033e2790aeb4afc3830555e57c8",
+    "GRAPH_REPORT.md": "b4c4a0c0a64844179189bddaeca01baf3ac3224c663dfb460f485d205a79f832",
     "communities.json": "a0d39e0bcb90754bc443de576846ee0975b3f864eff47730a661af48c18ff7ac",
-    "graph.html": "a6b9e84f5135c4494ad2218b4e20d7c268cec914dae3f1b82082a0e3105b465f",
-    "graph.json": "6e44a6a75ac4eaa6fe4414e3ba85624b42305d178a10cd032cc2f482271f50f0"
+    "graph.html": "86d84d4ac2f2a84d3fb4aa1de80961dd263cabcb487b4242afa50cc2c4362f62",
+    "graph.json": "41c5b4a38f733a5534fae1ba017c5fd8939f501246dd7da0e2bd83b5b1934ab6"
   },
   "schema_version": 1,
-  "source_commit": "c6069a8d6ea4ee93d81919f7091ddf948f986a78",
-  "source_fingerprint": "003fdd12cd7ec7b9fde8da60cb71ac0121b5d9a55bb2f2eb839de3abe2217b48",
+  "source_commit": "bea421492f06212d67ff25bea169bee7fbad9293",
+  "source_fingerprint": "deb71e5703adc422f270bcd08c593dd7d85c7218c60a6ff56495c0258d53465a",
   "working_tree_changes": []
 }

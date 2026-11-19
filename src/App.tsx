@@ -5637,7 +5637,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   )
 
   const loadBackgroundTasks = useCallback(
-    async (session: ManagedSession, force = false): Promise<void> => {
+    async (
+      session: ManagedSession,
+      force = false,
+      reportFailure: (caught: unknown) => void = (caught) =>
+        setError(caught instanceof Error ? caught.message : String(caught)),
+    ): Promise<void> => {
       const key = sessionKey(session)
       if (
         !supportsBackgroundTasks(
@@ -5678,7 +5683,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           }
         } catch (caught) {
           failure = caught
-          setError(caught instanceof Error ? caught.message : String(caught))
+          reportFailure(caught)
         } finally {
           backgroundTaskRequestsRef.current.delete(key)
           if (
@@ -5689,7 +5694,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           }
         }
         if (queuedBackgroundTaskRefreshesRef.current.delete(key)) {
-          return loadBackgroundTasks(session, true)
+          return loadBackgroundTasks(session, true, reportFailure)
         }
         if (failure) throw failure
       })()
@@ -7171,18 +7176,26 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     // Set while reconnects wait for the sign-in to be renewed.
     let paused = false
     let reconnectDelay = 1_000
-    // A refresh the page asked for on returning that could not reach the hub.
+    // From the page returning until a refresh gets through to the hub, refreshes
+    // that cannot reach it are retried with backoff, whoever started them.
+    let resumeSince: number | undefined
     let resumeRetry: number | undefined
     let resumeDelay = 1_000
-    let resumeSince: number | undefined
-    // The error that refresh showed, cleared once the hub answers again.
+    // The error this recovery showed; it only ever replaces nothing or itself.
     let resumeError: string | undefined
     const stopResumeRetry = () => {
       if (resumeRetry !== undefined) window.clearTimeout(resumeRetry)
       resumeRetry = undefined
       resumeDelay = 1_000
     }
-    const clearResumeError = () => {
+    const showResumeError = (message: string) => {
+      const previous = resumeError
+      resumeError = message
+      setError((current) => current === undefined || current === previous ? message : current)
+    }
+    const endResume = () => {
+      stopResumeRetry()
+      resumeSince = undefined
       if (resumeError === undefined) return
       const shown = resumeError
       resumeError = undefined
@@ -7545,7 +7558,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             }
           }).then((refreshedSessions) =>
             Promise.all(refreshedSessions.map((session) =>
-              loadBackgroundTasks(session, true)))),
+              // Unreachability only leaves the data stale; it is reported below.
+              loadBackgroundTasks(session, true, (caught) => {
+                if (!isHubUnreachable(caught)) {
+                  setError(caught instanceof Error ? caught.message : String(caught))
+                }
+              })))),
           dispatchAuthoritativeRefresh(),
         ])
         const failed = settled.find(
@@ -7555,15 +7573,20 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         if (failed) throw failed.reason
         if (authoritativeRefreshGeneration.current === generation) {
           setRefreshState('fresh')
-          // The hub answered, so a pending retry is moot and its error stale.
-          stopResumeRetry()
-          clearResumeError()
+          endResume()
         }
       } catch (caught) {
         if (authoritativeRefreshGeneration.current !== generation) return
         const message = caught instanceof Error ? caught.message : String(caught)
         setRefreshState('stale')
-        setRefreshMessage(isHubUnreachable(caught) ? HUB_RECONNECTING_MESSAGE : message)
+        if (isHubUnreachable(caught)) {
+          setRefreshMessage(HUB_RECONNECTING_MESSAGE)
+          continueResume()
+        } else {
+          setRefreshMessage(message)
+          // The hub answered, so it is reachable again.
+          endResume()
+        }
         throw caught
       }
     }
@@ -7599,7 +7622,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         // Settings events are not replayed either.
         void settingsClient.sync()
         setScheduleProposalEpoch((current) => current + 1)
-        void refreshAllAuthoritativeState(setSessionLoadError).catch(() => undefined)
+        void refreshAllAuthoritativeState((message, caught) => {
+          // While the page is recovering from a return, unreachability is retried, not shown.
+          if (resumeSince === undefined || !isHubUnreachable(caught)) setSessionLoadError(message)
+        }).catch(() => undefined)
       }
       socket.onmessage = (message) => {
         const event = patches.receive(JSON.parse(message.data as string) as HubWireEvent)
@@ -7841,34 +7867,34 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       }
     }
 
-    const refreshAfterResume = (since: number) => {
+    // Session-list failures the hub answered with still show at once.
+    const reportResumeListingFailure = (message: string, caught: unknown) => {
+      if (!isHubUnreachable(caught)) setError(message)
+    }
+    const refreshAfterResume = () => {
       resumeRetry = undefined
-      void refreshAllAuthoritativeState((message, caught) => {
-        if (isHubUnreachable(caught)) {
-          if (Date.now() - since < HUB_UNREACHABLE_GRACE_MS) return
-          message = HUB_UNREACHABLE_MESSAGE
-        }
-        resumeError = message
-        setError(message)
-      }).catch((caught: unknown) => {
-        if (stopped || !isHubUnreachable(caught) || document.visibilityState !== 'visible' ||
-            resumeSince !== since) return
-        resumeRetry = window.setTimeout(() => refreshAfterResume(since), resumeDelay)
-        resumeDelay = Math.min(resumeDelay * 2, 10_000)
-      })
+      void refreshAllAuthoritativeState(reportResumeListingFailure).catch(() => undefined)
+    }
+    // Called by any refresh that could not reach the hub during a resume episode.
+    function continueResume() {
+      if (resumeSince === undefined || stopped || document.visibilityState !== 'visible') return
+      if (Date.now() - resumeSince >= HUB_UNREACHABLE_GRACE_MS) showResumeError(HUB_UNREACHABLE_MESSAGE)
+      if (resumeRetry !== undefined) return
+      resumeRetry = window.setTimeout(refreshAfterResume, resumeDelay)
+      resumeDelay = Math.min(resumeDelay * 2, 10_000)
     }
     const handleVisibility = () => {
       stopResumeRetry()
       if (document.visibilityState === 'visible') {
         resumeSince = Date.now()
-        refreshAfterResume(resumeSince)
+        refreshAfterResume()
       }
     }
     // The browser reports its network back: retry now rather than after the backoff.
     const handleOnline = () => {
-      if (resumeRetry === undefined || resumeSince === undefined) return
+      if (resumeRetry === undefined) return
       window.clearTimeout(resumeRetry)
-      refreshAfterResume(resumeSince)
+      refreshAfterResume()
     }
     // Renewed, perhaps in another tab: catch up on what was refused meanwhile.
     const handleSignIn = () => {

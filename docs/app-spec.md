@@ -118,10 +118,12 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - After visibility return (unlock or wake), a refresh whose requests never
   reach the hub (the browser's "Failed to fetch", or no answer in time) MUST
   only mark the data stale as reconnecting and retry with backoff while the
-  page stays visible; an app-wide error MUST appear only if the hub is still
-  unreachable 30 seconds after the return, and MUST clear itself once the hub
-  answers. Errors the hub returns still show at once, and other errors MUST NOT
-  be cleared by that recovery.
+  page stays visible, whichever refresh (return, reconnect or manual) meets
+  that failure, including background-task reads. An app-wide error MUST appear
+  only if the hub is still unreachable 30 seconds after the return, MUST NOT
+  replace another error, and MUST clear itself once the hub answers. Errors the
+  hub returns still show at once, and other errors MUST NOT be cleared by that
+  recovery.
 - When the hub's sign-in gateway refuses requests because its session lapsed,
   the app MUST show one sign-in-expired notice above every pane, covering none
   of their controls, or inside an open modal, which keeps focus within itself.

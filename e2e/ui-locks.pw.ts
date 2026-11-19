@@ -235,7 +235,7 @@ for (const viewport of uiViewports) {
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
 
-/** A microphone and recorder that record `fixture audio`; `window.fixtureMicrophone` counts their use. */
+/** A fake microphone whose recording the fixture transcribes as "Transcribed fixture note". */
 async function mockMicrophone(page: Page) {
   await page.addInitScript(() => {
     const microphone = { calls: [] as MediaStreamConstraints[], stopped: 0 }
@@ -923,6 +923,44 @@ test.describe('browser interaction contracts', () => {
       .toEqual({ calls: [{ audio: true }], stopped: 1 })
     expect(handle.requests.some((request) => request.path === `${sessionPath}/messages`)).toBe(false)
   })
+
+  for (const viewport of [uiViewports[0], uiViewports[2]]) {
+    test.describe(`line below the composer ${viewport.name}`, () => {
+      test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+      test('takes no space while idle and appears only while audio is busy', async ({ page, baseURL }) => {
+        await mockMicrophone(page)
+        let release = () => {}
+        const held = new Promise<void>((resolve) => { release = resolve })
+        await page.route('**/api/transcriptions', async (route) => {
+          await held
+          await route.fallback()
+        })
+        await open(page, baseURL, 'conversation')
+        const area = page.locator('.composer-area')
+        const line = area.locator('.composer-hint')
+        const height = () => area.evaluate((element) => element.getBoundingClientRect().height)
+        await expect(line).toHaveCount(0)
+        await expect(area).toBeInViewport({ ratio: 1 })
+        const idle = await height()
+
+        await page.getByRole('button', { name: 'Start microphone recording', exact: true }).click()
+        await expect(line).toHaveText('Recording 0:00…')
+        await page.getByRole('button', { name: 'Stop & transcribe', exact: true }).click()
+        await expect(line).toHaveText('Transcribing audio…')
+        // Nothing else changes while transcribing, so the idle composer is
+        // shorter by exactly the line and its margin.
+        const lineBox = await line.evaluate((element) =>
+          element.getBoundingClientRect().height + parseFloat(getComputedStyle(element).marginTop))
+        expect(lineBox).toBeGreaterThan(0)
+        expect(await height()).toBeCloseTo(idle + lineBox, 0)
+        await expect(area).toBeInViewport({ ratio: 1 })
+
+        release()
+        await expect(message(page)).toHaveValue('Transcribed fixture note')
+        await expect(line).toHaveCount(0)
+      })
+    })
+  }
 
   test('ArrowUp recalls sent history but preserves an unsent draft and its durable storage', async ({ page, baseURL }) => {
     await open(page, baseURL, 'conversation')

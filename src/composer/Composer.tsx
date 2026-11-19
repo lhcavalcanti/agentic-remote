@@ -56,6 +56,43 @@ export function Composer(props: ComposerProps) {
     onFileChange,
     onOpenRuntime,
   } = props
+  // The line below the composer only explains a live state or mode; an idle
+  // composer keeps no line. Send and Queue name their shortcuts in tooltips.
+  const stateLine = askingAside
+    ? (
+      <>
+        <span className="composer-hint__desktop">
+          {sideQuestionPending
+            ? 'Answering… you can type your follow-up · Esc back to your message'
+            : 'Enter asks · Shift+Enter newline · Esc back to your message'}
+        </span>
+        <span className="composer-hint__mobile">
+          {sideQuestionPending ? 'Answering… you can type your follow-up' : 'Tap Ask · Return adds a line'}
+        </span>
+      </>
+    )
+    : recording
+      ? `Recording ${recordingDuration(recordingSeconds)}…`
+      : transcribing
+        ? 'Transcribing audio…'
+        : uploadingFile
+          ? 'Uploading file…'
+          : editingQueuedPromptId
+            ? (
+              <>
+                <span className="composer-hint__desktop">
+                  {supportsQueuedPromptDispatch
+                    ? 'Enter saves it back · ↑ sends this queued edit now · Esc leaves it as it was'
+                    : 'Enter saves it back · Shift+Enter newline · Esc leaves it as it was'}
+                </span>
+                <span className="composer-hint__mobile">
+                  {supportsQueuedPromptDispatch
+                    ? 'Save keeps its place · ↑ sends this queued edit now · Return adds a line'
+                    : 'Tap Save to put it back · Return adds a line'}
+                </span>
+              </>
+            )
+            : null
   return (
     <footer className="composer-area">
       <div className="composer-context">
@@ -263,46 +300,7 @@ export function Composer(props: ComposerProps) {
           ) : null}
         </button>
       ) : null}
-      <p className="composer-hint">
-        {askingAside
-          ? (
-            <>
-              <span className="composer-hint__desktop">
-                {sideQuestionPending
-                  ? 'Answering… you can type your follow-up · Esc back to your message'
-                  : 'Enter asks · Shift+Enter newline · Esc back to your message'}
-              </span>
-              <span className="composer-hint__mobile">
-                {sideQuestionPending ? 'Answering… you can type your follow-up' : 'Tap Ask · Return adds a line'}
-              </span>
-            </>
-          )
-          : recording
-            ? `Recording ${recordingDuration(recordingSeconds)}…`
-            : transcribing
-              ? 'Transcribing audio…'
-              : uploadingFile
-                ? 'Uploading file…'
-                : (
-                  <>
-                    <span className="composer-hint__desktop">
-                      {editingQueuedPromptId
-                        ? supportsQueuedPromptDispatch
-                          ? 'Enter saves it back · ↑ sends this queued edit now · Esc leaves it as it was'
-                          : 'Enter saves it back · Shift+Enter newline · Esc leaves it as it was'
-                        : 'Enter send · Shift+Enter newline · Ctrl/⌘+Enter queue for later'}
-                    </span>
-                    <span className="composer-hint__mobile">
-                      {editingQueuedPromptId
-                        ? supportsQueuedPromptDispatch
-                          ? 'Save keeps its place · ↑ sends this queued edit now · Return adds a line'
-                          : 'Tap Save to put it back · Return adds a line'
-                        : 'Tap Send · Return adds a line'}
-                    </span>
-                  </>
-                )}
-        {selected.queuedCount ? ` · ${selected.queuedCount} queued` : ''}
-      </p>
+      {stateLine ? <p className="composer-hint">{stateLine}</p> : null}
     </footer>
   )
 }

@@ -12,7 +12,7 @@ afterEach(cleanup)
 const props = (): ComponentProps<typeof ComposerActions> => ({
   selected: { id: 'one', computerId: 'studio', computerName: 'Studio', status: 'running' } as ComponentProps<typeof ComposerActions>['selected'],
   selectedComputerOnline: true, selectedQueueAvailable: true, foregroundTurnActive: true, supportsQueuedPromptDispatch: true,
-  recording: false, recordingSeconds: 0, askingAside: false, sideQuestionPending: false,
+  recording: false, recordingSeconds: 0, askingAside: false, sideQuestionPending: false, phoneEnterCreatesNewline: false,
   cancelling: false, transcribing: false, uploadingFile: false, composer: 'Draft', expandedComposer: 'Draft',
   sending: false, queuedEditUnconfirmed: false, recordingDuration: String,
   onStopRecording: vi.fn(), onSubmitSideQuestion: vi.fn(), onStopSession: vi.fn(),
@@ -32,11 +32,18 @@ describe('refreshed composer actions', () => {
     render(<ComposerActions {...callbacks} />)
     const send = screen.getByRole('button', { name: 'Send message' })
     expect(send).toBeEnabled()
-    expect(send).toHaveAttribute('title', 'Send immediately')
+    expect(send).toHaveAttribute('title', 'Send immediately (Enter)')
     expect(screen.queryByRole('button', { name: 'Send options' })).not.toBeInTheDocument()
     fireEvent.click(send)
     expect(callbacks.onSubmitMessage).toHaveBeenCalledExactlyOnceWith()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('keeps Enter out of the busy choice tooltip, because Enter steers instead of offering the choice', () => {
+    render(<ComposerActions {...props()} />)
+    expect(screen.getByRole('button', { name: 'Send message' })).toHaveAttribute('title', 'Choose Steer or Queue')
+    expect(screen.getByRole('button', { name: 'Queue message' }))
+      .toHaveAttribute('title', 'Queue for later delivery (Ctrl/⌘+Enter)')
   })
 
   it('sends an expanded multiline slash command without offering delivery choices', () => {

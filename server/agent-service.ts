@@ -11761,9 +11761,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           : besideBackgroundShells
             // Typed in as a steer is, except that work or background agents
             // found under the send lock are refused rather than typed into.
+            // The row can be cut short once the prompt holds text, so the
+            // event log has the last word on whether either has begun.
             ? await this.terminalController.send(sessionId, next.content, false, {
                 allowDuringAgentExecution: true,
-                backgroundShellsOnly: true,
+                backgroundShellsOnly: {
+                  turnOver: async () => {
+                    try {
+                      return statusFromEvents(await this.sessionEventReader(sessionId)) === 'idle'
+                    } catch {
+                      return false
+                    }
+                  },
+                },
               })
             : this.terminalController.sendWhenIdle
               ? await this.terminalController.sendWhenIdle(sessionId, next.content)

@@ -60,10 +60,14 @@ export interface TerminalSendOptions {
   idleOnly?: boolean
   /**
    * Narrows allowDuringAgentExecution to Copilot waiting only for background
-   * shells: under the send lock, any other work, and background agents, are
-   * refused before the paste and again before Enter, as idleOnly refuses work.
+   * shells after its turn ended. Under the send lock, before the paste and
+   * again before Enter, `turnOver` must still find the turn over with no
+   * background agents running, and the footer must show no other work and no
+   * background agents. Before the paste the row must show that wait plainly;
+   * after it, the queue key can cut the row short, and only what it still
+   * names is held against it.
    */
-  backgroundShellsOnly?: boolean
+  backgroundShellsOnly?: { turnOver: () => Promise<boolean> }
   /**
    * Runs synchronously immediately before each step that changes the pane's
    * input (clearing a draft, pasting), inside the send lock, so a caller can
@@ -2146,7 +2150,8 @@ export class TmuxTerminalSessionController
       }
       if (
         options.backgroundShellsOnly
-          ? !idleButForBackgroundShells(paneBeforePaste)
+          ? !idleButForBackgroundShells(paneBeforePaste) ||
+            !(await options.backgroundShellsOnly.turnOver())
           : idleOnly && isTerminalAgentWorking(paneBeforePaste)
       ) {
         throw Object.assign(
@@ -2250,7 +2255,7 @@ export class TmuxTerminalSessionController
             paneBeforePaste,
             enqueue,
             idleOnly,
-            options.backgroundShellsOnly === true,
+            options.backgroundShellsOnly,
           )
         } catch (error) {
           if (!pasteAcknowledged && error && typeof error === 'object' &&
@@ -2289,7 +2294,7 @@ export class TmuxTerminalSessionController
     paneBeforePaste: string,
     enqueue: boolean,
     idleOnly = false,
-    backgroundShellsOnly = false,
+    backgroundShellsOnly?: TerminalSendOptions['backgroundShellsOnly'],
   ): Promise<boolean> {
       if (
         !(await waitForComposerPaste(
@@ -2358,10 +2363,11 @@ export class TmuxTerminalSessionController
         if (idleOnly || backgroundShellsOnly) {
           const current = await capturePane(target)
           if (
+            isTerminalOverlay(current) ||
             (backgroundShellsOnly
-              ? !idleButForBackgroundShells(current, true)
-              : isTerminalAgentWorking(current)) ||
-            isTerminalOverlay(current)
+              ? !idleButForBackgroundShells(current, true) ||
+                !(await backgroundShellsOnly.turnOver())
+              : isTerminalAgentWorking(current))
           ) {
             throw new Error('The terminal changed before queued submission')
           }
@@ -3502,7 +3508,8 @@ const BACKGROUND_SHELLS_STATUS_CUT = 'Waiting for backgr'
 /**
  * Whether a busy row is Copilot's wait for background shells. With `cutFurther`
  * it is enough that nothing left of the row names anything else, as when the
- * queue key a pasted message brings takes the room its status and word had.
+ * queue key a pasted message brings takes the room its status and word had;
+ * what such a row no longer shows is for the event log to tell.
  */
 function isBackgroundShellsRow(row: CopilotBusyRow, cutFurther = false): boolean {
   // Whatever follows the status, such as an output size, is not part of it.

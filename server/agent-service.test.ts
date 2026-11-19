@@ -11049,7 +11049,8 @@ describe('AgentService deletion', () => {
       ' ← open sidebar · Interactive · Manual Approval · ● Waiting for background shells ctrl+c interrupt GPT-5 mini · Low · (19%)'
     const prompt = 'Why are these preview features not available to be tested?'
     const typedBesideShells = (sessionId: string) => [
-      sessionId, prompt, false, { allowDuringAgentExecution: true, backgroundShellsOnly: true },
+      sessionId, prompt, false,
+      { allowDuringAgentExecution: true, backgroundShellsOnly: { turnOver: expect.any(Function) } },
     ]
 
     beforeEach(() => {
@@ -11061,7 +11062,7 @@ describe('AgentService deletion', () => {
     })
 
     // Queues the head while a turn runs; `endTurn` then logs the turn's end
-    // and takes it in, which drains the queue.
+    // and takes it in, which drains the queue. `log` adds to Copilot's log.
     async function queuedBehindTurn(
       initialPane: string,
       queue: (service: AgentService, sessionId: string) => Promise<unknown>,
@@ -11110,15 +11111,18 @@ describe('AgentService deletion', () => {
       await queue(service, sessionId)
       expect(terminal.send).not.toHaveBeenCalled()
       expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
-      const endTurn = async () => {
+      const log = (type: string, extra: Record<string, unknown> = {}) => {
         events = JSON.parse(JSON.stringify([...events, {
-          type: 'session.idle', id: 'turn-ended', parentId: 'earlier-turn-ended',
-          timestamp: new Date(Date.now() + 1_000).toISOString(), data: {},
+          type, id: `${type}-${events.length}`, parentId: events.at(-1)?.id ?? null,
+          timestamp: new Date(Date.now() + 1_000).toISOString(), data: {}, ...extra,
         }])) as SessionEvent[]
-        version = 'events-v2'
+        version = `events-v${events.length}`
+      }
+      const endTurn = async () => {
+        log('session.idle')
         await service.refreshTranscripts()
       }
-      return { service, terminal, current, sessionId, queueStates, endTurn }
+      return { service, terminal, current, sessionId, queueStates, log, endTurn }
     }
 
     it.each([
@@ -11142,6 +11146,28 @@ describe('AgentService deletion', () => {
       })
       expect(service.getSession(sessionId)?.queueState).toBeUndefined()
       expect(queueStates).not.toContain('waiting')
+    })
+
+    // The row can be cut short once the prompt holds the text, so before
+    // pressing Enter the terminal asks the event log whether anything began.
+    it('lets the event log say whether a turn or background agent has begun', async () => {
+      const { terminal, sessionId, log, endTurn } = await queuedBehindTurn(
+        pane(shellsWait), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+      )
+      await endTurn()
+      expect(terminal.send.mock.calls).toEqual([typedBesideShells(sessionId)])
+      const options = (terminal.send.mock.calls[0] as unknown[])[3] as {
+        backgroundShellsOnly: { turnOver: () => Promise<boolean> }
+      }
+      const { turnOver } = options.backgroundShellsOnly
+
+      expect(await turnOver()).toBe(true)
+      log('assistant.turn_start')
+      expect(await turnOver()).toBe(false)
+      log('session.idle')
+      expect(await turnOver()).toBe(true)
+      log('subagent.started', { agentId: 'background-agent' })
+      expect(await turnOver()).toBe(false)
     })
 
     it('types in a prompt already waiting for the composer once only the shells are left', async () => {

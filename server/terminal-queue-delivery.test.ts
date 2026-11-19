@@ -38,14 +38,30 @@ describe('Idle-only native queue delivery', () => {
       .toBe(false)
   })
 
-  // What the fake Copilot draws below its prompt once busy: with the prompt
-  // empty, then holding text.
+  // What the fake Copilot draws below its prompt once busy, with the prompt
+  // empty and then holding text, and whether its event log already shows it.
   const busyFooters = {
-    work: ['Working - esc interrupt', 'Working - esc interrupt'],
-    'a wait for background agents': [
-      ' ◉ Waiting for background agents ctrl+c stop agents',
-      ' ◉ Waiting for background agents ctrl+c clear input · ctrl+q enqueue',
-    ],
+    work: { rows: ['Working - esc interrupt', 'Working - esc interrupt'], logged: false },
+    'a wait for background agents': {
+      rows: [
+        ' ◉ Waiting for background agents ctrl+c stop agents',
+        ' ◉ Waiting for background agents ctrl+c clear input · ctrl+q enqueue',
+      ],
+      logged: false,
+    },
+    // Cut short to fit beside a pasted message, these rows no longer say
+    // what runs; only the event log can.
+    'cut-short work': {
+      rows: [' ◉ Working ctrl+c interrupt', '  ctrl+c interrupt · ctrl+q enqueue'],
+      logged: true,
+    },
+    'a cut-short wait for background agents': {
+      rows: [
+        ' ◉ Waiting for background agents ctrl+c stop agents',
+        ' ◉ Waiting for backgr ctrl+c clear input · ctrl+q enqueue',
+      ],
+      logged: true,
+    },
   }
 
   it.each([
@@ -60,6 +76,8 @@ describe('Idle-only native queue delivery', () => {
     ['work', 'after paste', 'send backgroundShellsOnly'],
     ['a wait for background agents', 'before paste', 'send backgroundShellsOnly'],
     ['a wait for background agents', 'after paste', 'send backgroundShellsOnly'],
+    ['cut-short work', 'after paste', 'send backgroundShellsOnly'],
+    ['a cut-short wait for background agents', 'after paste', 'send backgroundShellsOnly'],
   ] as const)('does not steer %s that starts %s via %s', async (busy, timing, via) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'native-queue-admission-'))
     directories.push(directory)
@@ -77,7 +95,7 @@ const save = () => {
   writeFileSync(receipt + '.tmp', JSON.stringify(state))
   renameSync(receipt + '.tmp', receipt)
 }
-const busy = ${JSON.stringify(busyFooters[busy])}
+const busy = ${JSON.stringify(busyFooters[busy].rows)}
 const draw = (text = '', working = false) => process.stdout.write(
   '\\x1b[2J\\x1b[H' + [
     '\\u257b\\u2584\\u2584\\u2584\\u2584',
@@ -117,11 +135,14 @@ draw('', ${timing === 'before paste'})
     await writeFile(path.join(stateDirectory, `inuse.${pid}.lock`), `${pid}\n`)
     const controller = new TmuxTerminalSessionController()
     await eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes('\u2579')))
+    // The fake's event log shows its work once the paste has started it.
+    const turnOver = async () => !busyFooters[busy].logged ||
+      !JSON.parse(await readFile(receipt, 'utf8')).pastes.length
     const sending = via === 'sendWhenIdle'
       ? controller.sendWhenIdle(id, 'Keep this queued work')
       : controller.send(id, 'Keep this queued work', false, via === 'send idleOnly'
         ? { idleOnly: true }
-        : { allowDuringAgentExecution: true, backgroundShellsOnly: true })
+        : { allowDuringAgentExecution: true, backgroundShellsOnly: { turnOver } })
     await expect(sending).rejects.toMatchObject({
       statusCode: 409,
       ...(timing === 'after paste'

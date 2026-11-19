@@ -932,8 +932,8 @@
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
     "server/app-provenance.test.ts": "6698943be1ec6fe6f59e714c4330463a69dd8bf396566327d0fe34b6676a1496",
     "server/app.ts": "0d7d258197ae2880734e35df72789d7808152b8fcd28a41905d19dc2bce9f34c",
-    "server/background-task-adapter.test.ts": "d86b368c7c991f1744ee31eb71b1ad7e6bf0810ee87a982673e3c35f012410f9",
-    "server/background-task-adapter.ts": "eda68aa90b5283715d25d2f6991116a2867d8a30ea8818fd0dab5c0cf6a9a751",
+    "server/background-task-adapter.test.ts": "30cac9f96e06b582b863dde4d68ddd96cf44f0f926672a079de018d4ebc78a8b",
+    "server/background-task-adapter.ts": "7f9545c84d2e99505313ca18068fc421fc642018443a5916411f63c39c8910ca",
     "server/background-task-stop.test.ts": "0d6ce7dc963b1176cacaf415fd78349718ee89448c3aa6cd9f390e03005ddce4",
     "server/background-task-tracker.test.ts": "50154bcfeb4996dd6a4129fc16c10696da63ff73b439249f28d6aa1864c63137",
     "server/background-task-tracker.ts": "47f0fd9ebf4164c3347376c09aaca797738caeab49eb09312fda5b6ff1d5fdc0",
@@ -1753,13 +1753,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "070fdc43208b5030a5acfc92dbcb0af1abd9b920619859e662344586b483ec1e",
+    "GRAPH_REPORT.md": "6d6fc1c02c303cefde30a9419873185264c48e06f852640b5b42c9f83234a802",
     "communities.json": "c9888fdf33102ec28b2b1deca0c2738b697339291a2cba4fdaad304a2c1cb89f",
-    "graph.html": "f6f180aebb0c66a0dbf494922c66efc3ab68293b25bf3c37592940e17628e993",
-    "graph.json": "60e89fa2b99066ead00e40fda3591d461d159c8f72284caaa48ec4503e3e85ea"
+    "graph.html": "71d6969bccf7ef4ef5375410543a248ef61cf70e813176f6d2e76f48a0383971",
+    "graph.json": "80e407d6163c6376f468397c6e1588ca4539d8f39b06789490aeed0f40e5d140"
   },
   "schema_version": 1,
-  "source_commit": "e1dac33c87df2b8775bd9be1603e9b2e2e7df525",
-  "source_fingerprint": "c814bee364f8324bf2913864b261488383397a0b3728311938c1a4a4b42f8a1b",
+  "source_commit": "d2e572cec2238e61a9b333f0ab8753c8a98243f3",
+  "source_fingerprint": "374298b9f12cf8b92fa53a0610f375c279d66db887296e118a1a2511b172170e",
   "working_tree_changes": []
 }

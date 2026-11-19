@@ -635,9 +635,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 271,
+  "communities": 262,
   "community_algorithm": "louvain-seed-42",
-  "edges": 25653,
+  "edges": 25663,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -676,7 +676,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "9c2616f4b333f2c3cf4511075e68ec7376cf960877a560b0f1ff40ff4d8f8240",
+    "docs/app-spec.md": "5d959cab67f759cf0ac2f3a9c98f2703bab0d33f877be3973c905d4ebd141ed9",
     "docs/architecture.md": "60bf7b7f41a31ea467e3dfedd2b533eac1342fdb43c7526e7f6e08e650d12505",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -926,8 +926,8 @@
     "server/activity-spacing.test.ts": "b03df98ba6b03ed89042a63d1cfa61ced6230f09dc435ff74b2280589641d55e",
     "server/agent-service-recovery.test.ts": "6c3e3eac2e25f1d7c276bf3c78eff185683b4cecc7ba3d1b264634ed2ebc3202",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "300918d0250647868ca9ccc6fe16d6a9f9f73d5e461c49c32a634238014ee2a3",
-    "server/agent-service.ts": "66788b93d539ad4edb5db70c502ce74418d3873969e72f9e2651d602b1c21968",
+    "server/agent-service.test.ts": "1a8e245a4d4424efb6d9389083288914475133dc7f5256c0fa706a72c3c78baa",
+    "server/agent-service.ts": "a0db5173e7091bd75ad2c1c886181eb35819990a51850530633157e9f1a0dd04",
     "server/api-origin.test.ts": "7834409881aae57cda9ed1927f8e69b047e6891a1c05047ab0eb298b6371b99d",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -1131,7 +1131,7 @@
     "server/scheduler-routes.ts": "1f5efa8321efb1e4f627061d9486cf0e2e4e3a3d501c70ba90f65b23eb4ef953",
     "server/scheduler-store.ts": "4bdb9ff4051ab49cc17e88a09a046843e9f899d1d1b65fac688c0ed0920f6dda",
     "server/scheduler.test.ts": "41c38ed8d2b710b8866fda267e8d6be0f85423d5871625c4a8ef658d6daa0670",
-    "server/send-matrix.integration.test.ts": "d3a4457d0bb30a4f37aa95c2274ec5341570a5c0849802781109042ba5f3b7c4",
+    "server/send-matrix.integration.test.ts": "1a64094fdb6583b7e930dc8bf43c24026219a284c332ba3c4a21295fd9bc5a3b",
     "server/service-unit.test.ts": "7b78bab1401fe1ebeec3cedee090e354c4c28b0adabd92c7c1f5e9e9a1803601",
     "server/service-worker.test.ts": "d950b4cd69d64709df16c9d237eb5e296a7258ade1c0bd033dfc561e967ae1b1",
     "server/session-admission-lifecycle.test.ts": "3deed16f7b5b8874417103f0bf5b93fa22b6717f4e4b0ae6fc91ee09fe6a07ac",
@@ -1197,10 +1197,10 @@
     "server/terminal-form-deadline.test.ts": "4abe7cd75cba5123c99150dad748baeb8b8ed29e3a3f5ecff9eea094799695a9",
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-process-roots.test.ts": "4dcb5e7333623e53d543a590b06e88712837ba887caa1bf7f04246697a56ce15",
-    "server/terminal-queue-delivery.test.ts": "2d8bef67a2bcfdc2c9ae352455a5c4841180e18623a0edc8c1fe783656c223fc",
+    "server/terminal-queue-delivery.test.ts": "babbb990359e06dcfa997d9cb71cff4661a9db751ea27cba7482a26a694db17e",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "4156ae68a9ffd6cfff3262335f3b7b34299f27ed062abe89f8416dda927b34ee",
-    "server/terminal-session.ts": "6a1aefba98c05f4f9d537672ccc5336cb92fcf46049222c5b6f74577ceae0c8b",
+    "server/terminal-session.test.ts": "79ce94a3054e8ece2cef089209f74e5a4b5009773e4f63a6f385f227a8dce6ee",
+    "server/terminal-session.ts": "55350c3ac00d86fa9f7f9688dc2f58019b45915cd282763321b5d4bc973491ee",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "be15c41392f70dd2d8976f72441d972c885c7bc796e77e94ea186cc4ba22e93c",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -1514,7 +1514,7 @@
     "vite.config.ts": "a60a896cfb1d57a3837faf5c428fe1c90f874a3b0a4136b5a63d21737d54d139"
   },
   "mode": "local-ast-only",
-  "nodes": 8877,
+  "nodes": 8881,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1755,13 +1755,21 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "8e0c51321bb5035273ccac967c0cbd48f46f535a631b024d6a5da2d79944c540",
-    "communities.json": "d2899305033b983417decb52e1d265a7a24ba97e1df2afdc620e9207c0db1cf6",
-    "graph.html": "286a6ac2be6a11e9d35ed2ec4133daa40b703d57bb3b9df461e8c010a5a28a8d",
-    "graph.json": "938c4ebcc4d5396d93a075c34684b9c930288893c0bbf443d78c7d7c311edff1"
+    "GRAPH_REPORT.md": "b69f13e635324baa1a186135d20914e50d9143d1350be97925c18d7d59eaed22",
+    "communities.json": "ed4f7d846df1e8cd91d24241774d391d1ba44b8543db6c2edcfa97daed9d97ad",
+    "graph.html": "0f019cd468fd8ce0de2823b241e066664d73591ec7773c16a12310cb2819f664",
+    "graph.json": "5d6fa3f58464cebf6c6e3118367e30bcc020d86ae6b696db55caea661842ee6f"
   },
   "schema_version": 1,
-  "source_commit": "2179556c543922d149e579c8c98c0708893b1775",
-  "source_fingerprint": "8488211fe2868d6bfe6dbeda13f090b7c6fd69d8c5339e955bf101b30ecd006b",
-  "working_tree_changes": []
+  "source_commit": "e9110c0b0252ff3d617c1c26b0e8791297bfd439",
+  "source_fingerprint": "c413e09303a9b80773c4445abe70ec9edcd41e246b46e407bd96206208f30d46",
+  "working_tree_changes": [
+    "docs/app-spec.md",
+    "server/agent-service.test.ts",
+    "server/agent-service.ts",
+    "server/send-matrix.integration.test.ts",
+    "server/terminal-queue-delivery.test.ts",
+    "server/terminal-session.test.ts",
+    "server/terminal-session.ts"
+  ]
 }

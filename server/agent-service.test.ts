@@ -11037,20 +11037,29 @@ describe('AgentService deletion', () => {
   })
 
   // A turn can end with shells it started still running. Copilot then keeps
-  // its interrupt key on the row, but its prompt takes a new message, and the
-  // event log says the turn is over: only background agents hold queued text.
+  // its interrupt key on the row, cut to fit the pane, while its prompt takes a
+  // new message. The event log, not the row, says the turn is over with a shell
+  // still running; only background agents and an open turn hold queued text.
   describe('a queue behind a turn that left only background shells running', () => {
-    const rule = '─'.repeat(60)
+    const rule = '─'.repeat(80)
     const pane = (footer: string, draft = '') => [
-      ' /work/project                                      Session: 0 AIC used',
-      rule, draft ? `❯ ${draft}` : '❯', rule, footer,
+      '● STARTED', '', rule, draft ? `❯ ${draft}` : '❯', rule, footer,
     ].join('\n')
-    const shellsWait =
-      ' ← open sidebar · Interactive · Manual Approval · ● Waiting for background shells ctrl+c interrupt GPT-5 mini · Low · (19%)'
+    // As Copilot drew them in 80-column panes: cut with an ellipsis, beside
+    // the time waited and the output size, to its first letters, or to its
+    // spinner.
+    const shellsWaits = [
+      ' ● Waiting for background s… · 136 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)',
+      ' ● Waiting for bac… · 1m 06s · 136 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)',
+      ' Autopilot · Allow All · ◉ Wai… ctrl+c    Claude Opus 5.5 · Max · 1M context (6…',
+      ' Autopilot · Allow All · ◉ ctrl+c    Claude Opus 5.5 · Max · 1M context (6…',
+    ]
+    const work = ' Autopilot · Allow All · ◉ Wor ctrl+c    Claude Opus 5.5 · Max · 1M context (6…'
+    const noPrompt = 'Waiting for background shells'
     const prompt = 'Why are these preview features not available to be tested?'
     const typedBesideShells = (sessionId: string) => [
       sessionId, prompt, false,
-      { allowDuringAgentExecution: true, backgroundShellsOnly: { turnOver: expect.any(Function) } },
+      { allowDuringAgentExecution: true, backgroundShellsOnly: { eventLog: expect.any(Function) } },
     ]
 
     beforeEach(() => {
@@ -11061,11 +11070,14 @@ describe('AgentService deletion', () => {
       vi.useRealTimers()
     })
 
-    // Queues the head while a turn runs; `endTurn` then logs the turn's end
-    // and takes it in, which drains the queue. `log` adds to Copilot's log.
+    // Queues the head while a turn runs that started `sleep 300` in the
+    // background, unless `shell` is false. `endTurn` then logs the turn's end
+    // and takes it in, which drains the queue. `log` adds to Copilot's log;
+    // `unseen` keeps the hub from taking the addition in before it drains.
     async function queuedBehindTurn(
       initialPane: string,
       queue: (service: AgentService, sessionId: string) => Promise<unknown>,
+      { shell = true }: { shell?: boolean } = {},
     ) {
       const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
       directories.push(directory)
@@ -11076,10 +11088,22 @@ describe('AgentService deletion', () => {
         summary: 'External session', isRemote: false, context: { workingDirectory: directory },
       }])
       let version = 'events-v1'
-      let events = JSON.parse(JSON.stringify([{
-        type: 'session.idle', id: 'earlier-turn-ended', parentId: null,
-        timestamp: new Date(Date.now() - 60_000).toISOString(), data: {},
-      }])) as SessionEvent[]
+      let events = JSON.parse(JSON.stringify([
+        {
+          type: 'assistant.turn_start', id: 'turn', parentId: null,
+          timestamp: new Date(Date.now() - 60_000).toISOString(), data: {},
+        },
+        ...(shell
+          ? [{
+              type: 'tool.execution_start', id: 'sleep-start', parentId: 'turn',
+              timestamp: new Date(Date.now() - 59_000).toISOString(),
+              data: {
+                toolCallId: 'sleep-call', toolName: 'bash',
+                arguments: { command: 'sleep 300', description: 'Sleep in the background', mode: 'async' },
+              },
+            }]
+          : []),
+      ])) as SessionEvent[]
       const current = { pane: initialPane }
       const terminal = {
         has: vi.fn(async () => true),
@@ -11111,24 +11135,27 @@ describe('AgentService deletion', () => {
       await queue(service, sessionId)
       expect(terminal.send).not.toHaveBeenCalled()
       expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
-      const log = (type: string, extra: Record<string, unknown> = {}) => {
+      const log = (type: string, extra: Record<string, unknown> = {}, unseen = false) => {
         events = JSON.parse(JSON.stringify([...events, {
           type, id: `${type}-${events.length}`, parentId: events.at(-1)?.id ?? null,
           timestamp: new Date(Date.now() + 1_000).toISOString(), data: {}, ...extra,
         }])) as SessionEvent[]
-        version = `events-v${events.length}`
+        if (!unseen) version = `events-v${events.length}`
       }
       const endTurn = async () => {
+        log('assistant.turn_end')
         log('session.idle')
         await service.refreshTranscripts()
       }
-      return { service, terminal, current, sessionId, queueStates, log, endTurn }
+      // Lets the waiting head's retry come due, and takes in what changed.
+      const retry = async () => {
+        await vi.advanceTimersByTimeAsync(800)
+        await service.refreshTranscripts()
+      }
+      return { service, terminal, current, sessionId, queueStates, log, endTurn, retry }
     }
 
-    it.each([
-      shellsWait,
-      ' Autopilot · Allow All · ◎ Waiting for backgr ctrl+c interrupt  Claude Opus 5.5 · Max · (58%)',
-    ])('types the head prompt in as soon as the turn ends: %s', async (footer) => {
+    it.each(shellsWaits)('types the head prompt in as soon as the turn ends: %s', async (footer) => {
       const { service, terminal, sessionId, queueStates, endTurn } = await queuedBehindTurn(
         pane(footer), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
       )
@@ -11148,68 +11175,64 @@ describe('AgentService deletion', () => {
       expect(queueStates).not.toContain('waiting')
     })
 
-    // The row can be cut short once the prompt holds the text, so before
-    // pressing Enter the terminal asks the event log whether anything began.
-    it('lets the event log say whether a turn or background agent has begun', async () => {
-      const { terminal, sessionId, log, endTurn } = await queuedBehindTurn(
-        pane(shellsWait), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
-      )
-      await endTurn()
-      expect(terminal.send.mock.calls).toEqual([typedBesideShells(sessionId)])
-      const options = (terminal.send.mock.calls[0] as unknown[])[3] as {
-        backgroundShellsOnly: { turnOver: () => Promise<boolean> }
-      }
-      const { turnOver } = options.backgroundShellsOnly
-
-      expect(await turnOver()).toBe(true)
-      log('assistant.turn_start')
-      expect(await turnOver()).toBe(false)
-      log('session.idle')
-      expect(await turnOver()).toBe(true)
-      log('subagent.started', { agentId: 'background-agent' })
-      expect(await turnOver()).toBe(false)
-    })
-
     it('types in a prompt already waiting for the composer once only the shells are left', async () => {
-      const { service, terminal, current, sessionId, endTurn } = await queuedBehindTurn(
-        pane(' ◉ Running bash · 26s ctrl+c interrupt'),
-        (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+      const { service, terminal, current, sessionId, endTurn, retry } = await queuedBehindTurn(
+        pane(noPrompt), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
       )
       await endTurn()
       expect(service.getSession(sessionId)?.queueState).toMatchObject({ state: 'waiting' })
 
-      current.pane = pane(shellsWait)
-      await vi.advanceTimersByTimeAsync(800)
-      await service.refreshTranscripts()
+      current.pane = pane(shellsWaits[1])
+      await retry()
 
       expect(terminal.send.mock.calls).toEqual([typedBesideShells(sessionId)])
       expect(service.getSession(sessionId)).toMatchObject({ status: 'running', queuedPrompts: [] })
       expect(service.getSession(sessionId)?.queueState).toBeUndefined()
     })
 
+    // Before the paste and again before Enter, the terminal asks the event log
+    // whether the turn is still over, with a shell and no background agent.
+    it('hands the terminal the event log to check under its send lock', async () => {
+      const { terminal, sessionId, log, endTurn } = await queuedBehindTurn(
+        pane(shellsWaits[0]), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+      )
+      await endTurn()
+      expect(terminal.send.mock.calls).toEqual([typedBesideShells(sessionId)])
+      const options = (terminal.send.mock.calls[0] as unknown[])[3] as {
+        backgroundShellsOnly: { eventLog: () => Promise<{ turnOver: boolean; shellsRunning: boolean }> }
+      }
+      const { eventLog } = options.backgroundShellsOnly
+
+      expect(await eventLog()).toEqual({ turnOver: true, shellsRunning: true })
+      log('assistant.turn_start')
+      expect(await eventLog()).toMatchObject({ turnOver: false })
+      log('session.idle')
+      expect(await eventLog()).toEqual({ turnOver: true, shellsRunning: true })
+      log('subagent.started', { agentId: 'background-agent' })
+      expect(await eventLog()).toMatchObject({ turnOver: false })
+    })
+
     it.each([
-      ['a command at the head', pane(shellsWait), '/usage'],
+      ['no shell still running', { shell: false }, pane(shellsWaits[0]), prompt],
+      ['a row naming other work', {}, pane(work), prompt],
+      ['a command at the head', {}, pane(shellsWaits[0]), '/usage'],
       [
         'a prompt holding unsent text',
+        {},
         pane(
-          ' ● Waiting for background shells ctrl+c interrupt · ctrl+q enqueue GPT-5 mini · Low · (19%)',
+          ' ● Waiting for ba… · 136 B ctrl+c interrupt · ctrl+q enqueue GPT-6.1 Sol · High · (9%)',
           'an unsent draft',
         ),
         prompt,
       ],
-      ['no prompt drawn', 'Waiting for background shells', prompt],
-      [
-        'a status shrunk away',
-        pane(' Autopilot · Allow All · ◉       ctrl+c interrupt Claude Opus 5.5 · Max · (58%)'),
-        prompt,
-      ],
-      ['a turn at work', pane(' ◉ Running bash · 26s ctrl+c interrupt'), prompt],
-    ])('keeps waiting, with nothing typed, for %s', async (_case, initialPane, head) => {
+      ['no prompt drawn', {}, noPrompt, prompt],
+    ])('keeps waiting, with nothing typed, for %s', async (_case, setup, initialPane, head) => {
       const { service, terminal, sessionId, endTurn } = await queuedBehindTurn(
         initialPane,
         (service, sessionId) => head.startsWith('/')
           ? service.executeCommand(sessionId, head, true)
           : service.sendMessage(sessionId, head, true),
+        setup,
       )
 
       await endTurn()
@@ -11223,9 +11246,33 @@ describe('AgentService deletion', () => {
       })
     })
 
+    // The hub takes the log in on its own schedule, so the drain reads it
+    // afresh: a turn or a background agent begun since holds the prompt.
+    it.each([
+      ['a turn begun since', 'assistant.turn_start', {}],
+      ['a background agent started since', 'subagent.started', { agentId: 'background-agent' }],
+    ])('keeps waiting, with nothing typed, for %s', async (_case, type, extra) => {
+      const { service, terminal, current, sessionId, log, endTurn, retry } = await queuedBehindTurn(
+        pane(noPrompt), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+      )
+      await endTurn()
+      log(type, extra, true)
+      current.pane = pane(shellsWaits[0])
+
+      await retry()
+
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'idle',
+        queueState: { state: 'waiting' },
+        queuedPrompts: [{ content: prompt }],
+      })
+    })
+
     it('leaves a prompt queued while the turn is still open', async () => {
       const { service, terminal, sessionId } = await queuedBehindTurn(
-        pane(shellsWait), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+        pane(shellsWaits[0]), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
       )
 
       await service['drainTerminalQueue'](sessionId)

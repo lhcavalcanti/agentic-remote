@@ -95,10 +95,11 @@ const busyWithoutComposer = [
 const backgroundAgentsFooter = ' ● Waiting for background agents · 273 B esc esc stop agents'
 
 // Copilot 1.0.106 once a turn has ended with shells it started still running:
-// the prompt is back, but the footer still offers the interrupt key. While the
-// prompt holds text the row adds the queue key, and cuts its status to fit.
-const backgroundShellsFooter = ' ● Waiting for background shells ctrl+c interrupt GPT-5 mini · Low · (19%)'
-const backgroundShellsTypingFooter = ' ● Waiting ctrl+c interrupt · ctrl+q enqueue GPT-5 mini · Low · (19%)'
+// the prompt is back, but the footer still offers the interrupt key, its
+// status cut to fit an 80-column pane. While the prompt holds text the row
+// adds the queue key, and cuts the status further.
+const backgroundShellsFooter = ' ● Waiting for background s… · 136 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)'
+const backgroundShellsTypingFooter = ' ● Waitin… · 136 B ctrl+c interrupt · ctrl+q enqueue GPT-6.1 Sol · High · (9%)'
 
 type PaneState = 'idle' | 'working' | 'busy' | 'background' | 'shells' | keyof typeof dialogs
 
@@ -332,6 +333,15 @@ draw()
   await writeFile(path.join(sessionState, 'events.jsonl'), [
     { type: 'session.start', id: 'start', parentId: null, timestamp: '2026-10-20T00:00:00.000Z', data: {} },
     { type: 'assistant.turn_start', id: 'turn', parentId: 'start', timestamp: '2026-10-20T00:00:01.000Z', data: {} },
+    ...(pane === 'shells'
+      ? [{
+          type: 'tool.execution_start', id: 'sleep-start', parentId: 'turn', timestamp: '2026-10-20T00:00:01.500Z',
+          data: {
+            toolCallId: 'sleep-call', toolName: 'bash',
+            arguments: { command: 'sleep 300', description: 'Sleep in the background', mode: 'async' },
+          },
+        }]
+      : []),
     ...(pane === 'background'
       ? [
           { type: 'subagent.started', id: 'agent', parentId: 'turn', agentId: 'agent-1', timestamp: '2026-10-20T00:00:02.000Z', data: {} },

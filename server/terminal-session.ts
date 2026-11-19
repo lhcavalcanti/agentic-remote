@@ -53,6 +53,14 @@ export interface TerminalFormReplyOptions {
   deadline?: number
 }
 
+/** What Copilot's event log says of the work a finished turn left behind. */
+export interface BackgroundShellsEvidence {
+  /** The turn is over, and no background agent is running. */
+  turnOver: boolean
+  /** A background shell is still running. */
+  shellsRunning: boolean
+}
+
 export interface TerminalSendOptions {
   allowDuringAgentExecution?: boolean
   replaceExistingInput?: boolean
@@ -60,14 +68,13 @@ export interface TerminalSendOptions {
   idleOnly?: boolean
   /**
    * Narrows allowDuringAgentExecution to Copilot waiting only for background
-   * shells after its turn ended. Under the send lock, before the paste and
-   * again before Enter, `turnOver` must still find the turn over with no
-   * background agents running, and the footer must show no other work and no
-   * background agents. Before the paste the row must show that wait plainly;
-   * after it, the queue key can cut the row short, and only what it still
-   * names is held against it.
+   * shells after its turn ended. Copilot cuts that row's status to fit, down
+   * to nothing, so the row cannot tell the wait from other work. Under the
+   * send lock, before the paste and again before Enter, the footer must name
+   * no other work and no background agents, and `eventLog` must find the turn
+   * over with no background agent, and a shell running while a busy row shows.
    */
-  backgroundShellsOnly?: { turnOver: () => Promise<boolean> }
+  backgroundShellsOnly?: { eventLog: () => Promise<BackgroundShellsEvidence> }
   /**
    * Runs synchronously immediately before each step that changes the pane's
    * input (clearing a draft, pasting), inside the send lock, so a caller can
@@ -2150,8 +2157,7 @@ export class TmuxTerminalSessionController
       }
       if (
         options.backgroundShellsOnly
-          ? !idleButForBackgroundShells(paneBeforePaste) ||
-            !(await options.backgroundShellsOnly.turnOver())
+          ? !(await backgroundShellsAllow(paneBeforePaste, options.backgroundShellsOnly))
           : idleOnly && isTerminalAgentWorking(paneBeforePaste)
       ) {
         throw Object.assign(
@@ -2365,8 +2371,7 @@ export class TmuxTerminalSessionController
           if (
             isTerminalOverlay(current) ||
             (backgroundShellsOnly
-              ? !idleButForBackgroundShells(current, true) ||
-                !(await backgroundShellsOnly.turnOver())
+              ? !(await backgroundShellsAllow(current, backgroundShellsOnly))
               : isTerminalAgentWorking(current))
           ) {
             throw new Error('The terminal changed before queued submission')
@@ -3451,8 +3456,6 @@ interface CopilotBusyRow {
   kind: 'working' | 'background'
   /** The status after the spinner as drawn, cut to fit; none without a spinner. */
   status?: string
-  /** Ctrl+C's word as drawn, cut to fit; empty once wrapped away. */
-  word: string
 }
 
 /**
@@ -3491,43 +3494,40 @@ function parseCopilotBusyRow(line: string): CopilotBusyRow | undefined {
     if (more.length || (queue && !FOOTER_QUEUE_KEYS.some((hint) => hint.startsWith(queue)))) {
       continue
     }
-    if (!action || 'interrupt'.startsWith(action)) return { kind: 'working', status, word: action }
-    if ('stop agents'.startsWith(action)) return { kind: 'background', status, word: action }
+    if (!action || 'interrupt'.startsWith(action)) return { kind: 'working', status }
+    if ('stop agents'.startsWith(action)) return { kind: 'background', status }
   }
   return undefined
 }
 
 // A turn can end with shells it started still running. Copilot then keeps its
-// busy row and interrupt key, with this status, cut to fit like any other.
-// Cut no shorter than `Waiting for backgr`, the status still names a
-// background wait, and beside the interrupt key that wait is for shells:
-// background agents offer to stop them instead.
+// busy row and interrupt key, with this status cut to fit like any other: to a
+// prefix ending in `…`, to its spinner, or to nothing, beside cells for the
+// time it has waited and the output so far. Cut that far, the row cannot tell
+// the wait from other work, so the event log has to.
 const BACKGROUND_SHELLS_STATUS = 'Waiting for background shells'
-const BACKGROUND_SHELLS_STATUS_CUT = 'Waiting for backgr'
+// A cell after a busy row's status: the time spent, the output size, or a
+// count, such as `1m 06s`, `136 B` or `8`.
+const BUSY_ROW_DETAIL = /^\d+(?:\.\d+)?(?: ?(?:[hms]|[KMG]?B))?(?: \d+ ?[hms])*$/u
 
 /**
- * Whether a busy row is Copilot's wait for background shells. With `cutFurther`
- * it is enough that nothing left of the row names anything else, as when the
- * queue key a pasted message brings takes the room its status and word had;
- * what such a row no longer shows is for the event log to tell.
+ * What a busy row says is going on, without the cells after it or the `…`
+ * that marks it cut short; empty once Copilot cut it away.
  */
-function isBackgroundShellsRow(row: CopilotBusyRow, cutFurther = false): boolean {
-  // Whatever follows the status, such as an output size, is not part of it.
-  const status = row.status?.split(' · ')[0] ?? ''
-  if (row.kind !== 'working' || !BACKGROUND_SHELLS_STATUS.startsWith(status)) return false
-  return cutFurther || (row.word !== '' && status.startsWith(BACKGROUND_SHELLS_STATUS_CUT))
+function busyRowStatus(row: CopilotBusyRow): string {
+  const cells = (row.status ?? '').split(' · ')
+  while (cells.length > 1 && BUSY_ROW_DETAIL.test(cells.at(-1)!)) cells.pop()
+  return cells.join(' · ').replace(/…$/u, '').trimEnd()
 }
 
 /**
- * How the footer reads when nothing shows running but, at most, Copilot's
- * wait for background shells: `shells` for that wait, `idle` for no work at
- * all. Anything else is undefined, background agents included: they hold
- * queued text however idle their prompt looks. The prompt is not read.
+ * How the footer reads when it names nothing running but, at most, Copilot's
+ * wait for background shells: `shells` for a busy row that may be that wait,
+ * `idle` for no work at all. Anything else is undefined, background agents
+ * included: they hold queued text however idle their prompt looks. The prompt
+ * is not read.
  */
-function idleButForBackgroundShells(
-  pane: string,
-  cutFurther = false,
-): 'idle' | 'shells' | undefined {
+function idleButForBackgroundShells(pane: string): 'idle' | 'shells' | undefined {
   const controls = terminalControlLines(pane).slice(-6)
   // An older Copilot's Esc key for work, and background agents: their offer
   // to stop them or, once the prompt holds text, their status.
@@ -3538,22 +3538,42 @@ function idleButForBackgroundShells(
   for (const line of controls) {
     const row = parseCopilotBusyRow(line)
     if (!row) continue
-    if (!isBackgroundShellsRow(row, cutFurther)) return undefined
+    if (row.kind !== 'working' || !BACKGROUND_SHELLS_STATUS.startsWith(busyRowStatus(row))) {
+      return undefined
+    }
     shells = true
   }
   return shells ? 'shells' : 'idle'
 }
 
 /**
- * Whether Copilot's prompt is free while it waits only for background shells
- * that outlived its turn: the footer shows nothing else running, and the
- * prompt is live, empty, and has nothing open over it. Copilot takes a
- * message sent then as it would a steer.
+ * Whether the pane agrees with Copilot's prompt being free while it waits only
+ * for background shells that outlived its turn: a busy row that may be that
+ * wait, nothing else running, and a live, empty prompt with nothing open over
+ * it. Copilot takes a message sent then as it would a steer. A row cut to its
+ * spinner agrees with any work, so only the event log can say the wait is the
+ * shells'.
  */
-export function isTerminalWaitingForBackgroundShells(pane: string): boolean {
+export function terminalMayBeWaitingForBackgroundShells(pane: string): boolean {
   return idleButForBackgroundShells(pane) === 'shells' &&
     terminalInputReady(pane, true) &&
     !composerHoldsText(pane)
+}
+
+/**
+ * Whether queued text may still go in beside background shells: the footer
+ * names no other work and no background agents, and the event log finds the
+ * turn over with no background agent and, while a busy row shows, a shell
+ * running.
+ */
+async function backgroundShellsAllow(
+  pane: string,
+  backgroundShellsOnly: NonNullable<TerminalSendOptions['backgroundShellsOnly']>,
+): Promise<boolean> {
+  const reading = idleButForBackgroundShells(pane)
+  if (!reading) return false
+  const log = await backgroundShellsOnly.eventLog()
+  return log.turnOver && (reading === 'idle' || log.shellsRunning)
 }
 
 function isKnownTerminalFooterRow(

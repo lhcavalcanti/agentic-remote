@@ -39,28 +39,35 @@ describe('Idle-only native queue delivery', () => {
   })
 
   // What the fake Copilot draws below its prompt once busy, with the prompt
-  // empty and then holding text, and whether its event log already shows it.
+  // empty and then holding text, and what its event log says once the paste
+  // has started that work. Until then the turn is over and a shell runs.
+  const lagging = { turnOver: true, shellsRunning: true }
   const busyFooters = {
-    work: { rows: ['Working - esc interrupt', 'Working - esc interrupt'], logged: false },
+    work: { rows: ['Working - esc interrupt', 'Working - esc interrupt'], logged: lagging },
     'a wait for background agents': {
       rows: [
         ' ◉ Waiting for background agents ctrl+c stop agents',
         ' ◉ Waiting for background agents ctrl+c clear input · ctrl+q enqueue',
       ],
-      logged: false,
+      logged: lagging,
     },
     // Cut short to fit beside a pasted message, these rows no longer say
     // what runs; only the event log can.
     'cut-short work': {
       rows: [' ◉ Working ctrl+c interrupt', '  ctrl+c interrupt · ctrl+q enqueue'],
-      logged: true,
+      logged: { turnOver: false, shellsRunning: true },
     },
     'a cut-short wait for background agents': {
       rows: [
         ' ◉ Waiting for background agents ctrl+c stop agents',
         ' ◉ Waiting for backgr ctrl+c clear input · ctrl+q enqueue',
       ],
-      logged: true,
+      logged: { turnOver: false, shellsRunning: true },
+    },
+    // A busy row no running shell explains, before the log has its turn.
+    'cut-short work after the last shell': {
+      rows: [' ◉ Working ctrl+c interrupt', '  ctrl+c interrupt · ctrl+q enqueue'],
+      logged: { turnOver: true, shellsRunning: false },
     },
   }
 
@@ -78,6 +85,7 @@ describe('Idle-only native queue delivery', () => {
     ['a wait for background agents', 'after paste', 'send backgroundShellsOnly'],
     ['cut-short work', 'after paste', 'send backgroundShellsOnly'],
     ['a cut-short wait for background agents', 'after paste', 'send backgroundShellsOnly'],
+    ['cut-short work after the last shell', 'after paste', 'send backgroundShellsOnly'],
   ] as const)('does not steer %s that starts %s via %s', async (busy, timing, via) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'native-queue-admission-'))
     directories.push(directory)
@@ -135,14 +143,13 @@ draw('', ${timing === 'before paste'})
     await writeFile(path.join(stateDirectory, `inuse.${pid}.lock`), `${pid}\n`)
     const controller = new TmuxTerminalSessionController()
     await eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes('\u2579')))
-    // The fake's event log shows its work once the paste has started it.
-    const turnOver = async () => !busyFooters[busy].logged ||
-      !JSON.parse(await readFile(receipt, 'utf8')).pastes.length
+    const eventLog = async () =>
+      JSON.parse(await readFile(receipt, 'utf8')).pastes.length ? busyFooters[busy].logged : lagging
     const sending = via === 'sendWhenIdle'
       ? controller.sendWhenIdle(id, 'Keep this queued work')
       : controller.send(id, 'Keep this queued work', false, via === 'send idleOnly'
         ? { idleOnly: true }
-        : { allowDuringAgentExecution: true, backgroundShellsOnly: { turnOver } })
+        : { allowDuringAgentExecution: true, backgroundShellsOnly: { eventLog } })
     await expect(sending).rejects.toMatchObject({
       statusCode: 409,
       ...(timing === 'after paste'

@@ -168,6 +168,7 @@ const slowTests = [
   'shared/schedule-recurrence.test.ts',
   'src/ScheduleProposalCards.test.tsx',
   'src/SessionOriginBadge.test.tsx',
+  'src/composer/Composer.test.tsx',
   'src/composer/ComposerActions.test.tsx',
   'src/composer/RuntimeStatus.test.tsx',
   'src/composer/SendControl.test.tsx',

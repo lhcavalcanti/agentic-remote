@@ -44,6 +44,7 @@ export function ComposerActions({
   onCancelSentMessage,
   providerCapability,
   onUseSentMessage,
+  phoneEnterCreatesNewline,
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'foregroundTurnActive' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
@@ -51,13 +52,15 @@ export function ComposerActions({
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
   'recordingDuration' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
-  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage'
+  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage' | 'phoneEnterCreatesNewline'
 >) {
   const refresh = usePreviewFeature('composerRefresh')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyChosen, setHistoryChosen] = useState(false)
   const busyChoices = refresh && foregroundTurnActive &&
     !readonlyResourceCommand && !editingQueuedPromptId && !expandedComposer.trim().startsWith('/')
+  // Where Return adds a line, as on a phone, no keyboard shortcut is named.
+  const shortcut = (keys: string) => phoneEnterCreatesNewline ? '' : ` (${keys})`
   const sendDisabled = !composer.trim() || sending || transcribing || uploadingFile ||
     (!readonlyResourceCommand && (
       Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
@@ -177,7 +180,7 @@ export function ComposerActions({
           disabled={!composer.trim() || sending || transcribing || uploadingFile ||
             Boolean(queueActionId) || Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
           onClick={() => onSubmitMessage(true)}
-          title="Queue for later delivery"
+          title={`Queue for later delivery${shortcut('Ctrl/⌘+Enter')}`}
           type="button"
         >
           <ListPlus size={17} />
@@ -204,7 +207,8 @@ export function ComposerActions({
             ? 'Open the read-only resource view without sending a prompt'
             : editingQueuedPromptId
               ? supportsQueuedPromptDispatch ? 'Send this queued message now' : 'Put this back in the queue'
-              : busyChoices ? 'Choose Steer or Queue' : foregroundTurnActive ? 'Send into the current response' : 'Send immediately'
+              : busyChoices ? 'Choose Steer or Queue'
+                : `${foregroundTurnActive ? 'Send into the current response' : 'Send immediately'}${shortcut('Enter')}`
         }
         type="button"
       >

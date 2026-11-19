@@ -4110,6 +4110,49 @@ describe('App', () => {
     expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
   })
 
+  it('keeps a background-task read already in flight when the page returns out of the error banner', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    let failRead!: (error: unknown) => void
+    vi.mocked(listBackgroundTasks)
+      // The first load's read, still pending when the page returns.
+      .mockImplementationOnce(() => new Promise((_, reject) => { failRead = reject }))
+      // The returning refresh queues a forced re-read behind it.
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledTimes(1))
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    fireEvent(document, new Event('visibilitychange'))
+    await act(async () => { failRead(new TypeError('Failed to fetch')) })
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .toHaveTextContent('reconnecting to the hub'))
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+    await waitFor(() => expect(
+      screen.queryByRole('status', { name: 'Session data freshness' }),
+    ).not.toBeInTheDocument(), { timeout: 4_000 })
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+  })
+
+  it('still reports a background-task read that cannot reach the hub outside a return', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalled())
+    await act(async () => undefined)
+    vi.mocked(listBackgroundTasks).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh sessions and Oracle' }))
+    expect((await screen.findAllByText('Failed to fetch')).length).toBeGreaterThan(0)
+    // Nothing retries outside a return, so the data is not shown as reconnecting.
+    expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .not.toHaveTextContent('reconnecting to the hub')
+  })
+
   it('keeps recovering when a newer refresh supersedes the one on returning and also cannot reach the hub', async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],

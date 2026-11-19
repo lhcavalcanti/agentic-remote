@@ -4632,6 +4632,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const sessionSelectionIntentRef = useRef(0)
   const newSessionOpenRef = useRef(false)
   const backgroundTaskRequestsRef = useRef(new Map<string, Promise<void>>())
+  // Set from the page returning until the hub answers; see the hub event effect.
+  const resumeRecoveringRef = useRef(false)
   const queuedBackgroundTaskRefreshesRef = useRef(new Set<string>())
   const backgroundTaskEventSequenceRef = useRef(new Map<string, number>())
   const sessionEventSequenceRef = useRef(new Map<string, number>())
@@ -5637,12 +5639,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   )
 
   const loadBackgroundTasks = useCallback(
-    async (
-      session: ManagedSession,
-      force = false,
-      reportFailure: (caught: unknown) => void = (caught) =>
-        setError(caught instanceof Error ? caught.message : String(caught)),
-    ): Promise<void> => {
+    async (session: ManagedSession, force = false): Promise<void> => {
       const key = sessionKey(session)
       if (
         !supportsBackgroundTasks(
@@ -5683,7 +5680,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           }
         } catch (caught) {
           failure = caught
-          reportFailure(caught)
+          // While the page recovers from a return, unreachability is retried, not shown.
+          if (!(resumeRecoveringRef.current && isHubUnreachable(caught))) {
+            setError(caught instanceof Error ? caught.message : String(caught))
+          }
         } finally {
           backgroundTaskRequestsRef.current.delete(key)
           if (
@@ -5694,7 +5694,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           }
         }
         if (queuedBackgroundTaskRefreshesRef.current.delete(key)) {
-          return loadBackgroundTasks(session, true, reportFailure)
+          return loadBackgroundTasks(session, true)
         }
         if (failure) throw failure
       })()
@@ -7196,6 +7196,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const endResume = () => {
       stopResumeRetry()
       resumeSince = undefined
+      resumeRecoveringRef.current = false
       if (resumeError === undefined) return
       const shown = resumeError
       resumeError = undefined
@@ -7558,12 +7559,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             }
           }).then((refreshedSessions) =>
             Promise.all(refreshedSessions.map((session) =>
-              // Unreachability only leaves the data stale; it is reported below.
-              loadBackgroundTasks(session, true, (caught) => {
-                if (!isHubUnreachable(caught)) {
-                  setError(caught instanceof Error ? caught.message : String(caught))
-                }
-              })))),
+              loadBackgroundTasks(session, true)))),
           dispatchAuthoritativeRefresh(),
         ])
         const failed = settled.find(
@@ -7578,14 +7574,15 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       } catch (caught) {
         if (authoritativeRefreshGeneration.current !== generation) return
         const message = caught instanceof Error ? caught.message : String(caught)
+        const unreachable = isHubUnreachable(caught)
         setRefreshState('stale')
-        if (isHubUnreachable(caught)) {
+        if (unreachable && resumeSince !== undefined) {
           setRefreshMessage(HUB_RECONNECTING_MESSAGE)
           continueResume()
         } else {
           setRefreshMessage(message)
           // The hub answered, so it is reachable again.
-          endResume()
+          if (!unreachable) endResume()
         }
         throw caught
       }
@@ -7887,7 +7884,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       stopResumeRetry()
       if (document.visibilityState === 'visible') {
         resumeSince = Date.now()
+        resumeRecoveringRef.current = true
         refreshAfterResume()
+      } else {
+        // Hidden pages do not retry, so failures meanwhile report as before.
+        resumeSince = undefined
+        resumeRecoveringRef.current = false
       }
     }
     // The browser reports its network back: retry now rather than after the backoff.
@@ -7919,6 +7921,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     return () => {
       stopped = true
       stopResumeRetry()
+      resumeRecoveringRef.current = false
       window.removeEventListener('online', handleOnline)
       if (authoritativeRefreshRef.current === refreshAllAuthoritativeState) {
         authoritativeRefreshRef.current = async () => undefined

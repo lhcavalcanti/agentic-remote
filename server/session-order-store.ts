@@ -94,7 +94,8 @@ export class SessionOrderStore {
    * Hidden or unread sessions a plain removal took out of the list. A node
    * that predates replacement links reports a clear that way before its
    * response names the successor, which then inherits them; a Show or a read
-   * in between clears it. Nothing else reads them, so they stay in memory.
+   * in between clears it, and so does the same session being listed again.
+   * Nothing else reads them, so they stay in memory.
    */
   private retiredHidden = new Set<string>()
   private retiredUnread = new Set<string>()
@@ -341,6 +342,7 @@ export class SessionOrderStore {
     return this.commit((order) => {
       const lane = order[computerId] ?? []
       if (lane.includes(key)) return false
+      this.listedAgain(key)
       order[computerId] = [...lane, key]
       return true
     })
@@ -447,6 +449,16 @@ export class SessionOrderStore {
       state.unread = unread
       return true
     })
+  }
+
+  /**
+   * A session listed again under the same id -- reopened after a close, or
+   * found again after a delete -- starts afresh: what its last removal
+   * retired belonged to that removal, and must not surface on a later clear.
+   */
+  private listedAgain(key: string): void {
+    this.retiredHidden.delete(key)
+    this.retiredUnread.delete(key)
   }
 
   /**

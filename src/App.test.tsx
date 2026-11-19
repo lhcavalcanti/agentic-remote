@@ -22765,6 +22765,43 @@ describe('App', () => {
       expect(saveSessionUnread).toHaveBeenCalledTimes(4)
     })
 
+    it('stops holding the open session unread once that mark is refused or undone', async () => {
+      listed([session, other], [])
+      vi.mocked(saveSessionUnread).mockRejectedValueOnce(new Error('Hub unavailable'))
+      const finishTurn = () => {
+        emit({ type: 'session.upserted', session: { ...session, status: 'running' } })
+        emit({ type: 'session.upserted', session: { ...session, status: 'idle' } })
+        hubMarksUnread(session.id)
+      }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Mark Project chat as unread' }))
+      expect(await within(screen.getByRole('main'))
+        .findByText('Could not mark Project chat as unread: Hub unavailable')).toBeVisible()
+
+      // Never marked, so watching its turn end reads it as usual.
+      finishTurn()
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, false))
+      expect(saveSessionUnread).toHaveBeenCalledTimes(2)
+
+      // Marked, then read on another device: nothing is left to keep.
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Mark Project chat as unread' }))
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, true))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Mark Project chat as read' }))
+        .toBeEnabled())
+      hubSessionOrder = { ...hubSessionOrder, revision: hubSessionOrder.revision + 1, unread: [] }
+      emit({ type: 'session.order.updated', order: structuredClone(hubSessionOrder) })
+      finishTurn()
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, false))
+      expect(saveSessionUnread).toHaveBeenCalledTimes(4)
+    })
+
     it('reports a refused change and keeps the committed read state', async () => {
       listed([session, other], [])
       vi.mocked(saveSessionUnread).mockRejectedValueOnce(new Error('Hub unavailable'))

@@ -364,6 +364,24 @@ describe('SessionOrderStore', () => {
     expect((await order.replaceSession('pc', 'b', 'b2')).unread).toEqual([])
   })
 
+  it('does not bring back marks a closed session had once it is reopened and later cleared', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.setSessionHidden('pc', 'a', true)
+    await order.setSessionUnread('pc', 'a', true)
+
+    // Closing drops both marks, and reopening lists it again without them.
+    await order.removeSession('pc', 'a')
+    expect(await order.appendSession('pc', 'a')).toMatchObject({ hidden: [], unread: [] })
+
+    // Only a clear reported as a plain removal may hand its marks on.
+    expect(await order.replaceSession('pc', 'a', 'a2')).toMatchObject({
+      hidden: [],
+      unread: [],
+      order: { pc: ['pc:a2'] },
+    })
+  })
+
   it('reorders one lane without touching another', async () => {
     const { store: order } = await store()
     await order.appendSession('pc', 'a')

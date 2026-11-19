@@ -6713,6 +6713,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     settleReadIntentRef.current()
   }
   settleReadIntentRef.current = () => {
+    // A hold only keeps an unread mark you made. Once the hub shows none --
+    // the save was refused, or another device read it -- there is nothing
+    // left to keep, and the open session is read as usual again.
+    const held = unreadHoldRef.current
+    if (held && !unreadSavesRef.current.has(held) && !unreadSessionKeysRef.current.has(held)) {
+      unreadHoldRef.current = undefined
+    }
     const intent = readIntentRef.current
     if (!intent) return
     const open = selectedRef.current

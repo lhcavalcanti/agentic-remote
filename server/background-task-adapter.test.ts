@@ -1426,6 +1426,31 @@ describe('background task adapter', () => {
     })
   })
 
+  it("orders a subagent's shell and its agent stopping by the log, not the clock", () => {
+    // Written in the same millisecond: only the log says which came first.
+    const tasks = backgroundTasksFromEvents([
+      lifecycleEvent('start', 'subagent.started', '2026-09-03T08:00:00.000Z', {
+        toolCallId: 'task-call', agentId: 'agent-1',
+      }),
+      ...subagentShell('agent-1', '7', '2026-09-03T08:01:00.000Z'),
+      lifecycleEvent('read', 'tool.execution_start', '2026-09-03T08:02:00.000Z', {
+        toolCallId: 'read-call', toolName: 'read_bash', arguments: { shellId: '7' },
+      }, 'agent-1'),
+      lifecycleEvent('read-result', 'tool.execution_complete', '2026-09-03T08:03:00.000Z', {
+        toolCallId: 'read-call',
+        success: true,
+        result: { content: '<command with shellId: 7 is still running after 60 seconds.>' },
+      }, 'agent-1'),
+      lifecycleEvent('idle', 'system.notification', '2026-09-03T08:03:00.000Z', {
+        kind: { type: 'agent_idle', agentId: 'agent-1' },
+      }),
+    ] as unknown as SessionEvent[], { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '7')).toMatchObject({
+      status: 'failed', completedAt: '2026-09-03T08:03:00.000Z',
+    })
+  })
+
   it("keeps a subagent's shell seen running after the agent stopped, and a detached one", () => {
     const tasks = backgroundTasksFromEvents([
       lifecycleEvent('start', 'subagent.started', '2026-09-03T08:00:00.000Z', {

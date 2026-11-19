@@ -1586,8 +1586,10 @@ without logging it drops the mark after a short grace.
 If immediate steering is unsupported, the app MUST surface an error and
 restore the draft; it MUST NOT silently queue. Stop remains the explicit way
 to abort the current turn; sending after Stop begins a new turn.
-On phone, the composer MUST label the explicit Send action and explain that
-keyboard Return inserts a newline.
+On phone, the composer MUST label the explicit Send action.
+The line below the composer MUST appear only while recording, transcribing,
+uploading a file, asking aside, or editing a queued prompt; where Enter sends,
+the Send and Queue tooltips name their shortcuts instead.
 
 The Queue button MUST add to Agentic Remote's editable FIFO. Queued prompts MUST
 support edit and remove operations. Direct CLI-native queue entries are not

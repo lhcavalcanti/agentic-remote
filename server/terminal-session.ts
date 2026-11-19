@@ -60,8 +60,8 @@ export interface TerminalSendOptions {
   idleOnly?: boolean
   /**
    * Narrows allowDuringAgentExecution to Copilot waiting only for background
-   * shells: other work is refused under the send lock, before the paste and
-   * again before Enter, as idleOnly refuses it.
+   * shells: under the send lock, any other work, and background agents, are
+   * refused before the paste and again before Enter, as idleOnly refuses work.
    */
   backgroundShellsOnly?: boolean
   /**
@@ -2145,9 +2145,9 @@ export class TmuxTerminalSessionController
         )
       }
       if (
-        (idleOnly || options.backgroundShellsOnly) &&
-        isTerminalAgentWorking(paneBeforePaste) &&
-        !(options.backgroundShellsOnly && waitsOnlyForBackgroundShells(paneBeforePaste))
+        options.backgroundShellsOnly
+          ? !idleButForBackgroundShells(paneBeforePaste)
+          : idleOnly && isTerminalAgentWorking(paneBeforePaste)
       ) {
         throw Object.assign(
           new Error('The terminal started working before queued delivery; nothing was sent'),
@@ -2358,8 +2358,9 @@ export class TmuxTerminalSessionController
         if (idleOnly || backgroundShellsOnly) {
           const current = await capturePane(target)
           if (
-            (isTerminalAgentWorking(current) &&
-              !(backgroundShellsOnly && waitsOnlyForBackgroundShells(current))) ||
+            (backgroundShellsOnly
+              ? !idleButForBackgroundShells(current, true)
+              : isTerminalAgentWorking(current)) ||
             isTerminalOverlay(current)
           ) {
             throw new Error('The terminal changed before queued submission')
@@ -3498,36 +3499,52 @@ function parseCopilotBusyRow(line: string): CopilotBusyRow | undefined {
 const BACKGROUND_SHELLS_STATUS = 'Waiting for background shells'
 const BACKGROUND_SHELLS_STATUS_CUT = 'Waiting for backgr'
 
-function isBackgroundShellsRow(row: CopilotBusyRow): boolean {
+/**
+ * Whether a busy row is Copilot's wait for background shells. With `cutFurther`
+ * it is enough that nothing left of the row names anything else, as when the
+ * queue key a pasted message brings takes the room its status and word had.
+ */
+function isBackgroundShellsRow(row: CopilotBusyRow, cutFurther = false): boolean {
   // Whatever follows the status, such as an output size, is not part of it.
-  const status = row.status?.split(' · ')[0]
-  return row.kind === 'working' && row.word !== '' && status !== undefined &&
-    status.startsWith(BACKGROUND_SHELLS_STATUS_CUT) &&
-    BACKGROUND_SHELLS_STATUS.startsWith(status)
+  const status = row.status?.split(' · ')[0] ?? ''
+  if (row.kind !== 'working' || !BACKGROUND_SHELLS_STATUS.startsWith(status)) return false
+  return cutFurther || (row.word !== '' && status.startsWith(BACKGROUND_SHELLS_STATUS_CUT))
 }
 
 /**
- * Whether the only work the footer shows is Copilot waiting for background
- * shells, whatever the prompt holds.
+ * How the footer reads when nothing shows running but, at most, Copilot's
+ * wait for background shells: `shells` for that wait, `idle` for no work at
+ * all. Anything else is undefined, background agents included: they hold
+ * queued text however idle their prompt looks. The prompt is not read.
  */
-function waitsOnlyForBackgroundShells(pane: string): boolean {
+function idleButForBackgroundShells(
+  pane: string,
+  cutFurther = false,
+): 'idle' | 'shells' | undefined {
   const controls = terminalControlLines(pane).slice(-6)
-  // The work isTerminalAgentWorking reads: an Esc key offered by an older
-  // Copilot, or a busy row at work.
-  if (/esc\s+(?:interrupt|edit\s+prompt)/i.test(controls.join(' '))) return false
-  const work = controls.map(parseCopilotBusyRow)
-    .filter((row): row is CopilotBusyRow => row?.kind === 'working')
-  return work.length > 0 && work.every(isBackgroundShellsRow)
+  // An older Copilot's Esc key for work, and background agents: their offer
+  // to stop them or, once the prompt holds text, their status.
+  if (/esc\s+(?:interrupt|edit\s+prompt)|\bstop\s+ag|Waiting for background a/i.test(controls.join(' '))) {
+    return undefined
+  }
+  let shells = false
+  for (const line of controls) {
+    const row = parseCopilotBusyRow(line)
+    if (!row) continue
+    if (!isBackgroundShellsRow(row, cutFurther)) return undefined
+    shells = true
+  }
+  return shells ? 'shells' : 'idle'
 }
 
 /**
  * Whether Copilot's prompt is free while it waits only for background shells
- * that outlived its turn: the footer shows no other work, and the prompt is
- * live, empty, and has nothing open over it. Copilot takes a message sent then
- * as it would a steer.
+ * that outlived its turn: the footer shows nothing else running, and the
+ * prompt is live, empty, and has nothing open over it. Copilot takes a
+ * message sent then as it would a steer.
  */
 export function isTerminalWaitingForBackgroundShells(pane: string): boolean {
-  return waitsOnlyForBackgroundShells(pane) &&
+  return idleButForBackgroundShells(pane) === 'shells' &&
     terminalInputReady(pane, true) &&
     !composerHoldsText(pane)
 }

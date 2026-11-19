@@ -634,7 +634,7 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 257,
+  "communities": 264,
   "community_algorithm": "louvain-seed-42",
   "edges": 25648,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
@@ -926,7 +926,7 @@
     "server/agent-service-recovery.test.ts": "6c3e3eac2e25f1d7c276bf3c78eff185683b4cecc7ba3d1b264634ed2ebc3202",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
     "server/agent-service.test.ts": "de4e9d7a3858609ba4edcf84211776895ad7f9acae50f4f445b9968b49e92569",
-    "server/agent-service.ts": "ce92d999b0dfa55eb490c1763d75a35a27207b8440d12e5434247c9b389470d4",
+    "server/agent-service.ts": "1fc33f9bd15e3346bb327e6ba86e5ba574aa5474058b28ecd9339fc27ec0630f",
     "server/api-origin.test.ts": "7834409881aae57cda9ed1927f8e69b047e6891a1c05047ab0eb298b6371b99d",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -1130,7 +1130,7 @@
     "server/scheduler-routes.ts": "1f5efa8321efb1e4f627061d9486cf0e2e4e3a3d501c70ba90f65b23eb4ef953",
     "server/scheduler-store.ts": "4bdb9ff4051ab49cc17e88a09a046843e9f899d1d1b65fac688c0ed0920f6dda",
     "server/scheduler.test.ts": "41c38ed8d2b710b8866fda267e8d6be0f85423d5871625c4a8ef658d6daa0670",
-    "server/send-matrix.integration.test.ts": "7572e3d91c8617cdc65ff56b127fc7b6450b7cad951f14fd0569c023bb58038a",
+    "server/send-matrix.integration.test.ts": "d3a4457d0bb30a4f37aa95c2274ec5341570a5c0849802781109042ba5f3b7c4",
     "server/service-unit.test.ts": "7b78bab1401fe1ebeec3cedee090e354c4c28b0adabd92c7c1f5e9e9a1803601",
     "server/service-worker.test.ts": "d950b4cd69d64709df16c9d237eb5e296a7258ade1c0bd033dfc561e967ae1b1",
     "server/session-admission-lifecycle.test.ts": "3deed16f7b5b8874417103f0bf5b93fa22b6717f4e4b0ae6fc91ee09fe6a07ac",
@@ -1196,10 +1196,10 @@
     "server/terminal-form-deadline.test.ts": "4abe7cd75cba5123c99150dad748baeb8b8ed29e3a3f5ecff9eea094799695a9",
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-process-roots.test.ts": "4dcb5e7333623e53d543a590b06e88712837ba887caa1bf7f04246697a56ce15",
-    "server/terminal-queue-delivery.test.ts": "8564f0a4e29e5f041dab915acc469dd551851d63adee0b1d0972fa5f8a79c8d4",
+    "server/terminal-queue-delivery.test.ts": "510ab2190870072560ed13727701601eb9d11c71ec24792c4be7a48f94c3352a",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
     "server/terminal-session.test.ts": "4156ae68a9ffd6cfff3262335f3b7b34299f27ed062abe89f8416dda927b34ee",
-    "server/terminal-session.ts": "edd6cb153870b503621a99c5b407edb01a6b8b5b095265d1a4866658440cfb05",
+    "server/terminal-session.ts": "8647343a5ad5f6f048ce1ecfd4a4ccfac4c8b3f85bff6e62bbcdb543c7b6024c",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "be15c41392f70dd2d8976f72441d972c885c7bc796e77e94ea186cc4ba22e93c",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -1753,28 +1753,18 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7f67b0b937b68786217113e5390bf7286768db5fed8c720112456376d2f9daa7",
-    "communities.json": "cbdd2fd3d53ec4d1804177c062d5e80e235605bf9efd868652bc9be21295e66d",
-    "graph.html": "dfa8fed470202fad4742305ddc448ab3f89f5fa26a06959148727ed746ed7800",
-    "graph.json": "f69fe4c6ce134ce7fa315b8b8ebf81a72491f0f5dcd8499c56e33050cda53a95"
+    "GRAPH_REPORT.md": "a743239c97b5d7105ddc9854bc6be89987836cc11ee2532d6a42047ec36726d2",
+    "communities.json": "14fb0f7b026d37dc36cbfd00ef1f432f9451fac8b0e0f652d9bdfc20e8f9b35e",
+    "graph.html": "67bfbe651e85e847acb6d4afa7b9e6b4b8d39bfb24bf1a460d5681c2997aaf8f",
+    "graph.json": "de2b8cd807f9534b7fe2f7b91f0e889eca1c69ad3d0c8ee11ff64075da720324"
   },
   "schema_version": 1,
-  "source_commit": "77d3f7649095e6e55127e69ac998cd6a50bffbce",
-  "source_fingerprint": "e5ddaf6d4a074fe3395c8305aa63c707a44b41d9c9cca9748db41410605c47fa",
+  "source_commit": "cae285714f1ec7912903c70ad9d93529c73f05a5",
+  "source_fingerprint": "9b0e1ed236faa6b291d03837296375c830863cc0e3843f6b68f19dc31d8f2afd",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "e2e/ui-locks.pw.ts-snapshots/desktop-preview-features-chromium-linux.png",
-    "e2e/ui-locks.pw.ts-snapshots/foldable-preview-features-chromium-linux.png",
-    "package.json",
-    "server/agent-service.test.ts",
     "server/agent-service.ts",
     "server/send-matrix.integration.test.ts",
     "server/terminal-queue-delivery.test.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/terminal-session.ts"
   ]
 }

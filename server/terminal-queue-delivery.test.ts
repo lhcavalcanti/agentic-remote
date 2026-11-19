@@ -38,16 +38,29 @@ describe('Idle-only native queue delivery', () => {
       .toBe(false)
   })
 
+  // What the fake Copilot draws below its prompt once busy: with the prompt
+  // empty, then holding text.
+  const busyFooters = {
+    work: ['Working - esc interrupt', 'Working - esc interrupt'],
+    'a wait for background agents': [
+      ' ◉ Waiting for background agents ctrl+c stop agents',
+      ' ◉ Waiting for background agents ctrl+c clear input · ctrl+q enqueue',
+    ],
+  }
+
   it.each([
-    ['before paste', 'sendWhenIdle'],
-    ['after paste', 'sendWhenIdle'],
+    ['work', 'before paste', 'sendWhenIdle'],
+    ['work', 'after paste', 'sendWhenIdle'],
     // A retained form answer is held to the same idle-only admission.
-    ['before paste', 'send idleOnly'],
-    ['after paste', 'send idleOnly'],
-    // So is a queued prompt typed in while Copilot waits for background shells.
-    ['before paste', 'send backgroundShellsOnly'],
-    ['after paste', 'send backgroundShellsOnly'],
-  ] as const)('does not steer work that starts %s via %s', async (timing, via) => {
+    ['work', 'before paste', 'send idleOnly'],
+    ['work', 'after paste', 'send idleOnly'],
+    // So is a queued prompt typed in while Copilot waits for background
+    // shells, and background agents hold it however idle their prompt looks.
+    ['work', 'before paste', 'send backgroundShellsOnly'],
+    ['work', 'after paste', 'send backgroundShellsOnly'],
+    ['a wait for background agents', 'before paste', 'send backgroundShellsOnly'],
+    ['a wait for background agents', 'after paste', 'send backgroundShellsOnly'],
+  ] as const)('does not steer %s that starts %s via %s', async (busy, timing, via) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'native-queue-admission-'))
     directories.push(directory)
     const id = randomUUID()
@@ -64,12 +77,13 @@ const save = () => {
   writeFileSync(receipt + '.tmp', JSON.stringify(state))
   renameSync(receipt + '.tmp', receipt)
 }
+const busy = ${JSON.stringify(busyFooters[busy])}
 const draw = (text = '', working = false) => process.stdout.write(
   '\\x1b[2J\\x1b[H' + [
     '\\u257b\\u2584\\u2584\\u2584\\u2584',
     '\\u2503 ' + text,
     '\\u2579\\u2580\\u2580\\u2580\\u2580',
-    working ? 'Working - esc interrupt' : ' / commands',
+    working ? busy[text ? 1 : 0] : ' / commands',
   ].join('\\r\\n'),
 )
 let input = ''

@@ -11759,8 +11759,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const sent = midTurnSteer
           ? await this.terminalController.send(sessionId, next.content, false, { allowDuringAgentExecution: true })
           : besideBackgroundShells
-            // Typed in as a steer is, except that work begun since the pane
-            // was read is refused under the send lock rather than steered.
+            // Typed in as a steer is, except that work or background agents
+            // found under the send lock are refused rather than typed into.
             ? await this.terminalController.send(sessionId, next.content, false, {
                 allowDuringAgentExecution: true,
                 backgroundShellsOnly: true,

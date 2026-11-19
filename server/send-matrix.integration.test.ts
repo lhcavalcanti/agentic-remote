@@ -95,8 +95,10 @@ const busyWithoutComposer = [
 const backgroundAgentsFooter = ' ● Waiting for background agents · 273 B esc esc stop agents'
 
 // Copilot 1.0.106 once a turn has ended with shells it started still running:
-// the prompt is back, but the footer still offers the interrupt key.
+// the prompt is back, but the footer still offers the interrupt key. While the
+// prompt holds text the row adds the queue key, and cuts its status to fit.
 const backgroundShellsFooter = ' ● Waiting for background shells ctrl+c interrupt GPT-5 mini · Low · (19%)'
+const backgroundShellsTypingFooter = ' ● Waiting ctrl+c interrupt · ctrl+q enqueue GPT-5 mini · Low · (19%)'
 
 type PaneState = 'idle' | 'working' | 'busy' | 'background' | 'shells' | keyof typeof dialogs
 
@@ -266,6 +268,7 @@ const dialogs = ${JSON.stringify(dialogs)}
 const busy = ${JSON.stringify(busyWithoutComposer)}
 const backgroundFooter = ${JSON.stringify(backgroundAgentsFooter)}
 const shellsFooter = ${JSON.stringify(backgroundShellsFooter)}
+const shellsTypingFooter = ${JSON.stringify(backgroundShellsTypingFooter)}
 let mode = ${JSON.stringify(pane)}
 let draft = ${JSON.stringify(draft)}
 const received = { pastes: [], submits: [], clears: 0, keys: '', draft }
@@ -275,7 +278,7 @@ const draw = () => {
   const pane = mode === 'background'
     ? makeComposer(draft, false).replace(' / commands', backgroundFooter)
     : mode === 'shells'
-      ? makeComposer(draft, false).replace(' / commands', shellsFooter)
+      ? makeComposer(draft, false).replace(' / commands', draft ? shellsTypingFooter : shellsFooter)
       : composing() ? makeComposer(draft, mode === 'working') : mode === 'busy' ? busy : dialogs[mode]
   process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
 }

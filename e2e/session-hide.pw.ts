@@ -74,16 +74,28 @@ function row(list: Locator, title: string) {
   return list.locator('.session-item').filter({ has: list.page().getByText(title, { exact: true }) })
 }
 
-/** Each side's computed border style and colour, top first, and the row's opacity. */
+/** Each side's computed border width, style and colour, top first, and the row's opacity. */
 async function edges(locator: Locator) {
   return locator.evaluate((element) => {
     const style = getComputedStyle(element)
     const sides = ['top', 'right', 'bottom', 'left']
     return {
+      widths: sides.map((side) => style.getPropertyValue(`border-${side}-width`)),
       styles: sides.map((side) => style.getPropertyValue(`border-${side}-style`)),
       colors: sides.map((side) => style.getPropertyValue(`border-${side}-color`)),
       opacity: Number(style.opacity),
     }
+  })
+}
+
+/** How far a row's text and activity time sit from its own edges. */
+async function inset(locator: Locator) {
+  return locator.evaluate((element) => {
+    const row = element.getBoundingClientRect()
+    const text = element.querySelector('.session-item__text')?.getBoundingClientRect()
+    const time = element.querySelector('.session-item__time')?.getBoundingClientRect()
+    if (!text || !time) throw new Error('Expected a session row')
+    return { text: text.left - row.left, time: row.right - time.right }
   })
 }
 
@@ -223,11 +235,12 @@ for (const device of devices) {
 
           // Dashed all round in the neutral border colour, at full strength,
           // and tagged with an icon as well as the word.
-          expect(await edges(hidden)).toEqual({
+          const dashed = {
+            widths: ['1px', '1px', '1px', '1px'],
             styles: ['dashed', 'dashed', 'dashed', 'dashed'],
             colors: [outline, outline, outline, outline],
-            opacity: 1,
-          })
+          }
+          expect(await edges(hidden)).toEqual({ ...dashed, opacity: 1 })
           await expect(hidden.locator('.session-hidden-badge svg')).toBeVisible()
           await expect(hidden.getByText('Hidden', { exact: true })).toBeVisible()
 
@@ -246,21 +259,29 @@ for (const device of devices) {
           await expect(both.getByText('Hidden', { exact: true })).toBeVisible()
           await expect(both.getByText('Suspended', { exact: true })).toBeVisible()
 
-          // The left edge keeps saying a session runs background work...
-          const working = await edges(tasks)
-          expect(working.styles).toEqual(['dashed', 'dashed', 'dashed', 'solid'])
-          expect(working.colors[3]).toBe(await token(page, '--task'))
+          // Background work adds no edge of its own.
+          expect(await edges(tasks)).toEqual({ ...dashed, opacity: 1 })
 
-          // ...and which session is open, once that one is hidden too.
+          // The open session keeps its bars once it is hidden too: they take
+          // the place of the side dashes, and the top and bottom stay dashed.
           const selected = row(list, 'Plan the knowledge workspace')
-          const beforeHiding = await edges(selected)
           await selected.hover()
           await selected.getByRole('button', { name: 'Hide Plan the knowledge workspace from the list' })
             .click()
           await expect(selected).toHaveCSS('border-top-style', 'dashed')
-          const afterHiding = await edges(selected)
-          expect(afterHiding.styles).toEqual(['dashed', 'dashed', 'dashed', 'solid'])
-          expect(afterHiding.colors[3]).toBe(beforeHiding.colors[3])
+          const text = await token(page, '--text')
+          expect(await edges(selected)).toEqual({
+            widths: ['1px', '3px', '1px', '3px'],
+            styles: ['dashed', 'solid', 'dashed', 'solid'],
+            colors: [outline, text, outline, text],
+            opacity: 1,
+          })
+
+          // The outline keeps the text where it is on an ordinary row.
+          const place = await inset(ordinary)
+          for (const item of [hidden, suspended, both, tasks, selected]) {
+            expect(await inset(item)).toEqual(place)
+          }
 
           // Nothing spills sideways, the long title with all its badges included.
           for (const item of await list.locator('.session-item').all()) {

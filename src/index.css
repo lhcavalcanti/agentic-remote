@@ -1844,6 +1844,10 @@ button {
 .session-item {
   --computer-accent: #788075;
   --computer-tint: rgba(120, 128, 117, 0.06);
+  /* The unread dot and bars share this: the accent itself on dark, its legible
+     darker form on light. */
+  --session-unread: var(--accent-foreground);
+  --session-edge: transparent;
   display: grid;
   width: 100%;
   /* Handle, the conversation itself, and the control that puts it down.
@@ -1852,10 +1856,13 @@ button {
   grid-template-columns: 20px minmax(0, 1fr) auto;
   gap: 4px;
   align-items: start;
-  padding: 6px 7px;
+  padding: 6px 5px 6px 6px;
   color: var(--text);
+  /* Every row keeps room for a bar on each side, so its text stays put when
+     it becomes unread or is opened. */
   border: 1px solid transparent;
-  border-left: 2px solid transparent;
+  border-right: 3px solid var(--session-edge);
+  border-left: 3px solid var(--session-edge);
   border-radius: var(--radius-small);
   background: transparent;
   text-align: left;
@@ -1952,10 +1959,12 @@ button {
   }
 }
 
+/* The open row's bars are in the text colour, alike on every computer (its
+   group's header names that one), and stay when it is marked unread: the dot
+   and bold title still say so. */
 .session-item--active {
+  --session-edge: var(--text);
   color: var(--text);
-  border-color: transparent;
-  border-left-color: var(--computer-accent);
   background: color-mix(in srgb, var(--accent) 9%, var(--navigation));
 }
 
@@ -2030,30 +2039,6 @@ button {
 .status-dot--running {
   background: var(--accent);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.session-item--background-running {
-  --computer-accent: #6ea8fe;
-  --computer-tint: rgba(110, 168, 254, 0.1);
-  border-left-color: var(--task);
-}
-
-/* Any status, not just running: a session can be idle in the foreground while
-   background work continues. The waiting and error rules below are more
-   specific, so they still take precedence. */
-.session-item--background-running .status-dot {
-  background: var(--task);
-  box-shadow: 0 0 0 4px rgba(110, 168, 254, 0.12);
-}
-
-.session-item--background-running .status-dot.status-dot--waiting {
-  background: var(--warning);
-  box-shadow: none;
-}
-
-.session-item--background-running .status-dot.status-dot--error {
-  background: var(--danger);
-  box-shadow: none;
 }
 
 .status-dot--waiting {
@@ -2166,7 +2151,6 @@ button {
 
 .session-state--tasks {
   color: var(--task);
-  background: color-mix(in srgb, var(--task) 8%, transparent);
 }
 
 .session-state--running,
@@ -2217,7 +2201,9 @@ button {
 }
 
 /* The Tasks status remains a separate action without replacing the activity
-   time or nesting a button inside the session button. */
+   time or nesting a button inside the session button. It is the row's only
+   background-work cue, so it stays a quiet label with the task colour's dot,
+   filled only while pointed at or focused. */
 .session-item__tasks {
   display: inline-flex;
   position: absolute;
@@ -2232,7 +2218,7 @@ button {
   color: var(--task);
   border: 0;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--task) 8%, var(--panel));
+  background: transparent;
 }
 
 .session-item__body--task-status .session-item__badges,
@@ -8428,8 +8414,9 @@ button {
   cursor: pointer;
 }
 
-.session-item__tasks:hover {
-  background: color-mix(in srgb, var(--task) 15%, var(--panel));
+.session-item__tasks:hover,
+.session-item__tasks:focus-visible {
+  background: color-mix(in srgb, var(--task) 12%, transparent);
 }
 
 .session-item__tasks:focus-visible {
@@ -8472,25 +8459,29 @@ button {
 
 /* Listed although hidden, because Hidden shows it or because it needs you: a
    dashed outline sets it apart, and unlike a suspended row it keeps its full
-   strength. The left edge still says which session is open and which runs
-   background work. */
+   strength. An unread or open row keeps its bars in place of the side dashes. */
 .session-item--hidden {
   border-top: 1px dashed var(--border-strong);
-  border-right: 1px dashed var(--border-strong);
   border-bottom: 1px dashed var(--border-strong);
 }
 
-/* No state to show on the left, so the outline closes there, a pixel narrower
-   than that edge; the padding takes the pixel so the text stays in line. */
-.session-item--hidden:not(.session-item--active, .session-item--background-running) {
+/* No bars to show, so the outline closes at the sides too, two pixels
+   narrower than a bar; the padding takes them so the text stays in line. */
+.session-item--hidden:not(.session-item--active, .session-item--unread) {
+  padding-right: 7px;
   padding-left: 8px;
+  border-right: 1px dashed var(--border-strong);
   border-left: 1px dashed var(--border-strong);
 }
 
 /* Unread: a turn ended that nobody has read yet. The title carries the
-   weight and an accent dot leads it, which no status, attention, hidden or
-   suspended cue uses, so it combines with all of them. The accent's
-   foreground form is the accent itself on dark, and stays legible on light. */
+   weight, an accent dot leads it and a bar on each side frames the row, which
+   no status, attention, hidden or suspended cue uses, so it combines with all
+   of them. The open row's own bars take precedence. */
+.session-item--unread:not(.session-item--active) {
+  --session-edge: var(--session-unread);
+}
+
 .session-item--unread .session-item__text > strong {
   font-weight: 700;
 }
@@ -8501,7 +8492,7 @@ button {
   height: 7px;
   margin-right: 6px;
   border-radius: 50%;
-  background: var(--accent-foreground);
+  background: var(--session-unread);
   vertical-align: 0.1em;
 }
 

@@ -4054,6 +4054,235 @@ describe('App', () => {
     expect(screen.queryAllByRole('alert')).toHaveLength(0)
   })
 
+  it('treats a hub the page cannot reach on returning as reconnecting and retries without an error', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const before = vi.mocked(listSessionListing).mock.calls.length
+    vi.mocked(listSessionListing).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .toHaveTextContent('Data may be stale: reconnecting to the hub'))
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+    await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(before + 2), { timeout: 4_000 })
+    await waitFor(() => expect(
+      screen.queryByRole('status', { name: 'Session data freshness' }),
+    ).not.toBeInTheDocument())
+    expect(screen.queryAllByText("Can't reach the hub. Retrying automatically…")).toHaveLength(0)
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+  })
+
+  it('still reports a returning refresh that cannot reach the hub once the page hides again', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    let failListing!: (error: unknown) => void
+    vi.mocked(listSessionListing)
+      .mockImplementationOnce(() => new Promise((_, reject) => { failListing = reject }))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(failListing).toBeDefined())
+    visibility.mockReturnValue('hidden')
+    fireEvent(document, new Event('visibilitychange'))
+    await act(async () => { failListing(new TypeError('Failed to fetch')) })
+    expect((await screen.findAllByText('Failed to fetch')).length).toBeGreaterThan(0)
+    expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .not.toHaveTextContent('reconnecting to the hub')
+  })
+
+  it('reports an unreachable hub only after the grace period and clears it once the hub answers', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const realNow = Date.now.bind(Date)
+    let offset = 0
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset)
+    vi.mocked(listSessionListing)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    fireEvent(document, new Event('visibilitychange'))
+    await screen.findByRole('status', { name: 'Session data freshness' })
+    expect(screen.queryAllByText("Can't reach the hub. Retrying automatically…")).toHaveLength(0)
+    offset = 31_000
+    expect((await screen.findAllByText("Can't reach the hub. Retrying automatically…", undefined, { timeout: 4_000 })).length)
+      .toBeGreaterThan(0)
+    await waitFor(() => expect(
+      screen.queryAllByText("Can't reach the hub. Retrying automatically…"),
+    ).toHaveLength(0), { timeout: 6_000 })
+    expect(screen.queryByRole('status', { name: 'Session data freshness' })).not.toBeInTheDocument()
+  })
+
+  it('keeps a background-task request that cannot reach the hub on returning out of the error banner', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalled())
+    await act(async () => undefined)
+    vi.mocked(listBackgroundTasks).mockClear()
+    vi.mocked(listBackgroundTasks).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .toHaveTextContent('reconnecting to the hub'))
+    expect(listBackgroundTasks).toHaveBeenCalled()
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+    await waitFor(() => expect(
+      screen.queryByRole('status', { name: 'Session data freshness' }),
+    ).not.toBeInTheDocument(), { timeout: 4_000 })
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+  })
+
+  it('keeps a background-task read already in flight when the page returns out of the error banner', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    let failRead!: (error: unknown) => void
+    vi.mocked(listBackgroundTasks)
+      // The first load's read, still pending when the page returns.
+      .mockImplementationOnce(() => new Promise((_, reject) => { failRead = reject }))
+      // The returning refresh queues a forced re-read behind it.
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalledTimes(1))
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    fireEvent(document, new Event('visibilitychange'))
+    await act(async () => { failRead(new TypeError('Failed to fetch')) })
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .toHaveTextContent('reconnecting to the hub'))
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+    await waitFor(() => expect(
+      screen.queryByRole('status', { name: 'Session data freshness' }),
+    ).not.toBeInTheDocument(), { timeout: 4_000 })
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+  })
+
+  it('still reports a background-task read that cannot reach the hub outside a return', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    await waitFor(() => expect(listBackgroundTasks).toHaveBeenCalled())
+    await act(async () => undefined)
+    vi.mocked(listBackgroundTasks).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh sessions and Oracle' }))
+    expect((await screen.findAllByText('Failed to fetch')).length).toBeGreaterThan(0)
+    // Nothing retries outside a return, so the data is not shown as reconnecting.
+    expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .not.toHaveTextContent('reconnecting to the hub')
+  })
+
+  it('keeps recovering when a newer refresh supersedes the one on returning and also cannot reach the hub', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const realNow = Date.now.bind(Date)
+    let offset = 0
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset)
+    const listing = vi.mocked(listSessionListing).getMockImplementation()
+    vi.mocked(listSessionListing).mockRejectedValue(new TypeError('Failed to fetch'))
+    fireEvent(document, new Event('visibilitychange'))
+    act(() => MockWebSocket.instances.at(-1)?.onopen?.())
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .toHaveTextContent('reconnecting to the hub'))
+    expect(screen.queryAllByText('Failed to fetch')).toHaveLength(0)
+    offset = 31_000
+    expect((await screen.findAllByText("Can't reach the hub. Retrying automatically…", undefined, { timeout: 4_000 })).length)
+      .toBeGreaterThan(0)
+    vi.mocked(listSessionListing).mockImplementation(listing!)
+    act(() => { window.dispatchEvent(new Event('online')) })
+    await waitFor(() => expect(screen.queryAllByText("Can't reach the hub. Retrying automatically…")).toHaveLength(0))
+  })
+
+  it('never replaces a newer error while the hub stays unreachable after returning', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error('Send failed'))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    const realNow = Date.now.bind(Date)
+    let offset = 0
+    vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset)
+    const listing = vi.mocked(listSessionListing).getMockImplementation()
+    vi.mocked(listSessionListing).mockRejectedValue(new TypeError('Failed to fetch'))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Session data freshness' }))
+      .toHaveTextContent('reconnecting to the hub'))
+    offset = 31_000
+    await screen.findAllByText("Can't reach the hub. Retrying automatically…", undefined, { timeout: 4_000 })
+    fireEvent.change(textarea, { target: { value: 'Unsent work' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    await screen.findAllByText('Send failed')
+    const before = vi.mocked(listSessionListing).mock.calls.length
+    act(() => { window.dispatchEvent(new Event('online')) })
+    await waitFor(() => expect(vi.mocked(listSessionListing).mock.calls.length).toBeGreaterThan(before))
+    await act(async () => undefined)
+    expect(screen.queryAllByText("Can't reach the hub. Retrying automatically…")).toHaveLength(0)
+    expect(screen.getAllByText('Send failed').length).toBeGreaterThan(0)
+    vi.mocked(listSessionListing).mockImplementation(listing!)
+    act(() => { window.dispatchEvent(new Event('online')) })
+    await waitFor(() => expect(
+      screen.queryByRole('status', { name: 'Session data freshness' }),
+    ).not.toBeInTheDocument(), { timeout: 4_000 })
+    expect(screen.getAllByText('Send failed').length).toBeGreaterThan(0)
+  })
+
+  it('still reports an answer from the hub immediately and does not retry it', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    render(<App />)
+    await screen.findAllByText('Project chat')
+    const before = vi.mocked(listSessionListing).mock.calls.length
+    vi.mocked(listSessionListing).mockRejectedValueOnce(new Error('The hub refused the session listing'))
+    fireEvent(document, new Event('visibilitychange'))
+    expect((await screen.findAllByText('The hub refused the session listing')).length).toBeGreaterThan(0)
+    await new Promise((resolve) => setTimeout(resolve, 1_500))
+    expect(listSessionListing).toHaveBeenCalledTimes(before + 1)
+  })
+
+  it('keeps an unrelated error when the hub answers again after returning', async () => {
+    vi.mocked(getManager).mockResolvedValue({
+      available: true, status: 'idle', messages: [], queued: 0, managedSessions: [],
+    })
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.mocked(sendMessage).mockRejectedValueOnce(new Error('Send failed'))
+    render(<App />)
+    const textarea = await screen.findByLabelText('Message')
+    fireEvent.change(textarea, { target: { value: 'Unsent work' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    expect((await screen.findAllByText('Send failed')).length).toBeGreaterThan(0)
+    const shown = screen.getAllByText('Send failed').length
+    const before = vi.mocked(listSessionListing).mock.calls.length
+    vi.mocked(listSessionListing).mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    fireEvent(document, new Event('visibilitychange'))
+    await waitFor(() => expect(listSessionListing).toHaveBeenCalledTimes(before + 2), { timeout: 4_000 })
+    await waitFor(() => expect(
+      screen.queryByRole('status', { name: 'Session data freshness' }),
+    ).not.toBeInTheDocument())
+    expect(screen.getAllByText('Send failed')).toHaveLength(shown)
+  })
+
   it('marks data stale without reporting a session failure when Dreamer refresh fails', async () => {
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.mocked(getManager).mockResolvedValue({

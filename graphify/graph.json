@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "d2e572cec2238e61a9b333f0ab8753c8a98243f3",
+  "built_at_commit": "29c92f41d0348022a29196e1b7080319864285fe",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -53311,7 +53311,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1791",
+      "source_location": "L1800",
       "target": "server_background_task_adapter_addactivity",
       "weight": 1.0
     },
@@ -53323,7 +53323,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1985",
+      "source_location": "L1997",
       "target": "server_background_task_adapter_backgroundhandoff",
       "weight": 1.0
     },
@@ -53335,7 +53335,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1366",
+      "source_location": "L1367",
       "target": "server_background_task_adapter_boundedtext",
       "weight": 1.0
     },
@@ -53347,7 +53347,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1369",
+      "source_location": "L1370",
       "target": "server_background_task_adapter_errorvalue",
       "weight": 1.0
     },
@@ -53359,7 +53359,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1290",
+      "source_location": "L1291",
       "target": "server_background_task_adapter_eventstring",
       "weight": 1.0
     },
@@ -53371,7 +53371,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1666",
+      "source_location": "L1674",
       "target": "server_background_task_adapter_eventtask",
       "weight": 1.0
     },
@@ -53383,7 +53383,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1830",
+      "source_location": "L1839",
       "target": "server_background_task_adapter_executionmodevalue",
       "weight": 1.0
     },
@@ -53395,7 +53395,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1263",
+      "source_location": "L1264",
       "target": "server_background_task_adapter_islivetaskstatus",
       "weight": 1.0
     },
@@ -53407,7 +53407,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1471",
+      "source_location": "L1472",
       "target": "server_background_task_adapter_isolderexecution",
       "weight": 1.0
     },
@@ -53419,7 +53419,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1730",
+      "source_location": "L1738",
       "target": "server_background_task_adapter_isshellobservertool",
       "weight": 1.0
     },
@@ -53431,7 +53431,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1911",
+      "source_location": "L1920",
       "target": "server_background_task_adapter_isshellstoptool",
       "weight": 1.0
     },
@@ -53443,7 +53443,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1730",
+      "source_location": "L1738",
       "target": "server_background_task_adapter_isshelltool",
       "weight": 1.0
     },
@@ -53455,7 +53455,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1581",
+      "source_location": "L1504",
       "target": "server_background_task_adapter_isterminaltaskstatus",
       "weight": 1.0
     },
@@ -53467,7 +53467,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L2115",
+      "source_location": "L2130",
       "target": "server_background_task_adapter_lastforegroundcompletionat",
       "weight": 1.0
     },
@@ -53479,7 +53479,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1481",
+      "source_location": "L1482",
       "target": "server_background_task_adapter_mergeshellrefresh",
       "weight": 1.0
     },
@@ -53491,7 +53491,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1439",
+      "source_location": "L1440",
       "target": "server_background_task_adapter_normalizebackgroundtask",
       "weight": 1.0
     },
@@ -53503,7 +53503,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1710",
+      "source_location": "L1718",
       "target": "server_background_task_adapter_normalizedtoolname",
       "weight": 1.0
     },
@@ -53515,7 +53515,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1517",
+      "source_location": "L1525",
       "target": "server_background_task_adapter_notificationkind",
       "weight": 1.0
     },
@@ -53527,7 +53527,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1349",
+      "source_location": "L1350",
       "target": "server_background_task_adapter_numbervalue",
       "weight": 1.0
     },
@@ -53539,7 +53539,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1884",
+      "source_location": "L1893",
       "target": "server_background_task_adapter_rawtailtext",
       "weight": 1.0
     },
@@ -53551,7 +53551,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1382",
+      "source_location": "L1383",
       "target": "server_background_task_adapter_recordvalue",
       "weight": 1.0
     },
@@ -53563,7 +53563,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1245",
+      "source_location": "L1246",
       "target": "server_background_task_adapter_rekeytask",
       "weight": 1.0
     },
@@ -53575,7 +53575,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1299",
+      "source_location": "L1300",
       "target": "server_background_task_adapter_sameexecutionstart",
       "weight": 1.0
     },
@@ -53587,7 +53587,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1884",
+      "source_location": "L1893",
       "target": "server_background_task_adapter_shellexitfromfooter",
       "weight": 1.0
     },
@@ -53599,7 +53599,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1876",
+      "source_location": "L1885",
       "target": "server_background_task_adapter_shellexitfromvalue",
       "weight": 1.0
     },
@@ -53611,7 +53611,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1526",
+      "source_location": "L1534",
       "target": "server_background_task_adapter_shellidfromvalue",
       "weight": 1.0
     },
@@ -53623,7 +53623,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1918",
+      "source_location": "L1927",
       "target": "server_background_task_adapter_shellstopacknowledged",
       "weight": 1.0
     },
@@ -53635,7 +53635,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1271",
+      "source_location": "L1272",
       "target": "server_background_task_adapter_shelltask",
       "weight": 1.0
     },
@@ -53647,7 +53647,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1743",
+      "source_location": "L1751",
       "target": "server_background_task_adapter_shelltaskmode",
       "weight": 1.0
     },
@@ -53659,7 +53659,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1352",
+      "source_location": "L1353",
       "target": "server_background_task_adapter_shelltaskoutput",
       "weight": 1.0
     },
@@ -53671,7 +53671,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1726",
+      "source_location": "L1734",
       "target": "server_background_task_adapter_taskarguments",
       "weight": 1.0
     },
@@ -53683,7 +53683,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1206",
+      "source_location": "L1207",
       "target": "server_background_task_adapter_taskidalias",
       "weight": 1.0
     },
@@ -53695,7 +53695,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1813",
+      "source_location": "L1822",
       "target": "server_background_task_adapter_taskidforevent",
       "weight": 1.0
     },
@@ -53707,7 +53707,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1434",
+      "source_location": "L1435",
       "target": "server_background_task_adapter_taskinfolistfromvalue",
       "weight": 1.0
     },
@@ -53719,7 +53719,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1720",
+      "source_location": "L1728",
       "target": "server_background_task_adapter_taskinvocation",
       "weight": 1.0
     },
@@ -53731,7 +53731,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_backgroundtasksfromevents",
       "source_file": "server/background-task-adapter.ts",
-      "source_location": "L1681",
+      "source_location": "L1689",
       "target": "server_background_task_adapter_textfromvalue",
       "weight": 1.0
     },
@@ -54522,7 +54522,7 @@
       "relation": "contains",
       "source": "server_background_task_adapter_test",
       "source_file": "server/background-task-adapter.test.ts",
-      "source_location": "L1840",
+      "source_location": "L1860",
       "target": "server_background_task_adapter_test_lifecycleevent",
       "weight": 1.0
     },
@@ -54533,7 +54533,7 @@
       "relation": "contains",
       "source": "server_background_task_adapter_test",
       "source_file": "server/background-task-adapter.test.ts",
-      "source_location": "L1851",
+      "source_location": "L1871",
       "target": "server_background_task_adapter_test_subagentshell",
       "weight": 1.0
     },
@@ -54545,7 +54545,7 @@
       "relation": "calls",
       "source": "server_background_task_adapter_test_subagentshell",
       "source_file": "server/background-task-adapter.test.ts",
-      "source_location": "L1854",
+      "source_location": "L1874",
       "target": "server_background_task_adapter_test_lifecycleevent",
       "weight": 1.0
     },
@@ -317742,7 +317742,7 @@
       "label": "lifecycleEvent()",
       "norm_label": "lifecycleevent()",
       "source_file": "server/background-task-adapter.test.ts",
-      "source_location": "L1840"
+      "source_location": "L1860"
     },
     {
       "_callable": true,
@@ -317754,7 +317754,7 @@
       "label": "subagentShell()",
       "norm_label": "subagentshell()",
       "source_file": "server/background-task-adapter.test.ts",
-      "source_location": "L1851"
+      "source_location": "L1871"
     },
     {
       "_callable": true,

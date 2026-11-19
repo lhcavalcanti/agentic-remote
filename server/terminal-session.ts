@@ -59,6 +59,12 @@ export interface TerminalSendOptions {
   /** Refuse, under the send lock, unless the agent is idle at its composer. */
   idleOnly?: boolean
   /**
+   * Narrows allowDuringAgentExecution to Copilot waiting only for background
+   * shells: other work is refused under the send lock, before the paste and
+   * again before Enter, as idleOnly refuses it.
+   */
+  backgroundShellsOnly?: boolean
+  /**
    * Runs synchronously immediately before each step that changes the pane's
    * input (clearing a draft, pasting), inside the send lock, so a caller can
    * refuse a send that stopped being allowed while the pane was being read.
@@ -2138,7 +2144,11 @@ export class TmuxTerminalSessionController
           },
         )
       }
-      if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
+      if (
+        (idleOnly || options.backgroundShellsOnly) &&
+        isTerminalAgentWorking(paneBeforePaste) &&
+        !(options.backgroundShellsOnly && waitsOnlyForBackgroundShells(paneBeforePaste))
+      ) {
         throw Object.assign(
           new Error('The terminal started working before queued delivery; nothing was sent'),
           {
@@ -2240,6 +2250,7 @@ export class TmuxTerminalSessionController
             paneBeforePaste,
             enqueue,
             idleOnly,
+            options.backgroundShellsOnly === true,
           )
         } catch (error) {
           if (!pasteAcknowledged && error && typeof error === 'object' &&
@@ -2278,6 +2289,7 @@ export class TmuxTerminalSessionController
     paneBeforePaste: string,
     enqueue: boolean,
     idleOnly = false,
+    backgroundShellsOnly = false,
   ): Promise<boolean> {
       if (
         !(await waitForComposerPaste(
@@ -2343,9 +2355,13 @@ export class TmuxTerminalSessionController
         }
       }
       try {
-        if (idleOnly) {
+        if (idleOnly || backgroundShellsOnly) {
           const current = await capturePane(target)
-          if (isTerminalAgentWorking(current) || isTerminalOverlay(current)) {
+          if (
+            (isTerminalAgentWorking(current) &&
+              !(backgroundShellsOnly && waitsOnlyForBackgroundShells(current))) ||
+            isTerminalOverlay(current)
+          ) {
             throw new Error('The terminal changed before queued submission')
           }
         }
@@ -3424,6 +3440,14 @@ function isTerminalComposerFooter(lines: string[], tolerateUnknown = false): boo
 const FOOTER_QUESTION = /\?|\[[^\]]*\/[^\]]*\]|\([^)]*\/[^)]*\)|\b(?:y|yes)\s*\/\s*(?:n|no)\b/iu
 const FOOTER_QUEUE_KEYS = ['ctrl+q enqueue', 'ctrl+enter enqueue']
 
+interface CopilotBusyRow {
+  kind: 'working' | 'background'
+  /** The status after the spinner as drawn, cut to fit; none without a spinner. */
+  status?: string
+  /** Ctrl+C's word as drawn, cut to fit; empty once wrapped away. */
+  word: string
+}
+
 /**
  * What Copilot 1.0.106's busy row offers Ctrl+C for: `working` while a turn
  * runs, `background` once only background agents are left and a message
@@ -3436,6 +3460,10 @@ const FOOTER_QUEUE_KEYS = ['ctrl+q enqueue', 'ctrl+enter enqueue']
  * the prompt or leaving shell mode is not this row.
  */
 function copilotBusyRow(line: string): 'working' | 'background' | undefined {
+  return parseCopilotBusyRow(line)?.kind
+}
+
+function parseCopilotBusyRow(line: string): CopilotBusyRow | undefined {
   const row = line.trim().replace(/\s+/gu, ' ')
   if (!row || row.length > 240) return undefined
   const key = [...row.matchAll(/(?:^|\s)ctrl\+c(?=\s|$)/gu)].at(-1)
@@ -3447,6 +3475,7 @@ function copilotBusyRow(line: string): 'working' | 'background' | undefined {
     return undefined
   }
   if (spinner >= 0 && FOOTER_QUESTION.test(head.slice(spinner + 1))) return undefined
+  const status = spinner < 0 ? undefined : head.slice(spinner + 1).trim()
   const words = row.slice(key.index + key[0].length).split(' ').filter(Boolean)
   for (let at = 0; at <= words.length; at += 1) {
     const model = words.slice(at).join(' ')
@@ -3455,10 +3484,52 @@ function copilotBusyRow(line: string): 'working' | 'background' | undefined {
     if (more.length || (queue && !FOOTER_QUEUE_KEYS.some((hint) => hint.startsWith(queue)))) {
       continue
     }
-    if (!action || 'interrupt'.startsWith(action)) return 'working'
-    if ('stop agents'.startsWith(action)) return 'background'
+    if (!action || 'interrupt'.startsWith(action)) return { kind: 'working', status, word: action }
+    if ('stop agents'.startsWith(action)) return { kind: 'background', status, word: action }
   }
   return undefined
+}
+
+// A turn can end with shells it started still running. Copilot then keeps its
+// busy row and interrupt key, with this status, cut to fit like any other.
+// Cut no shorter than `Waiting for backgr`, the status still names a
+// background wait, and beside the interrupt key that wait is for shells:
+// background agents offer to stop them instead.
+const BACKGROUND_SHELLS_STATUS = 'Waiting for background shells'
+const BACKGROUND_SHELLS_STATUS_CUT = 'Waiting for backgr'
+
+function isBackgroundShellsRow(row: CopilotBusyRow): boolean {
+  // Whatever follows the status, such as an output size, is not part of it.
+  const status = row.status?.split(' · ')[0]
+  return row.kind === 'working' && row.word !== '' && status !== undefined &&
+    status.startsWith(BACKGROUND_SHELLS_STATUS_CUT) &&
+    BACKGROUND_SHELLS_STATUS.startsWith(status)
+}
+
+/**
+ * Whether the only work the footer shows is Copilot waiting for background
+ * shells, whatever the prompt holds.
+ */
+function waitsOnlyForBackgroundShells(pane: string): boolean {
+  const controls = terminalControlLines(pane).slice(-6)
+  // The work isTerminalAgentWorking reads: an Esc key offered by an older
+  // Copilot, or a busy row at work.
+  if (/esc\s+(?:interrupt|edit\s+prompt)/i.test(controls.join(' '))) return false
+  const work = controls.map(parseCopilotBusyRow)
+    .filter((row): row is CopilotBusyRow => row?.kind === 'working')
+  return work.length > 0 && work.every(isBackgroundShellsRow)
+}
+
+/**
+ * Whether Copilot's prompt is free while it waits only for background shells
+ * that outlived its turn: the footer shows no other work, and the prompt is
+ * live, empty, and has nothing open over it. Copilot takes a message sent then
+ * as it would a steer.
+ */
+export function isTerminalWaitingForBackgroundShells(pane: string): boolean {
+  return waitsOnlyForBackgroundShells(pane) &&
+    terminalInputReady(pane, true) &&
+    !composerHoldsText(pane)
 }
 
 function isKnownTerminalFooterRow(

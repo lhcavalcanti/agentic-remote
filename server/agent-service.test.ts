@@ -11036,6 +11036,183 @@ describe('AgentService deletion', () => {
     }
   })
 
+  // A turn can end with shells it started still running. Copilot then keeps
+  // its interrupt key on the row, but its prompt takes a new message, and the
+  // event log says the turn is over: only background agents hold queued text.
+  describe('a queue behind a turn that left only background shells running', () => {
+    const rule = '─'.repeat(60)
+    const pane = (footer: string, draft = '') => [
+      ' /work/project                                      Session: 0 AIC used',
+      rule, draft ? `❯ ${draft}` : '❯', rule, footer,
+    ].join('\n')
+    const shellsWait =
+      ' ← open sidebar · Interactive · Manual Approval · ● Waiting for background shells ctrl+c interrupt GPT-5 mini · Low · (19%)'
+    const prompt = 'Why are these preview features not available to be tested?'
+    const typedBesideShells = (sessionId: string) => [
+      sessionId, prompt, false, { allowDuringAgentExecution: true, backgroundShellsOnly: true },
+    ]
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // Queues the head while a turn runs; `endTurn` then logs the turn's end
+    // and takes it in, which drains the queue.
+    async function queuedBehindTurn(
+      initialPane: string,
+      queue: (service: AgentService, sessionId: string) => Promise<unknown>,
+    ) {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      const sessionId = client.session.sessionId
+      client.nextSessionList = Promise.resolve([{
+        sessionId, startTime: new Date(), modifiedTime: new Date(),
+        summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+      }])
+      let version = 'events-v1'
+      let events = JSON.parse(JSON.stringify([{
+        type: 'session.idle', id: 'earlier-turn-ended', parentId: null,
+        timestamp: new Date(Date.now() - 60_000).toISOString(), data: {},
+      }])) as SessionEvent[]
+      const current = { pane: initialPane }
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        sendWhenIdle: vi.fn(async () => true),
+        capture: vi.fn(async () => current.pane),
+        cancel: vi.fn(async () => true),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        client,
+        async () => [{
+          id: sessionId, cwd: directory, title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        }],
+        async () => undefined,
+        async () => events,
+        async () => version,
+        terminal,
+      )
+      const queueStates: Array<string | undefined> = []
+      service.on('event', (event: ServerEvent) => {
+        if (event.type === 'session.upserted' && event.session.id === sessionId) {
+          queueStates.push(event.session.queueState?.state)
+        }
+      })
+      await service.start()
+      await service.store.updateStatus(sessionId, 'running')
+      await queue(service, sessionId)
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      const endTurn = async () => {
+        events = JSON.parse(JSON.stringify([...events, {
+          type: 'session.idle', id: 'turn-ended', parentId: 'earlier-turn-ended',
+          timestamp: new Date(Date.now() + 1_000).toISOString(), data: {},
+        }])) as SessionEvent[]
+        version = 'events-v2'
+        await service.refreshTranscripts()
+      }
+      return { service, terminal, current, sessionId, queueStates, endTurn }
+    }
+
+    it.each([
+      shellsWait,
+      ' Autopilot · Allow All · ◎ Waiting for backgr ctrl+c interrupt  Claude Opus 5.5 · Max · (58%)',
+    ])('types the head prompt in as soon as the turn ends: %s', async (footer) => {
+      const { service, terminal, sessionId, queueStates, endTurn } = await queuedBehindTurn(
+        pane(footer), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+      )
+
+      await endTurn()
+
+      expect(terminal.send.mock.calls).toEqual([typedBesideShells(sessionId)])
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'running',
+        foregroundTurnActive: true,
+        activity: 'Sent queued prompt',
+        queuedPrompts: [],
+        queuedCount: 0,
+      })
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+      expect(queueStates).not.toContain('waiting')
+    })
+
+    it('types in a prompt already waiting for the composer once only the shells are left', async () => {
+      const { service, terminal, current, sessionId, endTurn } = await queuedBehindTurn(
+        pane(' ◉ Running bash · 26s ctrl+c interrupt'),
+        (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+      )
+      await endTurn()
+      expect(service.getSession(sessionId)?.queueState).toMatchObject({ state: 'waiting' })
+
+      current.pane = pane(shellsWait)
+      await vi.advanceTimersByTimeAsync(800)
+      await service.refreshTranscripts()
+
+      expect(terminal.send.mock.calls).toEqual([typedBesideShells(sessionId)])
+      expect(service.getSession(sessionId)).toMatchObject({ status: 'running', queuedPrompts: [] })
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+    })
+
+    it.each([
+      ['a command at the head', pane(shellsWait), '/usage'],
+      [
+        'a prompt holding unsent text',
+        pane(
+          ' ● Waiting for background shells ctrl+c interrupt · ctrl+q enqueue GPT-5 mini · Low · (19%)',
+          'an unsent draft',
+        ),
+        prompt,
+      ],
+      ['no prompt drawn', 'Waiting for background shells', prompt],
+      [
+        'a status shrunk away',
+        pane(' Autopilot · Allow All · ◉       ctrl+c interrupt Claude Opus 5.5 · Max · (58%)'),
+        prompt,
+      ],
+      ['a turn at work', pane(' ◉ Running bash · 26s ctrl+c interrupt'), prompt],
+    ])('keeps waiting, with nothing typed, for %s', async (_case, initialPane, head) => {
+      const { service, terminal, sessionId, endTurn } = await queuedBehindTurn(
+        initialPane,
+        (service, sessionId) => head.startsWith('/')
+          ? service.executeCommand(sessionId, head, true)
+          : service.sendMessage(sessionId, head, true),
+      )
+
+      await endTurn()
+
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'idle',
+        queueState: { state: 'waiting' },
+        queuedPrompts: [{ content: head }],
+      })
+    })
+
+    it('leaves a prompt queued while the turn is still open', async () => {
+      const { service, terminal, sessionId } = await queuedBehindTurn(
+        pane(shellsWait), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+      )
+
+      await service['drainTerminalQueue'](sessionId)
+
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'running',
+        queuedPrompts: [{ content: prompt }],
+      })
+    })
+  })
+
   it('does not assign an uncertain head failure to the untouched FIFO tail', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

@@ -32,6 +32,7 @@ import {
   terminalCommandOutput,
   terminalFormShowsFields,
   terminalInputReady,
+  isTerminalWaitingForBackgroundShells,
   TmuxTerminalSessionController,
   waitForTerminalStartup,
 } from './terminal-session.js'
@@ -1208,6 +1209,43 @@ process.stdin.on('data', () => undefined)
       expect(isTerminalVisiblyIdle(busy)).toBe(false)
       expect(terminalInputReady(busy)).toBe(false)
       expect(terminalInputReady(busy, true)).toBe(true)
+    })
+
+    // A turn can end with shells it started still running; the row then keeps
+    // the interrupt key and says what Copilot waits for, cut to fit.
+    it.each([
+      ' ← open sidebar · Interactive · Manual Approval · ● Waiting for background shells ctrl+c interrupt GPT-5 mini · Low · (19%)',
+      ' ◉ Waiting for background shells ctrl+c interrupt',
+      // An output size after the status, as the background agents row draws.
+      ' ● Waiting for background shells · 1.2 KB ctrl+c interrupt GPT-5 mini · Low · (19%)',
+      ' Autopilot · Allow All · ○ Waiting for background shells ctrl+c int Claude Sonnet 5.5 · High · 936K conte…',
+      ' Autopilot · Allow All · ◎ Waiting for backgr ctrl+c interrupt  Claude Opus 5.5 · Max · (58%)',
+    ])('reads a prompt left only to background shells: %s', (footer) => {
+      expect(isTerminalWaitingForBackgroundShells(pane(footer))).toBe(true)
+    })
+
+    it.each([
+      ' ◉ Waiting for background agents ctrl+c stop agents',
+      ' Autopilot · Allow All · ◎ Waiting for backgr ctrl+c stop agents  Claude Opus 5.5 · Max · (58%)',
+      ' ◉ Working · 83 B ctrl+c interrupt',
+      ' ◉ Running bash · 26s ctrl+c interrupt',
+      // Cut this short, or with the key's word wrapped away, the status could
+      // belong to any wait.
+      ' Autopilot · Allow All · ◉       ctrl+c interrupt Claude Opus 5.5 · Max · (58%)',
+      ' Autopilot · Allow All · ◉ Waiting for ctrl+c interrupt  Claude Opus 5.5 · Max · (58%)',
+      ' Autopilot · Allow All · ◎ Waiting for backgr ctrl+c    Claude Opus 5.5 · Max · (58%)',
+      ' Autopilot · Allow All · / commands      Claude Sonnet 5.5 · High · 936K conte…',
+    ])('does not read any other row as that wait: %s', (footer) => {
+      expect(isTerminalWaitingForBackgroundShells(pane(footer))).toBe(false)
+    })
+
+    it('reads that wait only below an empty live prompt', () => {
+      const typing = pane(
+        ' ● Waiting for background shells ctrl+c interrupt · ctrl+q enqueue GPT-5 mini · Low · (19%)',
+      ).replace('\n❯\n', '\n❯ an unsent draft\n')
+      expect(terminalInputReady(typing, true)).toBe(true)
+      expect(isTerminalWaitingForBackgroundShells(typing)).toBe(false)
+      expect(isTerminalWaitingForBackgroundShells('Waiting for background shells')).toBe(false)
     })
 
     // With only background agents left the key offers to stop them, and a

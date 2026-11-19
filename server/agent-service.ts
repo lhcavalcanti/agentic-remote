@@ -161,6 +161,7 @@ import {
   terminalInputReady,
   isTerminalSessionInUsePrompt,
   isTerminalVisiblyIdle,
+  isTerminalWaitingForBackgroundShells,
   terminalCommandOutput,
   terminalFormReplyBudget,
   TmuxTerminalSessionController,
@@ -11698,7 +11699,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       const currentQueueState = this.terminalQueueStates.get(sessionId)
+      // A turn can end with shells it started still running: Copilot keeps
+      // its interrupt key on the row, but its empty prompt takes a message as
+      // it would a steer. Background shells do not hold queued text, so a
+      // prompt goes in now, even one already waiting for the composer.
+      const besideBackgroundShells =
+        !midTurnSteer && !next.command && stored.status === 'idle' &&
+        before !== undefined && isTerminalWaitingForBackgroundShells(before)
       const composerKnownUnavailable = before !== undefined &&
+        !besideBackgroundShells &&
         !terminalInputReady(before) &&
         (
           !before.trim() ||
@@ -11716,7 +11725,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (midTurnSteer
         ? !before || !terminalInputReady(before, true) || composerHoldsText(before)
-        : before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
+        : !besideBackgroundShells && before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
         this.retryTerminalQueueClaim(sessionId)
         return false
       }
@@ -11749,9 +11758,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const handedAt = Date.now()
         const sent = midTurnSteer
           ? await this.terminalController.send(sessionId, next.content, false, { allowDuringAgentExecution: true })
-          : this.terminalController.sendWhenIdle
-            ? await this.terminalController.sendWhenIdle(sessionId, next.content)
-            : await this.terminalController.send(sessionId, next.content, false)
+          : besideBackgroundShells
+            // Typed in as a steer is, except that work begun since the pane
+            // was read is refused under the send lock rather than steered.
+            ? await this.terminalController.send(sessionId, next.content, false, {
+                allowDuringAgentExecution: true,
+                backgroundShellsOnly: true,
+              })
+            : this.terminalController.sendWhenIdle
+              ? await this.terminalController.sendWhenIdle(sessionId, next.content)
+              : await this.terminalController.send(sessionId, next.content, false)
         if (!sent) {
           throw new Error('External terminal is no longer available')
         }

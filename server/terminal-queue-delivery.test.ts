@@ -44,6 +44,9 @@ describe('Idle-only native queue delivery', () => {
     // A retained form answer is held to the same idle-only admission.
     ['before paste', 'send idleOnly'],
     ['after paste', 'send idleOnly'],
+    // So is a queued prompt typed in while Copilot waits for background shells.
+    ['before paste', 'send backgroundShellsOnly'],
+    ['after paste', 'send backgroundShellsOnly'],
   ] as const)('does not steer work that starts %s via %s', async (timing, via) => {
     const directory = await mkdtemp(path.join(tmpdir(), 'native-queue-admission-'))
     directories.push(directory)
@@ -102,7 +105,9 @@ draw('', ${timing === 'before paste'})
     await eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes('\u2579')))
     const sending = via === 'sendWhenIdle'
       ? controller.sendWhenIdle(id, 'Keep this queued work')
-      : controller.send(id, 'Keep this queued work', false, { idleOnly: true })
+      : controller.send(id, 'Keep this queued work', false, via === 'send idleOnly'
+        ? { idleOnly: true }
+        : { allowDuringAgentExecution: true, backgroundShellsOnly: true })
     await expect(sending).rejects.toMatchObject({
       statusCode: 409,
       ...(timing === 'after paste'

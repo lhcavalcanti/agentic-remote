@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
+  assertMousePointer,
   assertNoHorizontalOverflow,
   createUIScenes,
   uiContextOptions,
@@ -12,6 +13,11 @@ import { FIXTURE_NOW, SELECTED_SESSION_ID, createWorkspaceFixtureState, setupWor
 import { scheduleSchema, scheduleRunSchema } from '../shared/schedules'
 
 test.use(uiContextOptions)
+
+const lockedScreenshot = {
+  // Rounded-corner compositing can vary by one RGB level in Chromium.
+  animations: 'disabled', caret: 'hide', maxDiffPixels: 0, threshold: 0.01,
+} as const
 
 for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' || entry.name === 'phone')) {
   test.describe(`schedule abandonment ${viewport.name}`, () => {
@@ -217,10 +223,7 @@ for (const viewport of uiViewports) {
             expect(await page.locator('.sidebar').evaluate((sidebar) =>
               (window.innerWidth >= 1024 ? sidebar.firstElementChild : sidebar.lastElementChild)?.matches('.shell-rail'))).toBe(true)
           }
-          await expect(page).toHaveScreenshot(`${viewport.name}-${name}.png`, {
-            // Rounded-corner compositing can vary by one RGB level in Chromium.
-            animations: 'disabled', caret: 'hide', maxDiffPixels: 0, threshold: 0.01,
-          })
+          await expect(page).toHaveScreenshot(`${viewport.name}-${name}.png`, lockedScreenshot)
         } finally {
           fixture.assertHealthy()
         }
@@ -231,6 +234,33 @@ for (const viewport of uiViewports) {
 
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
+
+/** A microphone and recorder that record `fixture audio`; `window.fixtureMicrophone` counts their use. */
+async function mockMicrophone(page: Page) {
+  await page.addInitScript(() => {
+    const microphone = { calls: [] as MediaStreamConstraints[], stopped: 0 }
+    Object.assign(window, { fixtureMicrophone: microphone })
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async (constraints: MediaStreamConstraints) => {
+        microphone.calls.push(constraints)
+        return { getTracks: () => [{ stop: () => { microphone.stopped++ } }] }
+      } },
+    })
+    class Recorder extends EventTarget {
+      static isTypeSupported() { return true }
+      state = 'inactive'
+      mimeType = 'audio/webm'
+      start() { this.state = 'recording' }
+      stop() {
+        this.state = 'inactive'
+        this.dispatchEvent(new BlobEvent('dataavailable', { data: new Blob(['fixture audio'], { type: this.mimeType }) }))
+        this.dispatchEvent(new Event('stop'))
+      }
+    }
+    Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: Recorder })
+  })
+}
 
 test('settings categories preserve display name, scheduler defaults and the Host monitor destination', async ({ page, baseURL }) => {
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-navigation')!.setup(page)
@@ -535,6 +565,126 @@ for (const width of [320, 360]) {
   })
 }
 
+type ComposerPart = { left: number, right: number, top: number, bottom: number, width: number }
+
+/** Pastes a screenshot from the clipboard into the message box. */
+async function pasteImage(page: Page) {
+  await message(page).focus()
+  await message(page).evaluate((element) => {
+    const image = new Uint8Array(232_448)
+    image.set([137, 80, 78, 71, 13, 10, 26, 10])
+    const clipboardData = new DataTransfer()
+    clipboardData.items.add(new File([image], 'image.png', { type: 'image/png' }))
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }))
+  })
+  await expect(page.getByRole('listitem', { name: 'image.png attachment' })).toContainText('Attached · 227 KiB')
+}
+
+async function composerParts(page: Page) {
+  return page.locator('.composer').evaluate((composer) => {
+    const part = (element: Element | null): ComposerPart | undefined => {
+      if (!element) return undefined
+      const { left, right, top, bottom, width } = element.getBoundingClientRect()
+      return { left, right, top, bottom, width }
+    }
+    return {
+      viewportWidth: document.documentElement.clientWidth,
+      overflow: composer.scrollWidth - composer.clientWidth,
+      composer: part(composer)!,
+      attachments: part(composer.querySelector(':scope > .composer-attachments')),
+      text: part(composer.querySelector(':scope > .composer-text-panel'))!,
+      actions: part(composer.querySelector(':scope > .composer-actions')),
+      recording: part(composer.querySelector(':scope > .recording-panel')),
+    }
+  })
+}
+
+/** Each part lies inside the composer's box, below the one before it. */
+function expectColumn(layout: Awaited<ReturnType<typeof composerParts>>, parts: [string, ComposerPart | undefined][]) {
+  const { composer } = layout
+  expect(layout.overflow, 'composer overflow').toBeLessThanOrEqual(0)
+  expect(composer.left, 'composer left').toBeGreaterThanOrEqual(0)
+  expect(composer.right, 'composer right').toBeLessThanOrEqual(layout.viewportWidth)
+  let above = composer.top
+  for (const [name, part] of parts) {
+    expect(part, name).toBeDefined()
+    expect(part!.left, `${name} left`).toBeGreaterThanOrEqual(composer.left)
+    expect(part!.right, `${name} right`).toBeLessThanOrEqual(composer.right)
+    expect(part!.top, `${name} top`).toBeGreaterThanOrEqual(above - 1)
+    expect(part!.bottom, `${name} bottom`).toBeLessThanOrEqual(composer.bottom)
+    above = part!.bottom
+  }
+}
+
+// A mouse and a composer at least 620px wide get the `(hover: hover)` layout,
+// which the desktop scene locks cover only without an attachment or recording.
+for (const viewport of [uiViewports[0].viewport, { width: 1000, height: 640 }]) {
+  test.describe(`composer with a mouse ${viewport.width}x${viewport.height}`, () => {
+    test.use({ viewport, isMobile: false, hasTouch: false })
+
+    async function open(page: Page, baseURL: string | undefined, name: UISceneName) {
+      await mockMicrophone(page)
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === name)!.setup(page)
+      await assertMousePointer(page)
+      expect((await page.locator('.composer').boundingBox())!.width).toBeGreaterThanOrEqual(620)
+      return fixture
+    }
+
+    async function startRecording(page: Page) {
+      await page.getByRole('button', { name: 'Start microphone recording', exact: true }).click()
+      await expect(page.locator('.recording-panel')).toContainText(/Recording \d+:\d\d/)
+    }
+
+    test('refreshed composer stacks an attachment, the message box and its buttons or recording', async ({ page, baseURL }) => {
+      const fixture = await open(page, baseURL, 'composer-button-row')
+      try {
+        await pasteImage(page)
+        const attached = await composerParts(page)
+        expectColumn(attached, [['attachment', attached.attachments], ['message box', attached.text], ['buttons', attached.actions]])
+        await assertNoHorizontalOverflow(page)
+        if (viewport.width === uiViewports[0].viewport.width) {
+          await expect(page.locator('.composer-area')).toHaveScreenshot('desktop-composer-refresh-attachment.png', lockedScreenshot)
+        }
+        await startRecording(page)
+        const recording = await composerParts(page)
+        expectColumn(recording, [['attachment', recording.attachments], ['message box', recording.text], ['recording', recording.recording]])
+        // The recording takes the buttons' row, as it does on a touch screen; nothing above it moves.
+        expect(recording.text.top - recording.composer.top, 'message box offset')
+          .toBeCloseTo(attached.text.top - attached.composer.top, 0)
+        expect(recording.text.bottom - recording.text.top, 'message box height')
+          .toBeCloseTo(attached.text.bottom - attached.text.top, 0)
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+
+    test('classic composer keeps an attachment above the message box and its buttons', async ({ page, baseURL }) => {
+      const fixture = await open(page, baseURL, 'conversation')
+      try {
+        await pasteImage(page)
+        const { composer, attachments, text, actions, overflow } = await composerParts(page)
+        expect(overflow, 'composer overflow').toBeLessThanOrEqual(0)
+        expect(attachments!.width, 'attachment row').toBeGreaterThanOrEqual(composer.width - 2)
+        for (const [name, part] of [['message box', text], ['buttons', actions!]] as const) {
+          expect(part.top, `${name} top`).toBeGreaterThanOrEqual(attachments!.bottom - 1)
+          expect(part.bottom, `${name} bottom`).toBeLessThanOrEqual(composer.bottom)
+        }
+        expect(text.left, 'message box left').toBeGreaterThanOrEqual(composer.left)
+        expect(actions!.left, 'buttons beside the message box').toBeGreaterThanOrEqual(text.right - 1)
+        expect(actions!.top, 'buttons beside the message box').toBeLessThan(text.bottom)
+        expect(actions!.right, 'buttons right').toBeLessThanOrEqual(composer.right)
+        await startRecording(page)
+        const recording = await composerParts(page)
+        expectColumn(recording, [['attachment', recording.attachments], ['message box', recording.text], ['recording', recording.recording]])
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
 // App.test.tsx covers reconciliation, receipt failures, serialized queue races,
 // clipboard variants and history ownership. These locks add real-browser event
 // and HTTP wiring rather than duplicating that component-level matrix.
@@ -758,29 +908,7 @@ test.describe('browser interaction contracts', () => {
   })
 
   test('records with a mocked microphone and transcribes into the live draft without sending', async ({ page, baseURL }) => {
-    await page.addInitScript(() => {
-      const microphone = { calls: [] as MediaStreamConstraints[], stopped: 0 }
-      Object.assign(window, { fixtureMicrophone: microphone })
-      Object.defineProperty(navigator, 'mediaDevices', {
-        configurable: true,
-        value: { getUserMedia: async (constraints: MediaStreamConstraints) => {
-          microphone.calls.push(constraints)
-          return { getTracks: () => [{ stop: () => { microphone.stopped++ } }] }
-        } },
-      })
-      class Recorder extends EventTarget {
-        static isTypeSupported() { return true }
-        state = 'inactive'
-        mimeType = 'audio/webm'
-        start() { this.state = 'recording' }
-        stop() {
-          this.state = 'inactive'
-          this.dispatchEvent(new BlobEvent('dataavailable', { data: new Blob(['fixture audio'], { type: this.mimeType }) }))
-          this.dispatchEvent(new Event('stop'))
-        }
-      }
-      Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: Recorder })
-    })
+    await mockMicrophone(page)
     const handle = await open(page, baseURL, 'conversation')
     await message(page).fill('Keep this draft.')
     await page.getByRole('button', { name: 'Start microphone recording', exact: true }).click()

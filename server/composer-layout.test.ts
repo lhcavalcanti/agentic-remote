@@ -58,6 +58,11 @@ function declaration(css: string, selector: string, property: string): string {
 // panel. A touch device keeps them in a separate bar, where they stay large
 // enough to hit with a thumb.
 describe('desktop composer layout', () => {
+  // That row is the classic composer's. The refreshed one stays a column,
+  // where a full-row attachment or recording would push the text panel and
+  // buttons out of the box.
+  const classic = '.composer:not(.composer--refresh)'
+
   it('stacks the actions below the text panel by default', async () => {
     const css = await stylesheet()
 
@@ -68,9 +73,9 @@ describe('desktop composer layout', () => {
     const css = await stylesheet()
     const desktop = pointerLayout(css)
 
-    expect(declaration(desktop, '.composer', 'flex-direction')).toBe('row')
+    expect(declaration(desktop, classic, 'flex-direction')).toBe('row')
     // Bottom-aligned, so the buttons stay with the last line as the box grows.
-    expect(declaration(desktop, '.composer', 'align-items')).toBe('flex-end')
+    expect(declaration(desktop, classic, 'align-items')).toBe('flex-end')
   })
 
   // The sidebar is resizable, so a wide window can still leave a narrow
@@ -118,12 +123,12 @@ describe('desktop composer layout', () => {
     const desktop = pointerLayout(css)
 
     // Full width on its own line rather than beside the text.
-    expect(declaration(desktop, '.composer > .recording-panel', 'flex')).toBe(
+    expect(declaration(desktop, `${classic} > .recording-panel`, 'flex')).toBe(
       '1 0 100%',
     )
     // Nested inside the merged border it would read as a panel within a panel.
     expect(
-      declaration(desktop, '.composer:has(.recording-panel)', 'border-color'),
+      declaration(desktop, `${classic}:has(.recording-panel)`, 'border-color'),
     ).toBe('transparent')
   })
 

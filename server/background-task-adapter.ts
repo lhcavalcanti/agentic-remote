@@ -1109,6 +1109,17 @@ export function backgroundTasksFromEvents(
   // completion has to know whether it came from something that reads shells.
   const toolNames = new Map<string, string>()
   const aliases = new Map<string, string>()
+  // Multi-turn agents that finished processing and wait, idle, for another
+  // message. Only these can start working again after ending.
+  const idleAgents = new Set<string>()
+  // Idle agents a message woke. Copilot announces idling again only to a
+  // parent that is not already waiting for the reply, so a woken agent's run
+  // ends, like the foreground's, with a turn end no turn start follows.
+  const wokenAgents = new Set<string>()
+  // Log position at which each agent last stopped working. Positions, not
+  // timestamps: events written in the same millisecond still have an order.
+  const agentEndedOrder = new Map<string, number>()
+  let eventOrder = -1
   type ShellIdentity = {
     startedAt: string
     creationOrder: number
@@ -1123,6 +1134,11 @@ export function backgroundTasksFromEvents(
     exitCode?: number
     completion?: Pick<BackgroundTask, 'status' | 'completedAt' | 'error' | 'progress'>
     ids: Set<string>
+    /** The subagent that started the shell, when one did. */
+    owner?: string
+    /** Log position and time of the latest event that showed it running. */
+    seenRunningOrder?: number
+    seenRunningAt?: string
   }
   // A per-execution handle that stays with a shell through metadata refreshes,
   // provider-id rekeys and native handoffs, even before a synchronous launch
@@ -1363,6 +1379,7 @@ export function backgroundTasksFromEvents(
   }
 
   for (const event of events) {
+    eventOrder += 1
     const data = recordValue(event.data)
     if (
       event.type === 'session.start' ||
@@ -1378,6 +1395,34 @@ export function backgroundTasksFromEvents(
           task.completedAt = event.timestamp
           task.error = task.error || 'Ended without reporting completion'
           task.canCancel = false
+        }
+      }
+      // A restarted process has none of its old agents left to wake.
+      idleAgents.clear()
+      wokenAgents.clear()
+    }
+    if (
+      event.agentId &&
+      (event.type === 'user.message' ||
+        event.type === 'assistant.turn_start' ||
+        event.type === 'assistant.turn_end')
+    ) {
+      const id = taskIdAlias(aliases, event.agentId)
+      const current = tasks.get(id)
+      if (current?.type === 'agent') {
+        if (event.type === 'assistant.turn_end') {
+          if (wokenAgents.delete(id) && current.status === 'running') {
+            current.status = 'completed'
+            current.completedAt = event.timestamp
+            idleAgents.add(id)
+            agentEndedOrder.set(id, eventOrder)
+          }
+        } else if (idleAgents.delete(id) && current.status === 'completed') {
+          // A message woke an idle agent: it works until it idles again.
+          current.status = 'running'
+          current.completedAt = undefined
+          wokenAgents.add(id)
+          agentEndedOrder.delete(id)
         }
       }
     }
@@ -1453,6 +1498,13 @@ export function backgroundTasksFromEvents(
           bindShellIdentity(current, pending)
         } else {
           shellIdentityOf(current)
+        }
+      }
+      if (current.type === 'agent') {
+        if (!isTerminalTaskStatus(current.status)) {
+          agentEndedOrder.delete(current.id)
+        } else if (!previous || !isTerminalTaskStatus(previous.status)) {
+          agentEndedOrder.set(current.id, eventOrder)
         }
       }
       tasks.set(current.id, current)
@@ -1628,8 +1680,18 @@ export function backgroundTasksFromEvents(
             eventString(kind, 'agentType') || current.agentType
           current.prompt = boundedText(kind.prompt) || current.prompt
           if (kindType === 'agent_idle') {
-            current.status = 'queued'
-            current.canCancel = true
+            // Idle is finished processing, not waiting to start: the agent
+            // only waits for another message, which wakes it above. Keeping it
+            // live left every multi-turn agent a session ever ran listed as
+            // work until its process restarted.
+            current.status = 'completed'
+            current.completedAt = event.timestamp
+            current.result = textFromValue(kind.result) || current.result
+            current.latestResponse =
+              textFromValue(kind.latestResponse) || current.latestResponse
+            current.canCancel = false
+            idleAgents.add(id)
+            wokenAgents.delete(id)
           } else {
             const status = eventString(kind, 'status')
             current.status =
@@ -1645,6 +1707,7 @@ export function backgroundTasksFromEvents(
               textFromValue(kind.latestResponse) || current.latestResponse
             current.canCancel = false
           }
+          agentEndedOrder.set(id, eventOrder)
           tasks.set(id, current)
           aliases.set(agentId, id)
         }
@@ -1692,6 +1755,9 @@ export function backgroundTasksFromEvents(
         const identity: ShellIdentity = {
           startedAt: event.timestamp, creationOrder: shellCreationOrder++,
           toolCallId, materialized: false, ids: new Set(),
+          owner: event.agentId || eventString(data, 'agentId'),
+          seenRunningOrder: eventOrder,
+          seenRunningAt: event.timestamp,
         }
         if (toolCallId && shellId) {
           identity.start = {
@@ -1779,6 +1845,7 @@ export function backgroundTasksFromEvents(
         current.executionMode = 'background'
       }
       if (event.type === 'subagent.started') {
+        agentEndedOrder.delete(id)
         current.status = 'running'
         current.description =
           boundedText(eventString(data, 'agentDescription')) ||
@@ -1790,6 +1857,7 @@ export function backgroundTasksFromEvents(
           current.agentType
         current.model = eventString(data, 'model') || current.model
       } else {
+        agentEndedOrder.set(id, eventOrder)
         current.completedAt = event.timestamp
         current.status =
           event.type === 'subagent.completed'
@@ -1918,6 +1986,11 @@ export function backgroundTasksFromEvents(
         // evidence (handled below) may change the observed lifecycle.
         if (current?.type === 'shell' && isLiveTaskStatus(current.status) && data.success === true) {
           shellTaskOutput(current, data.result)
+          const observed = shellInstances.get(current)
+          if (observed) {
+            observed.seenRunningOrder = eventOrder
+            observed.seenRunningAt = event.timestamp
+          }
         }
         continue
       }
@@ -1957,6 +2030,11 @@ export function backgroundTasksFromEvents(
           // can no longer end it.
           assumedBackground.delete(current.id)
           assumedOwners.delete(current.id)
+          const handedOff = shellInstances.get(current)
+          if (handedOff) {
+            handedOff.seenRunningOrder = eventOrder
+            handedOff.seenRunningAt = event.timestamp
+          }
         }
         // Only a real handoff renames the task after the shell it created. An
         // ordinary command reports the same id when it finishes, and taking
@@ -2099,6 +2177,45 @@ export function backgroundTasksFromEvents(
     }
     task.status = 'failed'
     task.completedAt = endedAt
+    task.error = task.error || 'Ended without reporting completion'
+    task.canCancel = false
+  }
+  // Copilot reports a subagent's shell finishing only to that subagent, never
+  // in this log, so nothing here can close it. The subagent waits on its own
+  // shells, though: once it has stopped working since anything last showed
+  // the shell running, it is not waiting on that shell any more. A detached
+  // shell is meant to outlive it and is left alone.
+  for (const task of tasks.values()) {
+    if (
+      task.type !== 'shell' ||
+      !isLiveTaskStatus(task.status) ||
+      task.attachmentMode === 'detached'
+    ) {
+      continue
+    }
+    const identity = shellInstances.get(task)
+    if (!identity?.owner) continue
+    const ownerId = taskIdAlias(aliases, identity.owner)
+    const owner = tasks.get(ownerId)
+    if (
+      owner?.type !== 'agent' ||
+      !isTerminalTaskStatus(owner.status) ||
+      !owner.completedAt ||
+      identity.seenRunningOrder === undefined ||
+      !identity.seenRunningAt
+    ) {
+      continue
+    }
+    const ownerEnded = agentEndedOrder.get(ownerId)
+    const stoppedSinceSeen = ownerEnded !== undefined
+      ? ownerEnded > identity.seenRunningOrder
+      // Ended where no position is kept: the clock is all there is, and a tie
+      // counts as after, since any later sighting of the shell undoes it
+      // while the other way round nothing would.
+      : Date.parse(owner.completedAt) >= Date.parse(identity.seenRunningAt)
+    if (!stoppedSinceSeen) continue
+    task.status = 'failed'
+    task.completedAt = owner.completedAt
     task.error = task.error || 'Ended without reporting completion'
     task.canCancel = false
   }

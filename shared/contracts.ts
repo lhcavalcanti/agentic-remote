@@ -875,6 +875,12 @@ export interface SessionOrderSnapshot {
    * that predates it sends none: nothing is hidden.
    */
   hidden?: string[]
+  /**
+   * Keys of the sessions whose last turn ended while nobody was reading them,
+   * or that someone marked unread. Shared by every browser on the hub. A hub
+   * that predates it sends none: nothing is unread.
+   */
+  unread?: string[]
   order: Record<string, string[]>
 }
 

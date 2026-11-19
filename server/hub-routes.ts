@@ -27,6 +27,7 @@ import { noteRefusalReason } from './refusal-metrics.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
+import { SessionUnreadTracker } from './session-unread-tracker.js'
 import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
 import type { ClientPresence } from './client-presence.js'
@@ -68,7 +69,13 @@ const sessionOrderEntryParamsSchema = z.object({
   sessionId: z.string().min(1).max(200),
 })
 
-const sessionOrderEntrySchema = z.object({ hidden: z.boolean() })
+// One change per request: hiding a session, or marking it read or unread.
+const sessionOrderEntrySchema = z
+  .object({ hidden: z.boolean().optional(), unread: z.boolean().optional() })
+  .refine(
+    (input) => (input.hidden === undefined) !== (input.unread === undefined),
+    'Choose whether to hide the session or to mark it read or unread',
+  )
 
 const sessionOrderBootstrapSchema = z.object({
   order: z.record(z.string().trim().min(1).max(200), sessionOrderKeys),
@@ -814,14 +821,17 @@ export async function registerHubRoutes(
     },
   )
 
-  // Hiding only leaves a session out of the Sessions list; it keeps running,
-  // notifying, and answering Oracle exactly as before.
+  // Hiding only leaves a session out of the Sessions list, and unread only
+  // marks it; either way it keeps running, notifying, and answering Oracle
+  // exactly as before.
   app.put('/api/session-order/:computerId/:sessionId', async (request) => {
     const { computerId, sessionId } = sessionOrderEntryParamsSchema.parse(request.params)
     const input = sessionOrderEntrySchema.parse(request.body)
     return {
       sessionOrder: await commitOrder((store) =>
-        store.setSessionHidden(computerId, sessionId, input.hidden),
+        input.unread === undefined
+          ? store.setSessionHidden(computerId, sessionId, input.hidden === true)
+          : store.setSessionUnread(computerId, sessionId, input.unread),
       ),
     }
   })
@@ -1381,6 +1391,9 @@ export async function registerHubRoutes(
   // mid-seed would be appended back after its removal was already applied.
   const retiredSessions = new Set<string>()
   const retiredComputers = new Set<string>()
+  // Each session's last status, so the end of a turn can mark it unread
+  // whether or not any browser is connected to see it.
+  const turns = new SessionUnreadTracker()
   /**
    * Seats a session by lineage: a successor takes its nearest recorded
    * ancestor's slot, and only a session with no known ancestor is appended.
@@ -1401,6 +1414,7 @@ export async function registerHubRoutes(
   }
   const trackOrder = (event: HubEvent) => {
     if (!sessionOrder) return
+    const finished = turns.observe(event)
     const change = (apply: (store: SessionOrderStore) => Promise<SessionOrderSnapshot>) => {
       orderWork = orderWork
         .then(() => commitOrder(apply))
@@ -1413,6 +1427,11 @@ export async function registerHubRoutes(
     if (event.type === 'session.upserted') {
       const { computerId, id, replacedSessionIds } = event.session
       change((store) => seatSession(store, computerId, id, replacedSessionIds))
+      // Behind its seat: only a session the list holds can be unread. Whoever
+      // has it open marks it read again.
+      if (finished) {
+        change((store) => store.setSessionUnread(computerId, id, true, { ifListed: true }))
+      }
       return
     }
     if (event.type === 'session.removed') {

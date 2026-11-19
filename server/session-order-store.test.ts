@@ -24,7 +24,7 @@ describe('SessionOrderStore', () => {
   it('starts empty and advances a revision only when something changes', async () => {
     const { store: order } = await store()
     expect(order.snapshot()).toEqual({
-      revision: 0, bootstrapped: false, showSuspended: true, showHidden: false, hidden: [], order: {},
+      revision: 0, bootstrapped: false, showSuspended: true, showHidden: false, hidden: [], unread: [], order: {},
     })
     expect(order.isBootstrapped()).toBe(false)
 
@@ -35,6 +35,7 @@ describe('SessionOrderStore', () => {
       showSuspended: true,
       showHidden: false,
       hidden: [],
+      unread: [],
       order: { pc: ['pc:a'] },
     })
 
@@ -57,6 +58,7 @@ describe('SessionOrderStore', () => {
       showSuspended: true,
       showHidden: false,
       hidden: [],
+      unread: [],
       order: { pc: ['pc:b', 'pc:a'] },
     })
   })
@@ -95,6 +97,7 @@ describe('SessionOrderStore', () => {
         version: 1,
         revision: 4,
         hidden: ['pc:b', 'pc:b', 7, ''],
+        unread: ['pc:a', 'pc:a', 7, ''],
         order: { pc: ['pc:a', 'pc:a', 7, '', 'pc:b'], empty: [] },
       }),
     )
@@ -106,6 +109,7 @@ describe('SessionOrderStore', () => {
       showSuspended: true,
       showHidden: false,
       hidden: ['pc:b'],
+      unread: ['pc:a'],
       order: { pc: ['pc:a', 'pc:b'] },
     })
   })
@@ -215,6 +219,7 @@ describe('SessionOrderStore', () => {
     const { store: order, directory } = await store()
     await order.appendSession('pc', 'a')
     await order.setSessionHidden('pc', 'a', true)
+    await order.setSessionUnread('pc', 'a', true)
     await order.removeSession('pc', 'a')
 
     // Replacing the directory with a file makes the temporary write fail.
@@ -224,7 +229,10 @@ describe('SessionOrderStore', () => {
     await rm(directory, { force: true })
     await mkdir(directory)
 
-    expect((await order.replaceSession('pc', 'a', 'a2', 0)).hidden).toEqual(['pc:a2'])
+    expect(await order.replaceSession('pc', 'a', 'a2', 0)).toMatchObject({
+      hidden: ['pc:a2'],
+      unread: ['pc:a2'],
+    })
   })
 
   it('does not hide a replacement whose predecessor was shown again before it was replaced', async () => {
@@ -242,6 +250,136 @@ describe('SessionOrderStore', () => {
     // Shown before the clear's link arrives.
     await order.setSessionHidden('pc', 'b', false)
     expect((await order.replaceSession('pc', 'b', 'b2')).hidden).toEqual([])
+  })
+
+  it('marks a session unread and read durably, advancing only on a change', async () => {
+    const { store: order, directory } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+
+    const unread = await order.setSessionUnread('pc', 'b', true)
+    expect(unread).toMatchObject({ revision: 3, unread: ['pc:b'], hidden: [] })
+    expect((await order.setSessionUnread('pc', 'b', true)).revision).toBe(3)
+    // Unread never reorders.
+    expect(unread.order).toEqual({ pc: ['pc:a', 'pc:b'] })
+
+    const reloaded = new SessionOrderStore(directory)
+    await reloaded.initialize()
+    expect(reloaded.snapshot()).toEqual(unread)
+
+    const read = await reloaded.setSessionUnread('pc', 'b', false)
+    expect(read).toMatchObject({ revision: 4, unread: [] })
+    expect((await reloaded.setSessionUnread('pc', 'b', false)).revision).toBe(4)
+  })
+
+  it('refuses to mark unread a session its lane does not hold, but marks one read freely', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+
+    await expect(order.setSessionUnread('pc', 'missing', true)).rejects.toMatchObject({
+      statusCode: 409,
+    })
+    await expect(order.setSessionUnread('laptop', 'a', true)).rejects.toMatchObject({
+      statusCode: 409,
+    })
+    // A turn that ends for a session the list no longer holds is not news.
+    expect((await order.setSessionUnread('pc', 'missing', true, { ifListed: true })).revision)
+      .toBe(1)
+    expect(order.snapshot()).toMatchObject({ revision: 1, unread: [] })
+    expect((await order.setSessionUnread('pc', 'missing', false)).revision).toBe(1)
+  })
+
+  it('keeps unread and hidden independent of each other', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.setSessionHidden('pc', 'a', true)
+
+    expect(await order.setSessionUnread('pc', 'a', true)).toMatchObject({
+      hidden: ['pc:a'],
+      unread: ['pc:a'],
+    })
+    expect(await order.setSessionHidden('pc', 'a', false)).toMatchObject({
+      hidden: [],
+      unread: ['pc:a'],
+    })
+  })
+
+  it('forgets an unread session when it is closed or deleted, or its computer is unpaired', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.appendSession('laptop', 'x')
+    await order.setSessionUnread('pc', 'a', true)
+    await order.setSessionUnread('pc', 'b', true)
+    await order.setSessionUnread('laptop', 'x', true)
+
+    expect((await order.removeSession('pc', 'a')).unread).toEqual(['pc:b', 'laptop:x'])
+    const unpaired = await order.removeComputer('laptop')
+    expect(unpaired.unread).toEqual(['pc:b'])
+    expect(unpaired.order).toEqual({ pc: ['pc:b'] })
+  })
+
+  it('keeps a cleared session unread under its replacement identity', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.setSessionUnread('pc', 'a', true)
+
+    const replaced = await order.replaceSession('pc', 'a', 'a2')
+    expect(replaced.unread).toEqual(['pc:a2'])
+    expect(replaced.order).toEqual({ pc: ['pc:a2', 'pc:b'] })
+  })
+
+  it('restores unread onto a replacement after a plain removal retired the predecessor', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.setSessionUnread('pc', 'a', true)
+    const slot = order.indexOf('pc', 'a')
+
+    // A legacy node reports the clear as a plain removal first.
+    expect((await order.removeSession('pc', 'a')).unread).toEqual([])
+    const restored = await order.replaceSession('pc', 'a', 'a2', slot)
+    expect(restored.unread).toEqual(['pc:a2'])
+
+    // Reported again, the same clear changes nothing.
+    expect((await order.replaceSession('pc', 'a', 'a2', slot)).revision)
+      .toBe(restored.revision)
+  })
+
+  it('does not mark a replacement unread whose predecessor was read before it was replaced', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.appendSession('pc', 'b')
+    await order.setSessionUnread('pc', 'a', true)
+    await order.setSessionUnread('pc', 'b', true)
+
+    // Read after a legacy node's plain removal already retired it.
+    await order.removeSession('pc', 'a')
+    await order.setSessionUnread('pc', 'a', false)
+    expect((await order.replaceSession('pc', 'a', 'a2', 0)).unread).toEqual(['pc:b'])
+
+    // Read before the clear's link arrives.
+    await order.setSessionUnread('pc', 'b', false)
+    expect((await order.replaceSession('pc', 'b', 'b2')).unread).toEqual([])
+  })
+
+  it('does not bring back marks a closed session had once it is reopened and later cleared', async () => {
+    const { store: order } = await store()
+    await order.appendSession('pc', 'a')
+    await order.setSessionHidden('pc', 'a', true)
+    await order.setSessionUnread('pc', 'a', true)
+
+    // Closing drops both marks, and reopening lists it again without them.
+    await order.removeSession('pc', 'a')
+    expect(await order.appendSession('pc', 'a')).toMatchObject({ hidden: [], unread: [] })
+
+    // Only a clear reported as a plain removal may hand its marks on.
+    expect(await order.replaceSession('pc', 'a', 'a2')).toMatchObject({
+      hidden: [],
+      unread: [],
+      order: { pc: ['pc:a2'] },
+    })
   })
 
   it('reorders one lane without touching another', async () => {
@@ -484,6 +622,7 @@ describe('SessionOrderStore', () => {
     await expect(order.appendSession('pc', 'c')).rejects.toThrow()
     await expect(order.setSessionHidden('pc', 'b', true)).rejects.toThrow()
     await expect(order.setSessionHidden('pc', 'a', false)).rejects.toThrow()
+    await expect(order.setSessionUnread('pc', 'b', true)).rejects.toThrow()
     await expect(order.setVisibility({ showHidden: true })).rejects.toThrow()
     expect(order.snapshot()).toEqual(committed)
 
@@ -503,6 +642,7 @@ describe('SessionOrderStore', () => {
       showSuspended: true,
       showHidden: false,
       hidden: [],
+      unread: [],
       order: { pc: ['pc:a'] },
     })
   })

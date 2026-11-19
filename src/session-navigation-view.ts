@@ -10,7 +10,7 @@ import {
   taskSnapshot,
 } from './session-presentation'
 
-export type SessionFilter = 'all' | 'attention' | 'working'
+export type SessionFilter = 'all' | 'attention' | 'working' | 'unread'
 
 export interface SessionNavigationView {
   groups: {
@@ -35,6 +35,7 @@ export interface HiddenSessions {
 }
 
 const noHiddenSessions: HiddenSessions = { keys: new Set(), shown: false }
+const noUnreadSessions: ReadonlySet<string> = new Set()
 
 export function sessionNavigationView(
   computers: readonly ComputerSummary[],
@@ -44,13 +45,16 @@ export function sessionNavigationView(
   filter: SessionFilter,
   showSuspended = true,
   hiddenSessions: HiddenSessions = noHiddenSessions,
+  /** `computerId:sessionId` of the sessions not read since their last turn ended. */
+  unreadSessions: ReadonlySet<string> = noUnreadSessions,
 ): SessionNavigationView {
-  const counts = { all: 0, attention: 0, working: 0, suspended: 0, hidden: 0 }
+  const counts = { all: 0, attention: 0, working: 0, unread: 0, suspended: 0, hidden: 0 }
   const groups = computers.map((computer) => {
     const open = (sessionsByComputer.get(computer.id) || []).filter((session) => session.isOpen !== false)
     const states = open.map((session) => ({
       session,
       hidden: hiddenSessions.keys.has(sessionKey(session)),
+      unread: unreadSessions.has(sessionKey(session)),
       state: sessionPresentation(
         session,
         taskSnapshot(backgroundTasks, session),
@@ -66,17 +70,19 @@ export function sessionNavigationView(
     counts.all += classified.length
     counts.attention += classified.filter(({ state }) => state.needsAttention).length
     counts.working += classified.filter(({ state }) => state.working).length
+    counts.unread += classified.filter((entry) => entry.unread).length
     counts.suspended += classified.filter(({ session }) => session.suspended === true).length
     return {
       computer,
       total: classified.length,
       hidden: states.length - classified.length,
-      sessions: classified.filter(({ session, state }) =>
+      sessions: classified.filter(({ session, state, unread }) =>
         (showSuspended || session.suspended !== true) &&
           matchesSessionSearch(session, query, computer.name) &&
           (filter === 'all' ||
             (filter === 'attention' && state.needsAttention) ||
-            (filter === 'working' && state.working)),
+            (filter === 'working' && state.working) ||
+            (filter === 'unread' && unread)),
       ).map(({ session }) => session),
     }
   })

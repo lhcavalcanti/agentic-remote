@@ -649,6 +649,7 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
       showSuspended: true,
       showHidden: false,
       hidden: [],
+      unread: [],
       order: Object.fromEntries(
         fixtureComputers.map((computer) => [
           computer.id,
@@ -1252,7 +1253,7 @@ export async function setupWorkspaceFixture(
       await respond({ sessionOrder: state.sessionOrder })
       return
     }
-    // The hub's list visibility and hidden sessions, committed like its order.
+    // The hub's list visibility, hidden and unread sessions, committed like its order.
     const commitSessionOrder = async (change: Partial<SessionOrderSnapshot>) => {
       state.sessionOrder = {
         ...state.sessionOrder,
@@ -1272,8 +1273,13 @@ export async function setupWorkspaceFixture(
     }
     const sessionOrderEntry = path.match(/^\/api\/session-order\/([^/]+)\/([^/]+)$/)
     if (method === 'PUT' && sessionOrderEntry) {
-      const input = request.postDataJSON() as { hidden: boolean }
+      const input = request.postDataJSON() as { hidden?: boolean; unread?: boolean }
       const key = `${decodeURIComponent(sessionOrderEntry[1])}:${decodeURIComponent(sessionOrderEntry[2])}`
+      if (input.unread !== undefined) {
+        const unread = (state.sessionOrder.unread ?? []).filter((entry) => entry !== key)
+        await commitSessionOrder({ unread: input.unread ? [...unread, key] : unread })
+        return
+      }
       const others = (state.sessionOrder.hidden ?? []).filter((entry) => entry !== key)
       await commitSessionOrder({ hidden: input.hidden ? [...others, key] : others })
       return

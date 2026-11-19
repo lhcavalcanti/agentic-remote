@@ -11,6 +11,8 @@ import {
   EyeOff,
   GripVertical,
   History,
+  Mail,
+  MailOpen,
   Monitor,
   Pause,
   Play,
@@ -73,6 +75,11 @@ type SessionActions = {
   /** `computerId:sessionId` of the sessions whose hide or show is being saved. */
   hidingSessions: ReadonlySet<string>
   onToggleSessionHidden: (session: ManagedSession) => void
+  /** `computerId:sessionId` of the sessions not read since their last turn ended. */
+  unreadSessions: ReadonlySet<string>
+  /** `computerId:sessionId` of the sessions whose read state is being saved. */
+  markingUnreadSessions: ReadonlySet<string>
+  onToggleSessionUnread: (session: ManagedSession) => void
 }
 
 export function SessionState({ presentation }: {
@@ -162,6 +169,9 @@ function SortableSessionItem({
   hiddenSessions,
   hidingSessions,
   onToggleSessionHidden,
+  unreadSessions,
+  markingUnreadSessions,
+  onToggleSessionUnread,
   managedSessions,
   recoverableClose,
 }: SessionActions & {
@@ -206,13 +216,18 @@ function SortableSessionItem({
   // The hub keeps this, not the owning computer, so it works offline too.
   const hidden = hiddenSessions.has(sessionKey(session))
   const hiding = hidingSessions.has(sessionKey(session))
+  // Hub-owned too, and shared by every browser on it.
+  const unread = unreadSessions.has(sessionKey(session))
+  const markingUnread = markingUnreadSessions.has(sessionKey(session))
   return (
     <div
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
       )} ${presentation.working && runningBackgroundTasks > 0 ? 'session-item--background-running' : ''} ${
         session.suspended ? 'session-item--suspended' : ''
-      } ${hidden ? 'session-item--hidden' : ''} ${presentation.needsAttention ? 'session-item--attention' : ''} ${
+      } ${hidden ? 'session-item--hidden' : ''} ${unread ? 'session-item--unread' : ''} ${
+        presentation.needsAttention ? 'session-item--attention' : ''
+      } ${
         selected ? 'session-item--active' : ''
       } ${closing ? 'session-item--closing' : ''} ${isDragging ? 'sortable-dragging' : ''}`}
       ref={setNodeRef}
@@ -235,6 +250,7 @@ function SortableSessionItem({
           aria-current={selected ? 'page' : undefined}
           aria-label={[
             session.title,
+            unread ? 'unread' : undefined,
             originPreview ? sessionOriginDescription(session.provenance) :
               managedSessions?.has(sessionKey(session)) ? 'started by Oracle' : undefined,
             session.retention?.pinned ? 'kept for review' : undefined,
@@ -277,7 +293,10 @@ function SortableSessionItem({
                 ? null
                 : <SessionState presentation={presentation} />}
             </span>
-            <strong>{session.title}</strong>
+            <strong>
+              {unread ? <span aria-hidden="true" className="session-item__unread-dot" /> : null}
+              {session.title}
+            </strong>
             <small className="session-item__where">
               <span className="session-item__cwd">{shortPath(session.cwd)}</span>
               <time
@@ -351,6 +370,27 @@ function SortableSessionItem({
           type="button"
         >
           {session.suspended ? <Play aria-hidden="true" size={13} /> : <Pause aria-hidden="true" size={13} />}
+        </button>
+        <button
+          aria-busy={markingUnread || undefined}
+          aria-label={
+            unread ? `Mark ${session.title} as read` : `Mark ${session.title} as unread`
+          }
+          className="session-item__unread"
+          disabled={markingUnread}
+          onClick={() => onToggleSessionUnread(session)}
+          title={
+            markingUnread
+              ? unread
+                ? 'Marking this session as unread'
+                : 'Marking this session as read'
+              : unread
+                ? 'Mark as read'
+                : 'Mark as unread'
+          }
+          type="button"
+        >
+          {unread ? <MailOpen aria-hidden="true" size={13} /> : <Mail aria-hidden="true" size={13} />}
         </button>
         <button
           aria-busy={hiding || undefined}
@@ -571,6 +611,7 @@ export function SessionNavigation({
     { id: 'all', label: 'All', count: counts.all },
     { id: 'attention', label: 'Needs you', count: counts.attention },
     { id: 'working', label: 'Working', count: counts.working },
+    { id: 'unread', label: 'Unread', count: counts.unread },
   ]
   useEffect(() => {
     if (loading || counts.all === 0 || restoredScrollRef.current) return

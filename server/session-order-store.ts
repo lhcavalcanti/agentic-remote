@@ -22,6 +22,11 @@ interface SessionOrderState {
    * lane holds it, and leaves with it, so this never outgrows the order.
    */
   hidden: string[]
+  /**
+   * Sessions whose last turn ended while nobody was reading them, or that
+   * someone marked unread. Bounded by the order exactly as `hidden` is.
+   */
+  unread: string[]
   order: Record<string, string[]>
 }
 
@@ -33,6 +38,17 @@ export interface SessionVisibility {
 
 export function sessionOrderKey(computerId: string, sessionId: string): string {
   return `${computerId}:${sessionId}`
+}
+
+/**
+ * Keys a plain removal took out of the list that a replacement may still
+ * inherit, oldest first. Only a clear's own response comes back for one,
+ * moments later, so a few dozen is plenty.
+ */
+function retire(retired: Set<string>, key: string): void {
+  retired.add(key)
+  const [oldest] = retired
+  if (retired.size > 64 && oldest !== undefined) retired.delete(oldest)
 }
 
 function laneFrom(value: unknown): string[] | undefined {
@@ -65,6 +81,7 @@ export class SessionOrderStore {
     showSuspended: true,
     showHidden: false,
     hidden: [],
+    unread: [],
     order: {},
   }
   /**
@@ -74,12 +91,13 @@ export class SessionOrderStore {
    */
   private commits: Promise<unknown> = Promise.resolve()
   /**
-   * Hidden sessions a plain removal took out of the list. A node that
-   * predates replacement links reports a clear that way before its response
-   * names the successor, which then inherits this; a Show in between clears
-   * it. Nothing else reads it, so it stays in memory and small.
+   * Hidden or unread sessions a plain removal took out of the list. A node
+   * that predates replacement links reports a clear that way before its
+   * response names the successor, which then inherits them; a Show or a read
+   * in between clears it. Nothing else reads them, so they stay in memory.
    */
   private retiredHidden = new Set<string>()
+  private retiredUnread = new Set<string>()
 
   constructor(private readonly directory: string) {
     this.statePath = path.join(directory, 'session-order.json')
@@ -127,6 +145,8 @@ export class SessionOrderStore {
       // A file from before sessions could be hidden has neither field.
       showHidden: parsed.showHidden === true,
       hidden: laneFrom(parsed.hidden) ?? [],
+      // Nor one from before sessions could be unread: nothing is.
+      unread: laneFrom(parsed.unread) ?? [],
       order,
     }
   }
@@ -138,6 +158,7 @@ export class SessionOrderStore {
       showSuspended: this.state.showSuspended,
       showHidden: this.state.showHidden,
       hidden: [...this.state.hidden],
+      unread: [...this.state.unread],
       order: structuredClone(this.state.order),
     }
   }
@@ -193,6 +214,41 @@ export class SessionOrderStore {
         )
       }
       state.hidden = [...state.hidden, key]
+      return true
+    })
+  }
+
+  /**
+   * Marks a session unread, or read. Like hiding, nothing about the session
+   * itself changes, and only a session its lane holds can be marked unread;
+   * marking one read is always safe. `ifListed` makes an unlisted session a
+   * no-op rather than a refusal, for the hub's own mark when a turn ends just
+   * as the session leaves.
+   */
+  async setSessionUnread(
+    computerId: string,
+    sessionId: string,
+    unread: boolean,
+    { ifListed = false }: { ifListed?: boolean } = {},
+  ): Promise<SessionOrderSnapshot> {
+    const key = sessionOrderKey(computerId, sessionId)
+    return this.commit((order, state) => {
+      if (!unread) this.retiredUnread.delete(key)
+      if (state.unread.includes(key) === unread) return false
+      if (!unread) {
+        state.unread = state.unread.filter((entry) => entry !== key)
+        return true
+      }
+      // Checked inside the commit: a removal queued ahead of this has already
+      // retired the key, and marking it would bring it back.
+      if (!(order[computerId] ?? []).includes(key)) {
+        if (ifListed) return false
+        throw Object.assign(
+          new Error(`Session ${key} is not in the session list; reload the session list`),
+          { statusCode: 409 },
+        )
+      }
+      state.unread = [...state.unread, key]
       return true
     })
   }
@@ -297,8 +353,8 @@ export class SessionOrderStore {
    *
    * `fallbackIndex` covers a legacy node whose plain removal already retired
    * the predecessor before the clear response named its successor: the slot is
-   * read before the clear and restored here. Whether it was hidden is what
-   * that removal retired.
+   * read before the clear and restored here. Whether it was hidden or unread
+   * is what that removal retired.
    */
   async replaceSession(
     computerId: string,
@@ -311,13 +367,13 @@ export class SessionOrderStore {
     const next = sessionOrderKey(computerId, nextSessionId)
     return this.commit((order, state) => {
       // Clearing replaces the identity, not the decision to keep it out of
-      // the list.
-      const retired = this.retiredHidden.delete(previous)
-      const carried = state.hidden.includes(previous) || retired
-      const hidden = state.hidden.filter((key) => key !== previous)
-      if (carried && !hidden.includes(next)) hidden.push(next)
-      const hiddenChanged = !sameLane(state.hidden, hidden)
+      // the list, nor what is still waiting to be read.
+      const hidden = carried(state.hidden, this.retiredHidden, previous, next)
+      const unread = carried(state.unread, this.retiredUnread, previous, next)
+      const marksChanged =
+        !sameLane(state.hidden, hidden) || !sameLane(state.unread, unread)
       state.hidden = hidden
+      state.unread = unread
       const lane = order[computerId] ?? []
       const index = lane.indexOf(previous)
       if (index >= 0) {
@@ -333,12 +389,12 @@ export class SessionOrderStore {
       if (already >= 0) {
         // The successor is present. Only move it if the remembered slot is a
         // better answer than where a plain append happened to leave it.
-        if (fallbackIndex === undefined || fallbackIndex >= lane.length) return hiddenChanged
+        if (fallbackIndex === undefined || fallbackIndex >= lane.length) return marksChanged
         const without = lane.filter((key) => key !== next)
         const target = Math.min(Math.max(fallbackIndex, 0), without.length)
         const restored = [...without]
         restored.splice(target, 0, next)
-        if (sameLane(lane, restored)) return hiddenChanged
+        if (sameLane(lane, restored)) return marksChanged
         order[computerId] = restored
         return true
       }
@@ -359,7 +415,8 @@ export class SessionOrderStore {
       const lane = order[computerId]
       const listed = lane?.includes(key) === true
       const hidden = state.hidden.includes(key)
-      if (!listed && !hidden) return false
+      const unread = state.unread.includes(key)
+      if (!listed && !hidden && !unread) return false
       if (lane && listed) {
         const next = lane.filter((entry) => entry !== key)
         if (next.length === 0) delete order[computerId]
@@ -367,12 +424,11 @@ export class SessionOrderStore {
       }
       if (hidden) {
         state.hidden = state.hidden.filter((entry) => entry !== key)
-        this.retiredHidden.add(key)
-        // Only a clear's own response comes back for one, moments later.
-        const [oldest] = this.retiredHidden
-        if (this.retiredHidden.size > 64 && oldest !== undefined) {
-          this.retiredHidden.delete(oldest)
-        }
+        retire(this.retiredHidden, key)
+      }
+      if (unread) {
+        state.unread = state.unread.filter((entry) => entry !== key)
+        retire(this.retiredUnread, key)
       }
       return true
     })
@@ -380,11 +436,15 @@ export class SessionOrderStore {
 
   async removeComputer(computerId: string): Promise<SessionOrderSnapshot> {
     return this.commit((order, state) => {
-      const hidden = state.hidden.filter((key) => !key.startsWith(`${computerId}:`))
-      const hiddenChanged = hidden.length !== state.hidden.length
-      if (!(computerId in order) && !hiddenChanged) return false
+      const prefix = `${computerId}:`
+      const hidden = state.hidden.filter((key) => !key.startsWith(prefix))
+      const unread = state.unread.filter((key) => !key.startsWith(prefix))
+      const marksChanged =
+        hidden.length !== state.hidden.length || unread.length !== state.unread.length
+      if (!(computerId in order) && !marksChanged) return false
       delete order[computerId]
       state.hidden = hidden
+      state.unread = unread
       return true
     })
   }
@@ -404,11 +464,13 @@ export class SessionOrderStore {
     const run = this.commits.then(async () => {
       const previous = this.state
       // Restored with the state, so a refused write can be retried.
-      const retired = new Set(this.retiredHidden)
+      const retiredHidden = new Set(this.retiredHidden)
+      const retiredUnread = new Set(this.retiredUnread)
       const draft = structuredClone(previous.order)
       const staged: SessionOrderState = {
         ...previous,
         hidden: [...previous.hidden],
+        unread: [...previous.unread],
         order: draft,
       }
       if (!mutate(draft, staged)) {
@@ -421,6 +483,7 @@ export class SessionOrderStore {
         showSuspended: staged.showSuspended,
         showHidden: staged.showHidden,
         hidden: staged.hidden,
+        unread: staged.unread,
         order: draft,
       }
       try {
@@ -430,7 +493,8 @@ export class SessionOrderStore {
         // clients would converge on an order the hub forgets on restart.
         // Nothing else is in flight, so the previous state is still current.
         this.state = previous
-        this.retiredHidden = retired
+        this.retiredHidden = retiredHidden
+        this.retiredUnread = retiredUnread
         throw error
       }
       return this.snapshot()
@@ -451,4 +515,20 @@ function sameLane(left: string[], right: string[]): boolean {
   return (
     left.length === right.length && left.every((key, index) => key === right[index])
   )
+}
+
+/**
+ * A mark held by a replaced session, or retired with it by a plain removal,
+ * moved onto its successor. The retired entry is used up either way.
+ */
+function carried(
+  marks: string[],
+  retired: Set<string>,
+  previous: string,
+  next: string,
+): string[] {
+  const wasRetired = retired.delete(previous)
+  const kept = marks.filter((key) => key !== previous)
+  if ((wasRetired || kept.length !== marks.length) && !kept.includes(next)) kept.push(next)
+  return kept
 }

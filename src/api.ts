@@ -430,6 +430,19 @@ export async function saveSessionHidden(
   return response.sessionOrder
 }
 
+/** Marks a session read or unread for every browser on this hub. */
+export async function saveSessionUnread(
+  computerId: string,
+  sessionId: string,
+  unread: boolean,
+): Promise<SessionOrderSnapshot> {
+  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
+    `/api/session-order/${encodeURIComponent(computerId)}/${encodeURIComponent(sessionId)}`,
+    { method: 'PUT', body: JSON.stringify({ unread }) },
+  )
+  return response.sessionOrder
+}
+
 /** Submits one computer's lane, so a stale view cannot rewrite the others. */
 export async function saveSessionOrderLane(
   computerId: string,

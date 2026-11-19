@@ -8302,8 +8302,9 @@ button {
 
 /* Sits at the end of the row, out of the way of the title but reachable
    without opening the conversation. Close stays above Pause so the destructive
-   and reversible lifecycle actions keep a stable order. Hide follows them in a
-   column of its own: a third control under them would make every row taller. */
+   and reversible lifecycle actions keep a stable order. Read and Hide, which
+   only change how the list treats the session, share a second column: a third
+   control under the first two would make every row taller. */
 .session-item__controls {
   grid-column: 3;
   grid-row: 1;
@@ -8314,13 +8315,9 @@ button {
   gap: 2px;
 }
 
-.session-item__hide {
-  grid-row: 1 / span 2;
-  align-self: center;
-}
-
 .session-item__close,
 .session-item__suspend,
+.session-item__unread,
 .session-item__hide {
   flex: 0 0 auto;
   display: inline-flex;
@@ -8344,12 +8341,15 @@ button {
 
 .session-item:hover .session-item__close,
 .session-item:hover .session-item__suspend,
+.session-item:hover .session-item__unread,
 .session-item:hover .session-item__hide,
 .session-item:focus-within .session-item__close,
 .session-item:focus-within .session-item__suspend,
+.session-item:focus-within .session-item__unread,
 .session-item:focus-within .session-item__hide,
 .session-item__close:focus-visible,
 .session-item__suspend:focus-visible,
+.session-item__unread:focus-visible,
 .session-item__hide:focus-visible,
 .session-item__suspend--active {
   opacity: 1;
@@ -8361,6 +8361,7 @@ button {
 }
 
 .session-item__suspend:hover,
+.session-item__unread:hover,
 .session-item__hide:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text);
@@ -8372,6 +8373,7 @@ button {
 
 .session-item__close:focus-visible,
 .session-item__suspend:focus-visible,
+.session-item__unread:focus-visible,
 .session-item__hide:focus-visible {
   outline: 2px solid var(--accent-foreground);
   outline-offset: 2px;
@@ -8381,18 +8383,22 @@ button {
    own left every busy session showing a faint pause button at all times. */
 .session-item__close:disabled,
 .session-item__suspend:disabled,
+.session-item__unread:disabled,
 .session-item__hide:disabled {
   cursor: not-allowed;
 }
 
 .session-item:hover .session-item__close:disabled,
 .session-item:hover .session-item__suspend:disabled,
+.session-item:hover .session-item__unread:disabled,
 .session-item:hover .session-item__hide:disabled,
 .session-item:focus-within .session-item__close:disabled,
 .session-item:focus-within .session-item__suspend:disabled,
+.session-item:focus-within .session-item__unread:disabled,
 .session-item:focus-within .session-item__hide:disabled,
 .session-item__close:disabled:focus-visible,
 .session-item__suspend:disabled:focus-visible,
+.session-item__unread:disabled:focus-visible,
 .session-item__hide:disabled:focus-visible {
   opacity: 0.35;
 }
@@ -8403,6 +8409,7 @@ button {
 @media (hover: none) {
   .session-item__close,
   .session-item__suspend,
+  .session-item__unread,
   .session-item__hide {
     opacity: 1;
     width: 40px;
@@ -8411,6 +8418,7 @@ button {
 
   .session-item__close:disabled,
   .session-item__suspend:disabled,
+  .session-item__unread:disabled,
   .session-item__hide:disabled {
     opacity: 0.3;
   }
@@ -8477,6 +8485,24 @@ button {
 .session-item--hidden:not(.session-item--active, .session-item--background-running) {
   padding-left: 8px;
   border-left: 1px dashed var(--border-strong);
+}
+
+/* Unread: a turn ended that nobody has read yet. The title carries the
+   weight and an accent dot leads it, which no status, attention, hidden or
+   suspended cue uses, so it combines with all of them. The accent's
+   foreground form is the accent itself on dark, and stays legible on light. */
+.session-item--unread .session-item__text > strong {
+  font-weight: 700;
+}
+
+.session-item__unread-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent-foreground);
+  vertical-align: 0.1em;
 }
 
 /* On its way out: the other rows stay fully usable meanwhile. */

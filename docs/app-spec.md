@@ -105,12 +105,18 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   MUST NOT. Each row MUST offer Mark as read or Mark as unread beside Hide; an
   open session marked unread MUST stay unread until it is opened again or the
   app becomes visible again. Unread rows MUST carry a bold title, an accent dot,
-  and "unread" in their accessible name, distinct from the status, attention,
-  hidden, and suspended cues. Unread state is hub-owned and shared by every
-  browser like hidden state: it MUST follow Clear and Recover replacements and
-  MUST be dropped on close, delete, and unpair. The Unread filter MUST show its
-  count, counting hidden sessions only as the hidden-count rules above allow.
-  A hub that predates unread state sends none, and nothing is unread.
+  a bar on each side in the dot's colour, and "unread" in their accessible
+  name, distinct from the status, attention, hidden, and suspended cues.
+  Unread state is hub-owned and shared by every browser like hidden state: it
+  MUST follow Clear and Recover replacements and MUST be dropped on close,
+  delete, and unpair. The Unread filter MUST show its count, counting hidden
+  sessions only as the hidden-count rules above allow. A hub that predates
+  unread state sends none, and nothing is unread.
+- The selected session's row MUST keep its tint and carry a bar on each side in
+  the text colour, alike on every computer; these win over unread bars, while
+  its dot and bold title still say unread. Unread and selected bars replace a
+  hidden row's side dashes, and every row MUST reserve the bar width so its
+  content does not shift between states.
 - Session ordering MUST be explicit. Custom order remains the backward-
   compatible default; Recent activity, Attention first, and Name views MAY
   reorder the displayed sessions within each computer without rewriting the
@@ -301,9 +307,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   runtime advertises task support. The UI MUST show queued, running,
   completed, failed, and cancelled task states, including task progress and
   timestamps where available.
-- A session MUST use the blue active-task treatment while at least one
-  background task is running. With no running background task, the existing
-  green and gray session treatments MUST remain unchanged.
+- While at least one background task is running, the session's Tasks status
+  action MUST carry the blue task cue: a blue dot and label, unfilled until
+  hovered or focused. Background work MUST NOT give the row its own edge, tint,
+  or status-dot colour.
 - A foreground response in progress MUST show Working rather than Tasks,
   even while background tasks run. A separate Tasks status action MUST retain
   touch and keyboard access to the task panel without replacing the session's

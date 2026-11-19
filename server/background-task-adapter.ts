@@ -1109,6 +1109,13 @@ export function backgroundTasksFromEvents(
   // completion has to know whether it came from something that reads shells.
   const toolNames = new Map<string, string>()
   const aliases = new Map<string, string>()
+  // Multi-turn agents that finished processing and wait, idle, for another
+  // message. Only these can start working again after ending.
+  const idleAgents = new Set<string>()
+  // Idle agents a message woke. Copilot announces idling again only to a
+  // parent that is not already waiting for the reply, so a woken agent's run
+  // ends, like the foreground's, with a turn end no turn start follows.
+  const wokenAgents = new Set<string>()
   type ShellIdentity = {
     startedAt: string
     creationOrder: number
@@ -1123,6 +1130,10 @@ export function backgroundTasksFromEvents(
     exitCode?: number
     completion?: Pick<BackgroundTask, 'status' | 'completedAt' | 'error' | 'progress'>
     ids: Set<string>
+    /** The subagent that started the shell, when one did. */
+    owner?: string
+    /** The latest moment anything showed the shell still running. */
+    seenRunningAt?: string
   }
   // A per-execution handle that stays with a shell through metadata refreshes,
   // provider-id rekeys and native handoffs, even before a synchronous launch
@@ -1380,6 +1391,32 @@ export function backgroundTasksFromEvents(
           task.canCancel = false
         }
       }
+      // A restarted process has none of its old agents left to wake.
+      idleAgents.clear()
+      wokenAgents.clear()
+    }
+    if (
+      event.agentId &&
+      (event.type === 'user.message' ||
+        event.type === 'assistant.turn_start' ||
+        event.type === 'assistant.turn_end')
+    ) {
+      const id = taskIdAlias(aliases, event.agentId)
+      const current = tasks.get(id)
+      if (current?.type === 'agent') {
+        if (event.type === 'assistant.turn_end') {
+          if (wokenAgents.delete(id) && current.status === 'running') {
+            current.status = 'completed'
+            current.completedAt = event.timestamp
+            idleAgents.add(id)
+          }
+        } else if (idleAgents.delete(id) && current.status === 'completed') {
+          // A message woke an idle agent: it works until it idles again.
+          current.status = 'running'
+          current.completedAt = undefined
+          wokenAgents.add(id)
+        }
+      }
     }
     const completingCallId = event.type === 'tool.execution_complete'
       ? eventString(data, 'toolCallId')
@@ -1628,8 +1665,18 @@ export function backgroundTasksFromEvents(
             eventString(kind, 'agentType') || current.agentType
           current.prompt = boundedText(kind.prompt) || current.prompt
           if (kindType === 'agent_idle') {
-            current.status = 'queued'
-            current.canCancel = true
+            // Idle is finished processing, not waiting to start: the agent
+            // only waits for another message, which wakes it above. Keeping it
+            // live left every multi-turn agent a session ever ran listed as
+            // work until its process restarted.
+            current.status = 'completed'
+            current.completedAt = event.timestamp
+            current.result = textFromValue(kind.result) || current.result
+            current.latestResponse =
+              textFromValue(kind.latestResponse) || current.latestResponse
+            current.canCancel = false
+            idleAgents.add(id)
+            wokenAgents.delete(id)
           } else {
             const status = eventString(kind, 'status')
             current.status =
@@ -1692,6 +1739,7 @@ export function backgroundTasksFromEvents(
         const identity: ShellIdentity = {
           startedAt: event.timestamp, creationOrder: shellCreationOrder++,
           toolCallId, materialized: false, ids: new Set(),
+          owner: event.agentId || eventString(data, 'agentId'),
         }
         if (toolCallId && shellId) {
           identity.start = {
@@ -1918,6 +1966,8 @@ export function backgroundTasksFromEvents(
         // evidence (handled below) may change the observed lifecycle.
         if (current?.type === 'shell' && isLiveTaskStatus(current.status) && data.success === true) {
           shellTaskOutput(current, data.result)
+          const observed = shellInstances.get(current)
+          if (observed) observed.seenRunningAt = event.timestamp
         }
         continue
       }
@@ -1957,6 +2007,8 @@ export function backgroundTasksFromEvents(
           // can no longer end it.
           assumedBackground.delete(current.id)
           assumedOwners.delete(current.id)
+          const handedOff = shellInstances.get(current)
+          if (handedOff) handedOff.seenRunningAt = event.timestamp
         }
         // Only a real handoff renames the task after the shell it created. An
         // ordinary command reports the same id when it finishes, and taking
@@ -2099,6 +2151,36 @@ export function backgroundTasksFromEvents(
     }
     task.status = 'failed'
     task.completedAt = endedAt
+    task.error = task.error || 'Ended without reporting completion'
+    task.canCancel = false
+  }
+  // Copilot reports a subagent's shell finishing only to that subagent, never
+  // in this log, so nothing here can close it. The subagent waits on its own
+  // shells, though: once it has stopped working since anything last showed
+  // the shell running, it is not waiting on that shell any more. A detached
+  // shell is meant to outlive it and is left alone.
+  for (const task of tasks.values()) {
+    if (
+      task.type !== 'shell' ||
+      !isLiveTaskStatus(task.status) ||
+      task.attachmentMode === 'detached'
+    ) {
+      continue
+    }
+    const identity = shellInstances.get(task)
+    if (!identity?.owner) continue
+    const owner = tasks.get(taskIdAlias(aliases, identity.owner))
+    if (
+      owner?.type !== 'agent' ||
+      !isTerminalTaskStatus(owner.status) ||
+      !owner.completedAt
+    ) {
+      continue
+    }
+    const lastSeen = Date.parse(identity.seenRunningAt || task.startedAt)
+    if (!(Date.parse(owner.completedAt) > lastSeen)) continue
+    task.status = 'failed'
+    task.completedAt = owner.completedAt
     task.error = task.error || 'Ended without reporting completion'
     task.canCancel = false
   }

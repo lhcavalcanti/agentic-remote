@@ -1352,6 +1352,106 @@ describe('background task adapter', () => {
   })
 
 
+  it('ends an idle multi-turn agent and works it again only while a message wakes it', () => {
+    const events = [
+      lifecycleEvent('start', 'subagent.started', '2026-09-03T08:00:00.000Z', {
+        toolCallId: 'task-call', agentId: 'agent-1', agentDescription: 'Fix the review',
+      }),
+      lifecycleEvent('done', 'subagent.completed', '2026-09-03T08:05:00.000Z', {
+        toolCallId: 'task-call', agentId: 'agent-1',
+      }),
+      lifecycleEvent('idle', 'system.notification', '2026-09-03T08:05:01.000Z', {
+        kind: { type: 'agent_idle', agentId: 'agent-1', description: 'Fix the review' },
+      }),
+      lifecycleEvent('wake', 'user.message', '2026-09-03T09:00:00.000Z', { content: 'Rebase again' }, 'agent-1'),
+      lifecycleEvent('turn', 'assistant.turn_start', '2026-09-03T09:00:01.000Z', { turnId: '0' }, 'agent-1'),
+      // Woken by a parent already waiting for the reply: no idle notice follows.
+      lifecycleEvent('turn-over', 'assistant.turn_end', '2026-09-03T09:03:00.000Z', { turnId: '0' }, 'agent-1'),
+      // An agent that ended without idling is over for good.
+      lifecycleEvent('other-start', 'subagent.started', '2026-09-03T09:10:00.000Z', {
+        toolCallId: 'other-call', agentId: 'agent-2', agentDescription: 'Explore',
+      }),
+      lifecycleEvent('other-done', 'subagent.completed', '2026-09-03T09:11:00.000Z', {
+        toolCallId: 'other-call', agentId: 'agent-2',
+      }),
+      lifecycleEvent('other-turn', 'assistant.turn_start', '2026-09-03T09:12:00.000Z', { turnId: '9' }, 'agent-2'),
+    ] as unknown as SessionEvent[]
+    const taskAfter = (count: number, id: string) =>
+      backgroundTasksFromEvents(events.slice(0, count), { assumeBackground: true })
+        .find((task) => task.id === id)
+
+    expect(taskAfter(3, 'task-call')).toMatchObject({
+      status: 'completed', completedAt: '2026-09-03T08:05:01.000Z', canCancel: false,
+    })
+    expect(taskAfter(5, 'task-call')).toMatchObject({ status: 'running', completedAt: undefined })
+    expect(taskAfter(6, 'task-call')).toMatchObject({
+      status: 'completed', completedAt: '2026-09-03T09:03:00.000Z',
+    })
+    expect(taskAfter(9, 'other-call')).toMatchObject({ status: 'completed' })
+  })
+
+  it("ends a subagent's shell once the agent stops after last seeing it run", () => {
+    const events = [
+      lifecycleEvent('start', 'subagent.started', '2026-09-03T08:00:00.000Z', {
+        toolCallId: 'task-call', agentId: 'agent-1',
+      }),
+      ...subagentShell('agent-1', '7', '2026-09-03T08:01:00.000Z'),
+      lifecycleEvent('read', 'tool.execution_start', '2026-09-03T08:02:00.000Z', {
+        toolCallId: 'read-call', toolName: 'read_bash', arguments: { shellId: '7' },
+      }, 'agent-1'),
+      lifecycleEvent('read-result', 'tool.execution_complete', '2026-09-03T08:03:00.000Z', {
+        toolCallId: 'read-call',
+        success: true,
+        result: { content: '<command with shellId: 7 is still running after 60 seconds.>' },
+      }, 'agent-1'),
+      lifecycleEvent('done', 'subagent.completed', '2026-09-03T08:04:00.000Z', {
+        toolCallId: 'task-call', agentId: 'agent-1',
+      }),
+      lifecycleEvent('idle', 'system.notification', '2026-09-03T08:04:01.000Z', {
+        kind: { type: 'agent_idle', agentId: 'agent-1' },
+      }),
+    ] as unknown as SessionEvent[]
+    const shellAfter = (count: number) =>
+      backgroundTasksFromEvents(events.slice(0, count), { assumeBackground: true })
+        .find((task) => task.id === '7')
+
+    // Copilot tells only the agent when its shell finishes, so the agent
+    // stopping is the last word this log can have on it.
+    expect(shellAfter(5)).toMatchObject({ status: 'running' })
+    expect(shellAfter(events.length)).toMatchObject({
+      status: 'failed',
+      completedAt: '2026-09-03T08:04:01.000Z',
+      error: 'Ended without reporting completion',
+      canCancel: false,
+    })
+  })
+
+  it("keeps a subagent's shell seen running after the agent stopped, and a detached one", () => {
+    const tasks = backgroundTasksFromEvents([
+      lifecycleEvent('start', 'subagent.started', '2026-09-03T08:00:00.000Z', {
+        toolCallId: 'task-call', agentId: 'agent-1',
+      }),
+      ...subagentShell('agent-1', '7', '2026-09-03T08:01:00.000Z'),
+      ...subagentShell('agent-1', '8', '2026-09-03T08:02:00.000Z', true),
+      lifecycleEvent('idle', 'system.notification', '2026-09-03T08:04:00.000Z', {
+        kind: { type: 'agent_idle', agentId: 'agent-1' },
+      }),
+      lifecycleEvent('read', 'tool.execution_start', '2026-09-03T08:10:00.000Z', {
+        toolCallId: 'read-call', toolName: 'read_bash', arguments: { shellId: '7' },
+      }),
+      lifecycleEvent('read-result', 'tool.execution_complete', '2026-09-03T08:10:01.000Z', {
+        toolCallId: 'read-call',
+        success: true,
+        result: { content: '<command with shellId: 7 is still running after 0 seconds.>' },
+      }),
+    ] as unknown as SessionEvent[], { assumeBackground: true })
+
+    expect(tasks.find((task) => task.id === '7')).toMatchObject({ status: 'running' })
+    expect(tasks.find((task) => task.id === '8')).toMatchObject({
+      status: 'running', attachmentMode: 'detached',
+    })
+  })
+
   it('reads the marker at the end, not one quoted before it', () => {
     // A `read_bash` result carries whatever the command printed, and then the
     // transport's own footer. Taking the first thing that looks like a shell
@@ -1711,3 +1811,33 @@ describe('background task adapter', () => {
   })
 
 })
+
+function lifecycleEvent(
+  id: string,
+  type: string,
+  timestamp: string,
+  data: Record<string, unknown>,
+  agentId?: string,
+) {
+  return { type, id, parentId: null, timestamp, data, ...(agentId ? { agentId } : {}) }
+}
+
+// A subagent starting a shell in the background, as Copilot records it.
+function subagentShell(agentId: string, shellId: string, timestamp: string, detached = false) {
+  const started = new Date(Date.parse(timestamp) + 1_000).toISOString()
+  return [
+    lifecycleEvent(`${shellId}-start`, 'tool.execution_start', timestamp, {
+      toolCallId: `${shellId}-call`,
+      toolName: 'bash',
+      arguments: { command: 'pnpm test', mode: 'async', ...(detached ? { detach: true } : {}) },
+    }, agentId),
+    lifecycleEvent(`${shellId}-launch`, 'tool.execution_complete', started, {
+      toolCallId: `${shellId}-call`,
+      success: true,
+      toolTelemetry: { properties: { executionMode: 'async', detached: String(detached) } },
+      result: {
+        content: `<command started in ${detached ? 'detached ' : ''}background with shellId: ${shellId}>`,
+      },
+    }, agentId),
+  ]
+}

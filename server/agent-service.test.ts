@@ -4056,19 +4056,16 @@ describe('AgentService deletion', () => {
     directories.push(directory)
     const client = new FakeCopilotClient()
     client.models = [configurableModel()]
-    // agent_idle is the projection path that marks a task cancellable.
+    // A live agent: the work a Stop would be asked for.
     const events = [
       {
-        type: 'system.notification',
-        id: 'agent-idle',
+        type: 'subagent.started',
+        id: 'agent-start',
         parentId: null,
         timestamp: new Date(Date.now() - 1_000).toISOString(),
         data: {
-          kind: {
-            type: 'agent_idle',
-            agentId: 'agent-1',
-            description: 'Inspect the repository',
-          },
+          agentId: 'agent-1',
+          agentDescription: 'Inspect the repository',
         },
       },
     ] as unknown as SessionEvent[]
@@ -4098,7 +4095,9 @@ describe('AgentService deletion', () => {
     const snapshot = await service.listBackgroundTasks(client.session.sessionId)
 
     // Projected from an event log, so there is no channel to cancel through.
-    expect(snapshot.tasks.length).toBeGreaterThan(0)
+    expect(snapshot.tasks).toEqual([
+      expect.objectContaining({ id: 'agent-1', status: 'running' }),
+    ])
     for (const task of snapshot.tasks) {
       expect(task.canCancel).toBe(false)
     }

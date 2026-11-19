@@ -328,6 +328,19 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   confirmed Stop task action. When it does not, the panel MUST explain why
   stopping is unavailable rather than hiding the management state or guessing
   at an operating-system process.
+- A terminal session's tasks are projected from Copilot's event log, which
+  offers no cancellation handle, so they MUST NOT offer Stop. A projected task
+  MUST stop counting as running once the log shows its work is over:
+  - A multi-turn agent that reports going idle has finished processing and
+    MUST read as completed. A message that wakes it MUST make it running again
+    until it idles again or, when no idle notice follows, its last turn ends.
+  - Copilot reports a subagent's shell finishing only to that subagent. Such a
+    shell MUST end, without reporting completion, once its agent has finished
+    or gone idle since anything last showed the shell running. A detached
+    shell is meant to outlive its agent and MUST NOT end this way.
+  - A restarted Copilot process ends every task it had that is not detached.
+    A detached shell that a computer restart ended reports nothing, so it
+    stays running until its own completion is seen.
 
 ### 3.2 Creation
 

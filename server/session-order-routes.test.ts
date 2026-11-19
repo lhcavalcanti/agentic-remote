@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import Fastify from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ManagedSession } from '../shared/contracts.js'
 import type { ComputerManager } from './computer-manager.js'
 import type { KnowledgeStore } from './knowledge-store.js'
 import { registerHubRoutes } from './hub-routes.js'
@@ -55,6 +56,36 @@ async function until(check: () => boolean): Promise<void> {
   throw new Error('Timed out waiting for the session order to settle')
 }
 
+/** A session as its computer's events describe it. */
+function upserted(computerId: string, id: string, change: Partial<ManagedSession> = {}) {
+  return {
+    type: 'session.upserted',
+    session: {
+      id,
+      computerId,
+      computerName: computerId,
+      title: 'Synthetic check',
+      cwd: '/home/demo',
+      updatedAt: '2026-11-19T00:00:00Z',
+      status: 'idle',
+      messages: [],
+      ...change,
+    } satisfies ManagedSession,
+  }
+}
+
+let sentinels = 0
+
+/**
+ * Waits for every lifecycle change queued so far. Order work runs one change
+ * at a time, so once a session seated behind them appears, they are done.
+ */
+async function settled(store: SessionOrderStore, manager: EventEmitter): Promise<void> {
+  const id = `sentinel-${sentinels += 1}`
+  manager.emit('event', upserted('sentinel', id))
+  await until(() => (store.snapshot().order.sentinel ?? []).includes(`sentinel:${id}`))
+}
+
 describe('hub session order routes', () => {
   beforeEach(() => {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
@@ -77,6 +108,7 @@ describe('hub session order routes', () => {
         showSuspended: true,
         showHidden: false,
         hidden: [],
+        unread: [],
         order: {},
       },
     })
@@ -96,6 +128,7 @@ describe('hub session order routes', () => {
         showSuspended: true,
         showHidden: false,
         hidden: [],
+        unread: [],
         order: { 'computer-1': ['computer-1:b', 'computer-1:a'] },
       },
     })
@@ -176,6 +209,7 @@ describe('hub session order routes', () => {
       showSuspended: false,
       showHidden: false,
       hidden: [],
+      unread: [],
       order: {},
     })
 
@@ -278,6 +312,137 @@ describe('hub session order routes', () => {
     await app.close()
   })
 
+  it('marks one session unread and read without reordering it', async () => {
+    const store = await orderStore()
+    await store.bootstrap({ 'computer-1': ['computer-1:a', 'computer-1:b'] })
+    const { app } = await hub(store)
+
+    const unread = await app.inject({
+      method: 'PUT',
+      url: '/api/session-order/computer-1/b',
+      headers: { host: 'localhost' },
+      payload: { unread: true },
+    })
+    expect(unread.statusCode).toBe(200)
+    expect(unread.json().sessionOrder).toMatchObject({
+      revision: 2,
+      hidden: [],
+      unread: ['computer-1:b'],
+      order: { 'computer-1': ['computer-1:a', 'computer-1:b'] },
+    })
+
+    const read = await app.inject({
+      method: 'PUT',
+      url: '/api/session-order/computer-1/b',
+      headers: { host: 'localhost' },
+      payload: { unread: false },
+    })
+    expect(read.statusCode).toBe(200)
+    expect(read.json().sessionOrder).toMatchObject({ revision: 3, unread: [] })
+    await app.close()
+  })
+
+  it('refuses to mark unread a session the hub does not list, or a malformed request', async () => {
+    const store = await orderStore()
+    await store.bootstrap({ 'computer-1': ['computer-1:a'] })
+    const { app } = await hub(store)
+
+    const unknown = await app.inject({
+      method: 'PUT',
+      url: '/api/session-order/computer-1/retired',
+      headers: { host: 'localhost' },
+      payload: { unread: true },
+    })
+    expect(unknown.statusCode).toBe(409)
+
+    for (const payload of [{ unread: 'yes' }, { unread: true, hidden: true }, { unread: null }]) {
+      const refused = await app.inject({
+        method: 'PUT',
+        url: '/api/session-order/computer-1/a',
+        headers: { host: 'localhost' },
+        payload,
+      })
+      expect(refused.statusCode).toBeGreaterThanOrEqual(400)
+    }
+    expect(store.snapshot()).toMatchObject({ revision: 1, hidden: [], unread: [] })
+    await app.close()
+  })
+
+  it('marks a session unread when its turn ends, on any computer, with no browser connected', async () => {
+    const store = await orderStore()
+    const { app, manager } = await hub(store)
+    await app.ready()
+
+    // A paired node's session reaches the hub as the same events as its own.
+    manager.emit('event', upserted('node-1', 'remote', { status: 'running' }))
+    manager.emit('event', upserted('computer-1', 'local', { status: 'waiting' }))
+    manager.emit('event', upserted('computer-1', 'failing', { status: 'idle' }))
+    await settled(store, manager)
+    expect(store.snapshot().unread).toEqual([])
+
+    manager.emit('event', upserted('node-1', 'remote', { status: 'idle' }))
+    manager.emit('event', upserted('computer-1', 'local', { status: 'idle' }))
+    manager.emit('event', upserted('computer-1', 'failing', { status: 'error' }))
+    await until(() => (store.snapshot().unread ?? []).length === 3)
+    expect(store.snapshot().unread).toEqual([
+      'node-1:remote',
+      'computer-1:local',
+      'computer-1:failing',
+    ])
+    await app.close()
+  })
+
+  it('leaves a session read when it is first seen, still needs you, or has more queued', async () => {
+    const store = await orderStore()
+    const { app, manager } = await hub(store)
+
+    // Nothing says how a session's last turn went before this hub saw it.
+    manager.emit('event', upserted('node-1', 'idle-at-start', { status: 'idle' }))
+    manager.emit('event', upserted('node-1', 'failed-at-start', { status: 'error' }))
+    for (const pending of [
+      { pendingPermission: { requestId: 'permission', title: 'Run tests', options: [] } },
+      {
+        pendingUserInput: {
+          requestId: 'question', question: 'Which file?', choices: [], allowFreeform: true,
+        },
+      },
+      { queuedCount: 2 },
+    ]) {
+      manager.emit('event', upserted('node-1', 'busy', { status: 'running' }))
+      manager.emit('event', upserted('node-1', 'busy', { status: 'idle', ...pending }))
+    }
+    await settled(store, manager)
+    expect(store.snapshot().unread).toEqual([])
+    await app.close()
+  })
+
+  it('carries unread to a cleared session and drops it when the session is closed', async () => {
+    const store = await orderStore()
+    const { app, manager } = await hub(store)
+    manager.emit('event', upserted('node-1', 'a', { status: 'running' }))
+    manager.emit('event', upserted('node-1', 'a', { status: 'idle' }))
+    await until(() => (store.snapshot().unread ?? []).includes('node-1:a'))
+
+    manager.emit('event', {
+      type: 'session.removed',
+      computerId: 'node-1',
+      sessionId: 'a',
+      replacedBy: 'a2',
+    })
+    await until(() => (store.snapshot().unread ?? []).includes('node-1:a2'))
+    expect(store.snapshot().unread).toEqual(['node-1:a2'])
+
+    manager.emit('event', {
+      type: 'session.removed',
+      computerId: 'node-1',
+      sessionId: 'a2',
+      closed: true,
+    })
+    await until(() => (store.snapshot().unread ?? []).length === 0)
+    expect(store.snapshot().order).toEqual({})
+    await app.close()
+  })
+
   it('tracks discovery, clear replacement, deletion, and unpairing', async () => {
     const store = await orderStore()
     const { app, manager } = await hub(store)
@@ -349,6 +514,7 @@ describe('hub session order routes', () => {
       'computer-1': ['computer-1:other', 'computer-1:session-1', 'computer-1:last'],
     })
     await store.setSessionHidden('computer-1', 'session-1', true)
+    await store.setSessionUnread('computer-1', 'session-1', true)
     const { app, manager } = await hub(store, {
       clearConversation: async () => {
         // A legacy node's own removal event is applied before its response.
@@ -371,6 +537,7 @@ describe('hub session order routes', () => {
     expect(response.statusCode).toBe(200)
     expect(store.snapshot()).toMatchObject({
       hidden: ['computer-1:session-1-cleared'],
+      unread: ['computer-1:session-1-cleared'],
       order: {
         'computer-1': ['computer-1:other', 'computer-1:session-1-cleared', 'computer-1:last'],
       },
@@ -463,6 +630,7 @@ describe('hub session order routes', () => {
         showSuspended: true,
         showHidden: false,
         hidden: [],
+        unread: [],
         order: { 'computer-1': ['computer-1:b', 'computer-1:a'] },
       },
     })

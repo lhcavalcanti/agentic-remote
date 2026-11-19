@@ -235,6 +235,7 @@ import type {
   KnowledgeRoot,
   SessionKnowledgeBinding,
   SessionOrderSnapshot,
+  SessionStatus,
   QueuedPrompt,
   UserInputReplyInput,
   SlashCommand,
@@ -248,6 +249,7 @@ import {
   hasRunningBackgroundAgent,
 } from '../shared/background-tasks'
 import { terminalSendOptions } from '../shared/send-policy'
+import { turnEnded } from '../shared/session-unread'
 import {
   createPendingEcho,
   nextPendingEchoDeadline,
@@ -307,6 +309,7 @@ import {
   saveSessionVisibility,
   saveHiddenSessionVisibility,
   saveSessionHidden,
+  saveSessionUnread,
   suspendSession,
   fetchSessionOrder,
   fetchSettingsProfile,
@@ -552,6 +555,9 @@ const SIDEBAR_WIDTH_DEFAULT = 320
 const SIDEBAR_WIDTH_MIN = 220
 const SIDEBAR_WIDTH_MAX = 560
 const SESSION_NAVIGATION_STORAGE_KEY = 'agentic-remote:session-navigation-v1'
+// How long looking at a session waits for the hub to show it unread. Its mark
+// follows the session event within moments; a first snapshot can take longer.
+const READ_INTENT_MS = 15_000
 
 function clampSidebarWidth(value: number): number {
   return Math.min(Math.max(Math.round(value), SIDEBAR_WIDTH_MIN), SIDEBAR_WIDTH_MAX)
@@ -581,7 +587,7 @@ function readStoredSessionNavigation(): {
     const filter = Reflect.get(parsed as object, 'filter')
     if (
       typeof query !== 'string'
-      || !['all', 'attention', 'working'].includes(String(filter))
+      || !['all', 'attention', 'working', 'unread'].includes(String(filter))
     ) return fallback
     return { query, filter: filter as SessionFilter }
   } catch {
@@ -4517,6 +4523,26 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     () => new Set(),
   )
   const hidingSessionsRef = useRef(new Set<string>())
+  // Unread is hub-owned as well. Each save in flight shows its outcome at
+  // once and keeps the row's control busy until the hub answers.
+  const [unreadSessionKeys, setUnreadSessionKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  )
+  const unreadSessionKeysRef = useRef(unreadSessionKeys)
+  const [unreadSaves, setUnreadSaves] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  )
+  const unreadSavesRef = useRef(new Map<string, boolean>())
+  // Looking at a session reads it, but the hub may only mark it unread after
+  // you have already looked: its mark follows the session event that ended
+  // the turn. So looking leaves an intent to read it, used up by the first
+  // snapshot that shows it unread while it is still open, or soon dropped.
+  const readIntentRef = useRef<{ key: string; until: number } | undefined>(undefined)
+  // The open session you marked unread yourself, which stays unread until you
+  // open it again or the app comes back into view.
+  const unreadHoldRef = useRef<string | undefined>(undefined)
+  const requestReadRef = useRef((_key: string) => {})
+  const settleReadIntentRef = useRef(() => {})
   // While this browser clears or recovers a hidden session, sessions that
   // appear on its computer stay out of the list until the hub's snapshot says
   // whether they are hidden: a node that predates replacement links names the
@@ -4544,6 +4570,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       // A hub that predates hiding sends neither field.
       setHiddenSessionKeys(new Set(Array.isArray(snapshot.hidden) ? snapshot.hidden : []))
       setShowHiddenSessions(snapshot.showHidden === true)
+      // Nor unread: nothing is.
+      unreadSessionKeysRef.current = new Set(Array.isArray(snapshot.unread) ? snapshot.unread : [])
+      setUnreadSessionKeys(unreadSessionKeysRef.current)
+      // In the same update, so the session on screen never shows as unread.
+      settleReadIntentRef.current()
     },
     [],
   )
@@ -4979,6 +5010,16 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     return keys
   }, [hiddenSessionKeys, replacementHolds, sessions])
+  const listedUnreadKeys = useMemo(() => {
+    if (unreadSaves.size === 0) return unreadSessionKeys
+    const keys = new Set(unreadSessionKeys)
+    for (const [key, unread] of unreadSaves) {
+      if (unread) keys.add(key)
+      else keys.delete(key)
+    }
+    return keys
+  }, [unreadSaves, unreadSessionKeys])
+  const markingUnreadKeys = useMemo(() => new Set(unreadSaves.keys()), [unreadSaves])
   const navigationView = useMemo(
     () => sessionNavigationView(
       orderedComputers,
@@ -4988,6 +5029,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       sessionFilter,
       showSuspendedSessions,
       { keys: listedHiddenKeys, shown: showHiddenSessions },
+      listedUnreadKeys,
     ),
     [
       orderedComputers,
@@ -4998,6 +5040,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       showSuspendedSessions,
       listedHiddenKeys,
       showHiddenSessions,
+      listedUnreadKeys,
     ],
   )
   // A pending row stands where its session will appear, so finishing the
@@ -6672,6 +6715,69 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   useEffect(() => {
     void syncSessionOrder()
   }, [syncSessionOrder])
+
+  // Reading the session on screen. Opening it, coming back to the app with it
+  // open, or its turn ending while you watch each leave an intent to read it;
+  // settling that intent is what tells the hub. Oracle's reads and anything
+  // else in the background never get here.
+  requestReadRef.current = (key) => {
+    if (document.visibilityState !== 'visible') return
+    readIntentRef.current = { key, until: Date.now() + READ_INTENT_MS }
+    settleReadIntentRef.current()
+  }
+  settleReadIntentRef.current = () => {
+    // A hold only keeps an unread mark you made. Once the hub shows none --
+    // the save was refused, or another device read it -- there is nothing
+    // left to keep, and the open session is read as usual again.
+    const held = unreadHoldRef.current
+    if (held && !unreadSavesRef.current.has(held) && !unreadSessionKeysRef.current.has(held)) {
+      unreadHoldRef.current = undefined
+    }
+    const intent = readIntentRef.current
+    if (!intent) return
+    const open = selectedRef.current
+    if (Date.now() > intent.until || (open && sessionKey(open) !== intent.key)) {
+      readIntentRef.current = undefined
+      return
+    }
+    if (
+      !open ||
+      document.visibilityState !== 'visible' ||
+      unreadHoldRef.current === intent.key ||
+      // A save in flight settles this again once the hub answers it.
+      unreadSavesRef.current.has(intent.key) ||
+      !unreadSessionKeysRef.current.has(intent.key)
+    ) return
+    readIntentRef.current = undefined
+    changeSessionUnread(open, false, false)
+  }
+  useEffect(() => {
+    // Opening another session ends the hold on the last one.
+    unreadHoldRef.current = undefined
+    readIntentRef.current = undefined
+    if (selectedKey) requestReadRef.current(selectedKey)
+  }, [selectedKey])
+  const selectedTurnRef = useRef<{ key?: string; status?: SessionStatus }>({})
+  useEffect(() => {
+    const key = selected ? sessionKey(selected) : undefined
+    const previous = selectedTurnRef.current.key === key
+      ? selectedTurnRef.current.status
+      : undefined
+    selectedTurnRef.current = { key, status: selected?.status }
+    if (key && selected && turnEnded(previous, selected)) requestReadRef.current(key)
+    // Otherwise the open session may only now have arrived for an intent.
+    else settleReadIntentRef.current()
+  }, [selected])
+  useEffect(() => {
+    const returned = () => {
+      if (document.visibilityState !== 'visible') return
+      unreadHoldRef.current = undefined
+      const key = selectedKeyStateRef.current
+      if (key) requestReadRef.current(key)
+    }
+    document.addEventListener('visibilitychange', returned)
+    return () => document.removeEventListener('visibilitychange', returned)
+  }, [])
 
   function durableComposerDraft(key: string, draft: ComposerDraft): ComposerDraft {
     const history = composerHistoryRef.current[key]
@@ -10323,6 +10429,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     sessionSelectionIntentRef.current += 1
     historyIntentRef.current = 'push'
     setLocationKnowledgeTarget(undefined)
+    if (sessionKey(session) === selectedKey) {
+      // Opening the open session again reads it, even one you marked unread.
+      unreadHoldRef.current = undefined
+      requestReadRef.current(selectedKey)
+    }
     setSelectedKey(sessionKey(session))
     setSidebarOpen(false)
     setError(undefined)
@@ -13108,6 +13219,50 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     })()
   }
 
+  // Shown at once; a refusal puts back what the hub last committed. Only a
+  // change you asked for reports one: a read that fails on its own just
+  // leaves the session unread.
+  function changeSessionUnread(session: ManagedSession, unread: boolean, requested: boolean) {
+    const key = sessionKey(session)
+    if (unreadSavesRef.current.has(key)) return
+    unreadSavesRef.current.set(key, unread)
+    setUnreadSaves(new Map(unreadSavesRef.current))
+    void (async () => {
+      try {
+        applySessionOrderSnapshot(await saveSessionUnread(session.computerId, session.id, unread))
+      } catch (caught) {
+        void syncSessionOrderRef.current()
+        if (requested) {
+          // The report is in the conversation, which a phone's drawer covers.
+          setSidebarOpen(false)
+          setError(
+            `Could not mark ${session.title} as ${unread ? 'unread' : 'read'}: ${
+              caught instanceof Error ? caught.message : String(caught)
+            }`,
+          )
+        } else {
+          console.warn('Unable to mark the open session read:', caught)
+        }
+      } finally {
+        unreadSavesRef.current.delete(key)
+        setUnreadSaves(new Map(unreadSavesRef.current))
+        settleReadIntentRef.current()
+      }
+    })()
+  }
+
+  function toggleSessionUnread(session: ManagedSession) {
+    const key = sessionKey(session)
+    if (unreadSavesRef.current.has(key)) return
+    const unread = !unreadSessionKeysRef.current.has(key)
+    if (readIntentRef.current?.key === key) readIntentRef.current = undefined
+    // Marked unread while open, it stays so until you open it again or come
+    // back to the app; reading it straight away would undo the choice.
+    if (unread && key === selectedKey) unreadHoldRef.current = key
+    else if (unreadHoldRef.current === key) unreadHoldRef.current = undefined
+    changeSessionUnread(session, unread, true)
+  }
+
   function changeShowSuspendedSessions(showSuspended: boolean) {
     if (
       savingSuspendedVisibilityRef.current ||
@@ -13429,6 +13584,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 hiddenSessions={hiddenSessionKeys}
                 hidingSessions={hidingSessions}
                 onToggleSessionHidden={toggleSessionHidden}
+                unreadSessions={listedUnreadKeys}
+                markingUnreadSessions={markingUnreadKeys}
+                onToggleSessionUnread={toggleSessionUnread}
                 recentlyClosedCount={recentlyClosed.sessions?.length}
                 onOpenRecentlyClosed={openRecentlyClosed}
               />

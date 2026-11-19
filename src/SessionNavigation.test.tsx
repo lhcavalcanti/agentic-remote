@@ -70,11 +70,15 @@ const actions = {
   hiddenSessions: new Set<string>(),
   hidingSessions: new Set<string>(),
   onToggleSessionHidden: vi.fn(),
+  unreadSessions: new Set<string>(),
+  markingUnreadSessions: new Set<string>(),
+  onToggleSessionUnread: vi.fn(),
   onSortChange: vi.fn(),
   onNewSession: vi.fn(),
 }
 const hiddenVisibility = vi.fn()
 const sessionHidden = vi.fn()
+const sessionUnread = vi.fn()
 
 function NavigationHarness({
   sessions = sessionsByComputer,
@@ -89,6 +93,8 @@ function NavigationHarness({
   initialShowHidden = false,
   showHiddenSaving = false,
   hidingSessions = new Set<string>(),
+  initialUnread = [],
+  markingUnreadSessions = new Set<string>(),
   pendingCreations,
   closingSessions = new Set<string>(),
   suspendingSessions = new Set<string>(),
@@ -108,6 +114,8 @@ function NavigationHarness({
   initialShowHidden?: boolean
   showHiddenSaving?: boolean
   hidingSessions?: ReadonlySet<string>
+  initialUnread?: string[]
+  markingUnreadSessions?: ReadonlySet<string>
   pendingCreations?: PendingSessionCreation[]
   closingSessions?: ReadonlySet<string>
   suspendingSessions?: ReadonlySet<string>
@@ -120,6 +128,7 @@ function NavigationHarness({
   const [showSuspended, setShowSuspended] = useState(initialShowSuspended)
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set(initialHidden))
   const [showHidden, setShowHidden] = useState(initialShowHidden)
+  const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set(initialUnread))
   return (
     <DndContext>
       <SessionNavigation
@@ -137,6 +146,17 @@ function NavigationHarness({
             return next
           })
         }}
+        unreadSessions={unread}
+        markingUnreadSessions={markingUnreadSessions}
+        onToggleSessionUnread={(target) => {
+          sessionUnread(target)
+          const key = `${target.computerId}:${target.id}`
+          setUnread((current) => {
+            const next = new Set(current)
+            if (!next.delete(key)) next.add(key)
+            return next
+          })
+        }}
         backgroundTasks={snapshots}
         view={sessionNavigationView(
           computerList,
@@ -146,6 +166,7 @@ function NavigationHarness({
           filter,
           showSuspended,
           { keys: hidden, shown: showHidden },
+          unread,
         )}
         query={query}
         filter={filter}
@@ -650,6 +671,125 @@ describe('session navigation', () => {
     expect(toggle).toBeDisabled()
     expect(toggle).toHaveAttribute('aria-busy', 'true')
     expect(toggle).toHaveAttribute('title', 'Saving hidden-session visibility')
+  })
+
+  it('marks an unread row with a bold title, an accent dot, and the word in its name', () => {
+    const paused = { ...session, id: 'paused', title: 'Paused planning', suspended: true }
+    render(
+      <NavigationHarness
+        initialHidden={['studio:paused']}
+        initialShowHidden
+        initialUnread={['studio:review', 'studio:paused']}
+        sessions={new Map([['studio', [session, question, paused]], ['worker', [worker]]])}
+      />,
+    )
+    const row = (title: string) => {
+      const item = screen.getByRole('button', { name: new RegExp(`^${title},`) })
+        .closest<HTMLElement>('.session-item')
+      if (!item) throw new Error(`No row for ${title}`)
+      return item
+    }
+
+    const open = screen.getByRole('button', { name: /^Review the release,/ })
+    expect(open).toHaveAccessibleName(/^Review the release, unread, /)
+    const unread = row('Review the release')
+    expect(unread).toHaveClass('session-item--unread')
+    // The dot repeats what the name already says, so it is not announced.
+    const dot = unread.querySelector('.session-item__unread-dot')
+    expect(dot).toHaveAttribute('aria-hidden', 'true')
+    expect(open.querySelector('strong')).toContainElement(dot as HTMLElement)
+    // The status keeps its own dot and label.
+    expect(within(open).getByText('Idle')).toBeVisible()
+
+    const read = row('Choose a direction')
+    expect(read).not.toHaveClass('session-item--unread')
+    expect(read.querySelector('.session-item__unread-dot')).toBeNull()
+    expect(screen.getByRole('button', { name: /^Choose a direction,/ }))
+      .not.toHaveAccessibleName(/unread/)
+
+    // Unread combines with the hidden and suspended cues rather than replacing them.
+    const both = row('Paused planning')
+    expect(both).toHaveClass('session-item--unread', 'session-item--hidden', 'session-item--suspended')
+    expect(within(both).getByText('Hidden')).toBeVisible()
+    expect(within(both).getByText('Suspended')).toBeVisible()
+  })
+
+  it('marks a session read or unread beside Hide, without opening it', () => {
+    render(
+      <NavigationHarness
+        initialUnread={['studio:review']}
+        markingUnreadSessions={new Set(['worker:build'])}
+      />,
+    )
+    const pause = screen.getByRole('button', { name: 'Suspend Review the release' })
+    const markRead = screen.getByRole('button', { name: 'Mark Review the release as read' })
+    const hide = screen.getByRole('button', { name: 'Hide Review the release from the list' })
+    expect(pause.compareDocumentPosition(markRead) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect(markRead.compareDocumentPosition(hide) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect(markRead.closest('.session-item__open')).toBeNull()
+    expect(markRead).toHaveAttribute('title', 'Mark as read')
+    expect(markRead.querySelector('svg.lucide-mail-open')).toHaveAttribute('aria-hidden', 'true')
+
+    const markUnread = screen.getByRole('button', { name: 'Mark Choose a direction as unread' })
+    expect(markUnread).toHaveAttribute('title', 'Mark as unread')
+    expect(markUnread.querySelector('svg.lucide-mail')).toHaveAttribute('aria-hidden', 'true')
+    fireEvent.click(markUnread)
+    expect(sessionUnread).toHaveBeenCalledWith(question)
+    expect(actions.onSelectSession).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /^Choose a direction,/ }))
+      .toHaveAccessibleName(/^Choose a direction, unread, /)
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Choose a direction as read' }))
+    expect(screen.getByRole('button', { name: 'Mark Choose a direction as unread' })).toBeEnabled()
+
+    // The hub keeps it, so an offline computer's session can be marked too.
+    expect(screen.getByRole('button', { name: 'Mark Last known work as unread' })).toBeEnabled()
+
+    // Only the session being saved waits.
+    const saving = screen.getByRole('button', { name: 'Mark Build docs as unread' })
+    expect(saving).toBeDisabled()
+    expect(saving).toHaveAttribute('aria-busy', 'true')
+    expect(saving).toHaveAttribute('title', 'Marking this session as read')
+  })
+
+  it('offers an Unread filter with its count, counting hidden sessions only while shown', () => {
+    render(
+      <NavigationHarness
+        initialHidden={['worker:build']}
+        initialUnread={['studio:review', 'worker:build']}
+      />,
+    )
+    const working = screen.getByRole('button', { name: 'Working' })
+    const filter = screen.getByRole('button', { name: 'Unread' })
+    expect(working.compareDocumentPosition(filter) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect(filter).toHaveAttribute('aria-pressed', 'false')
+    expect(filter).toHaveTextContent('Unread1')
+
+    fireEvent.click(filter)
+    expect(filter).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /^Review the release,/ })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /^Choose a direction,/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Build docs,/ })).toBeNull()
+    expect(screen.getByRole('status', { name: 'Session filter results' }))
+      .toHaveTextContent('1 of 3 sessions')
+    expect(screen.getByRole('region', { name: 'Travel laptop' })).toBeVisible()
+    expect(screen.getByLabelText('Reorder Review the release'))
+      .toHaveAttribute('aria-disabled', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Include hidden sessions' }))
+    expect(filter).toHaveTextContent('Unread2')
+    expect(screen.getByRole('button', { name: /^Build docs,/ })).toBeVisible()
+
+    // Marking it read takes it out of what Unread shows.
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Review the release as read' }))
+    expect(screen.queryByRole('button', { name: /^Review the release,/ })).toBeNull()
+    expect(filter).toHaveTextContent('Unread1')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /^Review the release,/ })).toBeVisible()
   })
 
   it('keeps the session time and opens background tasks from the status chip', () => {

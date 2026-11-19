@@ -77,6 +77,7 @@ import {
   saveSessionVisibility,
   saveHiddenSessionVisibility,
   saveSessionHidden,
+  saveSessionUnread,
   saveSessionOrderLane,
   bootstrapSessionOrder,
   fetchSettingsProfile,
@@ -162,6 +163,7 @@ let hubSessionOrder: {
   showSuspended: boolean
   showHidden?: boolean
   hidden?: string[]
+  unread?: string[]
   order: Record<string, string[]>
 } = { revision: 0, bootstrapped: false, showSuspended: true, order: {} }
 
@@ -252,6 +254,7 @@ vi.mock('./api', async (importOriginal) => ({
   saveSessionVisibility: vi.fn(),
   saveHiddenSessionVisibility: vi.fn(),
   saveSessionHidden: vi.fn(),
+  saveSessionUnread: vi.fn(),
   saveSessionOrderLane: vi.fn(),
   bootstrapSessionOrder: vi.fn(),
   fetchSettingsProfile: vi.fn(),
@@ -2229,6 +2232,16 @@ describe('App', () => {
         ...hubSessionOrder,
         revision: hubSessionOrder.revision + 1,
         hidden: hidden ? [...others, key] : others,
+      }
+      return structuredClone(hubSessionOrder)
+    })
+    vi.mocked(saveSessionUnread).mockImplementation(async (computerId, sessionId, unread) => {
+      const key = `${computerId}:${sessionId}`
+      const others = (hubSessionOrder.unread ?? []).filter((entry) => entry !== key)
+      hubSessionOrder = {
+        ...hubSessionOrder,
+        revision: hubSessionOrder.revision + 1,
+        unread: unread ? [...others, key] : others,
       }
       return structuredClone(hubSessionOrder)
     })
@@ -22800,6 +22813,241 @@ describe('App', () => {
       .toHaveAccessibleName(/hidden from the list/)
     expect(screen.getByRole('button', { name: 'Hide Project chat from the list' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Include hidden sessions' })).toBeNull()
+  })
+
+  describe('unread sessions', () => {
+    const other = { ...session, id: 'other-work', title: 'Other work', messages: [] }
+    const key = (id: string) => `${computer.id}:${id}`
+    let visibility: PropertyDescriptor | undefined
+    const setVisibility = (value: DocumentVisibilityState) => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value })
+      act(() => { document.dispatchEvent(new Event('visibilitychange')) })
+    }
+    const emit = (event: unknown) => act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent)
+    })
+    /** The hub's own unread mark, published after the session event as the hub does. */
+    const hubMarksUnread = (id: string) => {
+      hubSessionOrder = {
+        ...hubSessionOrder,
+        revision: hubSessionOrder.revision + 1,
+        unread: [...(hubSessionOrder.unread ?? []), key(id)],
+      }
+      emit({ type: 'session.order.updated', order: structuredClone(hubSessionOrder) })
+    }
+    const listed = (items: ManagedSession[], unread: string[]) => {
+      vi.mocked(listSessions).mockResolvedValue(items)
+      vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+        items.find((candidate) => candidate.id === id) ?? items[0],
+      )
+      hubSessionOrder = {
+        revision: 3,
+        bootstrapped: true,
+        showSuspended: true,
+        unread: unread.map(key),
+        order: { [computer.id]: items.map((item) => key(item.id)) },
+      }
+      window.history.replaceState({}, '', `/?computer=${computer.id}&session=${session.id}`)
+    }
+
+    beforeEach(() => {
+      visibility = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    })
+
+    afterEach(() => {
+      if (visibility) Object.defineProperty(document, 'visibilityState', visibility)
+      else Reflect.deleteProperty(document, 'visibilityState')
+    })
+
+    it('marks a session read when you open it, and leaves the others unread', async () => {
+      const third = { ...session, id: 'third-work', title: 'Third work', messages: [] }
+      listed([session, other, third], [other.id, third.id])
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(await screen.findByRole('button', { name: /^Other work, unread,/ }))
+
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenCalledWith(computer.id, other.id, false))
+      expect(saveSessionUnread).toHaveBeenCalledTimes(1)
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Other work,/ }))
+        .not.toHaveAccessibleName(/unread/))
+      expect(screen.getByRole('button', { name: /^Third work, unread,/ })).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Unread' })).toHaveTextContent('Unread1')
+    })
+
+    it('leaves the open session unread while the app is hidden, and reads it when you return', async () => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+      listed([session, other], [session.id])
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      expect(await screen.findByRole('button', { name: /^Project chat, unread,/ })).toBeVisible()
+      expect(saveSessionUnread).not.toHaveBeenCalled()
+
+      setVisibility('visible')
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenCalledWith(computer.id, session.id, false))
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Project chat,/ }))
+        .not.toHaveAccessibleName(/unread/))
+    })
+
+    it('reads the open session when its turn ends while you watch, without showing it unread', async () => {
+      const running = { ...session, status: 'running' as const }
+      listed([running, other], [])
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      await screen.findByRole('button', { name: /^Other work,/ })
+      // Long after it was opened, so only the turn ending can read it.
+      const now = Date.now.bind(Date)
+      vi.spyOn(Date, 'now').mockImplementation(() => now() + 60_000)
+
+      emit({ type: 'session.upserted', session: { ...session, status: 'idle' } })
+      hubMarksUnread(session.id)
+      expect(screen.getByRole('button', { name: /^Project chat,/ }))
+        .not.toHaveAccessibleName(/unread/)
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenCalledWith(computer.id, session.id, false))
+      expect(hubSessionOrder.unread).toEqual([])
+
+      // Another session finishing is still unread: nobody was watching it.
+      emit({ type: 'session.upserted', session: { ...other, status: 'running' } })
+      emit({ type: 'session.upserted', session: { ...other, status: 'idle' } })
+      hubMarksUnread(other.id)
+      expect(screen.getByRole('button', { name: /^Other work, unread,/ })).toBeVisible()
+      expect(saveSessionUnread).toHaveBeenCalledTimes(1)
+    })
+
+    it('leaves a session unread when its turn ends while the app is hidden', async () => {
+      const running = { ...session, status: 'running' as const }
+      listed([running, other], [])
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      setVisibility('hidden')
+      emit({ type: 'session.upserted', session: { ...session, status: 'idle' } })
+      hubMarksUnread(session.id)
+
+      expect(await screen.findByRole('button', { name: /^Project chat, unread,/ })).toBeVisible()
+      expect(saveSessionUnread).not.toHaveBeenCalled()
+    })
+
+    it('keeps the open session unread once you mark it, until you open it again or return', async () => {
+      listed([session, other], [])
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Mark Project chat as unread' }))
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenCalledWith(computer.id, session.id, true))
+      expect(screen.getByRole('button', { name: /^Project chat, unread,/ })).toBeVisible()
+
+      // Another turn ending while it is open does not undo that.
+      emit({ type: 'session.upserted', session: { ...session, status: 'running' } })
+      emit({ type: 'session.upserted', session: { ...session, status: 'idle' } })
+      emit({ type: 'session.order.updated', order: structuredClone(hubSessionOrder) })
+      await act(async () => {})
+      expect(saveSessionUnread).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('button', { name: /^Project chat, unread,/ })).toBeVisible()
+
+      // Coming back to the app reads it.
+      setVisibility('hidden')
+      setVisibility('visible')
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, false))
+
+      // So does opening it again.
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Mark Project chat as unread' }))
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, true))
+      fireEvent.click(await screen.findByRole('button', { name: /^Project chat, unread,/ }))
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, false))
+      expect(saveSessionUnread).toHaveBeenCalledTimes(4)
+    })
+
+    it('stops holding the open session unread once that mark is refused or undone', async () => {
+      listed([session, other], [])
+      vi.mocked(saveSessionUnread).mockRejectedValueOnce(new Error('Hub unavailable'))
+      const finishTurn = () => {
+        emit({ type: 'session.upserted', session: { ...session, status: 'running' } })
+        emit({ type: 'session.upserted', session: { ...session, status: 'idle' } })
+        hubMarksUnread(session.id)
+      }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Mark Project chat as unread' }))
+      expect(await within(screen.getByRole('main'))
+        .findByText('Could not mark Project chat as unread: Hub unavailable')).toBeVisible()
+
+      // Never marked, so watching its turn end reads it as usual.
+      finishTurn()
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, false))
+      expect(saveSessionUnread).toHaveBeenCalledTimes(2)
+
+      // Marked, then read on another device: nothing is left to keep.
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Mark Project chat as unread' }))
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, true))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Mark Project chat as read' }))
+        .toBeEnabled())
+      hubSessionOrder = { ...hubSessionOrder, revision: hubSessionOrder.revision + 1, unread: [] }
+      emit({ type: 'session.order.updated', order: structuredClone(hubSessionOrder) })
+      finishTurn()
+      await waitFor(() =>
+        expect(saveSessionUnread).toHaveBeenLastCalledWith(computer.id, session.id, false))
+      expect(saveSessionUnread).toHaveBeenCalledTimes(4)
+    })
+
+    it('reports a refused change and keeps the committed read state', async () => {
+      listed([session, other], [])
+      vi.mocked(saveSessionUnread).mockRejectedValueOnce(new Error('Hub unavailable'))
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Mark Other work as unread' }))
+
+      expect(await within(screen.getByRole('main'))
+        .findByText('Could not mark Other work as unread: Hub unavailable')).toBeVisible()
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      expect(screen.getByRole('button', { name: /^Other work,/ }))
+        .not.toHaveAccessibleName(/unread/)
+      expect(screen.getByRole('button', { name: 'Mark Other work as unread' })).toBeEnabled()
+    })
+
+    it('follows what another device marks, and remembers the Unread filter', async () => {
+      listed([session, other], [])
+
+      const first = render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      await screen.findByRole('button', { name: /^Other work,/ })
+      hubMarksUnread(other.id)
+      expect(screen.getByRole('button', { name: /^Other work, unread,/ })).toBeVisible()
+      fireEvent.click(screen.getByRole('button', { name: 'Unread' }))
+      expect(screen.queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+      first.unmount()
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      expect(screen.getByRole('button', { name: 'Unread' }))
+        .toHaveAttribute('aria-pressed', 'true')
+      expect(await screen.findByRole('button', { name: /^Other work, unread,/ })).toBeVisible()
+      expect(saveSessionUnread).not.toHaveBeenCalled()
+    })
   })
 
   it('shows hidden sessions on every device, and keeps the committed choice when saving fails', async () => {

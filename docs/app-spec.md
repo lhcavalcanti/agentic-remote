@@ -68,21 +68,22 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 
 - The Sessions drawer MUST show all configured computers.
 - Selecting, creating, or opening a session MUST NOT hide other computers.
-- Sessions MUST offer metadata search and All, Needs you, and Working filters,
-  plus a hub-owned Suspended visibility toggle that defaults to showing sessions
-  paused through Agentic Remote. A committed visibility change, including hiding
-  or showing one session, MUST survive hub restarts and update every connected
-  browser; a failed save MUST leave the last committed state visible and report
-  the failure. Filtering and hiding MUST keep every configured computer visible
-  and MUST NOT change the selected session, its draft, or its Knowledge
-  position. Suspended or hidden sessions the list leaves out MUST also be
-  excluded from keyboard next/previous navigation. Search and the Needs you or
-  Working filters MUST disable reordering. With Custom order, All selected and
-  no search, listed sessions MAY still be reordered while suspended or hidden
-  sessions are left out: each listed session MUST move with the contiguous
-  left-out sessions immediately following it, while leading left-out sessions
-  without a listed predecessor retain their position. Clearing filters MUST
-  restore and persist suspended-session visibility.
+- Sessions MUST offer metadata search and All, Needs you, Working, and Unread
+  filters, plus a hub-owned Suspended visibility toggle that defaults to
+  showing sessions paused through Agentic Remote. A committed visibility
+  change, including hiding or showing one session, MUST survive hub restarts
+  and update every connected browser; a failed save MUST leave the last
+  committed state visible and report the failure. Filtering and hiding MUST
+  keep every configured computer visible and MUST NOT change the selected
+  session, its draft, or its Knowledge position. Suspended or hidden sessions
+  the list leaves out MUST also be excluded from keyboard next/previous
+  navigation. Search and the Needs you, Working, or Unread filters MUST disable
+  reordering. With Custom order, All selected and no search, listed sessions
+  MAY still be reordered while suspended or hidden sessions are left out: each
+  listed session MUST move with the contiguous left-out sessions immediately
+  following it, while leading left-out sessions without a listed predecessor
+  retain their position. Clearing filters MUST restore and persist
+  suspended-session visibility.
 - Any session MAY be hidden from the Sessions list. Hiding changes nothing else
   about it: it keeps running, notifying, and answering Oracle, and it stays
   openable by address and from Oracle. The list MUST leave hidden sessions out
@@ -93,6 +94,23 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   visibly marked apart from suspended and ordinary rows, not by colour alone.
   The toggle MUST show the hidden count, and MAY be omitted while nothing is
   hidden and it is off. Discovery MUST NOT unhide a session.
+- A session MUST become unread when a turn ends while nobody is reading it:
+  it goes from running or waiting to idle with no pending permission, question,
+  or queued prompt (the rule the "finished" push follows), or it fails. The hub
+  MUST decide this from session events for every computer, with or without a
+  browser connected, and MUST NOT mark a session unread the first time it sees
+  it, including after a hub restart or an upgrade. Opening a session while the
+  app is visible, returning to the app with it open, and its turn ending while
+  it is open and visible MUST mark it read; Oracle and other background reads
+  MUST NOT. Each row MUST offer Mark as read or Mark as unread beside Hide; an
+  open session marked unread MUST stay unread until it is opened again or the
+  app becomes visible again. Unread rows MUST carry a bold title, an accent dot,
+  and "unread" in their accessible name, distinct from the status, attention,
+  hidden, and suspended cues. Unread state is hub-owned and shared by every
+  browser like hidden state: it MUST follow Clear and Recover replacements and
+  MUST be dropped on close, delete, and unpair. The Unread filter MUST show its
+  count, counting hidden sessions only as the hidden-count rules above allow.
+  A hub that predates unread state sends none, and nothing is unread.
 - Session ordering MUST be explicit. Custom order remains the backward-
   compatible default; Recent activity, Attention first, and Name views MAY
   reorder the displayed sessions within each computer without rewriting the
@@ -105,9 +123,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   holds. A drag MAY be applied optimistically, but a refused write MUST restore
   the last acknowledged order and report the failure rather than claim a local
   save. A drag MUST submit only the dragged computer's lane, and a session MUST
-  NOT move between computers. Suspended visibility, hidden sessions, and Hidden
-  visibility share the same revisioned hub snapshot; computer-group order, sort
-  mode, search, and the three primary filters remain browser-local.
+  NOT move between computers. Suspended visibility, hidden sessions, Hidden
+  visibility, and unread sessions share the same revisioned hub snapshot;
+  computer-group order, sort mode, search, and the four primary filters remain
+  browser-local.
 - Search, the three primary filters, the selected session, and session-list
   scroll position MUST survive browser reloads and responsive layout changes.
   Sessions MUST expose one accessible **Refresh** action that reloads

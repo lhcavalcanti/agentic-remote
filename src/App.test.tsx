@@ -14213,9 +14213,6 @@ describe('App', () => {
       ),
     )
     expect(
-      screen.getByText('Tap Send · Return adds a line'),
-    ).toBeInTheDocument()
-    expect(
       screen.getByText('SDK', { selector: '.session-mode-badge' }),
     ).toBeInTheDocument()
   })
@@ -16362,13 +16359,14 @@ describe('App', () => {
       'Messages waiting for later delivery',
     )
     expect(screen.getByRole('button', { name: 'Queue message' }))
-      .toHaveAttribute('title', 'Queue for later delivery')
+      .toHaveAttribute('title', 'Queue for later delivery (Ctrl/⌘+Enter)')
     expect(screen.getByRole('button', { name: 'Queue message' }))
       .toHaveAttribute(
         'aria-description',
         'Queues this message for later delivery',
       )
-    expect(screen.getByText(/Ctrl\/⌘\+Enter queue for later/)).toBeInTheDocument()
+    // The list carries the count; no line below the composer repeats it.
+    expect(document.querySelector('.composer-hint')).toBeNull()
 
     // Editing opens the message for rewriting and leaves it where it is. It
     // used to take it off the queue, so changing your mind, or simply closing
@@ -19394,7 +19392,7 @@ describe('App', () => {
     )
     expect(
       screen.getByRole('button', { name: 'Send message' }),
-    ).toHaveAttribute('title', 'Send into the current response')
+    ).toHaveAttribute('title', 'Send into the current response (Enter)')
     const actionButtons = [...document.querySelectorAll('.composer-actions > .send-button')]
     expect(actionButtons).toHaveLength(5)
     expect(actionButtons.filter((button) => button.querySelector('.send-button__label')))

@@ -1807,18 +1807,22 @@ const RENDERED_HISTORY = 250
 
 /**
  * The tool rows the reader has opened in a session: true while open, false
- * once closed again. A closed one stays where the reader left it while the
- * window has moved past it, and is let go once it is back inside.
+ * once closed again where the window had moved past it, which keeps it where
+ * the reader left it instead of vanishing before it is brought back into view.
  */
 type ActivityRowStates = Readonly<Record<string, boolean>>
 
-/** Every session's rows, without the closed ones kept in place. */
+/** The rows without the closed ones kept in place, in one session or all. */
 function releaseClosedActivityRows(
   sessions: Record<string, ActivityRowStates>,
+  only?: string,
 ): Record<string, ActivityRowStates> {
   let released = sessions
   for (const [key, rows] of Object.entries(sessions)) {
-    if (Object.values(rows).every((open) => open)) {
+    if (
+      (only !== undefined && key !== only) ||
+      Object.values(rows).every((open) => open)
+    ) {
       continue
     }
     if (released === sessions) {
@@ -1841,7 +1845,6 @@ const ConversationMessages = memo(function ConversationMessages({
   sessionId,
   activityRows,
   onToggleActivity,
-  onReleaseActivities,
 }: {
   messages: ChatMessage[]
   pendingEchoes: PendingEcho[]
@@ -1858,9 +1861,8 @@ const ConversationMessages = memo(function ConversationMessages({
   // The tool rows the reader has opened, held by the conversation for the
   // same reason as `showAll`.
   activityRows?: ActivityRowStates
-  onToggleActivity: (messageId: string) => void
-  // Lets go of closed rows that no longer need keeping in place.
-  onReleaseActivities: (messageIds: readonly string[]) => void
+  // Whether the row came along past the cut, so a closed one can be kept.
+  onToggleActivity: (messageId: string, pastWindow: boolean) => void
 }) {
   const cut = showAll
     ? 0
@@ -1900,17 +1902,20 @@ const ConversationMessages = memo(function ConversationMessages({
       }
     }
   }
-  // A row closed again is kept only while it lies past the cut. Back inside
-  // the window, as once the reader shows the earlier messages, it is an
-  // ordinary row again, and is let go so it does not come along later.
-  const released = Object.entries(activityRows ?? {})
-    .filter(([id, open]) => !open && tail.some((message) => message.id === id))
-    .map(([id]) => id)
-  useEffect(() => {
-    if (released.length > 0) {
-      onReleaseActivities(released)
-    }
+  // The rows that came along as last drawn, read when one is toggled. One
+  // toggle for every row keeps an unchanged row from drawing again.
+  const carriedRef = useRef(carried)
+  useLayoutEffect(() => {
+    carriedRef.current = carried
   })
+  const toggleActivity = useCallback(
+    (messageId: string) =>
+      onToggleActivity(
+        messageId,
+        carriedRef.current.some((message) => message.id === messageId),
+      ),
+    [onToggleActivity],
+  )
   const hidden = cut - carried.length
   const messages = carried.length ? [...carried, ...tail] : tail
   const activityMessages = new Map(
@@ -1958,7 +1963,7 @@ const ConversationMessages = memo(function ConversationMessages({
       expanded={activityRows?.[message.id] === true}
       key={key}
       message={message}
-      onToggle={onToggleActivity}
+      onToggle={toggleActivity}
       sessionId={sessionId}
     />
   )
@@ -3878,6 +3883,18 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [expandedTranscripts, setExpandedTranscripts] = useState<
     Record<string, boolean>
   >({})
+  // Which tool rows the reader has opened, by session.
+  const [activityRows, setActivityRows] = useState<
+    Record<string, ActivityRowStates>
+  >({})
+  // Another session opens at its end, so moving to one lets go of every
+  // closed row kept in place. Done while rendering, before anything is drawn
+  // with them.
+  const [activityRowsSession, setActivityRowsSession] = useState(selectedKey)
+  if (activityRowsSession !== selectedKey) {
+    setActivityRowsSession(selectedKey)
+    setActivityRows((current) => releaseClosedActivityRows(current))
+  }
   // Stable per session. A fresh closure on every render defeats the memo the
   // transcript relies on, so every keystroke in the composer would rebuild
   // every row and walk the hidden history again.
@@ -3886,52 +3903,33 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return
     }
     setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
+    // Everything is inside the window now, so nothing needs keeping in place.
+    setActivityRows((current) =>
+      releaseClosedActivityRows(current, selectedKey),
+    )
   }, [selectedKey])
-  // Which tool rows the reader has opened, by session. The transcript lets a
-  // closed one go once it is back inside the window, and leaving the session
-  // lets go of them all. The callbacks are stable per session for the same
-  // reason as above.
-  const [activityRows, setActivityRows] = useState<
-    Record<string, ActivityRowStates>
-  >({})
-  const toggleSelectedActivity = useCallback((messageId: string) => {
-    if (!selectedKey) {
-      return
-    }
-    setActivityRows((current) => {
-      const rows = current[selectedKey] ?? {}
-      return {
-        ...current,
-        [selectedKey]: { ...rows, [messageId]: rows[messageId] !== true },
-      }
-    })
-  }, [selectedKey])
-  const releaseSelectedActivities = useCallback(
-    (messageIds: readonly string[]) => {
+  // Opening a row records it open. Closing it forgets it, unless the window
+  // has moved past it: then it stays, closed, where the reader is, rather
+  // than vanishing before it can be brought back into view.
+  const toggleSelectedActivity = useCallback(
+    (messageId: string, pastWindow: boolean) => {
       if (!selectedKey) {
         return
       }
       setActivityRows((current) => {
-        const rows = current[selectedKey]
-        // One opened again meanwhile stays.
-        const closed = messageIds.filter((id) => rows?.[id] === false)
-        if (!rows || closed.length === 0) {
-          return current
+        const rows: Record<string, boolean> = { ...current[selectedKey] }
+        if (rows[messageId] !== true) {
+          rows[messageId] = true
+        } else if (pastWindow) {
+          rows[messageId] = false
+        } else {
+          delete rows[messageId]
         }
-        const remaining = { ...rows }
-        for (const id of closed) {
-          delete remaining[id]
-        }
-        return { ...current, [selectedKey]: remaining }
+        return { ...current, [selectedKey]: rows }
       })
     },
     [selectedKey],
   )
-  // Another session opens at its end, so no closed row needs keeping in place
-  // once the reader moves to one.
-  useEffect(() => {
-    setActivityRows(releaseClosedActivityRows)
-  }, [selectedKey])
   // The socket is bound once, so it reaches the restore through a ref.
   const restoreFailedPromptRef = useRef<
     (key: string, content: string, failedAt?: string) => void
@@ -14053,7 +14051,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 activityRows={activityRows[sessionKey(selected)]}
                 computerId={selected.computerId}
                 currentToolId={currentTool?.id}
-                onReleaseActivities={releaseSelectedActivities}
                 onShowAll={expandSelectedTranscript}
                 onToggleActivity={toggleSelectedActivity}
                 sessionId={selected.id}

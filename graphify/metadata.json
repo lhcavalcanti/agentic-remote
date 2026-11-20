@@ -636,9 +636,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 256,
+  "communities": 253,
   "community_algorithm": "louvain-seed-42",
-  "edges": 25689,
+  "edges": 25691,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -1199,10 +1199,10 @@
     "server/terminal-form-deadline.test.ts": "4abe7cd75cba5123c99150dad748baeb8b8ed29e3a3f5ecff9eea094799695a9",
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-process-roots.test.ts": "4dcb5e7333623e53d543a590b06e88712837ba887caa1bf7f04246697a56ce15",
-    "server/terminal-queue-delivery.test.ts": "06014e06ae290a7609d8b19688bba5d844eb6c7268338ffb4ad9ef018c46a1f8",
+    "server/terminal-queue-delivery.test.ts": "a300a1d649476393150ead2f240cf1338625aac6dc1bc1053cc32a4f26b9fac1",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
     "server/terminal-session.test.ts": "79ce94a3054e8ece2cef089209f74e5a4b5009773e4f63a6f385f227a8dce6ee",
-    "server/terminal-session.ts": "ce20d35c8348ea3aff9c1d0ad884a938395d6e5ca3cb574d2000f19377e5a9da",
+    "server/terminal-session.ts": "22d5426707d8a1dbcbf0d456156786ee2951aad1c410ae91169564935fc123eb",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "be15c41392f70dd2d8976f72441d972c885c7bc796e77e94ea186cc4ba22e93c",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -1517,7 +1517,7 @@
     "vite.config.ts": "a60a896cfb1d57a3837faf5c428fe1c90f874a3b0a4136b5a63d21737d54d139"
   },
   "mode": "local-ast-only",
-  "nodes": 8891,
+  "nodes": 8892,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1759,13 +1759,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "b1e3cdca7d662e6b14ad5f3bb2d18aabfe81afc4e5d93b793d9b1afd29452b44",
-    "communities.json": "37ca2abae006b1a1e862a0846d84ab07fe6527d406edd862a03a31c3a0cf0789",
-    "graph.html": "3ae38d5ce7793525e911b96634132652ab335fbcc80dd1e37f45c46f735a7955",
-    "graph.json": "01aef9df0ebf6503c9bc6d6a6ca356786e74c83ad7560952cc76fc374d1ea77e"
+    "GRAPH_REPORT.md": "4cb4ff0b5edeb5c294e0697b646e4029c203fecbffa49eff240f5b7b48cf6db5",
+    "communities.json": "8e7137b05500c659ae83d1c88d7f90d0ab4aba2ba946ab9a0dbdda5cc85a0349",
+    "graph.html": "d5eb109f7dcf449f397f775e54796baa2e8e3cb969247d0cbae4fdf292f4df43",
+    "graph.json": "96e5121b8f630f146072182db6bbcae8d0591eff2db8bc29991bf2afd9276d65"
   },
   "schema_version": 1,
-  "source_commit": "9a2f0134c69cda311d03a519ecd4809515ea679e",
-  "source_fingerprint": "1762fc28bf8488ad17c04820ada8c19366d0877eaa887982b0d5164fbeae4005",
+  "source_commit": "16bee49bafb40a6fe36975996a5c3af74ecb9fb3",
+  "source_fingerprint": "da4284258faa024d454b251243f3f2245f86cb9a8d119ba4f2af7f042e0614aa",
   "working_tree_changes": []
 }

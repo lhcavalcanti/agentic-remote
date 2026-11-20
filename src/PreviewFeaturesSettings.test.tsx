@@ -57,9 +57,9 @@ function hub(values: SettingsProfileValues = {}) {
 }
 
 function EffectiveState() {
-  const composer = usePreviewFeature('composerRefresh')
+  const rail = usePreviewFeature('desktopRail')
   const notifications = usePreviewFeature('notificationPanel')
-  return <output aria-label="Effective previews">{JSON.stringify({ composer, notifications })}</output>
+  return <output aria-label="Effective previews">{JSON.stringify({ rail, notifications })}</output>
 }
 
 function SchedulerDraft() {
@@ -101,16 +101,16 @@ describe('Preview features settings', () => {
   it('starts off and persists a toggle through the hub profile and a remount', async () => {
     const server = hub()
     const view = settings(await server.client())
-    expect(screen.getAllByRole('checkbox')).toHaveLength(8)
+    expect(screen.getAllByRole('checkbox')).toHaveLength(4)
     for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).not.toBeChecked()
-    const composer = screen.getByRole('checkbox', { name: 'Composer refresh' })
-    expect(composer).toHaveAccessibleDescription('Try the refreshed composer controls and session status.')
-    fireEvent.click(composer)
-    await waitFor(() => expect(server.snapshot().values.previewFeatures).toEqual({ composerRefresh: true }))
-    expect(screen.getByLabelText('Effective previews')).toHaveTextContent('"composer":true')
+    const rail = screen.getByRole('checkbox', { name: 'Desktop rail' })
+    expect(rail).toHaveAccessibleDescription('Try compact navigation alongside the session list.')
+    fireEvent.click(rail)
+    await waitFor(() => expect(server.snapshot().values.previewFeatures).toEqual({ desktopRail: true }))
+    expect(screen.getByLabelText('Effective previews')).toHaveTextContent('"rail":true')
     view.unmount()
     settings(await server.client())
-    expect(screen.getByRole('checkbox', { name: 'Composer refresh' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: 'Desktop rail' })).toBeChecked()
     expect(server.transport.update).toHaveBeenCalledTimes(1)
   })
 

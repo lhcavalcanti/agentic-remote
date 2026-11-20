@@ -636,9 +636,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 263,
+  "communities": 271,
   "community_algorithm": "louvain-seed-42",
-  "edges": 25696,
+  "edges": 25711,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -927,8 +927,8 @@
     "server/activity-spacing.test.ts": "b03df98ba6b03ed89042a63d1cfa61ced6230f09dc435ff74b2280589641d55e",
     "server/agent-service-recovery.test.ts": "6c3e3eac2e25f1d7c276bf3c78eff185683b4cecc7ba3d1b264634ed2ebc3202",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "5bda36ad982934c2738c21fd71d42c222937e3388cee817d46097061e852e36d",
-    "server/agent-service.ts": "3047e7401f83ba42fed832ddfa0cf96b861c3b087cd7c46fefb849200fee4d37",
+    "server/agent-service.test.ts": "7f063984a3b1fdf6852d1111125fd6f50fee4edae59295248a8c7357c7be8f09",
+    "server/agent-service.ts": "2a0beb438b58f1de8a1f805377c94e6e8166a99e900f1168a068335a533e676e",
     "server/api-origin.test.ts": "7834409881aae57cda9ed1927f8e69b047e6891a1c05047ab0eb298b6371b99d",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -1200,8 +1200,8 @@
     "server/terminal-process-roots.test.ts": "4dcb5e7333623e53d543a590b06e88712837ba887caa1bf7f04246697a56ce15",
     "server/terminal-queue-delivery.test.ts": "babbb990359e06dcfa997d9cb71cff4661a9db751ea27cba7482a26a694db17e",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "b84ff4bf424919363f39842f376a55f0abdbbaeb891eff1b9341ce6541fc75b5",
-    "server/terminal-session.ts": "6bf23d5e27197665dea6bf07fb4edaea6b8b4cc41a61160ba3cbfa50c3d58aea",
+    "server/terminal-session.test.ts": "e606e5ab0b03e7774c047dc64328bd64cce80f922260d3a125eca477c0d10d6a",
+    "server/terminal-session.ts": "c714cd95b071461ce55d8d79b54981acec998acb25199a80c01b9e235032be2d",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "be15c41392f70dd2d8976f72441d972c885c7bc796e77e94ea186cc4ba22e93c",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -1516,7 +1516,7 @@
     "vite.config.ts": "a60a896cfb1d57a3837faf5c428fe1c90f874a3b0a4136b5a63d21737d54d139"
   },
   "mode": "local-ast-only",
-  "nodes": 8887,
+  "nodes": 8891,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1757,27 +1757,18 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "63e8fe2f2495079459207a1683e87a93f647ec07f807fb840477198a0021b082",
-    "communities.json": "dbf2e3f047a3c6298bab1d4253387250870a68493dda5d6c6822802302140df0",
-    "graph.html": "99725601947498fce236abb692941a89012f53c3d6e2cd83ee54b45a3c106f38",
-    "graph.json": "37aee0c9257838234565b1faf031032df7c934b43c41d98219f1ace450da202b"
+    "GRAPH_REPORT.md": "848588df6bdec39cecfd635471cc6a1c5339640757f29a09eb9f25cbe761a375",
+    "communities.json": "7902c08f39e4be95a46bac12b33b9920294051b6c2e59e4ead0e7d371aa29c55",
+    "graph.html": "e770091f4971dedf08b8b53ac6a1863afa0568e8941958fd42f67f1286fd442c",
+    "graph.json": "1540efcf030c3483bd6960d7cc2c1b6b9481943cf34b0e8a35b1b72c96f4e908"
   },
   "schema_version": 1,
-  "source_commit": "e5b41d6906e9f58e4229f7fc326941cc9249fe98",
-  "source_fingerprint": "d90419be55bfddc9b0509f240a4fabf2e93f2f3dcccb1cc164f91160ed274fa4",
+  "source_commit": "9bd04e9db9c372b640da1f279e9260d85df0118d",
+  "source_fingerprint": "5b503b2cdd11c59521de99d29d7dedd24701a2c5c513b3854b81b8c4839de559",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "e2e/ui-locks.pw.ts-snapshots/desktop-preview-features-chromium-linux.png",
-    "e2e/ui-locks.pw.ts-snapshots/foldable-preview-features-chromium-linux.png",
-    "package.json",
     "server/agent-service.test.ts",
     "server/agent-service.ts",
-    "server/send-matrix.integration.test.ts",
     "server/terminal-session.test.ts",
-    "server/terminal-session.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "server/terminal-session.ts"
   ]
 }

@@ -1,249 +1,255 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `03bed729558b8bfa4b7759781c2b44a0864d59122a8400b4dfbbf0cd4f86de79`
+Snapshot: `c2fbe4b6475ade6741af4b649b55e10259d0cf8ab18d417149f828eaffd33a41`
 
-Source checkout: `83d3f33c53617d987d826c0aa9b384c292765f14`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `3d0c0b1972a6a8686d0219051415bf5fa30b9d0e`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
-All 637 tracked code files in scope have source nodes. Parsing, resolution, community labels, and queries are local; no model or external API is used. Imports can point to external package identifiers rather than local files.
+All 640 tracked code files in scope have source nodes. Parsing, resolution, community labels, and queries are local; no model or external API is used. Imports can point to external package identifiers rather than local files.
 
 Documentation, styles, images, and other non-code files are inventoried but **not semantically extracted**. Runtime routing and dynamic behavior must still be confirmed in source.
 
 
 ## Corpus Check
-- 637 files · ~1,128,579 words
+- 640 files · ~1,136,612 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 8886 nodes · 25622 edges · 257 communities (212 shown, 27 thin omitted)
-- Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 1295 edges (avg confidence: 0.81)
+- 8965 nodes · 25874 edges · 264 communities (217 shown, 28 thin omitted)
+- Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 1317 edges (avg confidence: 0.81)
 - Token cost: 0 input · 0 output
 
 ## Community Hubs (Navigation)
-- SessionDetail
 - AgentService
+- SessionDetail
 - AppWorkspace
 - api.ts
 - computer-manager.ts
+- ComputerManager
 - agent-service.ts
 - App.tsx
-- contracts.ts
+- react
 - ClaudeAgentService
-- session-presentation.ts
-- SessionService
-- client.ts
+- hub-routes.ts
+- contracts.ts
 - claude-agent-service.ts
-- ManagedSession
-- ManagerStore
-- shared/settings-profile.ts
-- session-store-providers.test.ts
-- manager-tools.ts
-- sections.tsx
 - dreamer-store.ts
-- schedule-launcher.ts
-- agentic-remote-promotion-monitor
+- manager-tools.ts
+- ManagerStore
+- SessionStatus
+- session-presentation.ts
+- terminal-session.ts
 - oracle-voice-soak.ts
+- agentic-remote-promotion-monitor
+- manager-agent.ts
 - ManagerAgent
 - oracle-voice-child.ts
-- schedules.ts
-- active-sessions.ts
-- workspace-fixtures.ts
-- VoiceCapture
-- terminal-session.ts
-- PushNotificationService
-- notification-center.ts
-- oracle-voice-coordinator.ts
-- tmux-test-helpers.ts
-- notification-classifier.ts
-- OracleVoiceCoordinator
-- fake-voice.ts
-- oracle-voice-worker.ts
-- oracle-task-store.ts
-- manager-agent.ts
-- session-reply-durability.test.ts
-- FakeVoiceEngine
-- oracle-voice-integration.test.ts
-- TmuxTerminalSessionController
-- oracle-voice-security.test.ts
-- oracle-voice-session.ts
-- manager-structured-memory-validation.ts
-- sampler.ts
-- dreamer-service.ts
-- DreamerService
-- session-knowledge-store.ts
-- session-knowledge-routes.test.ts
-- setupWorkspaceFixture
-- CopilotClientLike
-- oracle-voice-benchmark.ts
-- oracle-voice.ts
-- app.ts
-- OracleDreamer.tsx
 - ManagerAssistant.tsx
-- agentic-remote
-- manager-proactive-coordinator.ts
-- SchedulerStore
+- ManagerMessage
+- app.ts
+- transcription-service.ts
+- CopilotSessionLike
+- oracle-task-store.ts
+- node-routes.ts
+- oracle-voice-integration.test.ts
+- oracle-voice-coordinator.ts
+- TmuxTerminalSessionController
+- active-sessions.ts
 - session-directory.ts
-- session-latency-benchmark.ts
-- manager-routes.ts
+- OracleVoiceCoordinator
+- FakeVoiceEngine
+- multi-node.test.ts
+- ChatMessage
+- tmux-test-helpers.ts
+- manager-structured-memory-validation.ts
+- session-resource-clear.test.ts
+- background-task-adapter.ts
+- SchedulerStore
+- fake-voice.ts
+- TerminalSessionController
+- CopilotClientLike
+- OracleDreamer.tsx
+- DreamerService
+- oracle-voice-benchmark.ts
+- sampler.ts
+- oracle-voice-session.ts
+- SettingsProfileSnapshot
+- agentic-remote
+- schedule-launcher.ts
+- processes.ts
+- ProviderSessionService
 - dreamer-progress.ts
-- hub-routes.ts
+- pwa.ts
 - server/skill-settings.ts
-- terminal-session.test.ts
-- agentic-remote-gate
-- bundle
-- manager-structured-memory.ts
-- manager-context.ts
-- .sendInternal
-- shell.ts
-- VoicePlayback
-- AppSettingsDialog.tsx
-- lib.rs
-- FakeSessionService
-- schedule-recurrence.ts
-- ScheduleForm.tsx
-- dependencies
+- ManagerEvent
 - client.test.ts
+- oracle-voice.ts
+- Composer.tsx
+- client.ts
+- OracleVoiceClient
+- agentic-remote-gate
+- workspace-fixtures.ts
+- bundle
+- ui-scenes.ts
+- manager-agent.test.ts
+- VoicePlayback
+- schedule-recurrence.ts
+- oracle-voice-routes.test.ts
+- service.ts
+- ManagedSession
+- shell.ts
+- lib.rs
+- dreamer-service.ts
+- normalizeKnowledgeRelativePath
+- ManagerAttachment
+- dependencies
+- ChildVoiceEngine
+- ScheduleForm.tsx
 - agentic-remote-promotion-setup
-- terminal-startup-queue.test.ts
+- ComputerSummary
+- schedules.ts
+- .sendInternal
+- DialogFrame.tsx
 - devDependencies
 - config.rs
-- feature-flags.ts
-- transcription-service.ts
-- react
-- KnowledgeStore
-- SessionOrderStore
-- session-launcher.ts
-- EngineVoiceBackendSession
-- ui-scenes.ts
-- recovery-resend-durability.test.ts
-- manager-proactive-inbox.ts
-- composer-state.ts
-- markdown-navigation.ts
-- pipeline.test.tsx
-- oracle-voice-child.test.ts
-- oracle-voice-segments.ts
-- remote-voice-client.ts
-- session-patch-browser.ts
-- real-voice.ts
-- node:fs/promises
-- registerSessionKnowledgeRoutes
-- manager-agent.test.ts
-- use-markdown-document.test.tsx
-- ManagerAttachment
-- tmux-errors.integration.test.ts
-- ManagerAssistant.test.tsx
-- capture-workspace.ts
-- oracle-voice-config.ts
-- cli-canary.ts
-- manager-structured-memory-search.ts
-- scripts
-- pipeline.ts
-- oracle-voice-routes.test.ts
-- send-matrix.integration.test.ts
-- background-task-adapter.ts
-- compilerOptions
-- delegated-transcription-service.ts
-- ManagerStructuredMemoryStore
-- SettingsProfileClient
-- agent-service.test.ts
-- .toolHost
-- HostSnapshot
-- normalizeKnowledgeRelativePath
-- oracle-voice-tickets.ts
+- schedule-proposals.ts
+- notification-center-service.ts
+- manager-structured-memory.ts
 - host-telemetry.ts
-- HostMonitorView.test.tsx
-- compilerOptions
-- full-gate.test.ts
-- service.ts
-- refusal-metrics.ts
-- PromptCards.tsx
+- manager-proactive-inbox.ts
+- oracle-voice-child.test.ts
 - knowledge-tree.ts
+- shared/settings-profile.ts
+- EngineVoiceBackendSession
+- setupWorkspaceFixture
+- buildApp
+- PushNotificationService
+- oracle-voice-segments.ts
+- VoiceClientControl
+- SchedulerDispatcher
+- send-matrix.integration.test.ts
+- real-voice.ts
+- agent-service-event-projection.test.ts
+- oracle-voice-security.test.ts
+- session-reply-durability.test.ts
+- notification-classifier.ts
+- terminal-session.test.ts
+- capture-workspace.ts
+- src/settings-profile.ts
+- use-markdown-document.ts
+- PreviewFeaturesSettings.test.tsx
+- cli-canary.ts
+- scripts
+- session-patch-browser.ts
+- oracle-voice-config.ts
+- manager-structured-memory-search.ts
+- SettingsProfileClient
+- VoiceCapture
+- agent-service.test.ts
+- HostMonitorView.test.tsx
+- oracle-voice-worker.ts
+- compilerOptions
+- closed-sessions.ts
+- notification-center.integration.test.ts
+- EnabledOracleVoiceConfig
+- transport.test.ts
+- NotificationStore
+- SessionKnowledgeStore
+- PromptCards.tsx
+- oracle-voice-tickets.ts
+- refusal-metrics.ts
+- session-knowledge-store.ts
+- pipeline.test.tsx
+- renderer.ts
+- compilerOptions
+- HubEvent
+- full-gate.test.ts
+- ManagerStructuredMemoryStore
+- session-store-providers.test.ts
+- pipeline.ts
+- capture.ts
 - compilerOptions
 - ManagerProactiveInbox
-- schedule-notification-service.test.ts
 - OnlineRecognizer
+- markdown-navigation.ts
 - MessageTime.tsx
 - compilerOptions
 - compilerOptions
-- transport.test.ts
-- recordValue
-- HostTelemetrySampler
-- ManagerMemory
-- startup-phases.test.ts
-- session-provenance.test.ts
-- dreamer-schedule.ts
 - oracle-status.test.ts
-- session-resource-routes.test.ts
+- ManagerMemory
+- recovery-resend-durability.test.ts
+- dreamer-schedule.ts
+- KnowledgeStore
 - promotion-monitor.test.ts
+- terminal-startup-queue.test.ts
 - BoundedQueue
 - ReaderWorkspace
+- manager-automatic.ts
 - scripts
-- file-upload-routes.ts
-- .correct
-- closed-session-sweeper.ts
-- manager-runtime.ts
-- ScheduleWorktreeService
+- session-knowledge-routes.ts
+- session-resource-routes.test.ts
+- session-unread.pw.ts
+- knowledge-store.ts
+- registerSessionKnowledgeRoutes
+- SessionAdmissions
 - package.json
+- terminal-form-deadline.test.ts
 - VoiceEngineEvent
-- backgroundTasksFromEvents
 - background-task-stop.test.ts
 - oracle-voice-assets.test.ts
-- RuntimeStatus.tsx
-- pending-echo.ts
+- SessionOriginBadge.test.tsx
+- check-workspace-review-regressions.ts
 - fake-vad.ts
 - desktop.json
-- session-clear-transcript.test.ts
-- manager-automatic.ts
+- DeferredSession
+- HostTelemetrySampler
 - theme-contrast.test.ts
-- ShellNavigation.test.tsx
 - .oxlintrc.json
 - settings-local.json
-- dreamer-service.test.ts
 - .observe
-- BackgroundTasksDialog.tsx
-- DialogFrame.tsx
-- Pcm16Resampler
-- document-render.pw.ts
-- background-task-tracker.ts
-- dreamer-routes.ts
-- recovery-seed-guards.test.ts
-- html-preview.ts
-- fixture-frontend.ts
-- sign-in-expired.pw.ts
-- DeferredSession
-- isRecord
 - manager-proactive-inbox.test.ts
-- SessionAdmissions
-- session-enqueue-clear.test.ts
-- use-oracle-attachments.ts
+- session-scope.ts
+- Pcm16Resampler
+- pending-echo.ts
+- document-render.pw.ts
+- recently-closed.pw.ts
+- BackgroundTask
+- dreamer-routes.ts
+- dreamer-service.test.ts
+- .initialize
+- BackgroundTasksDialog.tsx
+- html-preview.ts
+- sign-in-expired.pw.ts
+- isRecord
+- session-knowledge-store.test.ts
 - dataset
 - generate-pwa-icons.ts
-- agent-service-recovery.test.ts
-- ManagerProactiveInboxValidationError
-- session-unread-tracker.ts
+- ScheduleNotificationService
 - bridge.rs
+- VoiceCaptureOptions
 - vite.config.ts
 - logs-cli.test.ts
+- ManagerProactiveInboxValidationError
+- manager-structured-memory-performance.test.ts
 - promotion-setup-execution.test.ts
 - SkillsSettings.tsx
 - sent-message.ts
+- capture.test.ts
+- VoiceVadOptions
 - doctor-cli.test.ts
 - release-publication.test.ts
+- UserInputFieldControl
+- OracleVoicePlayback
 - HostTelemetryClock
 - settings.ts
 - DocumentViewControls.tsx
 - composer-layout.test.ts
-- MarkdownCodeBlock.tsx
-- background-task-adapter.test.ts
 - promotion-setup.test.ts
-- appearance.ts
-- MemoryStorage
 - FakeRecorder
-- storedProvider
+- FakeRecorder
 - MockMediaRecorder
 - version-policy.test.ts
-- MockWebSocket
 - MermaidDiagram.test.tsx
 - tsconfig.json
 - @fastify/static
@@ -264,11 +270,11 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 ## God Nodes (most connected - your core abstractions)
 1. `AppWorkspace()` - 350 edges
 2. `SessionDetail` - 337 edges
-3. `AgentService` - 303 edges
-4. `SessionStore` - 207 edges
+3. `AgentService` - 308 edges
+4. `SessionStore` - 211 edges
 5. `ManagedSession` - 184 edges
 6. `buildApp()` - 138 edges
-7. `ClaudeAgentService` - 135 edges
+7. `ClaudeAgentService` - 136 edges
 8. `registerHubRoutes()` - 107 edges
 9. `ComputerManager` - 106 edges
 10. `ManagerAgent` - 101 edges
@@ -278,888 +284,908 @@ Documentation, styles, images, and other non-code files are inventoried but **no
   src/App.tsx → server/terminal-send-uncertainty.test.ts
 - `FakeVoiceState` --references--> `ManagerMessage`  [EXTRACTED]
   e2e/fixtures/fake-voice.ts → shared/manager.ts
-- `instrument()` --indirect_call--> `document()`  [INFERRED]
-  e2e/session-patch-browser.ts → server/skill-settings-jsonc.ts
 - `AcceptedSdkReply` --references--> `SessionDetail`  [EXTRACTED]
   server/agent-service.ts → shared/contracts.ts
 - `CreationRuntime` --references--> `RuntimeReasoningEffort`  [EXTRACTED]
   server/agent-service.ts → shared/contracts.ts
+- `BackgroundTaskUpdate` --references--> `BackgroundTaskSnapshot`  [EXTRACTED]
+  server/background-task-tracker.ts → shared/contracts.ts
 
 ## Import Cycles
 - 4-file cycle: `server/computer-manager.ts -> server/remote-node-client.ts -> server/node-routes.ts -> server/file-upload-routes.ts -> server/computer-manager.ts`
 
-## Communities (257 total, 27 thin omitted)
+## Communities (264 total, 28 thin omitted)
 
-### Community 0 - "SessionDetail"
-Cohesion: 0.02
-Nodes (110): storage(), fixture(), restart(), fixture(), connect(), createStore(), deferred(), disk (+102 more)
-
-### Community 1 - "AgentService"
+### Community 0 - "AgentService"
 Cohesion: 0.03
-Nodes (14): agentMode(), AgentService, isTerminalNotReadyRefusal(), lifecycleRefusal(), removeCopilotSessionFiles(), RuntimeConfigurationError, sessionInUseConflictMessage(), suspendedRuntimeConflict() (+6 more)
+Nodes (20): agentMode(), AgentService, isTerminalNotReadyRefusal(), isUncertainDelivery(), lifecycleRefusal(), restart(), removeCopilotSessionFiles(), RuntimeConfigurationError (+12 more)
+
+### Community 1 - "SessionDetail"
+Cohesion: 0.03
+Nodes (80): fixture(), fixture(), createStore(), recoveryFixture(), storedProvider(), fixture(), fixture(), fixture() (+72 more)
 
 ### Community 2 - "AppWorkspace"
 Cohesion: 0.03
-Nodes (195): terminalSendOptions(), sessionFileValidationError(), SettingsChange, submissionReceiptFromError(), activateSession(), listClosedSessions(), replyPermission(), saveHiddenSessionVisibility() (+187 more)
+Nodes (184): terminalSendOptions(), sessionFileValidationError(), submissionReceiptFromError(), AppWorkspace(), adoptConversationReplacement(), appendComposerForKey(), appKeyDown(), applyComputerSnapshot() (+176 more)
 
 ### Community 3 - "api.ts"
-Cohesion: 0.03
-Nodes (152): SettingsProfileValues, parseSubmissionReceipt(), addComputer(), addKnowledgeRoot(), askSession(), bootstrapSessionOrder(), cancelBackgroundTask(), cancelSession() (+144 more)
+Cohesion: 0.02
+Nodes (160): ManagedSessionMcpServersSnapshot, ManagedSessionSkillsSnapshot, SessionMcpServerSummary, SessionSkillSummary, SettingsChange, parseSubmissionReceipt(), activateSession(), addComputer() (+152 more)
 
 ### Community 4 - "computer-manager.ts"
 Cohesion: 0.02
-Nodes (94): ClaudeSdk, RemoteResync, RemoteSessionListing, RemoteSessionRead, awaitTermination(), LaunchCreations, apps, directories (+86 more)
+Nodes (75): AgentServiceEvents, ServerRole, ClaudeAgentServiceEvents, connections, fixture(), managers, releases, remote (+67 more)
 
-### Community 5 - "agent-service.ts"
+### Community 5 - "ComputerManager"
 Cohesion: 0.04
-Nodes (89): AcceptedSdkReply, ActivePrompt, activityDuration(), activityGroupIdFor(), activityKind(), activityResult(), ActivityToolStart, AgentServiceEvents (+81 more)
+Nodes (20): ComputerManager, managedSession(), sessionAtLeastAsNew(), nodeVoiceCapabilities(), registerNodeRoutes(), tokenMatches(), VoiceBackend, SessionKnowledgeBaseLocation (+12 more)
 
-### Community 6 - "App.tsx"
+### Community 6 - "agent-service.ts"
 Cohesion: 0.03
-Nodes (98): isManagerEvent(), SettingsProfileKey, executeCommand(), activityKindFromMessage(), ActivityMessage(), activityPresentation(), activityStatusFromMessage(), activityStatusGlyph() (+90 more)
+Nodes (111): AcceptedSdkReply, ActivePrompt, activityDuration(), activityGroupIdFor(), activityKind(), activityResult(), ActivityToolStart, ansiSequence (+103 more)
 
-### Community 7 - "contracts.ts"
+### Community 7 - "App.tsx"
 Cohesion: 0.03
-Nodes (59): ClaudeAgentServiceEvents, DirectoryScope, directories, voiceControlQueues, voiceControlWaiters, ProviderSessionServiceEvents, closable(), provider() (+51 more)
+Nodes (108): isManagerEvent(), turnEnded(), SettingsProfileKey, executeCommand(), activityKindFromMessage(), ActivityMessage(), activityPresentation(), activityStatusFromMessage() (+100 more)
 
-### Community 8 - "ClaudeAgentService"
-Cohesion: 0.05
-Nodes (23): ClaudeAgentService, isMissingClaudeSessionError(), cleanupFixtures(), directories, fixture(), queryHandle(), services, waitForIdle() (+15 more)
-
-### Community 9 - "session-presentation.ts"
-Cohesion: 0.03
-Nodes (85): closedSessionExpiresAt(), SessionMcpServerSummary, SessionProvenance, SessionResourceSource, SessionSkillSummary, handleDragEnd(), KnowledgeRootSelector(), root (+77 more)
-
-### Community 10 - "SessionService"
+### Community 8 - "react"
 Cohesion: 0.04
-Nodes (9): updateComputerForLaunchIdentity(), nodeVoiceCapabilities(), registerNodeRoutes(), VoiceBackend, ProviderSessionService, SessionService, BackgroundTaskSnapshot, RemovedQueuedPrompt (+1 more)
+Nodes (95): react, RuntimeModelOption, NewSessionBackendSetting, getHubHealth(), getManager(), listClosedSessions(), listDirectories(), updateManagerSettings() (+87 more)
 
-### Community 11 - "client.ts"
-Cohesion: 0.05
-Nodes (36): VoiceCapabilities, VoiceServerControl, getOracleVoiceCapabilities(), captureClientError(), clientError(), closeError(), closeReason(), isCapabilities() (+28 more)
+### Community 9 - "ClaudeAgentService"
+Cohesion: 0.04
+Nodes (24): ClaudeAgentService, isClaudeAuthenticationError(), isMissingClaudeSessionError(), cleanupFixtures(), directories, fixture(), queryHandle(), services (+16 more)
+
+### Community 10 - "hub-routes.ts"
+Cohesion: 0.04
+Nodes (61): ClientPresence, PRESENCE_TTL_MS, addComputerSchema, configureRuntimeSchema, createSessionSchema, directoryQuerySchema, directoryValidationSchema, discardQueuedDispatchSchema (+53 more)
+
+### Community 11 - "contracts.ts"
+Cohesion: 0.03
+Nodes (70): awaitTermination(), LaunchCreations, apps, claudeOwner(), directories, directory(), runtime(), services (+62 more)
 
 ### Community 12 - "claude-agent-service.ts"
-Cohesion: 0.05
-Nodes (68): ActiveClaudeQuery, AuthStatusRunner, ClaudeQuestion, ClaudeResources, execFileAsync, isClaudeAuthenticationError(), PendingClaudeInput, PendingClaudePermission (+60 more)
-
-### Community 13 - "ManagedSession"
-Cohesion: 0.07
-Nodes (18): ComputerManager, managedSession(), mapWithConcurrency(), sessionAtLeastAsNew(), RegisteredComputer, registerHubRoutes(), SessionMuteCarrier, normalizeNodeUrl() (+10 more)
-
-### Community 14 - "ManagerStore"
-Cohesion: 0.04
-Nodes (40): applications, directories, fixture(), releases, scheduledFixture(), session(), sockets, DreamerProgressEntry (+32 more)
-
-### Community 15 - "shared/settings-profile.ts"
-Cohesion: 0.05
-Nodes (69): execute, resolveHubDisplayName(), deviceId, importSchema, parse(), registerSettingsProfileRoutes(), profileStore(), updateSchema (+61 more)
-
-### Community 16 - "session-store-providers.test.ts"
-Cohesion: 0.03
-Nodes (46): CopilotSessionLike, CopilotTasksApi, nextVoiceControl(), openNodeVoiceSocket(), waitForEvent(), acceptanceReceipt(), errorMessage(), explicitlyRefused() (+38 more)
-
-### Community 17 - "manager-tools.ts"
-Cohesion: 0.04
-Nodes (46): APPROVE_WORDS, AUTONOMOUS_CLOSE_LIMIT, BUSY_STATUS, busyReason(), computerField, ContextTier, createManagerTools(), changeSuspension() (+38 more)
-
-### Community 18 - "sections.tsx"
-Cohesion: 0.05
-Nodes (66): AppearanceSetting, DEFAULT_SESSION_PROVIDER, NewSessionBackendSetting, getHubHealth(), shortcutKeys(), readStoredShortcuts(), AppShortcutBinding, binding() (+58 more)
-
-### Community 19 - "dreamer-store.ts"
 Cohesion: 0.06
-Nodes (48): publicSnapshot(), assertInteger(), assertUniqueJsonKeys(), clone(), DREAMER_LEASE_MS, DREAMER_MAX_HISTORY, DREAMER_MAX_ITEMS, DREAMER_MAX_RUNS (+40 more)
+Nodes (65): ActiveClaudeQuery, AuthStatusRunner, ClaudeQuestion, ClaudeResources, execFileAsync, PendingClaudeInput, PendingClaudePermission, PendingClaudeReply (+57 more)
 
-### Community 20 - "schedule-launcher.ts"
-Cohesion: 0.07
-Nodes (31): enableSchedulerTools(), LaunchPrimitives, provenance(), ScheduleProvenance, scheduleSessionTitle(), SessionScheduleLauncher, NoopScheduleLauncher, ScheduleLauncher (+23 more)
+### Community 13 - "dreamer-store.ts"
+Cohesion: 0.05
+Nodes (57): DreamerHistoryEntry, assertInteger(), assertUniqueJsonKeys(), clone(), DREAMER_LEASE_MS, DREAMER_MAX_HISTORY, DREAMER_MAX_ITEMS, DREAMER_MAX_RUNS (+49 more)
 
-### Community 21 - "agentic-remote-promotion-monitor"
+### Community 14 - "manager-tools.ts"
+Cohesion: 0.04
+Nodes (50): DreamerMemoryMetadataRecord, APPROVE_WORDS, AUTONOMOUS_CLOSE_LIMIT, BUSY_STATUS, busyReason(), computerField, ContextTier, createManagerTools() (+42 more)
+
+### Community 15 - "ManagerStore"
+Cohesion: 0.05
+Nodes (35): applications, directories, fixture(), releases, scheduledFixture(), session(), sockets, openStore() (+27 more)
+
+### Community 16 - "SessionStatus"
+Cohesion: 0.05
+Nodes (43): contextChangedInEvents(), createPendingUserInputTracker(), createStatusTracker(), foregroundCompletedSince(), foregroundTurnOpen(), isEmptyResponseNotice(), isForegroundCompletionEvent(), isForegroundLifecycleEvent() (+35 more)
+
+### Community 17 - "session-presentation.ts"
+Cohesion: 0.05
+Nodes (71): hasActiveBackgroundTasks(), hasForegroundTurn(), hasRunningBackgroundAgent(), CLOSED_SESSION_RETENTION_DAYS, closedSessionExpiresAt(), BackgroundTaskSnapshot, handleDragEnd(), KnowledgeRootSelector() (+63 more)
+
+### Community 18 - "terminal-session.ts"
+Cohesion: 0.05
+Nodes (74): composer(), processAdapter, boxedComposerFrame(), captureTerminal(), COMPOSER_PLACEHOLDERS, composerFocusedPanes, composerFrameText(), composerHasFocus() (+66 more)
+
+### Community 19 - "oracle-voice-soak.ts"
+Cohesion: 0.05
+Nodes (34): childCleanupPassed(), childPids(), connectSoakSocket(), ControlledAcquisitionGate, ControlledSoakEngine, delay(), errorText(), GatedStartupRaceObservation (+26 more)
+
+### Community 20 - "agentic-remote-promotion-monitor"
 Cohesion: 0.05
 Nodes (80): agentic-remote-promotion-monitor script, acquire_test_lock(), ALLOWED_ORIGINS, ALLOWED_ROOTS, assert_clean(), assert_disposable(), assert_repository(), base_url() (+72 more)
 
-### Community 22 - "oracle-voice-soak.ts"
+### Community 21 - "manager-agent.ts"
 Cohesion: 0.05
-Nodes (36): ActiveBackendSession, childCleanupPassed(), childPids(), connectSoakSocket(), ControlledAcquisitionGate, ControlledSoakEngine, delay(), errorText() (+28 more)
+Nodes (57): DreamerProgressEntry, DreamerProgressView, automaticPayload(), discover(), isPending(), isQueued(), ManagerAgentOptions, messagePriority() (+49 more)
 
-### Community 23 - "ManagerAgent"
+### Community 22 - "ManagerAgent"
 Cohesion: 0.08
-Nodes (15): DreamerProgressView, checkContent(), delay(), discover(), errorMessage(), isNotFound(), ManagerAgent, sameRuntime() (+7 more)
+Nodes (11): checkContent(), delay(), errorMessage(), isNotFound(), ManagerAgent, sameRuntime(), TurnError, uniqueManagerSessionRefs() (+3 more)
 
-### Community 24 - "oracle-voice-child.ts"
+### Community 23 - "oracle-voice-child.ts"
 Cohesion: 0.06
-Nodes (37): ActiveNativeSynthesis, ActivePiperSynthesis, ActiveSynthesis, ActiveSynthesisIdentity, ActiveUtterance, combinedTranscript(), defaultSpawnPiper(), errorMessage() (+29 more)
+Nodes (36): ActiveNativeSynthesis, ActivePiperSynthesis, ActiveSynthesis, ActiveSynthesisIdentity, ActiveUtterance, combinedTranscript(), defaultSpawnPiper(), errorMessage() (+28 more)
 
-### Community 25 - "schedules.ts"
+### Community 24 - "ManagerAssistant.tsx"
 Cohesion: 0.05
-Nodes (65): proposalInput, headers, hub(), sender, SCHEDULE_RUN_LIMIT, State, stateSchema, timestamp (+57 more)
+Nodes (57): cancelManager(), editQueuedManagerMessage(), removeQueuedManagerMessage(), resetManager(), resolveManagerConfirmation(), retryManagerMessage(), sendManagerMessage(), phoneEnterCreatesNewline() (+49 more)
 
-### Community 26 - "active-sessions.ts"
+### Community 25 - "ManagerMessage"
+Cohesion: 0.05
+Nodes (25): FakeManager, ProactiveManager, FakeAgent, confirmationSchema, defaultsSchema, editSchema, effort, managerInputError() (+17 more)
+
+### Community 26 - "app.ts"
+Cohesion: 0.05
+Nodes (35): BuildAppOptions, phases, port, createManagerSdkClient(), efforts, managerRuntimeSettings, VoiceEngineFactory, resolveDataDirectory() (+27 more)
+
+### Community 27 - "transcription-service.ts"
+Cohesion: 0.05
+Nodes (37): collect(), DelegatedTranscriptionOptions, DelegatedTranscriptionService, oversized(), statusCodeOf(), hubComputer, workstation, transcriptionComputerName() (+29 more)
+
+### Community 28 - "CopilotSessionLike"
+Cohesion: 0.05
+Nodes (36): CopilotSessionLike, CopilotTasksApi, openNodeVoiceSocket(), waitForEvent(), acceptanceReceipt(), errorMessage(), explicitlyRefused(), hasUncertainDelivery() (+28 more)
+
+### Community 29 - "oracle-task-store.ts"
+Cohesion: 0.07
+Nodes (46): setup(), DreamerFollowUp, attemptId(), BeginOracleTaskAttemptInput, ConfirmOracleTaskCompletionInput, isId(), isMissing(), isText() (+38 more)
+
+### Community 30 - "node-routes.ts"
 Cohesion: 0.06
-Nodes (52): ActiveProcess, execFileAsync, findActiveCopilotProcesses(), findActiveCopilotSessions(), findActiveProcesses(), getBootTimeMs(), getClockTicks(), groupLockCandidates() (+44 more)
+Nodes (47): FileUploadError, registerFileUploadRoutes(), SessionParams, AUDIO_TYPE_HEADER, closeReason(), closeVoiceSocket(), configureRuntimeSchema, createSessionSchema (+39 more)
 
-### Community 27 - "workspace-fixtures.ts"
+### Community 31 - "oracle-voice-integration.test.ts"
 Cohesion: 0.04
-Nodes (54): frame(), geometry, output, scratch, screenshot(), { values }, accents, Measurement (+46 more)
-
-### Community 28 - "VoiceCapture"
-Cohesion: 0.06
-Nodes (24): BufferedFrame, captureFailure(), defaultAudioContext(), permissionError(), positiveLimit(), QueuedAudio, CaptureControl, harness() (+16 more)
-
-### Community 29 - "terminal-session.ts"
-Cohesion: 0.05
-Nodes (67): boxedComposerFrame(), captureTerminal(), COMPOSER_PLACEHOLDERS, composerFocusedPanes, composerFrameText(), composerHasFocus(), composerHoldsOtherText(), composerRowText() (+59 more)
-
-### Community 30 - "PushNotificationService"
-Cohesion: 0.06
-Nodes (28): start(), brief(), HubEventSource, OracleEventSource, PushNotificationService, PushPolicy, PushSender, PushState (+20 more)
-
-### Community 31 - "notification-center.ts"
-Cohesion: 0.05
-Nodes (42): booleanQuery, filters, params, cursorSchema, durableState(), emptyState(), identity, kind (+34 more)
+Nodes (32): apps, BrowserCapture, BrowserClient, BrowserClientConstructor, BrowserPlayback, BrowserPlaybackOptions, BrowserSocket, closeSocket() (+24 more)
 
 ### Community 32 - "oracle-voice-coordinator.ts"
 Cohesion: 0.04
-Nodes (36): ManagerEventSource, ManagerEventSource, AudioCompletion, backendDisconnectFromError(), disconnectCause(), isBackendDisconnect(), OperationTimeoutError, OracleVoiceBackendConnection (+28 more)
+Nodes (37): ManagerEventSource, AudioCompletion, AudioGate, backendDisconnectFromError(), disconnectCause(), isBackendDisconnect(), OperationTimeoutError, OracleVoiceBackendConnection (+29 more)
 
-### Community 33 - "tmux-test-helpers.ts"
-Cohesion: 0.06
-Nodes (55): directories, execFileAsync, processExists(), procStatReads, tmuxSessions, waitForProcessExit(), exec, terminal() (+47 more)
-
-### Community 34 - "notification-classifier.ts"
-Cohesion: 0.06
-Nodes (40): ComputerManagerEvents, HOST_ALERT_POLL_INTERVAL_MS, HostAlertMonitor, computer, observe(), snapshot(), start, sustained() (+32 more)
-
-### Community 35 - "OracleVoiceCoordinator"
-Cohesion: 0.08
-Nodes (9): AudioGate, errorMessage(), OracleVoiceCoordinator, PendingFinalTurn, resolvedAudioGate(), withTimeout(), ActiveConversation, VoiceTurnState (+1 more)
-
-### Community 36 - "fake-voice.ts"
-Cohesion: 0.05
-Nodes (11): beginSpeech(), endSpeech(), expectOk(), FakeManager, FakeVoiceBackend, FakeVoiceController, FakeVoiceState, installFakeBrowserVoice() (+3 more)
-
-### Community 37 - "oracle-voice-worker.ts"
+### Community 33 - "TmuxTerminalSessionController"
 Cohesion: 0.07
-Nodes (31): benchmarkGroup(), VoiceWorkerOptions, VoiceEndUtterance, VoiceStartUtterance, BlockingEngine, capabilityFromConfig(), ChildVoiceEngine, errorMessage() (+23 more)
+Nodes (23): startAgentAfterClear(), afterExit(), awaitingRelaunch(), copilotCommand(), endProbeSession(), execFileAsync, formReplyExpired(), parseTerminalUpdateNotice() (+15 more)
 
-### Community 38 - "oracle-task-store.ts"
-Cohesion: 0.08
-Nodes (43): setup(), DreamerFollowUp, attemptId(), BeginOracleTaskAttemptInput, ConfirmOracleTaskCompletionInput, isId(), isMissing(), isText() (+35 more)
-
-### Community 39 - "manager-agent.ts"
-Cohesion: 0.05
-Nodes (41): automaticPayload(), isPending(), isQueued(), ManagerAgentOptions, messagePriority(), Rung, TURN_ACTIVITY, TurnContextInput (+33 more)
-
-### Community 40 - "session-reply-durability.test.ts"
+### Community 34 - "active-sessions.ts"
 Cohesion: 0.06
-Nodes (28): isUncertainDelivery(), persistedFormAnswer(), terminalAnswerRefused(), TerminalFormContinuation, validateUserInputForm(), answer(), assistantFixture(), claudeFixture() (+20 more)
+Nodes (51): ActiveProcess, execFileAsync, findActiveCopilotProcesses(), findActiveCopilotSessions(), findActiveProcesses(), getBootTimeMs(), getClockTicks(), groupLockCandidates() (+43 more)
 
-### Community 41 - "FakeVoiceEngine"
-Cohesion: 0.06
-Nodes (26): FakeVoiceEngine, FakeVoiceEngineCall, identityKey(), isCancelled(), sameGeneration(), VoiceSttEngine, VoiceTtsEngine, VoiceUtteranceAudioFrame (+18 more)
-
-### Community 42 - "oracle-voice-integration.test.ts"
-Cohesion: 0.04
-Nodes (29): ManagerSdkClient, apps, BrowserCapture, BrowserClient, BrowserClientConstructor, BrowserPlayback, BrowserPlaybackOptions, BrowserSocket (+21 more)
-
-### Community 43 - "TmuxTerminalSessionController"
-Cohesion: 0.08
-Nodes (21): startAgentAfterClear(), composer(), processAdapter, afterExit(), awaitingRelaunch(), copilotCommand(), endProbeSession(), execFileAsync (+13 more)
-
-### Community 44 - "oracle-voice-security.test.ts"
-Cohesion: 0.05
-Nodes (25): voiceBackend(), EnabledOracleVoiceConfig, FakeVoiceEngineFactory, VoiceEngineFactory, availableBackend(), GatedVoiceEngineFactory, apps, config (+17 more)
-
-### Community 45 - "oracle-voice-session.ts"
+### Community 35 - "session-directory.ts"
 Cohesion: 0.07
-Nodes (48): apps, directories, sendNodeVoiceOutput(), OracleVoiceManager, limits(), outputBytes(), availableCapabilities(), backendOutputBytes() (+40 more)
+Nodes (44): DirectoryScope, displayPath(), listHomeDirectories(), resolveRequestedPath(), directories, directories, runtimes, start() (+36 more)
 
-### Community 46 - "manager-structured-memory-validation.ts"
+### Community 36 - "OracleVoiceCoordinator"
+Cohesion: 0.09
+Nodes (5): errorMessage(), OracleVoiceCoordinator, PendingFinalTurn, withTimeout(), VoiceTurnState
+
+### Community 37 - "FakeVoiceEngine"
+Cohesion: 0.05
+Nodes (27): FakeVoiceEngine, FakeVoiceEngineCall, identityKey(), isCancelled(), sameGeneration(), VoiceSttEngine, VoiceTtsEngine, VoiceUtteranceAudioFrame (+19 more)
+
+### Community 38 - "multi-node.test.ts"
+Cohesion: 0.05
+Nodes (10): directories, FakeSessionService, routingFixture(), session(), temporaryDirectory(), voiceControlQueues, voiceControlWaiters, ConfigureRuntimeInput (+2 more)
+
+### Community 39 - "ChatMessage"
+Cohesion: 0.06
+Nodes (42): Connection, count, historyEvents(), message(), normal(), now(), Pending, percentile() (+34 more)
+
+### Community 40 - "tmux-test-helpers.ts"
+Cohesion: 0.08
+Nodes (48): exec, formFixture(), horizontalFormFixture(), textFieldFormFixture(), directories, exec, deliveryFixture(), [root] (+40 more)
+
+### Community 41 - "manager-structured-memory-validation.ts"
 Cohesion: 0.06
 Nodes (53): appliedRequestSchema, auditSchema, boundedSearchQuery(), canonicalKeySchema, contentSchema, correctSchema, digestSchema, forgetSchema (+45 more)
 
-### Community 47 - "sampler.ts"
-Cohesion: 0.08
-Nodes (48): counter(), counterDelta(), CpuCounters, cpuUtilization(), detectWsl(), DeviceByteCounters, DeviceCounters, deviceRates() (+40 more)
+### Community 42 - "session-resource-clear.test.ts"
+Cohesion: 0.05
+Nodes (45): root, script, ClaudeSdk, connect(), deferred(), disk, enqueue(), fixture() (+37 more)
 
-### Community 48 - "dreamer-service.ts"
+### Community 43 - "background-task-adapter.ts"
+Cohesion: 0.11
+Nodes (53): addActivity(), attachmentModeValue(), backgroundHandoff(), booleanValue(), boundedText(), CopilotClientTaskInfo, CopilotClientTaskProgress, copyTask() (+45 more)
+
+### Community 44 - "SchedulerStore"
+Cohesion: 0.11
+Nodes (10): enableSchedulerTools(), fixture(), session(), failure(), occurrenceKey(), SchedulerStore, retainedHistory(), ScheduleProposal (+2 more)
+
+### Community 45 - "fake-voice.ts"
 Cohesion: 0.07
-Nodes (46): activeDreamerMemoryIds(), activeMemoryRecord(), addCountedCoverage(), addCoverage(), candidateForMemory(), candidateForSession(), carryItem(), carrySessionItem() (+38 more)
+Nodes (10): beginSpeech(), endSpeech(), expectOk(), FakeVoiceBackend, FakeVoiceController, FakeVoiceState, installFakeBrowserVoice(), ScriptedUtterance (+2 more)
+
+### Community 46 - "TerminalSessionController"
+Cohesion: 0.07
+Nodes (8): PendingUserInputTracker, persistedFormAnswer(), TerminalFormContinuation, validateUserInputForm(), TerminalFormReplyError, TerminalSessionController, PendingUserInput, UserInputReplyInput
+
+### Community 47 - "CopilotClientLike"
+Cohesion: 0.04
+Nodes (31): CopilotClientLike, holdProbe(), fixtures, gate(), releases, sdkPermissionEvents(), sdkRecoveryEvents(), directories (+23 more)
+
+### Community 48 - "OracleDreamer.tsx"
+Cohesion: 0.08
+Nodes (44): DreamerPreviousItem, DreamerStoredPlanItem, DreamerPersistedPlan, DreamerPlanItem, completeDreamerTask(), dispatchDreamerTask(), DreamerApiError, DreamerPlanEdit (+36 more)
 
 ### Community 49 - "DreamerService"
-Cohesion: 0.11
-Nodes (15): boundedText(), digest(), DreamerService, DreamerUnavailableError, planWithFingerprints(), safeRunError(), unavailableSnapshot(), uniqueSessionRefs() (+7 more)
+Cohesion: 0.12
+Nodes (9): digest(), DreamerService, DreamerUnavailableError, planWithFingerprints(), publicSnapshot(), uniqueSessionRefs(), DreamerCompletionCandidate, DreamerSnapshot (+1 more)
 
-### Community 50 - "session-knowledge-store.ts"
-Cohesion: 0.07
-Nodes (29): bindingKey(), bindingSchema, Identity, PathRecord, pathRecordKey(), PathState, pathStateFor(), pathStateSchema (+21 more)
-
-### Community 51 - "session-knowledge-routes.test.ts"
-Cohesion: 0.05
-Nodes (30): ServerRole, connections, fixture(), managers, releases, remote, session(), SessionMetadataLookup (+22 more)
-
-### Community 52 - "setupWorkspaceFixture"
-Cohesion: 0.05
-Nodes (26): desktop, devices, long, open(), phone, veryLong, automaticTurns(), event() (+18 more)
-
-### Community 53 - "CopilotClientLike"
-Cohesion: 0.06
-Nodes (25): CopilotClientLike, normalizedTitle(), directories, fakeClient(), ForkRequest, forkSession(), services, CopilotSdkMissingSessionRetirement (+17 more)
-
-### Community 54 - "oracle-voice-benchmark.ts"
+### Community 50 - "oracle-voice-benchmark.ts"
 Cohesion: 0.07
 Nodes (40): execFileAsync, RealVoiceState, benchmarkFixture(), BenchmarkMetric, BenchmarkProfile, CliOptions, clockTicksPerSecond(), CorpusFixture (+32 more)
 
-### Community 55 - "oracle-voice.ts"
-Cohesion: 0.08
-Nodes (39): exactArrayBuffer(), rawDataBuffer(), rawDataByteLength(), receiveNodeVoiceMessage(), config, capabilities, closeServers, exactArrayBuffer() (+31 more)
-
-### Community 56 - "app.ts"
-Cohesion: 0.06
-Nodes (33): buildApp(), errorStatusCode(), isAppleTouchIconProbe(), ClientPresence, PRESENCE_TTL_MS, transcriptionComputerName(), directories, runtimes (+25 more)
-
-### Community 57 - "OracleDreamer.tsx"
+### Community 51 - "sampler.ts"
 Cohesion: 0.09
-Nodes (41): completeDreamerTask(), dispatchDreamerTask(), DreamerApiError, DreamerPlanEdit, DreamerSettingsEdit, DreamerTaskCompletion, DreamerTaskDispatch, DreamerTaskDisposition (+33 more)
+Nodes (41): counter(), counterDelta(), CpuCounters, cpuUtilization(), detectWsl(), DeviceByteCounters, deviceRates(), isWholeDisk() (+33 more)
 
-### Community 58 - "ManagerAssistant.tsx"
-Cohesion: 0.07
-Nodes (42): cancelManager(), editQueuedManagerMessage(), resetManager(), resolveManagerConfirmation(), phoneEnterCreatesNewline(), ActivityRow, applyEvent(), boundWidth() (+34 more)
+### Community 52 - "oracle-voice-session.ts"
+Cohesion: 0.08
+Nodes (43): sendNodeVoiceOutput(), limits(), outputBytes(), ActiveConversation, availableCapabilities(), backendOutputBytes(), backendOutputRelay(), browserCloseCode() (+35 more)
 
-### Community 59 - "agentic-remote"
+### Community 53 - "SettingsProfileSnapshot"
+Cohesion: 0.08
+Nodes (25): WorkspaceFixtureState, directories, fakeManager(), hub(), local, profileStore(), SettingsProfileState, SettingsProfileStore (+17 more)
+
+### Community 54 - "agentic-remote"
 Cohesion: 0.10
 Nodes (45): agentic-remote script, activate_voice_profile(), append_preserved_voice_configuration(), COMMAND_LINK, CONFIG_DIR, config_value(), derived_origins(), diagnostic_node() (+37 more)
 
-### Community 60 - "manager-proactive-coordinator.ts"
+### Community 55 - "schedule-launcher.ts"
+Cohesion: 0.09
+Nodes (27): LaunchPrimitives, provenance(), ScheduleProvenance, scheduleSessionTitle(), SessionScheduleLauncher, NoopScheduleLauncher, ScheduleLauncher, ScheduleLaunchRefusedError (+19 more)
+
+### Community 56 - "processes.ts"
+Cohesion: 0.09
+Nodes (27): createProcessProcReader(), isUnavailableProcess(), parseProcessParameters(), parseProcessStat(), ProcessProcReader, ProcessStat, expectProc(), ProcessFixture (+19 more)
+
+### Community 57 - "ProviderSessionService"
 Cohesion: 0.08
-Nodes (16): batchMessageId(), ComputerGenerations, isTerminal(), lifecycles(), ManagerProactiveCoordinator, ManagerProactiveCoordinatorOptions, ProactiveManager, SessionLifecycle (+8 more)
+Nodes (3): updateComputerForLaunchIdentity(), owns(), ProviderSessionService
 
-### Community 61 - "SchedulerStore"
-Cohesion: 0.12
-Nodes (8): fixture(), deferUnboundWorktree(), failure(), occurrenceKey(), SchedulerStore, ScheduleProposal, Schedule, ScheduleRunStatus
-
-### Community 62 - "session-directory.ts"
-Cohesion: 0.10
-Nodes (36): displayPath(), listHomeDirectories(), resolveRequestedPath(), directories, allowedRoots(), assertOpenedDirectory(), assertOpenedDirectoryPath(), assertSafeResolvedKnowledgePath() (+28 more)
-
-### Community 63 - "session-latency-benchmark.ts"
+### Community 58 - "dreamer-progress.ts"
 Cohesion: 0.08
-Nodes (32): count, historyEvents(), message(), normal(), now(), Pending, percentile(), projection() (+24 more)
+Nodes (20): mapWithConcurrency(), DEFAULT_DREAMER_PROGRESS_LIMITS, DreamerProgress, DreamerProgressOptions, DreamerProgressRefresh, DreamerProgressReply, DreamerProgressRequest, DreamerProgressSnapshot (+12 more)
 
-### Community 64 - "manager-routes.ts"
+### Community 59 - "pwa.ts"
+Cohesion: 0.09
+Nodes (38): AppVersion, parseAppVersion(), HubFeatureFlags, HubHealth, getPushPublicKey(), savePushSubscription(), applyPwaUpdate(), snapshot (+30 more)
+
+### Community 60 - "server/skill-settings.ts"
+Cohesion: 0.09
+Nodes (27): instrument(), frontmatterFields(), frontmatterReason(), document(), parseSkillSettings(), replaceDisabledSkills(), Token, readBounded() (+19 more)
+
+### Community 61 - "ManagerEvent"
 Cohesion: 0.07
-Nodes (21): confirmationSchema, defaultsSchema, editSchema, effort, managerInputError(), ManagerRouteAgent, messageParams, registerManagerRoutes() (+13 more)
+Nodes (29): ManagerEventSource, NotificationRecorder, trusted, brief(), OracleEventSource, PushPolicy, PushSender, PushState (+21 more)
 
-### Community 65 - "dreamer-progress.ts"
-Cohesion: 0.08
-Nodes (19): DEFAULT_DREAMER_PROGRESS_LIMITS, DreamerProgress, DreamerProgressOptions, DreamerProgressRefresh, DreamerProgressReply, DreamerProgressRequest, DreamerProgressSnapshot, DreamerProgressSource (+11 more)
-
-### Community 66 - "hub-routes.ts"
+### Community 62 - "client.test.ts"
 Cohesion: 0.06
-Nodes (43): addComputerSchema, configureRuntimeSchema, createSessionSchema, directoryQuerySchema, directoryValidationSchema, discardQueuedDispatchSchema, executeCommandSchema, hostAllowed() (+35 more)
+Nodes (14): connect(), Inbox, rawBuffer(), VoiceServerControl, OracleVoiceClientDependencies, OracleVoiceSocket, capabilities, FakePlayback (+6 more)
 
-### Community 67 - "server/skill-settings.ts"
-Cohesion: 0.10
-Nodes (28): builtinSkillDirectories(), newestStableFirst(), frontmatterFields(), frontmatterReason(), document(), parseSkillSettings(), replaceDisabledSkills(), Token (+20 more)
+### Community 63 - "oracle-voice.ts"
+Cohesion: 0.09
+Nodes (36): capabilities, closeServers, exactArrayBuffer(), sockets, startFields, VoiceNode, decodeVoiceAudioFrame(), encodeVoiceAudioFrame() (+28 more)
 
-### Community 68 - "terminal-session.test.ts"
+### Community 64 - "Composer.tsx"
+Cohesion: 0.08
+Nodes (20): families, modelFamily, repositoryModels, AttachmentStrip(), Composer(), composerSteeringUnavailableReason(), ComposerActions(), ContextRing() (+12 more)
+
+### Community 65 - "client.ts"
 Cohesion: 0.07
-Nodes (33): FormReplyDeadlineError, hasClippedTerminalFormTabs(), parseTerminalFormActiveField(), submitTerminalForm(), tabNames(), terminalBoxWrap(), terminalChecklistState(), terminalFormCommitKeys() (+25 more)
+Nodes (26): VoiceCapabilities, closeReason(), isCapabilities(), isRecord(), isTicket(), OracleVoiceCapture, OracleVoiceClientErrorCode, OracleVoiceClientOptions (+18 more)
 
-### Community 69 - "agentic-remote-gate"
+### Community 66 - "OracleVoiceClient"
+Cohesion: 0.14
+Nodes (7): captureClientError(), clientError(), closeError(), OracleVoiceClient, OracleVoiceClientError, playbackClientError(), terminalCloseCode()
+
+### Community 67 - "agentic-remote-gate"
 Cohesion: 0.11
 Nodes (44): agentic-remote-gate script, assert_tree(), bindable_host_dir(), browser_counts(), BROWSER_LIBS_DIR, BROWSERS_DIR, CLONE_BASE, conclude() (+36 more)
 
-### Community 70 - "bundle"
+### Community 68 - "workspace-fixtures.ts"
+Cohesion: 0.07
+Nodes (33): frame(), geometry, output, pageFor(), scratch, screenshot(), { values }, oracleHostStatusFixture() (+25 more)
+
+### Community 69 - "bundle"
 Cohesion: 0.05
 Nodes (43): agentic, app, appimage, deb, desktop, dmg, icons/128x128@2x.png, icons/128x128.png (+35 more)
 
-### Community 71 - "manager-structured-memory.ts"
-Cohesion: 0.06
-Nodes (33): initializeManagerStructuredMemory(), ManagerStructuredMemoryRuntime, isMissing(), ManagerStructuredMemoryCapacityError, ManagerStructuredMemoryPersistenceError, ManagerStructuredMemoryStoreOptions, openWithPolicyGlobal(), openWithPolicyRecord() (+25 more)
-
-### Community 72 - "manager-context.ts"
-Cohesion: 0.10
-Nodes (32): ago(), attentionRank(), buildTurnContext(), cachedReply(), changeLines(), clock(), closedLine(), followUpLine() (+24 more)
-
-### Community 73 - ".sendInternal"
-Cohesion: 0.14
-Nodes (35): activeBottomFrame(), captureBeforeDeadline(), capturePane(), cleanDialogLine(), clearAutomaticStartupPrompts(), composerFocusWitnessed(), composerHoldsText(), composerText() (+27 more)
-
-### Community 74 - "shell.ts"
+### Community 70 - "ui-scenes.ts"
 Cohesion: 0.09
-Nodes (35): ScheduleShellNotifier, attentionCount(), bridge(), decodeSegment(), method(), nativeShell(), key(), label() (+27 more)
+Nodes (27): { values }, captureOutputDirectory(), fixtureFrontendBuildCommand, fixtureFrontendDist, startFixtureFrontend(), fixtureNotifications, fixtureScheduleProposals, fixtureScheduleRuns (+19 more)
 
-### Community 75 - "VoicePlayback"
+### Community 71 - "manager-agent.test.ts"
+Cohesion: 0.08
+Nodes (19): ManagerSdkClient, ManagerSdkEvent, ManagerSdkSession, ManagerSdkSessionConfig, Behavior, capturePrompt(), computers, fail() (+11 more)
+
+### Community 72 - "VoicePlayback"
 Cohesion: 0.09
 Nodes (12): ORACLE_VOICE_MAX_PLAYABLE_SEGMENT_SECONDS, pcm16ToFloat(), ScheduledSource, SegmentDrain, audio(), FakeSource, harness(), splitAudio() (+4 more)
 
-### Community 76 - "AppSettingsDialog.tsx"
+### Community 73 - "schedule-recurrence.ts"
 Cohesion: 0.10
-Nodes (36): parseAppVersion(), getProviderRuntimeOptions(), getPushPublicKey(), savePushSubscription(), applyPwaUpdate(), sidebarTouchStart(), activatePwaUpdate(), activePushSubscription() (+28 more)
+Nodes (38): CronField, cronMatchesDate(), DAY_NAMES, MONTH_NAMES, parseCronExpression(), ParsedCronExpression, parseField(), actualSpacingError() (+30 more)
 
-### Community 77 - "lib.rs"
+### Community 74 - "oracle-voice-routes.test.ts"
+Cohesion: 0.06
+Nodes (19): ActiveBackendSession, exactArrayBuffer(), rawDataBuffer(), rawDataByteLength(), receiveNodeVoiceMessage(), GatedVoiceEngineFactory, ObservedLocalVoiceBackend, openApps (+11 more)
+
+### Community 75 - "service.ts"
+Cohesion: 0.08
+Nodes (17): prefixes, session, trusted, untrusted, HOST_ALERT_POLL_INTERVAL_MS, HostAlertMonitor, HostRequest, HOST_PROCESSES_INTERVAL_MS (+9 more)
+
+### Community 76 - "ManagedSession"
+Cohesion: 0.09
+Nodes (7): RemoteSessionListing, ManagerHub, FakeManager, SessionLauncher, SessionLauncherOptions, ManagedSession, SessionListing
+
+### Community 77 - "shell.ts"
+Cohesion: 0.10
+Nodes (34): attentionCount(), bridge(), decodeSegment(), method(), nativeShell(), key(), label(), NotifiableSession (+26 more)
+
+### Community 78 - "lib.rs"
 Cohesion: 0.14
 Nodes (34): AppHandle, HubConfig, IntoIterator, Item, Mutex, bridge_ready(), build_tray(), config_dir() (+26 more)
 
-### Community 78 - "FakeSessionService"
-Cohesion: 0.07
-Nodes (4): FakeSessionService, routingFixture(), session(), temporaryDirectory()
-
-### Community 79 - "schedule-recurrence.ts"
+### Community 79 - "dreamer-service.ts"
 Cohesion: 0.11
-Nodes (36): CronField, cronMatchesDate(), DAY_NAMES, MONTH_NAMES, parseCronExpression(), ParsedCronExpression, parseField(), actualSpacingError() (+28 more)
+Nodes (36): activeDreamerMemoryIds(), activeMemoryRecord(), addCountedCoverage(), addCoverage(), candidateForMemory(), candidateForSession(), carryItem(), carrySessionItem() (+28 more)
 
-### Community 80 - "ScheduleForm.tsx"
+### Community 80 - "normalizeKnowledgeRelativePath"
+Cohesion: 0.09
+Nodes (30): knowledgeFileSchema, knowledgeRelativePathSchema, scopedKnowledgePath(), joinKnowledgeRelativePath(), knowledgeAbsolutePath(), knowledgeRelativePathFromAbsolute(), normalizeKnowledgeRelativePath(), rebaseKnowledgeRelativePath() (+22 more)
+
+### Community 81 - "ManagerAttachment"
 Cohesion: 0.11
-Nodes (30): scheduleProposalSummary(), scheduleProviderUnavailableReason(), ScheduleTarget, listDirectories(), AddKnowledgeRootDialog(), browse(), FolderPicker(), browse() (+22 more)
+Nodes (27): failure(), ManagerUploads, referenceId, storedFile, safeUploadName(), writePrivateUpload(), codeExtensions, fileTypes (+19 more)
 
-### Community 81 - "dependencies"
+### Community 82 - "dependencies"
 Cohesion: 0.05
 Nodes (39): @anthropic-ai/claude-agent-sdk, @dnd-kit/core, @dnd-kit/sortable, @dnd-kit/utilities, fastify, @fastify/multipart, @fastify/websocket, ffmpeg-static (+31 more)
 
-### Community 82 - "client.test.ts"
-Cohesion: 0.07
-Nodes (10): OracleVoiceClientDependencies, OracleVoiceSocket, capabilities, FakePlayback, FakeScheduler, FakeSocket, harness(), isBrowserClientCloseCode() (+2 more)
+### Community 83 - "ChildVoiceEngine"
+Cohesion: 0.13
+Nodes (8): benchmarkGroup(), ChildVoiceEngine, errorMessage(), matchesCancelled(), matchesSynthesis(), matchesUtterance(), rememberCancellation(), VoiceChildProcess
 
-### Community 83 - "agentic-remote-promotion-setup"
+### Community 84 - "ScheduleForm.tsx"
+Cohesion: 0.11
+Nodes (29): scheduleProposalSummary(), CLAUDE_SCHEDULE_UNAVAILABLE_REASON, scheduleProviderUnavailableReason(), ScheduleTarget, subscribeFeatureEvents(), FolderPicker(), browse(), editableSchedule() (+21 more)
+
+### Community 85 - "agentic-remote-promotion-setup"
 Cohesion: 0.12
 Nodes (35): agentic-remote-promotion-setup script, CONFIG_DIR, create_runtime_worktree(), die(), disable_monitor(), disarm_timer(), enable_monitor(), EXAMPLE_PROFILE (+27 more)
 
-### Community 84 - "terminal-startup-queue.test.ts"
-Cohesion: 0.09
-Nodes (28): appendLines(), cacheKey(), copilotHome(), eventLogPath(), ParsedLog, parsedLogs, readAt(), readSessionEvents() (+20 more)
+### Community 86 - "ComputerSummary"
+Cohesion: 0.12
+Nodes (12): batchMessageId(), ComputerGenerations, isTerminal(), lifecycles(), ManagerProactiveCoordinator, ManagerProactiveCoordinatorOptions, SessionLifecycle, directories (+4 more)
 
-### Community 85 - "devDependencies"
+### Community 87 - "schedules.ts"
+Cohesion: 0.09
+Nodes (32): deferUnboundWorktree(), State, stateSchema, timestamp, scheduleProposalInputSchema, ScheduleProposalsChanged, DEFAULT_SCHEDULE_TIMEZONE, identifier (+24 more)
+
+### Community 88 - ".sendInternal"
+Cohesion: 0.15
+Nodes (31): activeBottomFrame(), captureBeforeDeadline(), capturePane(), cleanDialogLine(), clearAutomaticStartupPrompts(), composerFocusWitnessed(), composerHoldsText(), composerText() (+23 more)
+
+### Community 89 - "DialogFrame.tsx"
+Cohesion: 0.09
+Nodes (26): changed(), frames, innermostDialogFrame(), listeners, openDialogFrame(), subscribeDialogFrames(), DialogFrame(), filterSentMessages() (+18 more)
+
+### Community 90 - "devDependencies"
 Cohesion: 0.05
 Nodes (37): concurrently, jsdom, oxlint, devDependencies, concurrently, jsdom, oxlint, @playwright/test (+29 more)
 
-### Community 86 - "config.rs"
+### Community 91 - "config.rs"
 Cohesion: 0.11
 Nodes (13): Duration, Fn, Path, HubConfig, normalize_origin(), normalize_url(), reachable(), Option (+5 more)
 
-### Community 87 - "feature-flags.ts"
-Cohesion: 0.13
-Nodes (25): hub(), AppVersion, defaultHubFeatureFlags, effectivePreviewFeatures(), HubFeatureFlag, HubFeatureFlags, hubFlagCatalogue, isPreviewAvailable() (+17 more)
-
-### Community 88 - "transcription-service.ts"
-Cohesion: 0.09
-Nodes (22): CommandOptions, CommandResult, CommandRunner, configuredThreads(), defaultCommandRunner(), execFileAsync, ffmpegStatic, ffprobeStatic (+14 more)
-
-### Community 89 - "react"
+### Community 92 - "schedule-proposals.ts"
 Cohesion: 0.10
-Nodes (16): react, AttachmentStrip(), Composer(), composerSteeringUnavailableReason(), ComposerActions(), ContextRing(), QueuedPromptList(), SendControl() (+8 more)
+Nodes (30): recordScheduleProposals(), proposalInput, recordScheduleReplacement(), action, create, existing, metadata, ScheduleProposalInput (+22 more)
 
-### Community 90 - "KnowledgeStore"
-Cohesion: 0.12
-Nodes (14): committedRevision(), KnowledgeConfinementClaim, KnowledgeRootConfinementConflictError, KnowledgeRootReference, KnowledgeRootReservation, KnowledgeRootReservationOptions, KnowledgeState, KnowledgeStore (+6 more)
+### Community 93 - "notification-center-service.ts"
+Cohesion: 0.08
+Nodes (27): booleanQuery, filters, params, registerNotificationRoutes(), cursorSchema, durableState(), identity, kind (+19 more)
 
-### Community 91 - "SessionOrderStore"
-Cohesion: 0.13
-Nodes (17): directories, fakeManager(), hub(), orderStore(), settled(), until(), upserted(), carried() (+9 more)
+### Community 94 - "manager-structured-memory.ts"
+Cohesion: 0.07
+Nodes (30): ManagerStructuredMemoryCapacityError, ManagerStructuredMemoryStoreOptions, open(), openWithPolicyGlobal(), openWithPolicyRecord(), MANAGER_STRUCTURED_MEMORY_MAX_APPLIED_REQUESTS, MANAGER_STRUCTURED_MEMORY_MAX_AUDIT_ENTRIES, MANAGER_STRUCTURED_MEMORY_MAX_CONTENT_CHARS (+22 more)
 
-### Community 92 - "session-launcher.ts"
-Cohesion: 0.09
-Nodes (17): withSessionCreateBoundary(), delay(), requireFolderTrust(), sameFolder(), SessionFolderTrustPolicy, SessionLaunch, SessionLauncher, SessionLauncherHost (+9 more)
-
-### Community 93 - "EngineVoiceBackendSession"
-Cohesion: 0.18
-Nodes (5): asSessionError(), disconnectCause(), EngineVoiceBackendSession, sameUtterance(), VoiceSessionError
-
-### Community 94 - "ui-scenes.ts"
-Cohesion: 0.12
-Nodes (23): { values }, fixtureNotifications, fixtureScheduleProposals, fixtureScheduleRuns, fixtureSchedules, ComposerPart, lockedScreenshot, message() (+15 more)
-
-### Community 95 - "recovery-resend-durability.test.ts"
-Cohesion: 0.09
-Nodes (18): directories, disk, fixture(), gate(), gates, httpBoundary(), initialize(), PublicSessionValue (+10 more)
+### Community 95 - "host-telemetry.ts"
+Cohesion: 0.08
+Nodes (28): HOST_TELEMETRY_REMOTE_TIMEOUT_MS, HOST_TELEMETRY_STALE_STREAM_MS, subscribeRemoteHost(), connect(), empty, servers, subscriptions, makeSampler() (+20 more)
 
 ### Community 96 - "manager-proactive-inbox.ts"
-Cohesion: 0.09
-Nodes (33): assertExactKeys(), cloneState(), DISPOSITIONS, hasExactKeys(), isDisposition(), isEventKind(), isId(), isOrigin() (+25 more)
+Cohesion: 0.08
+Nodes (34): assertExactKeys(), cloneState(), DISPOSITIONS, hasExactKeys(), isDisposition(), isEventKind(), isId(), isOrigin() (+26 more)
 
-### Community 97 - "composer-state.ts"
+### Community 97 - "oracle-voice-child.test.ts"
+Cohesion: 0.08
+Nodes (13): createVoiceWorker(), childHarness(), config, FakeChildProcess, FakePiperProcess, fakeSherpa(), FakeSherpaStream, initialize() (+5 more)
+
+### Community 98 - "knowledge-tree.ts"
 Cohesion: 0.10
-Nodes (29): moveComposerDraft(), persistComposerDrafts(), restoreComposerSubmission(), composerReadFailureMessage(), readComposerDrafts(), readLegacyComposerDrafts(), writeQueuedEditOwners(), CollapsedPaste (+21 more)
+Nodes (32): WorkspaceEntry, applyRootChoice(), cancelKnowledgeRestore(), collapseKnowledgeTree(), createRoot(), knowledgeBasePathFor(), knowledgeTreeKeyDown(), loadKnowledgeChain() (+24 more)
 
-### Community 98 - "markdown-navigation.ts"
-Cohesion: 0.11
-Nodes (26): MarkdownImage(), html(), today(), BreadcrumbSegment, DocumentLink, headingSlug(), headingText(), inlineText() (+18 more)
-
-### Community 99 - "pipeline.test.tsx"
-Cohesion: 0.12
-Nodes (24): documentJsx(), build(), childrenOf(), DocumentDrawing, drawStep(), elementsFor(), emptyDrawing, finishDrawing() (+16 more)
-
-### Community 100 - "oracle-voice-child.test.ts"
+### Community 99 - "shared/settings-profile.ts"
 Cohesion: 0.09
-Nodes (12): createVoiceWorker(), childHarness(), config, FakeChildProcess, FakePiperProcess, fakeSherpa(), FakeSherpaStream, initialize() (+4 more)
+Nodes (30): execute, resolveHubDisplayName(), deviceId, importSchema, parse(), registerSettingsProfileRoutes(), updateSchema, AccentSetting (+22 more)
 
-### Community 101 - "oracle-voice-segments.ts"
+### Community 100 - "EngineVoiceBackendSession"
+Cohesion: 0.19
+Nodes (4): asSessionError(), disconnectCause(), EngineVoiceBackendSession, VoiceSessionError
+
+### Community 101 - "setupWorkspaceFixture"
+Cohesion: 0.08
+Nodes (16): desktop, devices, long, open(), phone, veryLong, devices, markedState() (+8 more)
+
+### Community 102 - "buildApp"
+Cohesion: 0.10
+Nodes (23): buildApp(), errorStatusCode(), isAppleTouchIconProbe(), directories, runtimes, trusted, hub(), build() (+15 more)
+
+### Community 103 - "PushNotificationService"
+Cohesion: 0.17
+Nodes (4): start(), PushNotificationService, scoped(), registerPushRoutes()
+
+### Community 104 - "oracle-voice-segments.ts"
 Cohesion: 0.11
 Nodes (24): alignCandidateRanges(), alignCandidateSequences(), alignSmallCandidateRanges(), CandidateAlignment, candidatePrefixScores(), candidateSubstitutionCost(), capSegment(), collectProseBlocks() (+16 more)
 
-### Community 102 - "remote-voice-client.ts"
+### Community 105 - "VoiceClientControl"
 Cohesion: 0.16
 Nodes (14): VoiceBackendDisconnectCause, VoiceBackendOutput, closeReason(), exactArrayBuffer(), rawDataBuffer(), REDIRECT_STATUSES, remoteSocketCloseError(), remoteSocketError() (+6 more)
 
-### Community 103 - "session-patch-browser.ts"
-Cohesion: 0.11
-Nodes (28): pageFor(), advance(), Connection, connections, content(), FrameMeasurement, instrument(), lastHeading() (+20 more)
+### Community 106 - "SchedulerDispatcher"
+Cohesion: 0.20
+Nodes (4): SchedulerDispatcher, registerSchedulerRoutes(), holdsSlot(), isInFlight()
 
-### Community 104 - "real-voice.ts"
-Cohesion: 0.11
-Nodes (13): BrowserTestSessionService, clockTicksPerSecond(), execFileAsync, GenerationMetrics, InstrumentedRealEngine, processExists(), readWorkerProcessSample(), RealMetrics (+5 more)
-
-### Community 105 - "node:fs/promises"
+### Community 107 - "send-matrix.integration.test.ts"
 Cohesion: 0.08
-Nodes (21): question(), directories, execFileAsync, isSessionScopeLauncher(), ProbeRun, SESSION_SCOPE, sessionLaunchCommand(), sessionScopeAvailable (+13 more)
+Nodes (26): BUSY, busyWithoutComposer, CLEAR_REFUSED, client(), dialogs, Draft, drained, exec (+18 more)
 
-### Community 106 - "registerSessionKnowledgeRoutes"
+### Community 108 - "real-voice.ts"
 Cohesion: 0.11
-Nodes (22): errorStatusCode(), knowledgeBaseName(), Lineage, pathUpdateSchema, registerSessionKnowledgeRoutes(), finalizeLifecycleBinding(), generationFor(), knownPredecessors() (+14 more)
+Nodes (12): BrowserTestSessionService, clockTicksPerSecond(), execFileAsync, GenerationMetrics, InstrumentedRealEngine, processExists(), readWorkerProcessSample(), RealMetrics (+4 more)
 
-### Community 107 - "manager-agent.test.ts"
+### Community 109 - "agent-service-event-projection.test.ts"
 Cohesion: 0.11
-Nodes (17): ManagerSdkEvent, ManagerSdkSession, ManagerSdkSessionConfig, Behavior, capturePrompt(), computers, fail(), FakeClient (+9 more)
+Nodes (22): at(), directories, finish(), launch(), projected(), services, sessionLog(), syncSessionTranscript() (+14 more)
 
-### Community 108 - "use-markdown-document.test.tsx"
-Cohesion: 0.10
-Nodes (14): drawnInParts(), DocumentRenderEvent, RenderedDocumentTree, createWorkerRenderer(), defaultDocumentRenderer(), DocumentRenderer, DocumentRendererContext, RendererWorker (+6 more)
+### Community 110 - "oracle-voice-security.test.ts"
+Cohesion: 0.08
+Nodes (16): apps, directories, apps, config, configFixture(), createManager(), issueTicket(), localRuntime() (+8 more)
 
-### Community 109 - "ManagerAttachment"
-Cohesion: 0.15
-Nodes (17): failure(), ManagerUploads, referenceId, storedFile, safeUploadName(), writePrivateUpload(), codeExtensions, fileTypes (+9 more)
+### Community 111 - "session-reply-durability.test.ts"
+Cohesion: 0.12
+Nodes (20): answer(), assistantFixture(), claudeFixture(), claudeQuestions(), claudeRequest(), claudeRunFixture(), copilotFixture(), copilotRequest() (+12 more)
 
-### Community 110 - "tmux-errors.integration.test.ts"
-Cohesion: 0.10
-Nodes (21): listTmuxSessions(), createHub(), execFileAsync, headers, ignoreMissing(), removeFixture(), seedSession(), sessionLog() (+13 more)
+### Community 112 - "notification-classifier.ts"
+Cohesion: 0.14
+Nodes (24): computer, observe(), snapshot(), start, sustained(), attentionClosed(), attentionSeed(), classifyHostNotification() (+16 more)
 
-### Community 111 - "ManagerAssistant.test.tsx"
-Cohesion: 0.07
-Nodes (16): removeQueuedManagerMessage(), retryManagerMessage(), sendManagerMessage(), sessionLinkTarget(), OracleButton(), OracleControl, OracleIndicator, conversationCapability (+8 more)
+### Community 113 - "terminal-session.test.ts"
+Cohesion: 0.09
+Nodes (25): composerHoldsOtherText(), composerTookPaste(), isTerminalSessionInUsePrompt(), occurrences(), paneEvidenceCount(), paneShowsText(), pasteCouldCollapse(), pastedPlaceholderCount() (+17 more)
 
-### Community 112 - "capture-workspace.ts"
-Cohesion: 0.15
-Nodes (22): assertConversation(), assertLayout(), audit, capture(), desktop(), documentHeading(), expect, frames (+14 more)
-
-### Community 113 - "oracle-voice-config.ts"
+### Community 114 - "capture-workspace.ts"
 Cohesion: 0.13
-Nodes (23): buildConfig(), boundedInteger(), canonicalPath(), espeakDataDirectory(), ExternalPiperVoiceConfig, isInside(), isRecord(), nonNegativeInteger() (+15 more)
+Nodes (24): assertConversation(), assertLayout(), audit, capture(), desktop(), documentHeading(), expect, frames (+16 more)
 
-### Community 114 - "cli-canary.ts"
+### Community 115 - "src/settings-profile.ts"
+Cohesion: 0.10
+Nodes (24): AppearanceSetting, isSettingsDeviceId(), isSettingsRevision(), SETTINGS_MAX_COMPUTERS, settingsProfileKeys, SettingsProfileValues, statuslineItems, Appearance (+16 more)
+
+### Community 116 - "use-markdown-document.ts"
+Cohesion: 0.10
+Nodes (18): DocumentDrawing, drawnInParts(), isDrawnInParts(), DrawStep, RenderedDocumentTree, DocumentRenderer, DocumentRendererContext, Drawn (+10 more)
+
+### Community 117 - "PreviewFeaturesSettings.test.tsx"
+Cohesion: 0.15
+Nodes (16): PreviewFeature, PreviewFeatures, ClientFeature, railEntries(), PreviewFeaturesContext, PreviewFeatureState, usePreviewFeature(), usePreviewFeatures() (+8 more)
+
+### Community 118 - "cli-canary.ts"
 Cohesion: 0.14
 Nodes (10): CliCanary, CliCanaryDependencies, CliCanaryResult, CliCanaryState, cliCanaryStateFile(), createCliCanary(), execFileAsync, readCopilotVersion() (+2 more)
 
-### Community 115 - "manager-structured-memory-search.ts"
-Cohesion: 0.13
-Nodes (23): authorityRank, compareRanked(), createStructuredMemorySearchIndex(), escapedJson(), formatStructuredMemoryContext(), IndexedRecord, indexRecord(), ManagerStructuredMemoryFormattedContext (+15 more)
-
-### Community 116 - "scripts"
+### Community 119 - "scripts"
 Cohesion: 0.07
 Nodes (26): dependencies, @tauri-apps/api, description, devDependencies, @tauri-apps/cli, typescript, vite, typescript (+18 more)
 
-### Community 117 - "pipeline.ts"
+### Community 120 - "session-patch-browser.ts"
+Cohesion: 0.14
+Nodes (24): advance(), connections, content(), FrameMeasurement, lastHeading(), message(), open(), percentile() (+16 more)
+
+### Community 121 - "oracle-voice-config.ts"
+Cohesion: 0.14
+Nodes (22): buildConfig(), boundedInteger(), canonicalPath(), espeakDataDirectory(), ExternalPiperVoiceConfig, isInside(), isRecord(), nonNegativeInteger() (+14 more)
+
+### Community 122 - "manager-structured-memory-search.ts"
+Cohesion: 0.14
+Nodes (22): authorityRank, compareRanked(), createStructuredMemorySearchIndex(), escapedJson(), formatStructuredMemoryContext(), IndexedRecord, indexRecord(), ManagerStructuredMemoryFormattedContext (+14 more)
+
+### Community 123 - "SettingsProfileClient"
+Cohesion: 0.19
+Nodes (5): sameSettingValue(), errorText(), isRefusal(), samePending(), SettingsProfileClient
+
+### Community 124 - "VoiceCapture"
+Cohesion: 0.21
+Nodes (3): captureFailure(), harness(), VoiceCapture
+
+### Community 125 - "agent-service.test.ts"
 Cohesion: 0.13
-Nodes (24): holdingRenderer(), openKnowledgeReadme(), openSessionReadme(), partlyHeldRenderer(), render(), render, scope, documentOpening() (+16 more)
+Nodes (14): terminalFormSteps(), busyTerminal(), closableService(), configurableModel(), directories, FakeCopilotClient, normalSdkSessionConfiguration, probeService() (+6 more)
 
-### Community 118 - "oracle-voice-routes.test.ts"
-Cohesion: 0.09
-Nodes (11): ObservedLocalVoiceBackend, openApps, openSockets, RouteManager, RouteVoiceBackend, runtime(), testRoot(), testRoots (+3 more)
+### Community 126 - "HostMonitorView.test.tsx"
+Cohesion: 0.14
+Nodes (21): MinuteAccumulator, HostMetric, hostMetricNames, HostComputerView(), HostMonitorView(), Sparkline(), computer, metrics (+13 more)
 
-### Community 119 - "send-matrix.integration.test.ts"
-Cohesion: 0.08
-Nodes (22): BUSY, busyWithoutComposer, CLEAR_REFUSED, client(), dialogs, Draft, drained, Expected (+14 more)
+### Community 127 - "oracle-voice-worker.ts"
+Cohesion: 0.12
+Nodes (22): VoiceEndUtterance, VoiceStartUtterance, BlockingEngine, ActiveSynthesisIdentity, ActiveUtteranceIdentity, capabilityFromConfig(), exactKeys(), isCancelledEvent() (+14 more)
 
-### Community 120 - "background-task-adapter.ts"
-Cohesion: 0.10
-Nodes (24): BackgroundTaskEventOptions, CopilotClientTaskInfo, CopilotClientTaskProgress, CopilotTaskInfo, CopilotTaskProgress, isBackgroundTaskInfo(), isBackgroundTaskProgress(), isLiveTaskStatus() (+16 more)
-
-### Community 121 - "compilerOptions"
+### Community 128 - "compilerOptions"
 Cohesion: 0.08
 Nodes (24): compilerOptions, allowArbitraryExtensions, allowImportingTsExtensions, erasableSyntaxOnly, jsx, lib, module, moduleDetection (+16 more)
 
-### Community 122 - "delegated-transcription-service.ts"
-Cohesion: 0.13
-Nodes (12): collect(), DelegatedTranscriptionOptions, DelegatedTranscriptionService, oversized(), statusCodeOf(), hubComputer, workstation, AudioUpload (+4 more)
+### Community 129 - "closed-sessions.ts"
+Cohesion: 0.12
+Nodes (10): CLOSED_SESSION_SWEEP_INTERVAL_MS, ClosedSessionOwner, ClosedSessionSweeper, now, CLOSED_SESSION_RETENTION_MS, closedSessionContext(), excerpt(), isClosedSessionContext() (+2 more)
 
-### Community 123 - "ManagerStructuredMemoryStore"
+### Community 130 - "notification-center.integration.test.ts"
 Cohesion: 0.17
-Nodes (7): benchmarkState(), now(), openFixture(), searchSamples(), ManagerStructuredMemoryRecoveryError, ManagerStructuredMemoryStore, open()
+Nodes (11): center(), directories, directory(), hub(), now, runtimes, trusted, NotificationCenterService (+3 more)
 
-### Community 124 - "SettingsProfileClient"
+### Community 131 - "EnabledOracleVoiceConfig"
+Cohesion: 0.12
+Nodes (9): voiceBackend(), EnabledOracleVoiceConfig, FakeVoiceEngineFactory, config, availableBackend(), voiceBackend(), LocalVoiceBackend, isEnabledConfig() (+1 more)
+
+### Community 132 - "transport.test.ts"
+Cohesion: 0.13
+Nodes (12): registerHostTelemetryRoutes(), HOST_TELEMETRY_MAX_QUEUE_BYTES, HOST_TELEMETRY_MAX_QUEUE_MESSAGES, HOST_TELEMETRY_SEND_TIMEOUT_MS, HostSocket, HostTelemetrySocket, readingFixture(), empty (+4 more)
+
+### Community 133 - "NotificationStore"
+Cohesion: 0.17
+Nodes (5): emptyState(), matchesNotification(), NotificationStore, setup(), NotificationFilter
+
+### Community 134 - "SessionKnowledgeStore"
 Cohesion: 0.21
-Nodes (3): errorText(), isRefusal(), SettingsProfileClient
+Nodes (3): bindingKey(), SessionKnowledgeStore, SessionKnowledgeBinding
 
-### Community 125 - "agent-service.test.ts"
-Cohesion: 0.14
-Nodes (14): terminalFormSteps(), busyTerminal(), closableService(), configurableModel(), directories, FakeCopilotClient, normalSdkSessionConfiguration, probeService() (+6 more)
-
-### Community 127 - "HostSnapshot"
+### Community 135 - "PromptCards.tsx"
 Cohesion: 0.13
-Nodes (14): HOST_TELEMETRY_REMOTE_TIMEOUT_MS, HOST_TELEMETRY_STALE_STREAM_MS, subscribeRemoteHost(), connect(), empty, servers, subscriptions, HOST_TELEMETRY_MAX_QUEUE_BYTES (+6 more)
+Nodes (16): UserInputField, UserInputFieldValue, initialUserInputValues(), PermissionCard(), singleParagraphQuestionHeading(), StaleInteractionRecoveryCard(), question, request (+8 more)
 
-### Community 128 - "normalizeKnowledgeRelativePath"
-Cohesion: 0.17
-Nodes (18): knowledgeFileSchema, knowledgeRelativePathSchema, scopedKnowledgePath(), pathRecordSchema, joinKnowledgeRelativePath(), knowledgeAbsolutePath(), knowledgeRelativePathFromAbsolute(), normalizeKnowledgeRelativePath() (+10 more)
-
-### Community 129 - "oracle-voice-tickets.ts"
+### Community 136 - "oracle-voice-tickets.ts"
 Cohesion: 0.15
 Nodes (14): ConsumedVoiceTicket, DEFAULT_MAX_VOICE_TICKETS, DEFAULT_VOICE_TICKET_TTL_MS, IssuedVoiceTicket, normalizeAddress(), normalizeClient(), normalizeOrigin(), requirePositiveInteger() (+6 more)
 
-### Community 130 - "host-telemetry.ts"
-Cohesion: 0.12
-Nodes (19): aggregate, DiskSpaceSchema, HOST_TELEMETRY_CAPABILITY_VERSION, HOST_TELEMETRY_LIVE_WINDOW_MS, HostHistorySchema, HostInfoSchema, HostMetricAggregate, HostMetricAggregateSchema (+11 more)
+### Community 137 - "refusal-metrics.ts"
+Cohesion: 0.15
+Nodes (16): countsAsRefusal(), DEFAULT_MAX_REFUSAL_KEYS, httpRefusalReason(), keyId(), notedReasons, noteRefusalReason(), overflowId, reasonCodeFromChain() (+8 more)
 
-### Community 131 - "HostMonitorView.test.tsx"
-Cohesion: 0.17
-Nodes (18): HostComputerView(), HostMonitorView(), Sparkline(), computer, metrics, snapshot, Socket, bytes() (+10 more)
+### Community 138 - "session-knowledge-store.ts"
+Cohesion: 0.10
+Nodes (20): bindingSchema, Identity, PathRecord, pathRecordKey(), pathRecordSchema, PathState, pathStateFor(), pathStateSchema (+12 more)
 
-### Community 132 - "compilerOptions"
+### Community 139 - "pipeline.test.tsx"
+Cohesion: 0.16
+Nodes (16): documentJsx(), build(), childrenOf(), drawStep(), elementsFor(), emptyDrawing, finishDrawing(), Level (+8 more)
+
+### Community 140 - "renderer.ts"
+Cohesion: 0.14
+Nodes (11): render, scope, DocumentRenderEvent, createWorkerRenderer(), defaultDocumentRenderer(), RendererWorker, synchronousRenderer, FakeWorker (+3 more)
+
+### Community 141 - "compilerOptions"
 Cohesion: 0.10
 Nodes (20): DOM.Iterable, e2e, playwright.config.ts, compilerOptions, lib, module, moduleResolution, noEmit (+12 more)
 
-### Community 133 - "full-gate.test.ts"
+### Community 142 - "HubEvent"
+Cohesion: 0.12
+Nodes (9): ComputerManagerEvents, HubEventSource, headers, hub(), sender, FinishedSession, SessionUnreadTracker, finished() (+1 more)
+
+### Community 143 - "full-gate.test.ts"
 Cohesion: 0.12
 Nodes (11): Fixture, fixtures, gate(), git(), gitEnv, operatorEnv, Result, run (+3 more)
 
-### Community 134 - "service.ts"
-Cohesion: 0.17
-Nodes (9): HostRequest, registerHostTelemetryRoutes(), HOST_PROCESSES_INTERVAL_MS, HOST_TELEMETRY_MAX_VIEWERS, hostTelemetryError(), HostTelemetryTarget, HostTelemetrySocket, HOST_TELEMETRY_INVALID_CODE (+1 more)
+### Community 144 - "ManagerStructuredMemoryStore"
+Cohesion: 0.28
+Nodes (5): digest(), ManagerStructuredMemoryReferenceError, ManagerStructuredMemoryStore, ManagerStructuredMemoryMutationResult, ManagerStructuredMemoryState
 
-### Community 135 - "refusal-metrics.ts"
+### Community 145 - "session-store-providers.test.ts"
+Cohesion: 0.11
+Nodes (10): claude(), clearFixture(), copilot(), disk, event(), fixtures, holdOtherWrite(), releases (+2 more)
+
+### Community 146 - "pipeline.ts"
 Cohesion: 0.16
-Nodes (15): countsAsRefusal(), DEFAULT_MAX_REFUSAL_KEYS, httpRefusalReason(), keyId(), notedReasons, overflowId, reasonCodeFromChain(), REFUSAL_OVERFLOW (+7 more)
+Nodes (20): holdingRenderer(), openKnowledgeReadme(), openSessionReadme(), partlyHeldRenderer(), render(), documentOpening(), documentParts(), documentRenderEvents() (+12 more)
 
-### Community 136 - "PromptCards.tsx"
-Cohesion: 0.16
-Nodes (19): UserInputField, UserInputFieldValue, initialUserInputValues(), PermissionCard(), singleParagraphQuestionHeading(), StaleInteractionRecoveryCard(), question, request (+11 more)
+### Community 147 - "capture.ts"
+Cohesion: 0.13
+Nodes (15): BufferedFrame, defaultAudioContext(), permissionError(), positiveLimit(), QueuedAudio, validateIdentity(), VoiceCaptureError, VoiceCaptureErrorCode (+7 more)
 
-### Community 137 - "knowledge-tree.ts"
-Cohesion: 0.17
-Nodes (18): WorkspaceEntry, knowledgeTreeKeyDown(), toggleKnowledgeFolder(), collapseKnowledgeFolder(), expandKnowledgeFolder(), knowledgeAncestors(), KnowledgeCrumb, knowledgeCrumbs() (+10 more)
-
-### Community 138 - "compilerOptions"
+### Community 148 - "compilerOptions"
 Cohesion: 0.10
 Nodes (19): ES2022, compilerOptions, isolatedModules, lib, module, moduleResolution, noEmit, noUnusedLocals (+11 more)
 
-### Community 139 - "ManagerProactiveInbox"
+### Community 149 - "ManagerProactiveInbox"
 Cohesion: 0.22
 Nodes (4): ManagerProactiveInbox, ManagerProactiveInboxPersistenceError, nowIso(), openInbox()
 
-### Community 140 - "schedule-notification-service.test.ts"
-Cohesion: 0.18
-Nodes (6): ScheduleNotificationService, input(), now, run(), ScheduleRunNotification, SchedulerChanged
-
-### Community 141 - "OnlineRecognizer"
+### Community 150 - "OnlineRecognizer"
 Cohesion: 0.10
 Nodes (7): GeneratedAudio, OfflineTts, OfflineTtsConfig, OnlineRecognizer, OnlineRecognizerConfig, OnlineStream, sherpa-onnx-node
 
-### Community 142 - "MessageTime.tsx"
+### Community 151 - "markdown-navigation.ts"
+Cohesion: 0.19
+Nodes (18): MarkdownImage(), BreadcrumbSegment, DocumentLink, headingSlug(), headingText(), inlineText(), isExternalSource(), MarkdownNode (+10 more)
+
+### Community 152 - "MessageTime.tsx"
 Cohesion: 0.17
 Nodes (17): calendarDay(), calendarKey(), dayFields, dayTime, full, messageTimeParts(), time, yearFields (+9 more)
 
-### Community 143 - "compilerOptions"
+### Community 153 - "compilerOptions"
 Cohesion: 0.10
 Nodes (19): compilerOptions, allowImportingTsExtensions, erasableSyntaxOnly, lib, module, moduleDetection, noEmit, noFallthroughCasesInSwitch (+11 more)
 
-### Community 144 - "compilerOptions"
+### Community 154 - "compilerOptions"
 Cohesion: 0.11
 Nodes (18): server, compilerOptions, lib, module, moduleResolution, noEmit, noFallthroughCasesInSwitch, noUnusedLocals (+10 more)
 
-### Community 145 - "transport.test.ts"
-Cohesion: 0.13
-Nodes (11): prefixes, session, trusted, untrusted, BuildAppOptions, ProcessScanContext, HostTelemetryService, empty (+3 more)
-
-### Community 146 - "recordValue"
+### Community 155 - "oracle-status.test.ts"
 Cohesion: 0.18
-Nodes (19): attachmentModeValue(), backgroundHandoff(), booleanValue(), eventString(), lastForegroundCompletionAt(), normalizedToolName(), notificationKind(), parsedValue() (+11 more)
+Nodes (15): bytes(), HOST_STATUS_MAX_COMPUTERS, HOST_STATUS_MAX_LENGTH, number(), oracleHostStatus(), owner(), processes(), summary() (+7 more)
 
-### Community 147 - "HostTelemetrySampler"
-Cohesion: 0.20
-Nodes (3): HostTelemetrySampler, HostMinuteAggregate, HostSample
-
-### Community 148 - "ManagerMemory"
+### Community 156 - "ManagerMemory"
 Cohesion: 0.20
 Nodes (5): MANAGER_MEMORY_INDEX, ManagerMemory, ManagerMemoryEntry, ManagerMemoryError, ManagerMemoryLimits
 
-### Community 149 - "startup-phases.test.ts"
-Cohesion: 0.12
-Nodes (13): app(), directories, headers, launcher, createStartupPhases(), startManagedServer(), StartupPhaseRecord, address (+5 more)
+### Community 157 - "recovery-resend-durability.test.ts"
+Cohesion: 0.13
+Nodes (13): directories, disk, fixture(), gate(), gates, initialize(), PublicSessionValue, runtimes (+5 more)
 
-### Community 150 - "session-provenance.test.ts"
-Cohesion: 0.18
-Nodes (9): diffMessages(), Publication, sameMessage(), sessionKey(), SessionPublications, SessionUpserted, directories, session (+1 more)
-
-### Community 151 - "dreamer-schedule.ts"
+### Community 158 - "dreamer-schedule.ts"
 Cohesion: 0.25
 Nodes (16): assertTimeZone(), DREAMER_CATCHUP_END_HOUR, DREAMER_RUN_HOUR, dreamerLocalDate(), dreamerLocalParts, dreamerScheduledAt(), dreamerScheduleDecision, DreamerScheduleReason (+8 more)
 
-### Community 152 - "oracle-status.test.ts"
-Cohesion: 0.19
-Nodes (14): bytes(), HOST_STATUS_MAX_COMPUTERS, HOST_STATUS_MAX_LENGTH, number(), oracleHostStatus(), owner(), processes(), summary() (+6 more)
-
-### Community 153 - "session-resource-routes.test.ts"
-Cohesion: 0.14
-Nodes (10): make(), node(), apps, dataDirectory(), directories, pairedFixture(), releases, rememberApp() (+2 more)
-
-### Community 154 - "promotion-monitor.test.ts"
+### Community 160 - "promotion-monitor.test.ts"
 Cohesion: 0.24
 Nodes (15): addDownstream(), advanceMain(), calls(), canaryRuns(), Fixture, fixtures, git(), healthyReleaseFixture() (+7 more)
 
-### Community 155 - "BoundedQueue"
+### Community 161 - "terminal-startup-queue.test.ts"
+Cohesion: 0.12
+Nodes (10): client(), delayQueueWrite(), disk, exec, gate(), holdQueueCommit(), NativeFixture, NativeRuntime (+2 more)
+
+### Community 162 - "BoundedQueue"
 Cohesion: 0.16
 Nodes (7): abortReason(), BoundedQueue, QueueEntry, QueueWaiter, removeAbortListener(), VoiceQueueClearedError, VoiceQueueOverflowError
 
-### Community 156 - "ReaderWorkspace"
+### Community 163 - "ReaderWorkspace"
 Cohesion: 0.15
 Nodes (9): READER_WIDTH_MIN, ReaderWorkspace(), commitWidth(), resizeEnd(), resizeKeyDown(), resizeMove(), readWidth(), storeWidth() (+1 more)
 
-### Community 157 - "scripts"
+### Community 164 - "manager-automatic.ts"
+Cohesion: 0.19
+Nodes (13): automaticTurns(), event(), formatProactivePrompt(), MANAGER_PROACTIVE_EVENT_KINDS, ManagerProactiveEventKind, ProactivePromptEvent, proactivePromptEvents(), failed (+5 more)
+
+### Community 165 - "scripts"
 Cohesion: 0.12
 Nodes (17): scripts, build, check, dev, dev:server, dev:web, icons:pwa, lint (+9 more)
 
-### Community 158 - "file-upload-routes.ts"
-Cohesion: 0.19
-Nodes (9): FileUploadError, registerFileUploadRoutes(), SessionParams, registerTranscriptionRoutes(), transcriptionMultipartOptions, extension(), MAX_SESSION_FILE_BYTES, supportedExtensions (+1 more)
+### Community 166 - "session-knowledge-routes.ts"
+Cohesion: 0.12
+Nodes (11): KnowledgeRootConfinementConflictError, errorStatusCode(), knowledgeBaseName(), Lineage, pathUpdateSchema, RegistrationGeneration, ReplacementEvidence, rootUpdateSchema (+3 more)
 
-### Community 159 - ".correct"
-Cohesion: 0.31
-Nodes (6): digest(), ManagerStructuredMemoryReferenceError, ManagerStructuredMemoryCorrectInput, ManagerStructuredMemoryMutationResult, ManagerStructuredMemoryRememberInput, ManagerStructuredMemoryState
+### Community 167 - "session-resource-routes.test.ts"
+Cohesion: 0.15
+Nodes (9): node(), apps, dataDirectory(), directories, pairedFixture(), releases, rememberApp(), ResourceService (+1 more)
 
-### Community 160 - "closed-session-sweeper.ts"
+### Community 168 - "session-unread.pw.ts"
+Cohesion: 0.14
+Nodes (8): bounds(), devices, edgeState(), open(), screenshot(), unreadState(), fixtureBackgroundTasks, SUSPENDED_SESSION_ID
+
+### Community 169 - "knowledge-store.ts"
+Cohesion: 0.14
+Nodes (11): committedRevision(), KnowledgeConfinementClaim, KnowledgeRootReference, KnowledgeRootReservation, KnowledgeRootReservationOptions, KnowledgeState, parseMetadata(), PersistedKnowledgeState (+3 more)
+
+### Community 170 - "registerSessionKnowledgeRoutes"
+Cohesion: 0.26
+Nodes (12): registerSessionKnowledgeRoutes(), finalizeLifecycleBinding(), generationFor(), knownPredecessors(), knownSessionGuard(), markRemoved(), reconcileReplacement(), reconcileSession() (+4 more)
+
+### Community 171 - "SessionAdmissions"
 Cohesion: 0.17
-Nodes (5): CLOSED_SESSION_SWEEP_INTERVAL_MS, ClosedSessionOwner, ClosedSessionSweeper, now, CLOSED_SESSION_RETENTION_MS
+Nodes (4): Admission, ExclusiveAdmission, PendingQueueAdmission, SessionAdmissions
 
-### Community 161 - "manager-runtime.ts"
-Cohesion: 0.22
-Nodes (11): COPILOT_SDK_SESSION_DISCOVERY, COPILOT_SDK_SESSION_INTERACTION, copilotSdkClientOptions(), CopilotSdkRuntimeDiagnostic, CopilotSdkRuntimeDiagnosticClient, createCopilotSdkClient(), readCopilotSdkRuntimeDiagnostic(), retireMissingCopilotSdkSession() (+3 more)
-
-### Community 162 - "ScheduleWorktreeService"
-Cohesion: 0.34
-Nodes (4): execute, failure(), missing(), ScheduleWorktreeService
-
-### Community 163 - "package.json"
+### Community 172 - "package.json"
 Cohesion: 0.13
 Nodes (13): directory, { values }, workflows, engines, node, name, packageManager, pnpm (+5 more)
 
-### Community 164 - "VoiceEngineEvent"
+### Community 173 - "terminal-form-deadline.test.ts"
+Cohesion: 0.16
+Nodes (11): question(), actions, clippedPane(), closedPane, commitKeys, committed, fixture(), openPane() (+3 more)
+
+### Community 174 - "VoiceEngineEvent"
 Cohesion: 0.18
 Nodes (7): engine, integerEnvironment(), smokeEventLogLine(), requiredEnvironment(), voiceConfigFromEnvironment(), wave, VoiceEngineEvent
 
-### Community 165 - "backgroundTasksFromEvents"
-Cohesion: 0.32
-Nodes (15): addActivity(), backgroundTasksFromEvents(), boundedText(), errorValue(), eventTask(), executionModeValue(), normalizeBackgroundTask(), numberValue() (+7 more)
-
-### Community 166 - "background-task-stop.test.ts"
+### Community 175 - "background-task-stop.test.ts"
 Cohesion: 0.23
 Nodes (12): MAX_BACKGROUND_TASKS, completed(), handoff(), launched(), nativeStart(), readExit(), reportedShell(), started() (+4 more)
 
-### Community 167 - "oracle-voice-assets.test.ts"
+### Community 176 - "oracle-voice-assets.test.ts"
 Cohesion: 0.23
 Nodes (13): archiveMetadata(), Asset, createArchive(), createBoundaryArchive(), exec, fixtures, installerFixture(), Profile (+5 more)
 
-### Community 168 - "RuntimeStatus.tsx"
+### Community 177 - "SessionOriginBadge.test.tsx"
 Cohesion: 0.27
-Nodes (8): families, modelFamily, repositoryModels, RuntimeStatus(), session, glyphs, ModelFamilyIcon(), RuntimeModelName()
+Nodes (9): SessionProvenance, readScheduleLink(), ScheduleLink, scheduleNotificationLabel(), sessionOriginDescription(), icons, labels, SessionOriginBadge() (+1 more)
 
-### Community 169 - "pending-echo.ts"
-Cohesion: 0.24
-Nodes (11): createPendingEcho(), nextPendingEchoDeadline(), normalize(), pairEchoes(), PENDING_ECHO_SETTLED_MS, PendingEcho, PendingEchoOwner, prunePendingEchoMap() (+3 more)
+### Community 178 - "check-workspace-review-regressions.ts"
+Cohesion: 0.15
+Nodes (11): accents, Measurement, originalDocument, output, report, save(), scratch, screenshot() (+3 more)
 
-### Community 170 - "fake-vad.ts"
+### Community 179 - "fake-vad.ts"
 Cohesion: 0.14
 Nodes (3): FakeVadOptions, FakeVadWindow, MicVAD
 
-### Community 171 - "desktop.json"
+### Community 180 - "desktop.json"
 Cohesion: 0.14
 Nodes (13): global-shortcut:default, linux, macOS, windows, description, identifier, main, settings (+5 more)
 
-### Community 172 - "session-clear-transcript.test.ts"
-Cohesion: 0.15
-Nodes (8): Admission, ExclusiveAdmission, PendingQueueAdmission, disk, fixtures, gate(), holdTurnWrite(), releases
+### Community 181 - "DeferredSession"
+Cohesion: 0.16
+Nodes (4): DeferredSession, CopilotTaskInfo, CopilotTaskProgress, BackgroundTaskKind
 
-### Community 173 - "manager-automatic.ts"
-Cohesion: 0.22
-Nodes (11): formatProactivePrompt(), MANAGER_PROACTIVE_EVENT_KINDS, ManagerProactiveEventKind, ProactivePromptEvent, proactivePromptEvents(), failed, finished, AutomaticTurn (+3 more)
+### Community 182 - "HostTelemetrySampler"
+Cohesion: 0.24
+Nodes (3): DeviceCounters, HostTelemetrySampler, HostSample
 
-### Community 174 - "theme-contrast.test.ts"
+### Community 183 - "theme-contrast.test.ts"
 Cohesion: 0.19
 Nodes (12): accentSettings, accentTokens(), block(), contrast(), graphite, hex(), light, lightForeground (+4 more)
 
-### Community 175 - "ShellNavigation.test.tsx"
-Cohesion: 0.32
-Nodes (6): ClientFeature, railEntries(), initials(), useDisplayName(), DisplayNameSetting(), ShellNavigation()
-
-### Community 176 - ".oxlintrc.json"
+### Community 184 - ".oxlintrc.json"
 Cohesion: 0.15
 Nodes (12): ignorePatterns, plugins, rules, react/only-export-components, react/rules-of-hooks, $schema, graphify/.cache/**, graphify/vendor/** (+4 more)
 
-### Community 177 - "settings-local.json"
+### Community 185 - "settings-local.json"
 Cohesion: 0.15
 Nodes (12): allow-hub-config, allow-open-settings, allow-save-hub-config, core:default, description, identifier, main, settings (+4 more)
 
-### Community 178 - "dreamer-service.test.ts"
-Cohesion: 0.15
-Nodes (3): DreamerMemoryMetadataRecord, directories, enabledSettings()
-
-### Community 179 - ".observe"
+### Community 186 - ".observe"
 Cohesion: 0.21
 Nodes (7): canonicalHash(), eventId(), ManagerProactiveInboxCapacityError, ManagerProactiveInboxError, ManagerProactiveInboxReferenceError, ManagerProactiveInboxScopeError, namespaceId()
 
-### Community 180 - "BackgroundTasksDialog.tsx"
-Cohesion: 0.26
-Nodes (10): BackgroundTask, BackgroundTaskCard(), BackgroundTasksDialog(), messageDateTimeFormatter, messageTimeFormatter, stopUnavailableReason(), taskDurationLabel(), taskIsActive() (+2 more)
+### Community 187 - "manager-proactive-inbox.test.ts"
+Cohesion: 0.18
+Nodes (8): ManagerProactiveInboxObservation, ManagerProactiveInboxOptions, fsHooks, ReadGate, readState(), statePath(), TestState, writeState()
 
-### Community 181 - "DialogFrame.tsx"
-Cohesion: 0.28
-Nodes (10): changed(), frames, innermostDialogFrame(), listeners, openDialogFrame(), subscribeDialogFrames(), DialogFrame(), hubSignInExpired() (+2 more)
+### Community 188 - "session-scope.ts"
+Cohesion: 0.19
+Nodes (9): execFileAsync, isSessionScopeLauncher(), ProbeRun, SESSION_SCOPE, sessionLaunchCommand(), sessionScopeAvailable, sessionScopeProbe(), adapter (+1 more)
 
-### Community 182 - "Pcm16Resampler"
+### Community 189 - "Pcm16Resampler"
 Cohesion: 0.26
 Nodes (5): floatSampleToPcm16(), floatToPcm16(), Pcm16Resampler, validateSampleRate(), validateSamples()
 
-### Community 184 - "background-task-tracker.ts"
-Cohesion: 0.27
-Nodes (6): snapshot(), backgroundTaskSnapshot(), BackgroundTaskTracker, BackgroundTaskUpdate, cloneSnapshot(), taskFingerprint()
+### Community 190 - "pending-echo.ts"
+Cohesion: 0.28
+Nodes (9): nextPendingEchoDeadline(), normalize(), pairEchoes(), PENDING_ECHO_SETTLED_MS, PendingEcho, prunePendingEchoMap(), retainPendingEchoes(), sameText() (+1 more)
 
-### Community 185 - "dreamer-routes.ts"
+### Community 192 - "recently-closed.pw.ts"
+Cohesion: 0.23
+Nodes (9): bounds(), closedEarlier, closeFromRow(), devices, drawer(), expectUsable(), open(), row() (+1 more)
+
+### Community 193 - "BackgroundTask"
+Cohesion: 0.30
+Nodes (6): backgroundTaskSnapshot(), BackgroundTaskTracker, BackgroundTaskUpdate, cloneSnapshot(), taskFingerprint(), BackgroundTask
+
+### Community 194 - "dreamer-routes.ts"
 Cohesion: 0.20
 Nodes (10): dispatchSchema, parse(), planSchema, registerDreamerRoutes(), settingsSchema, taskCompletionSchema, taskDispositionSchema, taskParamsSchema (+2 more)
 
-### Community 186 - "recovery-seed-guards.test.ts"
-Cohesion: 0.18
-Nodes (8): bootLegacy(), directories, execute, pending, releases, SeedState, services, stores
+### Community 196 - ".initialize"
+Cohesion: 0.24
+Nodes (4): initializeManagerStructuredMemory(), isMissing(), ManagerStructuredMemoryPersistenceError, ManagerStructuredMemoryRecoveryError
 
-### Community 187 - "html-preview.ts"
+### Community 197 - "BackgroundTasksDialog.tsx"
+Cohesion: 0.27
+Nodes (9): BackgroundTaskCard(), BackgroundTasksDialog(), messageDateTimeFormatter, messageTimeFormatter, stopUnavailableReason(), taskDurationLabel(), taskIsActive(), taskStatusLabel() (+1 more)
+
+### Community 198 - "html-preview.ts"
 Cohesion: 0.29
 Nodes (8): blockedAttributes, blockedElements, createHtmlPreviewDocument(), disabledControls, HTML_PREVIEW_CSP, isAllowedDataSource(), sanitizeTree(), HtmlPreview()
 
-### Community 188 - "fixture-frontend.ts"
-Cohesion: 0.24
-Nodes (6): root, script, captureOutputDirectory(), fixtureFrontendBuildCommand, fixtureFrontendDist, startFixtureFrontend()
-
-### Community 189 - "sign-in-expired.pw.ts"
+### Community 199 - "sign-in-expired.pw.ts"
 Cohesion: 0.18
 Nodes (4): desktop, Layout, layouts, phone
 
-### Community 191 - "isRecord"
+### Community 200 - "isRecord"
 Cohesion: 0.29
 Nodes (4): isAlreadyExists(), isMissing(), isRecord(), ManagerProactiveInboxRecoveryError
 
-### Community 192 - "manager-proactive-inbox.test.ts"
-Cohesion: 0.22
-Nodes (6): fsHooks, ReadGate, readState(), statePath(), TestState, writeState()
+### Community 201 - "session-knowledge-store.test.ts"
+Cohesion: 0.20
+Nodes (7): SessionKnowledgeConflictError, SessionKnowledgeRecoveryError, disk, fixture(), fixtures, releases, root()
 
-### Community 194 - "session-enqueue-clear.test.ts"
-Cohesion: 0.29
-Nodes (10): disk, EnqueueCase, fixture(), fixtures, gate(), holdEnqueue(), joinedEnqueue(), quiet() (+2 more)
-
-### Community 195 - "use-oracle-attachments.ts"
-Cohesion: 0.36
-Nodes (10): uploadManagerFile(), DraftAttachment, hasBlockingAttachments(), uploadedReferences(), useOracleAttachments(), drain(), intake(), remove() (+2 more)
-
-### Community 196 - "dataset"
+### Community 202 - "dataset"
 Cohesion: 0.20
 Nodes (9): dataset, authors, datasetUrl, license, licenseUrl, name, paperUrl, fixtures (+1 more)
 
-### Community 197 - "generate-pwa-icons.ts"
+### Community 203 - "generate-pwa-icons.ts"
 Cohesion: 0.27
 Nodes (6): legacyAppleTouchIcons, renderIcon(), root, manifestIconSizes, root, appIconSvg()
 
-### Community 198 - "agent-service-recovery.test.ts"
-Cohesion: 0.22
-Nodes (6): holdProbe(), fixtures, gate(), releases, sdkPermissionEvents(), sdkRecoveryEvents()
-
-### Community 199 - "ManagerProactiveInboxValidationError"
-Cohesion: 0.24
-Nodes (7): emptyState(), ManagerProactiveInboxValidationError, publicEvent(), requireId(), validateLimit(), validateOptions(), rejectBeforeHello()
-
-### Community 200 - "session-unread-tracker.ts"
-Cohesion: 0.29
-Nodes (5): FinishedSession, SessionUnreadTracker, finished(), SessionTurnState, turnEnded()
-
-### Community 201 - "bridge.rs"
+### Community 205 - "bridge.rs"
 Cohesion: 0.31
 Nodes (7): deep_link_subscription_reports_readiness(), emit(), identity_cannot_break_out_of_the_script(), json_string(), String, script(), script_defines_the_bridge_and_carries_identity()
 
-### Community 202 - "vite.config.ts"
+### Community 207 - "vite.config.ts"
 Cohesion: 0.20
 Nodes (5): canaryTests, oracleVoiceAssetNames, packageVersion, slowTests, tmuxTests
 
-### Community 203 - "logs-cli.test.ts"
+### Community 208 - "logs-cli.test.ts"
 Cohesion: 0.28
 Nodes (8): epoch, exec, Explanation, fixture(), journalLine(), journalRecord(), Log, roots
 
-### Community 204 - "promotion-setup-execution.test.ts"
+### Community 209 - "ManagerProactiveInboxValidationError"
+Cohesion: 0.28
+Nodes (6): emptyState(), ManagerProactiveInboxValidationError, publicEvent(), requireId(), validateLimit(), validateOptions()
+
+### Community 210 - "manager-structured-memory-performance.test.ts"
+Cohesion: 0.31
+Nodes (6): benchmarkState(), now(), openFixture(), searchSamples(), MANAGER_STRUCTURED_MEMORY_MAX_STORE_BYTES, ManagerStructuredMemorySearchResult
+
+### Community 211 - "promotion-setup-execution.test.ts"
 Cohesion: 0.25
 Nodes (4): Context, fixtures, run, setup()
 
-### Community 205 - "SkillsSettings.tsx"
+### Community 212 - "SkillsSettings.tsx"
 Cohesion: 0.39
 Nodes (7): listComputerSkills(), toggleComputerSkill(), ComputerSkills(), save(), SkillsSettings(), computers, snapshot
 
-### Community 206 - "sent-message.ts"
+### Community 213 - "sent-message.ts"
 Cohesion: 0.42
 Nodes (5): UserMessage, PauseFollowingContext, sentMessageLength, SentMessageContent(), thirteenLines
 
-### Community 207 - "doctor-cli.test.ts"
+### Community 214 - "capture.test.ts"
+Cohesion: 0.22
+Nodes (3): CaptureControl, VoiceCaptureDependencies, VoiceVad
+
+### Community 216 - "doctor-cli.test.ts"
 Cohesion: 0.32
 Nodes (6): Check, checks(), exec, fixture(), fixtures, manifest
 
-### Community 208 - "release-publication.test.ts"
+### Community 217 - "release-publication.test.ts"
 Cohesion: 0.29
 Nodes (4): directories, exec, publicationFixture(), PublicationSyncEvent
 
-### Community 210 - "settings.ts"
+### Community 218 - "UserInputFieldControl"
+Cohesion: 0.57
+Nodes (8): UserInputFieldControl(), chooseOption(), handleMenuKeyDown(), handleMultiSelectKeyDown(), handleTriggerKeyDown(), moveOption(), optionDirection(), toggleOption()
+
+### Community 221 - "settings.ts"
 Cohesion: 0.38
 Nodes (4): HubConfig, load(), showError(), showUnreachableNotice()
 
-### Community 211 - "DocumentViewControls.tsx"
+### Community 222 - "DocumentViewControls.tsx"
 Cohesion: 0.33
 Nodes (3): DocumentViewControls(), actions, outline
 
-### Community 212 - "composer-layout.test.ts"
+### Community 223 - "composer-layout.test.ts"
 Cohesion: 0.53
 Nodes (3): atRule(), composerPointerBlock(), pointerLayout()
 
-### Community 213 - "MarkdownCodeBlock.tsx"
-Cohesion: 0.40
-Nodes (3): MarkdownCodeBlock(), copy(), originalClipboard
-
-### Community 214 - "background-task-adapter.test.ts"
-Cohesion: 0.50
-Nodes (4): MAX_TASK_ACTIVITY_LINES, MAX_TASK_TEXT_LENGTH, lifecycleEvent(), subagentShell()
-
-### Community 215 - "promotion-setup.test.ts"
+### Community 225 - "promotion-setup.test.ts"
 Cohesion: 0.60
 Nodes (4): exec, fixtures, setupFixture(), shellFunction()
 
-### Community 216 - "appearance.ts"
-Cohesion: 0.50
-Nodes (3): Appearance, appearanceFrom(), appearanceStorageKey
-
 ## Knowledge Gaps
-- **1426 isolated node(s):** `$schema`, `graphify/vendor/**`, `graphify/.venv/**`, `graphify/.cache/**`, `typescript` (+1421 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2384 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **27 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **1429 isolated node(s):** `$schema`, `graphify/vendor/**`, `graphify/.venv/**`, `graphify/.cache/**`, `typescript` (+1424 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2392 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **28 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `AgentService` connect `AgentService` to `SessionDetail`, `agent-service.ts`, `contracts.ts`, `session-reply-durability.test.ts`, `claude-agent-service.ts`, `session-store-providers.test.ts`, `CopilotClientLike`, `storedProvider`, `session-directory.ts`, `recovery-resend-durability.test.ts`?**
-  _High betweenness centrality (0.000) - this node is a cross-community bridge._
-- **Why does `RemoteNodeClient` connect `computer-manager.ts` to `remote-voice-client.ts`, `contracts.ts`, `session-reply-durability.test.ts`, `SessionService`, `claude-agent-service.ts`, `ManagedSession`?**
+- **Why does `ManagerAgent` connect `ManagerAgent` to `FakeVoiceEngine`, `manager-agent.test.ts`, `contracts.ts`, `ManagedSession`, `manager-tools.ts`, `ManagerStore`, `manager-agent.ts`, `ManagerMessage`?**
+  _High betweenness centrality (0.001) - this node is a cross-community bridge._
+- **Why does `buildApp()` connect `buildApp` to `AgentService`, `SessionDetail`, `notification-center.integration.test.ts`, `EnabledOracleVoiceConfig`, `computer-manager.ts`, `ComputerManager`, `transport.test.ts`, `NotificationStore`, `SessionKnowledgeStore`, `ClaudeAgentService`, `hub-routes.ts`, `refusal-metrics.ts`, `ManagerStore`, `ManagerProactiveInbox`, `ManagerAgent`, `ManagerMessage`, `app.ts`, `transcription-service.ts`, `oracle-task-store.ts`, `node-routes.ts`, `KnowledgeStore`, `SchedulerStore`, `DreamerService`, `SettingsProfileSnapshot`, `HostTelemetrySampler`, `schedule-launcher.ts`, `ProviderSessionService`, `pwa.ts`, `server/skill-settings.ts`, `dreamer-routes.ts`, `.initialize`, `manager-agent.test.ts`, `service.ts`, `ScheduleNotificationService`, `ChildVoiceEngine`, `ComputerSummary`, `schedule-proposals.ts`, `notification-center-service.ts`, `PushNotificationService`, `SchedulerDispatcher`, `cli-canary.ts`, `oracle-voice-config.ts`?**
+  _High betweenness centrality (0.001) - this node is a cross-community bridge._
+- **Why does `SessionStore` connect `SessionDetail` to `AgentService`, `multi-node.test.ts`, `ClaudeAgentService`, `claude-agent-service.ts`, `TerminalSessionController`, `SessionStatus`?**
   _High betweenness centrality (0.000) - this node is a cross-community bridge._
 - **Are the 6 inferred relationships involving `AppWorkspace()` (e.g. with `prefersLightNow()` and `readOraclePlacement()`) actually correct?**
   _`AppWorkspace()` has 6 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `$schema`, `graphify/vendor/**`, `graphify/.venv/**` to the rest of the system?**
-  _1426 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `SessionDetail` be split into smaller, more focused modules?**
-  _Cohesion score 0.021604197386920886 - nodes in this community are weakly interconnected._
+  _1429 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `AgentService` be split into smaller, more focused modules?**
-  _Cohesion score 0.03352775026594769 - nodes in this community are weakly interconnected._
-- **Should `AppWorkspace` be split into smaller, more focused modules?**
-  _Cohesion score 0.025231324757391108 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.032897089322749054 - nodes in this community are weakly interconnected._
+- **Should `SessionDetail` be split into smaller, more focused modules?**
+  _Cohesion score 0.028252680382497827 - nodes in this community are weakly interconnected._
 ## Non-code inventory (not semantically extracted)
 
 - `.github/copilot-instructions.md`

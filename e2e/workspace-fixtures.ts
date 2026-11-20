@@ -28,7 +28,9 @@ import {
 } from '../shared/settings-profile'
 import type { KnowledgePosition } from '../src/knowledge-position'
 import type {
+  ActivityDetail,
   BackgroundTaskSnapshot,
+  ChatMessage,
   ComputerSummary,
   HubEvent,
   KnowledgeRoot,
@@ -512,6 +514,85 @@ export const fixtureBackgroundTasks: Record<string, BackgroundTaskSnapshot> = {
   },
 }
 
+const fixtureLinkCheck = [
+  '> field-notes@1.0.0 check-links',
+  '> link-check docs/field-guide.md --format table',
+  '',
+  'Checking 18 links in docs/field-guide.md',
+  '  ok   handbook/agent-workspace.md',
+  '  ok   handbook/release-checklist.md',
+  '  ok   handbook/reading-patterns.md',
+  '  ok   reference/session-context.md',
+  '  ok   reference/recovery-checklist.md#before-sharing',
+  '  301  https://example.com/field-guide/old-reading-patterns -> https://example.com/field-guide/reading-patterns-for-long-documents',
+  '  ok   https://example.com/field-guide/keyboard',
+  '',
+  'Checked 18 links: 17 ok, 1 redirected',
+].join('\n')
+
+const fixtureMcpArguments = { query: 'recovery checklist', perPage: 5 }
+
+/** Synthetic tool rows: tests add them to a session, so no shared scene changes. */
+export const fixtureActivityMessages: ChatMessage[] = [
+  {
+    id: 'tool:fixture-call-links',
+    role: 'activity',
+    content: 'Bash · Check the field guide links\n$ pnpm run check-links docs/field-guide.md --format table',
+    createdAt: '2026-09-04T16:16:30.000Z',
+    activityStatus: 'completed',
+    activityKind: 'tool',
+    activityResult: 'Checked 18 links: 17 ok, 1 redirected',
+    activityDurationMs: 2_400,
+  },
+  {
+    id: 'tool:fixture-call-search',
+    role: 'activity',
+    content: `MCP · GitHub · Search Code\n${fixtureMcpArguments.query}`,
+    createdAt: '2026-09-04T16:17:10.000Z',
+    activityStatus: 'completed',
+    activityKind: 'tool',
+    activityResult: '3 results',
+    activityDurationMs: 900,
+  },
+]
+
+function fixtureText(text: string) {
+  return { text, truncated: false, originalBytes: new TextEncoder().encode(text).length }
+}
+
+/** What each synthetic call's computer logged, by `computerId:sessionId:toolCallId`. */
+export const fixtureActivityDetails: Record<string, ActivityDetail> = {
+  [`fixture-studio:${SELECTED_SESSION_ID}:fixture-call-links`]: {
+    toolCallId: 'fixture-call-links',
+    toolName: 'bash',
+    kind: 'tool',
+    status: 'completed',
+    startedAt: '2026-09-04T16:16:30.000Z',
+    completedAt: '2026-09-04T16:16:32.400Z',
+    durationMs: 2_400,
+    arguments: { format: 'command', ...fixtureText('pnpm run check-links docs/field-guide.md --format table') },
+    result: fixtureText(fixtureLinkCheck),
+  },
+  [`fixture-studio:${SELECTED_SESSION_ID}:fixture-call-search`]: {
+    toolCallId: 'fixture-call-search',
+    toolName: 'search_code',
+    mcpServerName: 'github-mcp-server',
+    mcpToolName: 'search_code',
+    kind: 'tool',
+    status: 'completed',
+    startedAt: '2026-09-04T16:17:10.000Z',
+    completedAt: '2026-09-04T16:17:10.900Z',
+    durationMs: 900,
+    arguments: { format: 'json', ...fixtureText(JSON.stringify(fixtureMcpArguments, null, 2)) },
+    result: fixtureText([
+      '3 results for "recovery checklist"',
+      'handbook/release-checklist.md:9',
+      'reference/recovery-checklist.md:1',
+      'handbook/agent-workspace.md:14',
+    ].join('\n')),
+  },
+}
+
 export const fixtureKnowledgePositions = Object.fromEntries(
   fixtureSessions.map((session) => [
     `${session.computerId}:${session.id}`,
@@ -572,6 +653,7 @@ export const fixtureEndpoints = [
   'GET /api/computers/:computerId/sessions/:sessionId/commands',
   'GET /api/computers/:computerId/sessions/:sessionId/runtime',
   'GET /api/computers/:computerId/sessions/:sessionId/tasks',
+  'GET /api/computers/:computerId/sessions/:sessionId/activities/:toolCallId',
   'GET /api/computers/:computerId/sessions/:sessionId/workspace?path=.',
   'GET /api/computers/:computerId/sessions/:sessionId/workspace/file?path=handbook/agent-workspace.md',
   'POST /api/computers/:computerId/sessions/:sessionId/open',
@@ -601,6 +683,8 @@ export interface WorkspaceFixtureOptions {
   /** Omitted keeps the hub scheduler disabled. All data remains fictional. */
   scheduler?: { schedules: Schedule[]; runs: ScheduleRun[]; proposals?: import('../shared/schedule-proposals').ScheduleProposal[] }
   taskSnapshots?: Record<string, BackgroundTaskSnapshot>
+  /** Tool call details by `computerId:sessionId:toolCallId`; an unknown call is not in the log. */
+  activityDetails?: Record<string, ActivityDetail>
   /** Use a native event socket only on the already-validated local fixture origin. */
   nativeLocalEvents?: boolean
   realClock?: boolean
@@ -1788,6 +1872,16 @@ export async function setupWorkspaceFixture(
             supported: session.provider === 'copilot',
           },
         )
+        return
+      }
+      const activity = action.match(/^\/activities\/([^/]+)$/)
+      if (method === 'GET' && activity) {
+        if (session.provider === 'claude') {
+          await respond({ error: 'Tool call details are unavailable for this provider.' }, 501)
+          return
+        }
+        const detail = options.activityDetails?.[`${session.computerId}:${session.id}:${decodeURIComponent(activity[1]!)}`]
+        await respond(detail ?? { error: 'This tool call is not in the session log.' }, detail ? 200 : 404)
         return
       }
       if (method === 'GET' && session.cwd === '/home/demo/field-notes') {

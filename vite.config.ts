@@ -37,6 +37,7 @@ const tmuxTests = [
 const slowTests = [
   'e2e/capture-screens.test.ts',
   'graphify/manage.test.ts',
+  'server/activity-details.test.ts',
   'server/agent-service-recovery.test.ts',
   'server/agent-service-side-question.test.ts',
   'server/agent-service.test.ts',
@@ -124,6 +125,7 @@ const slowTests = [
   'server/transcription-media-digests.test.ts',
   'server/transcription-routes.test.ts',
   'src/App.test.tsx',
+  'src/ActivityRow.test.tsx',
   'src/DocumentViewControls.test.tsx',
   'src/HtmlPreview.test.tsx',
   'src/KnowledgeRootChoices.test.tsx',

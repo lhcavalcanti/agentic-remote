@@ -344,6 +344,7 @@ export class ClaudeAgentService
         supportsContextRecovery: false,
         supportsSessionRetention: true,
         supportsRecoverableClose: true,
+        supportsActivityDetails: false,
         unavailableReason: this.available ? undefined : this.unavailableReason,
       },
     ]

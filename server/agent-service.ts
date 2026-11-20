@@ -34,6 +34,9 @@ import {
 import type {
   AgentProvider,
   AgentProviderCapability,
+  ActivityDetail,
+  ActivityDetailArguments,
+  ActivityDetailText,
   ActivityKind,
   BackgroundTask,
   BackgroundTaskSnapshot,
@@ -69,6 +72,7 @@ import type {
   WorkspaceSearchResponse,
   SideQuestionExchange,
 } from '../shared/contracts.js'
+import { ACTIVITY_DETAIL_TEXT_LIMIT_BYTES } from '../shared/activity-details.js'
 import { isAppOnlyQueuedCommand } from '../shared/queued-commands.js'
 import {
   acceptanceReceipt,
@@ -104,6 +108,7 @@ import {
 } from './session-store.js'
 import { SessionAdmissions, type PendingQueueAdmission } from './session-admissions.js'
 import { LaunchCreations, awaitTermination, withSessionCreateBoundary } from './launch-identity.js'
+import { activityNotInLog } from './activity-details.js'
 import {
   findActiveCopilotSessions,
   stopActiveCopilotSession,
@@ -555,6 +560,111 @@ function activityResult(data: unknown, success: boolean): string | undefined {
     return success ? text : `Error: ${text}`
   }
   return success ? undefined : 'Error: tool failed; inspect the session log'
+}
+
+/** The longest start of `text` that fits in `limit` bytes of UTF-8. */
+function utf8Prefix(text: string, limit: number): string {
+  let bytes = 0
+  let index = 0
+  while (index < text.length) {
+    const code = text.codePointAt(index) ?? 0
+    const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4
+    if (bytes + size > limit) break
+    bytes += size
+    index += code > 0xffff ? 2 : 1
+  }
+  return text.slice(0, index)
+}
+
+/** One whole text of a call as plain text, cut to the detail limit. */
+function activityDetailText(value: unknown): ActivityDetailText | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = stripAnsi(value)
+    .replaceAll('\0', '')
+    .replaceAll('\r\n', '\n')
+    .trimEnd()
+  if (!text.trim()) return undefined
+  const originalBytes = Buffer.byteLength(text, 'utf8')
+  return originalBytes <= ACTIVITY_DETAIL_TEXT_LIMIT_BYTES
+    ? { text, truncated: false, originalBytes }
+    : {
+        text: utf8Prefix(text, ACTIVITY_DETAIL_TEXT_LIMIT_BYTES),
+        truncated: true,
+        originalBytes,
+      }
+}
+
+function activityDetailArguments(value: unknown): ActivityDetailArguments | undefined {
+  const formatted = (
+    format: ActivityDetailArguments['format'],
+    text: ActivityDetailText | undefined,
+  ): ActivityDetailArguments | undefined => (text ? { format, ...text } : undefined)
+  if (value === undefined || value === null) return undefined
+  if (typeof value === 'string') return formatted('text', activityDetailText(value))
+  const command = activityDetailText(recordValue(value).command)
+  if (command) return { format: 'command', ...command }
+  if (typeof value === 'object' && Object.keys(value).length === 0) return undefined
+  return formatted('json', activityDetailText(JSON.stringify(value, null, 2)))
+}
+
+/**
+ * A tool call's complete detail from its session's events: the whole
+ * arguments, output and error, where a transcript row keeps only a preview.
+ */
+export function activityDetailFromEvents(
+  events: readonly SessionEvent[],
+  toolCallId: string,
+): ActivityDetail | undefined {
+  let start: SessionEvent | undefined
+  let completion: SessionEvent | undefined
+  for (const event of events) {
+    if (start && completion) break
+    if (
+      (event.type !== 'tool.execution_start' &&
+        event.type !== 'tool.execution_complete') ||
+      recordValue(event.data).toolCallId !== toolCallId
+    ) {
+      continue
+    }
+    if (event.type === 'tool.execution_start') start ??= event
+    else completion ??= event
+  }
+  if (!start && !completion) return undefined
+  const tool = recordValue(start?.data)
+  const toolName = stringValue(tool.toolName) || 'tool'
+  const mcp = mcpIdentity(tool, toolName)
+  const finished = recordValue(completion?.data)
+  const result = recordValue(finished.result)
+  const startedAt = start?.timestamp
+  const completedAt = completion?.timestamp
+  const durationMs =
+    startedAt && completedAt ? activityDuration(startedAt, completedAt) : undefined
+  const argumentsDetail = activityDetailArguments(tool.arguments)
+  const resultText =
+    activityDetailText(result.detailedContent) ||
+    activityDetailText(result.content) ||
+    activityDetailText(result.output) ||
+    activityDetailText(result.message) ||
+    activityDetailText(finished.result)
+  const errorText =
+    activityDetailText(finished.error) ||
+    activityDetailText(recordValue(finished.error).message)
+  return {
+    toolCallId,
+    toolName,
+    ...(mcp.isMcp && mcp.serverName ? { mcpServerName: mcp.serverName } : {}),
+    ...(mcp.isMcp && mcp.toolName ? { mcpToolName: mcp.toolName } : {}),
+    kind: activityKind(tool),
+    status: completion
+      ? finished.success === true ? 'completed' : 'failed'
+      : 'running',
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(argumentsDetail ? { arguments: argumentsDetail } : {}),
+    ...(resultText ? { result: resultText } : {}),
+    ...(errorText ? { error: errorText } : {}),
+  }
 }
 
 interface ActivityToolStart {
@@ -1387,19 +1497,32 @@ function previewText(value: unknown, multiline = false): string | undefined {
   return preview.length > 320 ? `${preview.slice(0, 319)}…` : preview
 }
 
+/** Whether a call went to an MCP server, and which server and tool it named. */
+function mcpIdentity(
+  tool: Record<string, unknown>,
+  toolName: string,
+): { isMcp: boolean; serverName?: string; toolName?: string } {
+  const serverName = previewText(tool.mcpServerName)
+  const mcpToolName = previewText(tool.mcpToolName)
+  const inferred = toolName
+    .replace(/^mcp:/i, '')
+    .match(/^(.+?)-mcp-server-(.+)$/i)
+  return {
+    isMcp:
+      Boolean(serverName || mcpToolName || inferred) || /^mcp:/i.test(toolName),
+    serverName: serverName || inferred?.[1],
+    toolName: mcpToolName || inferred?.[2],
+  }
+}
+
 function toolActivityContent(data: unknown): string {
   const tool = recordValue(data)
   const toolName = stringValue(tool.toolName) || 'tool'
   const argumentsValue = recordValue(tool.arguments)
   const toolDescription = recordValue(tool.toolDescription)
   const normalizedToolName = toolName.toLowerCase().replaceAll('-', '_')
-  const mcpServerName = previewText(tool.mcpServerName)
-  const mcpToolName = previewText(tool.mcpToolName)
   const rawToolName = toolName.replace(/^mcp:/i, '')
-  const inferredMcp = rawToolName.match(/^(.+?)-mcp-server-(.+)$/i)
-  const isMcp =
-    Boolean(mcpServerName || mcpToolName || inferredMcp) ||
-    /^mcp:/i.test(toolName)
+  const mcp = mcpIdentity(tool, toolName)
   const skillName =
     normalizedToolName === 'skill'
       ? previewText(argumentsValue.skill) || previewText(argumentsValue.name)
@@ -1429,14 +1552,12 @@ function toolActivityContent(data: unknown): string {
         previewText(argumentsValue.url) ||
         previewText(argumentsValue.agent_type) ||
         previewText(argumentsValue.name)
-  const baseTitle = isMcp
+  const baseTitle = mcp.isMcp
     ? [
         'MCP',
-        mcpServerName || inferredMcp?.[1]
-          ? readableMcpServerName(mcpServerName || inferredMcp?.[1] || '')
-          : undefined,
-        mcpToolName || inferredMcp?.[2]
-          ? readableToolName(mcpToolName || inferredMcp?.[2] || '')
+        mcp.serverName ? readableMcpServerName(mcp.serverName) : undefined,
+        mcp.toolName
+          ? readableToolName(mcp.toolName)
           : readableToolName(rawToolName),
       ]
         .filter(Boolean)
@@ -1446,11 +1567,8 @@ function toolActivityContent(data: unknown): string {
       : readableToolName(toolName)
   const titleDescription =
     description &&
-    (isMcp
-      ? !sameToolLabel(
-          description,
-          mcpToolName || inferredMcp?.[2] || toolName,
-        )
+    (mcp.isMcp
+      ? !sameToolLabel(description, mcp.toolName || toolName)
       : true)
       ? ` · ${description}`
       : ''
@@ -2361,6 +2479,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsSessionRetention: true,
         supportsRecoverableClose: true,
         supportsSideQuestions: true,
+        supportsActivityDetails: true,
       },
     ]
   }
@@ -7821,6 +7940,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return true
     })
     if (settled) this.publish(settled)
+  }
+
+  /** A tool call's complete detail, read on request from this session's event log. */
+  async readActivityDetail(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<ActivityDetail> {
+    if (!this.store.get(sessionId)) {
+      throw new Error('Session not found')
+    }
+    const detail = activityDetailFromEvents(
+      await this.sessionEventReader(sessionId),
+      toolCallId,
+    )
+    if (!detail) {
+      throw activityNotInLog()
+    }
+    return detail
   }
 
   async listBackgroundTasks(

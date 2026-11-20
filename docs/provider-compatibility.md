@@ -25,6 +25,7 @@ history is not transferred between providers.
 | Immediate follow-up steering | SDK `immediate` delivery and tmux CLI steering | Agent SDK abort/new-turn only | Copilot-only |
 | Cancel | SDK abort or terminal interrupt | Agent SDK abort controller | Compatible |
 | Background task monitoring | Experimental SDK task RPC; tmux `/tasks` event projection includes detached shells | Not exposed | Copilot-only |
+| Tool call details | Whole arguments, output and error read from the session's event log on request | Not available; no Copilot event log | Copilot-only |
 | Slash commands | Copilot command catalog plus web commands | Web commands only | Provider-specific |
 | Skills inspection | Existing SDK session metadata, or explicitly labelled folder discovery | Reported active-session skills and in-memory last-known metadata | Read-only; availability and scope are explicit |
 | MCP inspection | Existing SDK session status, or explicitly labelled configured servers | Active query status and in-memory last-known metadata | Read-only; no configuration or credential exposure |

@@ -30,6 +30,7 @@ import {
   SIDE_QUESTION_MAX_LENGTH,
 } from './side-question.js'
 import type { ServerEvent } from '../shared/contracts.js'
+import { activityDetailsUnavailable, toolCallIdSchema } from './activity-details.js'
 import {
   FileUploadError,
   MAX_SESSION_FILE_BYTES,
@@ -1001,6 +1002,15 @@ export async function registerNodeRoutes(
         '/sessions/:sessionId/tasks',
         async (request) =>
           service.listBackgroundTasks(request.params.sessionId),
+      )
+
+      node.get<{ Params: { sessionId: string; toolCallId: string } }>(
+        '/sessions/:sessionId/activities/:toolCallId',
+        async (request) => {
+          const toolCallId = toolCallIdSchema.parse(request.params.toolCallId)
+          if (!service.readActivityDetail) throw activityDetailsUnavailable()
+          return service.readActivityDetail(request.params.sessionId, toolCallId)
+        },
       )
 
       node.post<{

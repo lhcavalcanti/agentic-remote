@@ -44,6 +44,7 @@ import {
 import {
   checkHubSignIn,
   fetchHubFeatureFlags,
+  getActivityDetail,
   getManager,
   getSchedule,
   listScheduleProposals,
@@ -219,6 +220,7 @@ vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   checkHubSignIn: vi.fn(async () => undefined),
   fetchHubFeatureFlags: vi.fn(async () => defaultHubFeatureFlags),
+  getActivityDetail: vi.fn(),
   getManager: vi.fn(),
   getSchedule: vi.fn(),
   listScheduleProposals: vi.fn(),
@@ -4870,6 +4872,53 @@ describe('App', () => {
     expect(document.querySelector('.activity-message--mcp')).toHaveTextContent(
       'agentic-remote',
     )
+  })
+
+  it('opens a tool row onto the call its computer logged, and keeps it open as the session moves on', async () => {
+    const toolSession: ManagedSession = {
+      ...session,
+      messages: [
+        session.messages[0]!,
+        {
+          id: 'tool:call_bash',
+          role: 'activity',
+          content: 'Bash\n$ pnpm test',
+          createdAt: '2026-07-22T00:00:00.500Z',
+          activityStatus: 'completed',
+        },
+        session.messages[2]!,
+      ],
+    }
+    vi.mocked(listSessions).mockResolvedValue([toolSession])
+    vi.mocked(getSession).mockResolvedValue(toolSession)
+    vi.mocked(getActivityDetail).mockResolvedValue({
+      toolCallId: 'call_bash', toolName: 'bash', kind: 'tool', status: 'completed',
+      arguments: { format: 'command', text: 'pnpm test', truncated: false, originalBytes: 9 },
+      result: { text: 'All 42 tests passed', truncated: false, originalBytes: 19 },
+    })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Completed: Bash/ }))
+    expect(await screen.findByText('All 42 tests passed')).toBeInTheDocument()
+    expect(getActivityDetail).toHaveBeenCalledExactlyOnceWith(computer.id, session.id, 'call_bash')
+
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.upserted',
+        session: {
+          ...toolSession,
+          updatedAt: '2026-07-22T00:00:02.000Z',
+          messages: [
+            ...toolSession.messages,
+            { id: 'message-4', role: 'assistant', content: 'Next step.', createdAt: '2026-07-22T00:00:02.000Z' },
+          ],
+        },
+      }),
+    } as MessageEvent))
+    expect(await screen.findByText('Next step.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Completed: Bash/ })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('All 42 tests passed')).toBeInTheDocument()
+    expect(getActivityDetail).toHaveBeenCalledOnce()
   })
 
   it('renders transcript headings, statuses, results, and optional durations', async () => {

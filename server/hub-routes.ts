@@ -22,6 +22,7 @@ import {
   rebaseKnowledgeRelativePath,
 } from '../shared/knowledge-path.js'
 import { ComputerManager } from './computer-manager.js'
+import { toolCallIdSchema } from './activity-details.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { noteRefusalReason } from './refusal-metrics.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
@@ -1218,6 +1219,20 @@ export async function registerHubRoutes(
         request.params.computerId,
         request.params.sessionId,
       ),
+  )
+
+  app.get<{ Params: SessionParams & { toolCallId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/activities/:toolCallId',
+    async (request, reply) => {
+      const toolCallId = toolCallIdSchema.parse(request.params.toolCallId)
+      // Tool output can carry anything a command printed; keep it out of caches.
+      reply.header('cache-control', 'no-store')
+      return manager.readActivityDetail(
+        request.params.computerId,
+        request.params.sessionId,
+        toolCallId,
+      )
+    },
   )
 
   app.post<{

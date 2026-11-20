@@ -4,6 +4,7 @@ import type { SkillSettingsTarget } from './skill-settings-routes.js'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import type {
+  ActivityDetail,
   AddComputerInput,
   AgentProvider,
   AudioTranscription,
@@ -45,6 +46,7 @@ import { normalizeNodeUrl, RemoteNodeClient } from './remote-node-client.js'
 import { RemoteNodeRequestError } from './remote-node-errors.js'
 import { launchIdentitySchema, cancellationAckSchema, type TerminationAcknowledgement } from '../shared/launch-identity.js'
 import { updateComputerForLaunchIdentity, withSessionCreateBoundary } from './launch-identity.js'
+import { activityDetailsUnavailable, updateComputerForActivityDetails } from './activity-details.js'
 import { updateComputerForScheduleWorktrees, type ScheduleWorktreeInput } from '../shared/schedule-worktrees.js'
 import type { ScheduleWorktreeService } from './schedule-worktrees.js'
 import type { SessionService } from './session-service.js'
@@ -1108,6 +1110,27 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       return this.localService.askSession(sessionId, question, earlier)
     }
     return this.requireClient(computerId).askSession(sessionId, question, earlier)
+  }
+
+  async readActivityDetail(
+    computerId: string,
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<ActivityDetail> {
+    const computer = this.requireComputer(computerId)
+    if (computerId === this.identity.info.id) {
+      if (!this.localService.readActivityDetail) throw activityDetailsUnavailable()
+      return this.localService.readActivityDetail(sessionId, toolCallId)
+    }
+    // Capabilities are known once the node has answered; until then the
+    // request goes ahead rather than blaming an unreachable node's version.
+    if (
+      computer.version !== undefined &&
+      !computer.providers?.some((provider) => provider.supportsActivityDetails === true)
+    ) {
+      throw updateComputerForActivityDetails(computer.name)
+    }
+    return this.requireClient(computerId).readActivityDetail(sessionId, toolCallId)
   }
 
   async listBackgroundTasks(

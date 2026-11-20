@@ -146,6 +146,19 @@ TypeScript Agent SDK, local Claude session persistence, and the owning host's
 existing Claude authentication; Agentic Remote never transports that
 authentication to the hub or another node.
 
+### Tool call details
+
+A transcript row keeps only a preview of a call. Opening it reads the whole
+call from the owning computer: the hub's
+`GET /api/computers/:computerId/sessions/:sessionId/activities/:toolCallId`
+reaches the node's `GET /node-api/sessions/:sessionId/activities/:toolCallId`,
+which finds the call's `tool.execution_start` and `tool.execution_complete` in
+that session's Copilot event log through `readSessionEvents`. It answers the
+tool, its MCP server and tool, status, times, arguments, output and error,
+each cut at 256 KiB, with `404` when the log has no such call and `501` for a
+Claude Agent session or, from the hub, for a node that does not advertise
+`supportsActivityDetails`. The hub answers with `Cache-Control: no-store`.
+
 ### Read-only resource requests
 
 Skills/MCP reads carry cancellation through the browser request, hub forwarding,

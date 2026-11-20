@@ -449,6 +449,62 @@ for (const viewport of uiViewports) {
   })
 }
 
+// From 361 to 530 px a running turn keeps Queue as its own button and Send
+// opens Steer or Queue itself; at 360 px and below Queue folds into that menu,
+// and from 531 px the arrow returns beside Send.
+for (const { width, queue, arrow } of [
+  { width: 376, queue: 'menu', arrow: true }, { width: 377, queue: 'button', arrow: false },
+  { width: 390, queue: 'button', arrow: false }, { width: 546, queue: 'button', arrow: false },
+  { width: 547, queue: 'button', arrow: true },
+] as const) {
+  test.describe(`busy composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test(`queues from ${queue === 'button' ? 'its own button in one tap' : 'the Send menu'} and opens Steer or Queue from Send`, async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const send = page.getByRole('button', { name: 'Send message', exact: true })
+        const queueButton = page.getByRole('button', { name: 'Queue message', exact: true })
+        const options = page.getByRole('button', { name: 'Send options', exact: true })
+        const menu = page.getByRole('menu', { name: 'Message delivery' })
+        await message(page).fill('Check the release notes next.')
+        expectRuntimeInRow(await runtimeInRow(page))
+        if (arrow) await expect(options).toBeVisible()
+        else await expect(options).toBeHidden()
+        const queued = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/messages`)
+        if (queue === 'button') {
+          await queueButton.click()
+        } else {
+          await expect(queueButton).toBeHidden()
+          await options.click()
+          await menu.getByRole('menuitem', { name: /Queue —/ }).click()
+        }
+        expect((await queued).postDataJSON()).toMatchObject({ content: 'Check the release notes next.', enqueue: true })
+        await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the release notes next.')
+
+        await message(page).fill('Steer toward the recovery checklist.')
+        await expect(send).toHaveAttribute('aria-haspopup', 'menu')
+        await expect(send).toHaveAttribute('aria-expanded', 'false')
+        await send.focus()
+        await page.keyboard.press('Enter')
+        await expect(menu.getByRole('menuitem', { name: /Steer —/ })).toBeFocused()
+        await expect(menu.getByRole('menuitem', { name: /Queue —/ })).toBeVisible()
+        await expect(send).toHaveAttribute('aria-expanded', 'true')
+        const rect = (await menu.boundingBox())!
+        expect(rect.x).toBeGreaterThanOrEqual(0)
+        expect(rect.x + rect.width).toBeLessThanOrEqual(width)
+        await page.keyboard.press('Escape')
+        await expect(menu).toBeHidden()
+        await expect(send).toBeFocused()
+        expect(fixture.requests.filter((request) => request.method === 'POST' && request.path === `${sessionPath}/messages`))
+          .toHaveLength(1)
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
 for (const width of [320, 360]) {
   test.describe(`narrow composer ${width}px`, () => {
     test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
@@ -1168,8 +1224,11 @@ test.describe('browser interaction contracts', () => {
           })
           await expect(message(page)).toHaveValue('')
           await message(page).fill('Run these checks afterward.')
-          const options = page.getByRole('button', { name: 'Send options', exact: true })
-          await options.focus()
+          // From 361 to 480 px Send opens the menu itself and its arrow is left out.
+          const opener = page.getByRole('button', {
+            name: viewport.name === 'phone' ? 'Send message' : 'Send options', exact: true,
+          })
+          await opener.focus()
           await page.keyboard.press('Enter')
           await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
           await page.keyboard.press('ArrowDown')

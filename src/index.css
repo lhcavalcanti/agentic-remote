@@ -3988,14 +3988,15 @@ button {
 }
 
 /* The session-setup summary sits in the buttons row, in the width its
-   controls leave, and is as tall as they are. */
+   controls leave, and is as tall as they are. Its inset belongs to the
+   summary, so a row with no room left can close it rather than overflow. */
 .composer-runtime {
   display: flex;
   min-width: 0;
   min-height: 40px;
   flex: 1 1 auto;
   align-items: center;
-  padding: 0 6px;
+  padding: 0;
   overflow: hidden;
   color: var(--muted);
   border: 0;
@@ -4027,6 +4028,7 @@ button {
   flex: 1 1 auto;
   align-items: center;
   gap: 7px;
+  padding: 0 6px;
 }
 
 .composer-runtime-model {
@@ -4319,14 +4321,24 @@ button {
   .composer-secondary-overflow {
     display: flex;
   }
-  /* Send's options already offer Queue; leaving the duplicate there gives the
-     runtime summary room for a 40px target while a turn runs. */
-  .composer-actions--refresh:has(> .composer-send-options) > .send-button--queue {
+}
+
+/* While a turn runs Send itself opens Steer or Queue, so its arrow only
+   repeats it; leaving the arrow out keeps Queue one tap away and gives the
+   runtime summary a 40px target. Past 480px setup, history and context
+   return to the row, so this holds up to 530px, where the summary keeps
+   40px with the arrow. At 360px and below Queue folds into the menu
+   instead. */
+@container composer (360px < width <= 530px) {
+  .composer-actions--refresh > .composer-send-options {
     display: none;
   }
 }
 
 @container composer (max-width: 360px) {
+  .composer-actions--refresh:has(> .composer-send-options) > .send-button--queue {
+    display: none;
+  }
   .composer--refresh .composer-actions--refresh > .send-button:has(.send-button__label) {
     width: 40px;
     min-width: 40px;

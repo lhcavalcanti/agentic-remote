@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "3916c72a36977d801203f06f3b5a02fab1177c4d",
+  "built_at_commit": "7bf32cafa1ea98f501c9b41a64ae846256cf0bf8",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -232978,7 +232978,7 @@
       "relation": "contains",
       "source": "src_activity_details",
       "source_file": "src/activity-details.ts",
-      "source_location": "L90",
+      "source_location": "L97",
       "target": "src_activity_details_activitydetailfailure",
       "weight": 1.0
     },
@@ -232989,7 +232989,7 @@
       "relation": "contains",
       "source": "src_activity_details",
       "source_file": "src/activity-details.ts",
-      "source_location": "L15",
+      "source_location": "L16",
       "target": "src_activity_details_detailkey",
       "weight": 1.0
     },
@@ -233000,7 +233000,7 @@
       "relation": "contains",
       "source": "src_activity_details",
       "source_file": "src/activity-details.ts",
-      "source_location": "L102",
+      "source_location": "L109",
       "target": "src_activity_details_formatbytes",
       "weight": 1.0
     },
@@ -233011,7 +233011,7 @@
       "relation": "contains",
       "source": "src_activity_details",
       "source_file": "src/activity-details.ts",
-      "source_location": "L19",
+      "source_location": "L20",
       "target": "src_activity_details_keep",
       "weight": 1.0
     },
@@ -233033,7 +233033,7 @@
       "relation": "contains",
       "source": "src_activity_details",
       "source_file": "src/activity-details.ts",
-      "source_location": "L48",
+      "source_location": "L49",
       "target": "src_activity_details_keptactivitydetail",
       "weight": 1.0
     },
@@ -233044,7 +233044,7 @@
       "relation": "contains",
       "source": "src_activity_details",
       "source_file": "src/activity-details.ts",
-      "source_location": "L62",
+      "source_location": "L67",
       "target": "src_activity_details_loadactivitydetail",
       "weight": 1.0
     },
@@ -233055,7 +233055,7 @@
       "relation": "contains",
       "source": "src_activity_details",
       "source_file": "src/activity-details.ts",
-      "source_location": "L39",
+      "source_location": "L40",
       "target": "src_activity_details_peekactivitydetail",
       "weight": 1.0
     },
@@ -233066,7 +233066,7 @@
       "relation": "contains",
       "source": "src_activity_details",
       "source_file": "src/activity-details.ts",
-      "source_location": "L13",
+      "source_location": "L14",
       "target": "src_activity_details_reading",
       "weight": 1.0
     },
@@ -233102,7 +233102,7 @@
       "relation": "calls",
       "source": "src_activity_details_keptactivitydetail",
       "source_file": "src/activity-details.ts",
-      "source_location": "L53",
+      "source_location": "L54",
       "target": "src_activity_details_detailkey",
       "weight": 1.0
     },
@@ -233114,7 +233114,7 @@
       "relation": "calls",
       "source": "src_activity_details_loadactivitydetail",
       "source_file": "src/activity-details.ts",
-      "source_location": "L69",
+      "source_location": "L75",
       "target": "src_activity_details_detailkey",
       "weight": 1.0
     },
@@ -233126,7 +233126,7 @@
       "relation": "calls",
       "source": "src_activity_details_loadactivitydetail",
       "source_file": "src/activity-details.ts",
-      "source_location": "L73",
+      "source_location": "L80",
       "target": "src_activity_details_keep",
       "weight": 1.0
     },
@@ -233138,7 +233138,7 @@
       "relation": "calls",
       "source": "src_activity_details_loadactivitydetail",
       "source_file": "src/activity-details.ts",
-      "source_location": "L67",
+      "source_location": "L73",
       "target": "src_activity_details_keptactivitydetail",
       "weight": 1.0
     },
@@ -233150,7 +233150,7 @@
       "relation": "calls",
       "source": "src_activity_details_loadactivitydetail",
       "source_file": "src/activity-details.ts",
-      "source_location": "L72",
+      "source_location": "L79",
       "target": "src_api_getactivitydetail",
       "weight": 1.0
     },
@@ -233162,7 +233162,7 @@
       "relation": "calls",
       "source": "src_activity_details_peekactivitydetail",
       "source_file": "src/activity-details.ts",
-      "source_location": "L44",
+      "source_location": "L45",
       "target": "src_activity_details_detailkey",
       "weight": 1.0
     },
@@ -386604,7 +386604,7 @@
       "label": "activityDetailFailure",
       "norm_label": "activitydetailfailure",
       "source_file": "src/activity-details.ts",
-      "source_location": "L90"
+      "source_location": "L97"
     },
     {
       "_callable": true,
@@ -386616,7 +386616,7 @@
       "label": "detailKey()",
       "norm_label": "detailkey()",
       "source_file": "src/activity-details.ts",
-      "source_location": "L15"
+      "source_location": "L16"
     },
     {
       "_callable": true,
@@ -386628,7 +386628,7 @@
       "label": "formatBytes()",
       "norm_label": "formatbytes()",
       "source_file": "src/activity-details.ts",
-      "source_location": "L102"
+      "source_location": "L109"
     },
     {
       "_callable": true,
@@ -386640,7 +386640,7 @@
       "label": "keep()",
       "norm_label": "keep()",
       "source_file": "src/activity-details.ts",
-      "source_location": "L19"
+      "source_location": "L20"
     },
     {
       "_origin": "ast",
@@ -386663,7 +386663,7 @@
       "label": "keptActivityDetail()",
       "norm_label": "keptactivitydetail()",
       "source_file": "src/activity-details.ts",
-      "source_location": "L48"
+      "source_location": "L49"
     },
     {
       "_callable": true,
@@ -386675,7 +386675,7 @@
       "label": "loadActivityDetail()",
       "norm_label": "loadactivitydetail()",
       "source_file": "src/activity-details.ts",
-      "source_location": "L62"
+      "source_location": "L67"
     },
     {
       "_callable": true,
@@ -386687,7 +386687,7 @@
       "label": "peekActivityDetail()",
       "norm_label": "peekactivitydetail()",
       "source_file": "src/activity-details.ts",
-      "source_location": "L39"
+      "source_location": "L40"
     },
     {
       "_origin": "ast",
@@ -386698,7 +386698,7 @@
       "label": "reading",
       "norm_label": "reading",
       "source_file": "src/activity-details.ts",
-      "source_location": "L13"
+      "source_location": "L14"
     },
     {
       "_origin": "ast",

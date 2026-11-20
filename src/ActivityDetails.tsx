@@ -49,7 +49,7 @@ export function ActivityDetailsPanel({
   useEffect(() => {
     if (keptActivityDetail(computerId, sessionId, toolCallId)) return
     let active = true
-    loadActivityDetail(computerId, sessionId, toolCallId).then(
+    loadActivityDetail(computerId, sessionId, toolCallId, read).then(
       (detail) => {
         if (active) setState({ detail, settled: read })
       },
@@ -73,7 +73,7 @@ export function ActivityDetailsPanel({
     <div className="activity-details" id={id}>
       {detail ? <ActivityDetailBody detail={detail} /> : null}
       {!detail && loading ? (
-        <p className="activity-details__note" role="status">Loading the call…</p>
+        <p className="activity-details__note" role="status">Loading details…</p>
       ) : null}
       {detail?.status === 'running' && !failure ? (
         loading ? (

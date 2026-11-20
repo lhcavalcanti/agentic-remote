@@ -160,6 +160,23 @@ describe('ActivityRow', () => {
     expect(getActivityDetail).toHaveBeenCalledTimes(2)
   })
 
+  it('reads a call that finishes while its first read is still under way once more', async () => {
+    let answerFirst: (detail: ActivityDetail) => void = () => {}
+    vi.mocked(getActivityDetail)
+      .mockImplementationOnce(() => new Promise((resolve) => { answerFirst = resolve }))
+      .mockResolvedValueOnce(bashDetail())
+    const view = renderTranscript([row('running')])
+    fireEvent.click(toggleFor(/^Running: Bash/))
+    expect(getActivityDetail).toHaveBeenCalledOnce()
+    expect(screen.getByRole('status')).toHaveTextContent('Loading details…')
+
+    view.rerender([row('completed')])
+    expect(getActivityDetail).toHaveBeenCalledTimes(2)
+    await act(async () => answerFirst(runningDetail()))
+    expect(await screen.findByText(output, raw)).toBeInTheDocument()
+    expect(screen.queryByText('The session log has no result for this call yet.')).not.toBeInTheDocument()
+  })
+
   it('says when the log has no result yet for a finished call, and tries again on request', async () => {
     vi.mocked(getActivityDetail).mockResolvedValueOnce(runningDetail()).mockResolvedValueOnce(bashDetail())
     renderTranscript([row('completed')])

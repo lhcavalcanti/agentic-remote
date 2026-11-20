@@ -9,7 +9,8 @@ const MAX_KEPT_DETAILS = 48
 const MAX_KEPT_CHARACTERS = 4 * 1024 * 1024
 const kept = new Map<string, { detail: ActivityDetail; size: number }>()
 let keptCharacters = 0
-// One read per call at a time: a second opener shares it rather than asking again.
+// A read in flight, shared by an opener asking for the same one (React runs a
+// new effect twice in development) rather than asking again.
 const reading = new Map<string, Promise<ActivityDetail>>()
 
 function detailKey(computerId: string, sessionId: string, toolCallId: string): string {
@@ -58,27 +59,33 @@ export function keptActivityDetail(
   return entry.detail
 }
 
-/** A call's detail: kept once it has finished, otherwise read from its computer. */
+/**
+ * A call's detail: kept once it has finished, otherwise read from its
+ * computer. Openers asking for the same `read` share one request; a new one,
+ * such as the read once a call finishes, always asks again.
+ */
 export function loadActivityDetail(
   computerId: string,
   sessionId: string,
   toolCallId: string,
+  read: string,
 ): Promise<ActivityDetail> {
   const finished = keptActivityDetail(computerId, sessionId, toolCallId)
   if (finished) return Promise.resolve(finished)
   const key = detailKey(computerId, sessionId, toolCallId)
-  const pending = reading.get(key)
+  const readKey = `${key}\u0000${read}`
+  const pending = reading.get(readKey)
   if (pending) return pending
-  const read = getActivityDetail(computerId, sessionId, toolCallId).then((detail) => {
+  const request = getActivityDetail(computerId, sessionId, toolCallId).then((detail) => {
     keep(key, detail)
     return detail
   })
   const settle = () => {
-    if (reading.get(key) === read) reading.delete(key)
+    if (reading.get(readKey) === request) reading.delete(readKey)
   }
-  read.then(settle, settle)
-  reading.set(key, read)
-  return read
+  request.then(settle, settle)
+  reading.set(readKey, request)
+  return request
 }
 
 export interface ActivityDetailFailure {

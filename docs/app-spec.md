@@ -1181,9 +1181,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - The call MUST be read only when its row opens, from the owning computer's
   Copilot event log through
   `GET /api/computers/:computerId/sessions/:sessionId/activities/:toolCallId`,
-  never by the transcript poll. A finished call MUST be kept and not read
-  again. A running call shows its arguments and **Running…** and MUST be read
-  once more if it finishes while open.
+  never by the transcript poll. A finished call MUST be kept in a bounded
+  cache rather than read again. A running call shows its arguments and
+  **Running…** and MUST be read once more if it finishes while open.
 - Each text MUST be stripped of terminal colours and NUL and cut at 256 KiB,
   saying how much is shown. A call missing from the log MUST say so and offer
   **Try again**; a Claude Agent session, or a computer that cannot read calls

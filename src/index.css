@@ -1690,11 +1690,18 @@ button {
 .sidebar-settings {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   min-height: 0;
   gap: 6px;
   padding: 6px 12px max(6px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
   container: sidebar-settings / inline-size;
+}
+
+/* Buttons keep their hit targets; at the narrowest sidebar the row wraps
+   rather than squeezing them. */
+.sidebar-settings > :not(.sidebar-settings__button) {
+  flex-shrink: 0;
 }
 
 /* With feature icons beside it, App settings keeps only its icon, named by its

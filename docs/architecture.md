@@ -141,9 +141,9 @@ another session or into the conversation store.
 
 A tmux-backed session's event log is read incrementally: only appended bytes
 are parsed, and overlapping reads share one parse. The owning node keeps one
-projection of that log per session -- its background tasks, transcript rows
-and pending question -- which takes in only the events appended since the last
-read. Every read revalidates it (same first event, no fewer events, the last
+projection of that log per session -- its background tasks, transcript rows,
+pending question, status, runtime and folder -- which takes in only the events
+appended since the last read. Every read revalidates it (same first event, no fewer events, the last
 event taken in still in place) and rebuilds it from scratch otherwise. It holds
 no copy of the events, is shared by the transcript refresh and `/tasks`, and is
 dropped when the session is deleted, closed or cleared.

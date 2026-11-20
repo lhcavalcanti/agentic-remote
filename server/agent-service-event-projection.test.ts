@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentService, messagesFromHistory } from './agent-service.js'
 import type { CopilotClientLike } from './agent-service.js'
 import { backgroundTasksFromEvents } from './background-task-adapter.js'
+import { seededRandom } from './projection-test-helpers.js'
 import { SessionStore } from './session-store.js'
+import {
+  checkedRuntimeInfoFromEvents,
+  expectSessionProjectionEquivalence,
+} from './transcript-test-helpers.js'
 
 const sessionId = '6b1f8c2e-3d4a-4e5f-8a9b-0c1d2e3f4a5b'
 const services: AgentService[] = []
@@ -202,5 +207,158 @@ describe('tmux session event projection', () => {
     await end(service)
 
     expect(projections.has(sessionId)).toBe(false)
+  })
+})
+
+describe('session projection', () => {
+  /** A soak run sets this to explore new seeds; failures name the seed. */
+  const seedOffset = Number(process.env.PROPERTY_SEED_OFFSET ?? 0)
+  const emptyReply = 'No response was returned. Send your message again to retry.'
+
+  /**
+   * A log mixing lifecycle, agents, shells, runtime and folder changes,
+   * compactions and questions, so every answer the projection gives moves.
+   */
+  function sessionLog(seed: number, length: number): SessionEvent[] {
+    const next = seededRandom(seed)
+    const pick = <T,>(values: readonly T[]): T => values[Math.floor(next() * values.length)]
+    const chance = (probability: number) => next() < probability
+    const events: SessionEvent[] = []
+    let clock = Date.UTC(2026, 10, 20, 9)
+    for (let index = 0; index < length; index += 1) {
+      clock += pick([0, 1_000, 1_000, 7_000, -3_000])
+      const agentId = chance(0.2) ? pick(['agent-1', 'agent-2']) : undefined
+      const onEnvelope = agentId !== undefined && chance(0.5)
+      const owner = agentId && !onEnvelope ? { agentId } : {}
+      const base = {
+        id: `event-${index}`, parentId: null, timestamp: new Date(clock).toISOString(),
+        ...(onEnvelope ? { agentId } : {}),
+      }
+      const callId = pick(['call-1', 'call-2', 'call-3'])
+      const model = pick(['model-a', 'model-b', '', undefined])
+      const kind = next()
+      let event: Record<string, unknown>
+      if (kind < 0.12) {
+        event = { ...base, type: pick(['assistant.turn_start', 'assistant.turn_end', 'session.idle', 'abort']), data: owner }
+      } else if (kind < 0.18) {
+        event = {
+          ...base, type: 'session.error',
+          data: { ...owner, ...(chance(0.7) ? { errorType: 'query', message: emptyReply } : { errorType: 'runtime', message: 'Disconnected' }) },
+        }
+      } else if (kind < 0.24) {
+        event = { ...base, type: pick(['permission.requested', 'permission.completed']), data: { ...owner, requestId: callId } }
+      } else if (kind < 0.32) {
+        event = {
+          ...base, agentId: pick(['agent-1', 'agent-2']),
+          type: pick(['subagent.started', 'subagent.completed', 'subagent.failed']),
+          data: { toolCallId: callId, agentName: 'explore', agentDisplayName: 'Explore', agentDescription: 'Explore' },
+        }
+      } else if (kind < 0.42) {
+        event = {
+          ...base, type: 'tool.execution_start',
+          data: {
+            ...owner, toolCallId: callId, toolName: pick(['bash', 'ask_user', 'view']),
+            ...(model === undefined ? {} : { model }),
+            arguments: { command: `run ${index}`, question: `Pick ${index}`, ...(chance(0.4) ? { mode: pick(['sync', 'async']) } : {}) },
+          },
+        }
+      } else if (kind < 0.5) {
+        event = {
+          ...base, type: 'tool.execution_complete',
+          data: {
+            ...owner, toolCallId: callId, success: chance(0.8),
+            result: {
+              content: pick([
+                `output ${index}`,
+                '<command with shellId: 0 moved to background by the user. You will be automatically notified when it completes.>',
+                `<shellId: 0 completed with exit code ${pick([0, 1])}>`,
+              ]),
+              ...(chance(0.3) ? { structuredContent: { shellId: '0' } } : {}),
+            },
+          },
+        }
+      } else if (kind < 0.55) {
+        event = { ...base, type: 'system.notification', data: { kind: { type: 'shell_completed', shellId: '0', exitCode: pick([0, 1]) } } }
+      } else if (kind < 0.62) {
+        event = { ...base, type: 'user.message', data: { ...owner, content: 'x'.repeat(Math.floor(next() * 40)) } }
+      } else if (kind < 0.68) {
+        event = {
+          ...base, type: 'assistant.message',
+          data: { ...owner, messageId: `message-${index}`, content: 'y'.repeat(Math.floor(next() * 40)), ...(model === undefined ? {} : { model }) },
+        }
+      } else if (kind < 0.74) {
+        event = {
+          ...base, type: pick(['session.start', 'session.resume']),
+          data: {
+            ...owner,
+            ...(model === undefined ? {} : { selectedModel: model }),
+            ...(chance(0.5) ? { reasoningEffort: pick(['low', 'high', '']) } : {}),
+            ...(chance(0.5) ? { contextTier: pick(['default', 'long_context']) } : {}),
+            ...(chance(0.7) ? { context: { cwd: pick(['/work/a', '/work/b', ' ']) } } : {}),
+          },
+        }
+      } else if (kind < 0.8) {
+        event = {
+          ...base, type: pick(['session.model_change', 'session.mode_changed', 'session.permissions_changed', 'session.context_changed']),
+          data: {
+            ...owner,
+            newModel: model, newMode: pick(['plan', 'autopilot', '']),
+            ...(chance(0.7) ? { allowAllPermissions: chance(0.5) } : {}),
+            cwd: pick(['/work/c', '', undefined]),
+          },
+        }
+      } else if (kind < 0.86 && seed % 2) {
+        // Only odd seeds report usage, so even ones estimate the context.
+        event = {
+          ...base, type: 'session.usage_info',
+          data: { ...owner, currentTokens: pick([0, 120, 900, undefined]), tokenLimit: pick([0, 2_000, undefined]) },
+        }
+      } else if (kind < 0.93) {
+        event = {
+          ...base, type: pick(['session.compaction_start', 'session.compaction_complete']),
+          data: {
+            ...owner,
+            systemTokens: pick([0, 40, undefined]), conversationTokens: pick([0, 300]), toolDefinitionsTokens: pick([0, 25]),
+            success: chance(0.7), summaryContent: 'z'.repeat(Math.floor(next() * 60)),
+          },
+        }
+      } else {
+        event = { ...base, type: 'session.shutdown', data: owner }
+      }
+      events.push(event as unknown as SessionEvent)
+    }
+    return events
+  }
+
+  it('estimates the context from the last compaction and what was said since', () => {
+    const logged = (type: string, data: Record<string, unknown>, second: number) =>
+      ({ type, id: `${type}-${second}`, parentId: null, timestamp: at(second), data }) as unknown as SessionEvent
+    const events = [
+      logged('session.compaction_start', { systemTokens: 100, conversationTokens: 4_000, toolDefinitionsTokens: 50 }, 1),
+      logged('user.message', { content: 'x'.repeat(40) }, 2),
+      // 100 system and 50 tool tokens from its start, and 80 characters of summary.
+      logged('session.compaction_complete', { success: true, summaryContent: 'y'.repeat(80) }, 3),
+      logged('assistant.message', { messageId: 'reply', content: 'z'.repeat(12) }, 4),
+      logged('tool.execution_complete', { toolCallId: 'call', success: true, result: 'w'.repeat(8) }, 5),
+      logged('session.compaction_start', { systemTokens: 999, conversationTokens: 999 }, 6),
+      logged('user.message', { content: 'v'.repeat(4) }, 7),
+    ]
+
+    expect(checkedRuntimeInfoFromEvents(events, undefined)).toEqual({
+      contextTokens: 150 + 20 + 6,
+      contextEstimated: true,
+    })
+  })
+
+  it('answers as the full scans do at every prefix of generated logs', () => {
+    const previous = [
+      undefined,
+      { model: 'model-old', contextTokens: 50, contextEstimated: true },
+      { contextTokens: 50, contextTokenLimit: 9_000, contextEstimated: false },
+    ]
+    for (let seed = seedOffset + 1; seed <= seedOffset + 60; seed += 1) {
+      const events = sessionLog(seed, 6 + (seed % 30))
+      expectSessionProjectionEquivalence(events, seed % 2 ? '/fallback' : undefined, previous[seed % 3], `seed ${seed}`)
+    }
   })
 })

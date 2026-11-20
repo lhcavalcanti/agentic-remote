@@ -957,13 +957,21 @@ const MAX_EVENT_PROJECTIONS = 16
  * What a tmux session's event log projects to, kept between reads so a growing
  * log costs only its new events. It holds no copy of the events themselves.
  */
-class SessionEventProjection {
+export class SessionEventProjection {
   private firstId?: string
   private lastId?: string
   private count = 0
   private readonly backgroundTasks = createBackgroundTaskProjector({ assumeBackground: true })
   private readonly transcript = createTranscriptBuilder()
   private readonly question = createPendingUserInputTracker()
+  // An empty-response notice is judged by the tasks as of the notice itself,
+  // so the tasks are kept in step with the status: see `takeIn`.
+  private readonly lifecycle = createStatusTracker(() =>
+    this.backgroundTasks.tasks().some(isLiveTask))
+  private readonly runtimeTracker = createRuntimeTracker()
+  private cwd?: string
+  private changedFolder = false
+  private latestCompletion?: number
 
   /**
    * Whether `events` continue the log taken in so far: the same first event,
@@ -981,13 +989,44 @@ class SessionEventProjection {
   /** Takes in the events that follow those already taken in. */
   takeIn(events: readonly SessionEvent[]): void {
     if (events.length <= this.count) return
-    const appended = events.slice(this.count)
-    this.backgroundTasks.apply(appended)
-    this.transcript.apply(appended)
-    this.question.apply(appended)
+    // Split after each empty-response notice, so the status reads the tasks
+    // as of the notice rather than as of the end of what was appended.
+    let start = this.count
+    for (let index = start; index < events.length; index += 1) {
+      if (!isEmptyResponseNotice(events[index])) continue
+      this.apply(events.slice(start, index + 1))
+      start = index + 1
+    }
+    if (start < events.length) this.apply(events.slice(start))
     if (this.count === 0) this.firstId = events[0]?.id
     this.count = events.length
     this.lastId = events[events.length - 1]?.id
+  }
+
+  private apply(events: readonly SessionEvent[]): void {
+    this.backgroundTasks.apply(events)
+    this.transcript.apply(events)
+    this.question.apply(events)
+    this.lifecycle.apply(events)
+    this.runtimeTracker.apply(events)
+    for (const event of events) {
+      if (eventAgentId(event)) continue
+      if (event.type === 'session.start' || event.type === 'session.resume') {
+        this.cwd = stringValue(recordValue(recordValue(event.data).context).cwd) || this.cwd
+      } else if (event.type === 'session.context_changed') {
+        this.cwd = stringValue(recordValue(event.data).cwd) || this.cwd
+        this.changedFolder = true
+      }
+      if (isForegroundCompletionEvent(event)) {
+        const time = Date.parse(event.timestamp)
+        if (
+          !Number.isNaN(time) &&
+          (this.latestCompletion === undefined || time > this.latestCompletion)
+        ) {
+          this.latestCompletion = time
+        }
+      }
+    }
   }
 
   tasks(): BackgroundTask[] {
@@ -1000,6 +1039,30 @@ class SessionEventProjection {
 
   pendingUserInput(): PendingUserInput | undefined {
     return this.question.pending()
+  }
+
+  status(): SessionStatus {
+    return this.lifecycle.status()
+  }
+
+  /** As `runtimeInfoFromEvents`, for the events taken in so far. */
+  runtime(): RuntimeProjection {
+    return this.runtimeTracker.runtime()
+  }
+
+  /** As `workingDirectoryFromEvents`. */
+  workingDirectory(fallback: string | undefined): string | undefined {
+    return this.cwd || fallback
+  }
+
+  /** As `contextChangedInEvents`. */
+  contextChanged(): boolean {
+    return this.changedFolder
+  }
+
+  /** As `foregroundCompletedSince`. */
+  foregroundCompletedSince(time: number): boolean {
+    return this.latestCompletion !== undefined && this.latestCompletion >= time
   }
 }
 
@@ -1746,88 +1809,135 @@ function isEmptyResponseNotice(event: SessionEvent): boolean {
   return data.errorType === 'query' && data.message === EMPTY_RESPONSE_NOTICE
 }
 
-export function statusFromEvents(events: SessionEvent[]): SessionStatus {
+function isLiveTask(task: BackgroundTask): boolean {
+  return task.status === 'running' || task.status === 'queued'
+}
+
+/** `statusFromEvents` that takes in its log a few events at a time. */
+export interface StatusTracker {
+  /** Takes in events that follow every event applied so far. */
+  apply(events: readonly SessionEvent[]): void
+  /**
+   * The status as of the events applied so far. `tasksLiveAt` answers whether
+   * background tasks were running as of an event, for a tracker that could
+   * not ask as it took that event in.
+   */
+  status(tasksLiveAt?: (index: number) => boolean): SessionStatus
+}
+
+export function statusFromEvents(events: readonly SessionEvent[]): SessionStatus {
+  const tracker = createStatusTracker()
+  tracker.apply(events)
+  return tracker.status((index) =>
+    backgroundTasksFromEvents(events.slice(0, index + 1), {
+      assumeBackground: true,
+    }).some(isLiveTask))
+}
+
+/**
+ * `tasksLive`, when given, answers whether background tasks are running as of
+ * the event being taken in. A projection that keeps its tasks in step with the
+ * tracker passes it, so an empty-response notice is judged as it is taken in.
+ */
+export function createStatusTracker(tasksLive?: () => boolean): StatusTracker {
   let status: SessionStatus = 'idle'
   // Work a turn handed to background agents outlives the turn itself, so the
   // agents still running are tracked separately from it.
   const workingAgents = new Set<string>()
   // Set while the latest foreground event is Copilot's empty-response notice:
-  // where it is, and whether background agents were working when it came.
-  let emptyResponse: { index: number; agentsWorking: boolean } | undefined
-  for (const [index, event] of events.entries()) {
-    if (event.type === 'session.start' || event.type === 'session.resume') {
-      workingAgents.clear()
-      status = 'idle'
-      emptyResponse = undefined
-      continue
-    }
-    if (!isForegroundLifecycleEvent(event)) {
-      const agentId = eventAgentId(event)
-      if (agentId) {
-        if (event.type === 'subagent.started') {
-          workingAgents.add(agentId)
-        } else if (
-          event.type === 'subagent.completed' ||
-          event.type === 'subagent.failed'
-        ) {
-          // Failing ends an agent just as completing does. Tracking only the
-          // completions would leave a failed agent working for good, and the
-          // session running with it.
-          workingAgents.delete(agentId)
+  // where it is, whether background agents were working when it came, and
+  // whether background tasks were, if that was asked then.
+  let emptyResponse:
+    | { index: number; agentsWorking: boolean; tasksLive?: boolean }
+    | undefined
+  let applied = 0
+  return {
+    apply(events) {
+      for (const event of events) {
+        const index = applied
+        applied += 1
+        if (event.type === 'session.start' || event.type === 'session.resume') {
+          workingAgents.clear()
+          status = 'idle'
+          emptyResponse = undefined
+          continue
+        }
+        if (!isForegroundLifecycleEvent(event)) {
+          const agentId = eventAgentId(event)
+          if (agentId) {
+            if (event.type === 'subagent.started') {
+              workingAgents.add(agentId)
+            } else if (
+              event.type === 'subagent.completed' ||
+              event.type === 'subagent.failed'
+            ) {
+              // Failing ends an agent just as completing does. Tracking only the
+              // completions would leave a failed agent working for good, and the
+              // session running with it.
+              workingAgents.delete(agentId)
+            }
+          }
+          continue
+        }
+        emptyResponse = isEmptyResponseNotice(event)
+          ? {
+              index,
+              agentsWorking: workingAgents.size > 0,
+              ...(workingAgents.size === 0 && tasksLive
+                ? { tasksLive: tasksLive() }
+                : {}),
+            }
+          : undefined
+        switch (event.type) {
+          case 'assistant.turn_start':
+            status = 'running'
+            break
+          case 'permission.requested':
+            status = 'waiting'
+            break
+          case 'permission.completed':
+            status = 'running'
+            break
+          case 'session.error':
+            status = 'error'
+            break
+          case 'assistant.turn_end':
+          case 'session.idle':
+            status = 'idle'
+            break
+          case 'abort':
+          case 'session.shutdown':
+            // Nothing outlives the session ending, so agents it was waiting on
+            // are not still working.
+            workingAgents.clear()
+            status = 'idle'
+            break
         }
       }
-      continue
-    }
-    emptyResponse = isEmptyResponseNotice(event)
-      ? { index, agentsWorking: workingAgents.size > 0 }
-      : undefined
-    switch (event.type) {
-      case 'assistant.turn_start':
-        status = 'running'
-        break
-      case 'permission.requested':
-        status = 'waiting'
-        break
-      case 'permission.completed':
-        status = 'running'
-        break
-      case 'session.error':
-        status = 'error'
-        break
-      case 'assistant.turn_end':
-      case 'session.idle':
-        status = 'idle'
-        break
-      case 'abort':
-      case 'session.shutdown':
-        // Nothing outlives the session ending, so agents it was waiting on
-        // are not still working.
-        workingAgents.clear()
-        status = 'idle'
-        break
-    }
+    },
+    status(tasksLiveAt) {
+      let current = status
+      if (
+        current === 'error' &&
+        emptyResponse &&
+        (emptyResponse.agentsWorking ||
+          (emptyResponse.tasksLive ?? tasksLiveAt?.(emptyResponse.index) ?? false))
+      ) {
+        // A steer typed over a foreground command makes Copilot move the command
+        // to the background and tell the model to wait for it, so the turn that
+        // reads the steer often returns nothing. The work it waits on finishing
+        // starts the turn that answers, so this is the session waiting on its
+        // background work, as when the turn says so in words. Decided as of the
+        // notice: judged afresh, it would flash back to an error in the moment
+        // between that work finishing and the next turn starting.
+        current = 'idle'
+      }
+      // A turn that handed its work to background agents and then ended has not
+      // finished it. Reporting the session as idle offers it for the next prompt
+      // and calls the work done while it is still going on.
+      return current === 'idle' && workingAgents.size > 0 ? 'running' : current
+    },
   }
-  if (
-    status === 'error' &&
-    emptyResponse &&
-    (emptyResponse.agentsWorking ||
-      backgroundTasksFromEvents(events.slice(0, emptyResponse.index + 1), {
-        assumeBackground: true,
-      }).some((task) => task.status === 'running' || task.status === 'queued'))
-  ) {
-    // A steer typed over a foreground command makes Copilot move the command
-    // to the background and tell the model to wait for it, so the turn that
-    // reads the steer often returns nothing. The work it waits on finishing
-    // starts the turn that answers, so this is the session waiting on its
-    // background work, as when the turn says so in words. Decided as of the
-    // notice: judged afresh, it would flash back to an error in the moment
-    // between that work finishing and the next turn starting.
-    status = 'idle'
-  }
-  // A turn that handed its work to background agents and then ended has not
-  // finished it. Reporting the session as idle offers it for the next prompt
-  // and calls the work done while it is still going on.
-  return status === 'idle' && workingAgents.size > 0 ? 'running' : status
 }
 
 /**
@@ -1904,8 +2014,9 @@ function eventContextLength(event: SessionEvent): number {
   return 0
 }
 
-function workingDirectoryFromEvents(
-  events: SessionEvent[],
+/** The session's own working folder, as the log last named it. */
+export function workingDirectoryFromEvents(
+  events: readonly SessionEvent[],
   fallback?: string,
 ): string | undefined {
   let cwd = fallback
@@ -1923,123 +2034,228 @@ function workingDirectoryFromEvents(
   return cwd
 }
 
-function estimatedContextTokens(events: SessionEvent[]): number | undefined {
-  let baselineIndex = -1
-  let baselineTokens = 0
-  const completedIndex = events.findLastIndex(
+/** Whether the session itself, not one of its agents, changed folder. */
+export function contextChangedInEvents(events: readonly SessionEvent[]): boolean {
+  return events.some(
     (event) =>
-      event.type === 'session.compaction_complete' &&
-      recordValue(event.data).success === true,
+      event.type === 'session.context_changed' &&
+      !eventAgentId(event),
   )
-  if (completedIndex >= 0) {
-    const complete = recordValue(events[completedIndex].data)
-    const start = events
-      .slice(0, completedIndex)
-      .findLast((event) => event.type === 'session.compaction_start')
-    const startData = recordValue(start?.data)
-    baselineTokens =
-      (numberValue(startData.systemTokens) || 0) +
-      (numberValue(startData.toolDefinitionsTokens) || 0) +
-      Math.ceil(contextTextLength(complete.summaryContent) / 4)
-    baselineIndex = completedIndex
-  } else {
-    const startIndex = events.findLastIndex(
-      (event) => event.type === 'session.compaction_start',
-    )
-    if (startIndex >= 0) {
-      const startData = recordValue(events[startIndex].data)
-      baselineTokens =
-        (numberValue(startData.systemTokens) || 0) +
-        (numberValue(startData.conversationTokens) || 0) +
-        (numberValue(startData.toolDefinitionsTokens) || 0)
-      baselineIndex = startIndex
-    }
+}
+
+/** Whether the foreground finished a turn at or after `time`. */
+export function foregroundCompletedSince(
+  events: readonly SessionEvent[],
+  time: number,
+): boolean {
+  return events.some(
+    (event) =>
+      Date.parse(event.timestamp) >= time &&
+      isForegroundCompletionEvent(event),
+  )
+}
+
+/**
+ * The context the log adds up to: the last successful compaction's summary,
+ * or else the last compaction started, and everything said since, kept up as
+ * the log goes by.
+ */
+function createContextEstimate() {
+  let total = 0
+  let sinceStart = 0
+  let sinceCompleted = 0
+  let lastStart: Record<string, unknown> | undefined
+  let completedTokens: number | undefined
+  return {
+    add(event: SessionEvent): void {
+      const length = eventContextLength(event)
+      total += length
+      sinceStart += length
+      sinceCompleted += length
+      if (event.type === 'session.compaction_start') {
+        lastStart = recordValue(event.data)
+        sinceStart = 0
+      } else if (
+        event.type === 'session.compaction_complete' &&
+        recordValue(event.data).success === true
+      ) {
+        // Counted from the compaction started before it.
+        const startData = recordValue(lastStart)
+        completedTokens =
+          (numberValue(startData.systemTokens) || 0) +
+          (numberValue(startData.toolDefinitionsTokens) || 0) +
+          Math.ceil(contextTextLength(recordValue(event.data).summaryContent) / 4)
+        sinceCompleted = 0
+      }
+    },
+    estimate(): number | undefined {
+      let baselineTokens = 0
+      let addedCharacters = total
+      if (completedTokens !== undefined) {
+        baselineTokens = completedTokens
+        addedCharacters = sinceCompleted
+      } else if (lastStart) {
+        baselineTokens =
+          (numberValue(lastStart.systemTokens) || 0) +
+          (numberValue(lastStart.conversationTokens) || 0) +
+          (numberValue(lastStart.toolDefinitionsTokens) || 0)
+        addedCharacters = sinceStart
+      }
+      const estimate = baselineTokens + Math.ceil(addedCharacters / 4)
+      return estimate > 0 ? estimate : undefined
+    },
   }
-  const addedCharacters = events
-    .slice(baselineIndex + 1)
-    .reduce((total, event) => total + eventContextLength(event), 0)
-  const estimate = baselineTokens + Math.ceil(addedCharacters / 4)
-  return estimate > 0 ? estimate : undefined
+}
+
+/** The runtime a log gives, over what was stored before it. */
+export type RuntimeProjection = (
+  previous: SessionRuntimeInfo | undefined,
+  modelLimits?: ReadonlyMap<string, ModelPromptLimits>,
+  estimateContext?: boolean,
+) => SessionRuntimeInfo | undefined
+
+/** `runtimeInfoFromEvents` that takes in its log a few events at a time. */
+export interface RuntimeTracker {
+  /** Takes in events that follow every event applied so far. */
+  apply(events: readonly SessionEvent[]): void
+  /**
+   * The runtime as of the events applied so far, unaffected by any applied
+   * later: a caller that waits before using it still gets what it read.
+   */
+  runtime(): RuntimeProjection
 }
 
 export function runtimeInfoFromEvents(
-  events: SessionEvent[],
+  events: readonly SessionEvent[],
   previous: SessionRuntimeInfo | undefined,
   modelLimits: ReadonlyMap<string, ModelPromptLimits> = new Map(),
   estimateContext = true,
 ): SessionRuntimeInfo | undefined {
-  const runtime: SessionRuntimeInfo = { ...previous }
-  let exactContext = false
-  for (const event of events) {
-    if (eventAgentId(event)) {
-      continue
-    }
-    const data = recordValue(event.data)
-    if (event.type === 'session.start') {
-      runtime.model = stringValue(data.selectedModel) || runtime.model
-      runtime.reasoningEffort =
-        stringValue(data.reasoningEffort) || runtime.reasoningEffort
-      runtime.contextTier =
-        stringValue(data.contextTier) || runtime.contextTier
-    } else if (event.type === 'session.resume') {
-      runtime.model = stringValue(data.selectedModel) || runtime.model
-      runtime.reasoningEffort =
-        stringValue(data.reasoningEffort) || runtime.reasoningEffort
-      runtime.contextTier =
-        stringValue(data.contextTier) || runtime.contextTier
-    } else if (event.type === 'session.model_change') {
-      runtime.model = stringValue(data.newModel) || runtime.model
-      runtime.reasoningEffort =
-        stringValue(data.reasoningEffort) || runtime.reasoningEffort
-      runtime.contextTier =
-        stringValue(data.contextTier) || runtime.contextTier
-    } else if (event.type === 'session.mode_changed') {
-      runtime.mode = stringValue(data.newMode) || runtime.mode
-    } else if (
-      event.type === 'session.permissions_changed' &&
-      typeof data.allowAllPermissions === 'boolean'
-    ) {
-      runtime.allowAllPermissions = data.allowAllPermissions
-    } else if (
-      event.type === 'assistant.message' ||
-      event.type === 'tool.execution_start'
-    ) {
-      runtime.model = stringValue(data.model) || runtime.model
-    } else if (event.type === 'session.usage_info') {
-      runtime.contextTokens =
-        numberValue(data.currentTokens) || runtime.contextTokens
-      runtime.contextTokenLimit =
-        numberValue(data.tokenLimit) || runtime.contextTokenLimit
-      runtime.contextEstimated = false
-      exactContext = true
-    }
-  }
-  const limits = runtime.model ? modelLimits.get(runtime.model) : undefined
-  if (
-    !exactContext &&
-    limits &&
-    previous?.contextEstimated !== false
-  ) {
-    runtime.contextTokenLimit =
-      runtime.contextTier === 'long_context'
-        ? limits.long || limits.maximum
-        : limits.default || limits.maximum
-  }
+  const tracker = createRuntimeTracker()
+  tracker.apply(events)
+  return tracker.runtime()(previous, modelLimits, estimateContext)
+}
 
-  if (
-    !exactContext &&
-    estimateContext &&
-    previous?.contextEstimated !== false
-  ) {
-    const estimate = estimatedContextTokens(events)
-    if (estimate !== undefined) {
-      runtime.contextTokens = estimate
-      runtime.contextEstimated = true
-    }
+export function createRuntimeTracker(): RuntimeTracker {
+  // Which fields the log set, and the last value it gave each. An event that
+  // gives nothing keeps what came before it, the stored runtime included.
+  const set = {
+    model: false,
+    reasoningEffort: false,
+    contextTier: false,
+    mode: false,
+    allowAllPermissions: false,
   }
-  return Object.values(runtime).some((value) => value !== undefined)
-    ? runtime
-    : undefined
+  const last: Pick<
+    SessionRuntimeInfo,
+    | 'model'
+    | 'reasoningEffort'
+    | 'contextTier'
+    | 'mode'
+    | 'allowAllPermissions'
+    | 'contextTokens'
+    | 'contextTokenLimit'
+  > = {}
+  let exactContext = false
+  const context = createContextEstimate()
+  return {
+    apply(events) {
+      for (const event of events) {
+        context.add(event)
+        if (eventAgentId(event)) {
+          continue
+        }
+        const data = recordValue(event.data)
+        if (
+          event.type === 'session.start' ||
+          event.type === 'session.resume' ||
+          event.type === 'session.model_change'
+        ) {
+          last.model =
+            stringValue(
+              event.type === 'session.model_change' ? data.newModel : data.selectedModel,
+            ) || last.model
+          last.reasoningEffort =
+            stringValue(data.reasoningEffort) || last.reasoningEffort
+          last.contextTier = stringValue(data.contextTier) || last.contextTier
+          set.model = true
+          set.reasoningEffort = true
+          set.contextTier = true
+        } else if (event.type === 'session.mode_changed') {
+          last.mode = stringValue(data.newMode) || last.mode
+          set.mode = true
+        } else if (
+          event.type === 'session.permissions_changed' &&
+          typeof data.allowAllPermissions === 'boolean'
+        ) {
+          last.allowAllPermissions = data.allowAllPermissions
+          set.allowAllPermissions = true
+        } else if (
+          event.type === 'assistant.message' ||
+          event.type === 'tool.execution_start'
+        ) {
+          last.model = stringValue(data.model) || last.model
+          set.model = true
+        } else if (event.type === 'session.usage_info') {
+          last.contextTokens =
+            numberValue(data.currentTokens) || last.contextTokens
+          last.contextTokenLimit =
+            numberValue(data.tokenLimit) || last.contextTokenLimit
+          exactContext = true
+        }
+      }
+    },
+    runtime() {
+      const logged = { ...last }
+      const fields = { ...set }
+      const exact = exactContext
+      const estimated = context.estimate()
+      return (previous, modelLimits = new Map(), estimateContext = true) => {
+        const runtime: SessionRuntimeInfo = { ...previous }
+        if (fields.model) runtime.model = logged.model || runtime.model
+        if (fields.reasoningEffort) {
+          runtime.reasoningEffort = logged.reasoningEffort || runtime.reasoningEffort
+        }
+        if (fields.contextTier) {
+          runtime.contextTier = logged.contextTier || runtime.contextTier
+        }
+        if (fields.mode) runtime.mode = logged.mode || runtime.mode
+        if (fields.allowAllPermissions) {
+          runtime.allowAllPermissions = logged.allowAllPermissions
+        }
+        if (exact) {
+          runtime.contextTokens = logged.contextTokens || runtime.contextTokens
+          runtime.contextTokenLimit =
+            logged.contextTokenLimit || runtime.contextTokenLimit
+          runtime.contextEstimated = false
+        }
+        const limits = runtime.model ? modelLimits.get(runtime.model) : undefined
+        if (
+          !exact &&
+          limits &&
+          previous?.contextEstimated !== false
+        ) {
+          runtime.contextTokenLimit =
+            runtime.contextTier === 'long_context'
+              ? limits.long || limits.maximum
+              : limits.default || limits.maximum
+        }
+
+        if (
+          !exact &&
+          estimateContext &&
+          previous?.contextEstimated !== false &&
+          estimated !== undefined
+        ) {
+          runtime.contextTokens = estimated
+          runtime.contextEstimated = true
+        }
+        return Object.values(runtime).some((value) => value !== undefined)
+          ? runtime
+          : undefined
+      }
+    },
+  }
 }
 
 function runtimeInfoMatches(
@@ -10246,16 +10462,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.recoverHiddenUserInput(sessionId, events)
       return
     }
-    let status = statusFromEvents(events)
+    let status = projection ? projection.status() : statusFromEvents(events)
     let foregroundTurnActive = foregroundTurnOpen(events)
+    // Taken from this read now: the shared projection can take in later
+    // events while this refresh waits below.
+    const runtimeFromLog = projection?.runtime()
+    const loggedCwd = projection?.workingDirectory(undefined)
+    const contextCwd = projection
+      ? projection.contextChanged()
+      : contextChangedInEvents(events)
     const queueDispatchAt = this.store.queueDispatchAt(sessionId)
     if (queueDispatchAt) {
       const dispatchTime = Date.parse(queueDispatchAt)
-      const completion = events.some(
-        (event) =>
-          Date.parse(event.timestamp) >= dispatchTime &&
-          isForegroundCompletionEvent(event),
-      )
+      const completion = projection
+        ? projection.foregroundCompletedSince(dispatchTime)
+        : foregroundCompletedSince(events, dispatchTime)
       if (completion) {
         await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
       } else {
@@ -10271,11 +10492,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           message.activityStatus === 'running',
       )
       ?.content.split('\n', 1)[0]
-    const contextCwd = events.some(
-      (event) =>
-        event.type === 'session.context_changed' &&
-        !eventAgentId(event),
-    )
     if (
       this.activePrompts.has(sessionId) ||
       this.deletedSessionIds.has(sessionId) ||
@@ -10291,8 +10507,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
       status,
       activity,
-      (session) => runtimeInfoFromEvents(events, session.runtime, this.modelPromptLimits),
-      (session) => workingDirectoryFromEvents(events, session.cwd),
+      (session) => runtimeFromLog
+        ? runtimeFromLog(session.runtime, this.modelPromptLimits)
+        : runtimeInfoFromEvents(events, session.runtime, this.modelPromptLimits),
+      (session) => projection
+        ? loggedCwd || session.cwd
+        : workingDirectoryFromEvents(events, session.cwd),
       contextCwd,
       (session) => {
         const storedUserInput =

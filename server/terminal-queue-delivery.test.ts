@@ -173,9 +173,11 @@ describe('Queued delivery beside background shells', () => {
   // Copilot's prompt, free while it waits for shells its last turn started,
   // and what can take its place: somebody's draft, a question (empty, or
   // holding the pasted text as its freeform answer), or a full-screen view.
+  // F5 opens the `opened` screen, as a question opening at any moment would.
   // The event log keeps saying the turn is over and a shell runs, as it does
   // while it lags behind the pane.
-  const fakeCopilot = (receipt: string, screens: { start: string; pasted?: string; submitted?: string }) => `
+  type Screens = { start: string; pasted: string; submitted?: string; opened?: string }
+  const fakeCopilot = (receipt: string, screens: Screens) => `
 import { writeFileSync, renameSync } from 'node:fs'
 const receipt = ${JSON.stringify(receipt)}
 const screens = ${JSON.stringify(screens)}
@@ -210,6 +212,10 @@ process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
 process.stdin.on('data', (data) => {
   input += data.toString()
+  if (screens.opened && input.includes('\\x1b[15~')) {
+    input = input.replace('\\x1b[15~', '')
+    draw(screens.opened)
+  }
   for (let end = input.indexOf('\\x1b[201~'); end >= 0; end = input.indexOf('\\x1b[201~')) {
     const pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end)
     input = input.slice(end + 6)
@@ -226,13 +232,10 @@ process.stdin.on('data', (data) => {
 })
 draw(screens.start)
 `
-  const besideShells = {
-    allowDuringAgentExecution: true,
-    backgroundShellsOnly: { eventLog: async () => ({ turnOver: true, shellsRunning: true }) },
-  }
+  const lagging = async () => ({ turnOver: true, shellsRunning: true })
   const quietRefusal = { statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.queue' }
 
-  async function startCopilot(screens: { start: string; pasted: string; submitted?: string }, drawn: string) {
+  async function startCopilot(screens: Screens, drawn: string) {
     const directory = await mkdtemp(path.join(tmpdir(), 'native-queue-shells-'))
     directories.push(directory)
     const id = randomUUID()
@@ -251,9 +254,24 @@ draw(screens.start)
     await writeFile(path.join(stateDirectory, `inuse.${pid}.lock`), `${pid}\n`)
     const controller = new TmuxTerminalSessionController()
     await eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes(drawn)))
+    const shows = (text: string) => eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes(text)))
     return {
-      send: (content: string) => controller.send(id, content, false, besideShells),
-      shows: (text: string) => eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes(text))),
+      send: (content: string, eventLog = lagging) =>
+        controller.send(id, content, false, { allowDuringAgentExecution: true, backgroundShellsOnly: { eventLog } }),
+      shows,
+      // An event log whose `read`-th reading opens the question before it
+      // answers, as the pane can change at any point while the log is read.
+      questionOpensDuring: (read: number) => {
+        let reads = 0
+        return async () => {
+          reads += 1
+          if (reads === read) {
+            await exec('tmux', ['send-keys', '-t', name, 'F5'])
+            await shows('Question')
+          }
+          return lagging()
+        }
+      },
       received: async () => JSON.parse(await readFile(receipt, 'utf8')),
     }
   }
@@ -288,5 +306,23 @@ draw(screens.start)
     })
     expect(await copilot.received()).toEqual({ pastes: ['Keep this queued work'], submits: 0 })
     expect(await copilot.shows('Question')).toContain('\u276f Keep this queued work')
+  }, 15_000)
+
+  // The pane is captured after the event log is read, so a question opened
+  // while it was read is seen before the keys that would answer it.
+  it('refuses quietly when a question opens while the event log is read before the paste', async () => {
+    const copilot = await startCopilot({ start: 'shells', pasted: 'answered', opened: 'question' }, 'shells')
+    await expect(copilot.send('Keep this queued work', copilot.questionOpensDuring(1)))
+      .rejects.toMatchObject(quietRefusal)
+    expect(await copilot.received()).toEqual({ pastes: [], submits: 0 })
+  }, 15_000)
+
+  it('does not press Enter when a question opens while the event log is read after the paste', async () => {
+    const copilot = await startCopilot({ start: 'shells', pasted: 'typing', opened: 'question' }, 'shells')
+    await expect(copilot.send('Keep this queued work', copilot.questionOpensDuring(2))).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: true,
+    })
+    expect(await copilot.received()).toEqual({ pastes: ['Keep this queued work'], submits: 0 })
   }, 15_000)
 })

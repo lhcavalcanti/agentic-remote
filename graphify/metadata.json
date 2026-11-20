@@ -677,7 +677,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "5b202f05ec04e73505f7e4bd4da43a32f377f3aee499f5aea51d4c514af4c1e5",
+    "docs/app-spec.md": "b86ecbe06928b51f5dd17d51a79dd62ac16ac07814d2491acfa8f954140f24e2",
     "docs/architecture.md": "60bf7b7f41a31ea467e3dfedd2b533eac1342fdb43c7526e7f6e08e650d12505",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -756,7 +756,7 @@
     "e2e/session-unread.pw.ts": "54a5776c28698324d268a43edc49517674c7e6425311114bb9d64836cff57312",
     "e2e/shell-fixtures.ts": "75d818141cbf8c849a212885fd945ff37ed70c54d2e3b7de15acce7dc08aabd8",
     "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
-    "e2e/ui-locks.pw.ts": "ffa952fefb916f26c9721bf84d1884b2936bc1a9b66cc5b039e35a1a91f0f234",
+    "e2e/ui-locks.pw.ts": "c2667da504b9dbff466bc5749060fffea74dba33a6d0fb066653a68f56776037",
     "e2e/ui-locks.pw.ts-snapshots/desktop-app-settings-chromium-linux.png": "77383bbdbbae3152a9d5f8f067983b5174419d9c55c5862c130f7f3c0a264dd4",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-busy-queue-chromium-linux.png": "95d0d623993a5a7f2bdae752d6b263a4531ea5b08c68532bb77ce1a025f576b6",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-button-row-chromium-linux.png": "468a943d1083612bb952778cb2c8647a82351bd6de33c08d05efc03847b1d782",
@@ -1349,8 +1349,8 @@
     "src/components/dialog-stack.ts": "9e135ac91979e7d7b028a2ae5e3ed69ee2f15bb84620400396c16497b6804b27",
     "src/composer-sizing.ts": "287d9a67a40dffb32161e6867173ffd3d51ae35d7942b7b0c456478bf2082d8d",
     "src/composer/AttachmentStrip.tsx": "248c6e58cce38bfc7b6d241f6baaec95e9112a80f67601ab3166786d71183941",
-    "src/composer/Composer.test.tsx": "220ac0f073d546c60922e6aa29d1d4f7b2c18441f8b8a5fcb2821305644589a1",
-    "src/composer/Composer.tsx": "f95ace718c5ddb79ed5b54182e1c9efff21b7d31c5b199d5dbf2657f3d3530c2",
+    "src/composer/Composer.test.tsx": "afeded2f6851cc8a3c83e0871ab1525268296723b17950900c4c3e1513f0be5a",
+    "src/composer/Composer.tsx": "dca621553bb14dff496e22deb10f1dc4c04c12e5d031a73d9ffb171cae8f50f7",
     "src/composer/ComposerActions.test.tsx": "593156642ddaf19d0f1440dc001e102b2ea4daef07f661d0b7173f1d7537f5ed",
     "src/composer/ComposerActions.tsx": "6ab4fe815f165a1b8adba728abb85c6cb7fed4f52117b28be60ca774796fc916",
     "src/composer/ContextRing.tsx": "c732bba8225410dd60b6eb61a60b539ccbe130e539682c218e6f114b8ccc53b4",
@@ -1759,13 +1759,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "15e43267e01167977910a0067f9703bc9c03770c5ad40e88f5902d68c20a8e6e",
+    "GRAPH_REPORT.md": "7c290c5d52bbb1c58b87cf993d928634e393d8e0dd598f676564f79b5a47af67",
     "communities.json": "f71aa06d721717ac4c4ddbeb080c35b3b07c6e54c71e76de3169e6ae0ee28f88",
-    "graph.html": "3b0922757b7c4cab044047f8cc1f87639f5c37c835a6da98dd3c483102ab393b",
-    "graph.json": "ca1b7de753c7f663e43297e784cef6aa20efa1854516849b0a06daa0faf6c8fa"
+    "graph.html": "020bdc676efaca19a9111c8dd51d977da252fe518f57064159c8ee9ddc4c30de",
+    "graph.json": "159b5650f9885ab0e76b82ac77dc2c189c185283803d21d19e5e352774719edb"
   },
   "schema_version": 1,
-  "source_commit": "0b292b08b3feb80fa68789f26636bb9ef6702ae0",
-  "source_fingerprint": "57178b6bd40779e417e7654d32a048c886ca4bd1ae3a833e0dda902c4cd9e7d9",
+  "source_commit": "afafa5456ca718195645fc6ba5a7b861b29241fa",
+  "source_fingerprint": "f84f6bb5f4745135ad53246314cc4551dc7a62ce751355e4027df9f7699e09ef",
   "working_tree_changes": []
 }

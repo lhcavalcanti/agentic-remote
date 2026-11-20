@@ -47,6 +47,7 @@ const slowTests = [
   'server/claude-agent-service.test.ts',
   'server/claude-recovery-admission.test.ts',
   'server/client-presence.test.ts',
+  'server/command-catalog-cache.test.ts',
   'server/computer-manager-metadata.test.ts',
   'server/conversation-recovery.test.ts',
   'server/delegated-transcription-service.test.ts',

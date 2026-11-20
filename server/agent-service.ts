@@ -349,6 +349,10 @@ export interface CopilotClientLike extends CopilotResourceClient {
   }
 }
 
+type ExternalCommandCatalog = Awaited<
+  ReturnType<CopilotSessionLike['rpc']['commands']['list']>
+>['commands']
+
 interface ModelPromptLimits {
   default?: number
   long?: number
@@ -461,6 +465,11 @@ const TRANSCRIPT_PACE_COST_FACTOR = 8
 // How long a message handed to a terminal is watched for in its event log.
 const TRANSCRIPT_ECHO_WAIT_MS = 5_000
 const TERMINAL_STEER_RETRY_MS = 250
+// A folder's terminal command catalog needs a temporary SDK session to read.
+// It is fresh for a minute, then served while one background read replaces
+// it, and after ten minutes a request waits for a new read.
+const COMMAND_CATALOG_FRESH_MS = 60_000
+const COMMAND_CATALOG_MAX_AGE_MS = 10 * 60_000
 
 const sessionInUseMessage =
   'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
@@ -2316,12 +2325,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly externalCommandCache = new Map<
     string,
     {
-      expiresAt: number
-      commands: Awaited<
-        ReturnType<CopilotSessionLike['rpc']['commands']['list']>
-      >['commands']
+      readAt: number
+      commands: ExternalCommandCatalog
     }
   >()
+  // One folder catalog read at a time, shared by everyone waiting on it.
+  private readonly externalCommandReads = new Map<string, Promise<ExternalCommandCatalog>>()
 
   constructor(
     readonly store: SessionStore,
@@ -3006,6 +3015,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...this.terminalQueueWakeups.values(),
       ...this.loadingSessions.values(),
       ...this.hydratingSessions.values(),
+      // A background catalog read removes its temporary session through the client.
+      ...this.externalCommandReads.values(),
       this.runtimeModelLoad,
     ])
     await Promise.allSettled([...this.terminalInputReplies.values()].map((reply) => reply.completion))
@@ -6858,19 +6869,57 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.assertTerminalRecoverySettled(sessionId)
     if (retained?.interruption || retained?.archivedAt) return []
+    // A known terminal session's folder catalog, read within the minute,
+    // answers without discovering processes again.
+    const known = retained && this.externalSessionIds.has(sessionId)
+      ? this.externalCommandCache.get(retained.cwd)
+      : undefined
+    if (known && Date.now() - known.readAt < COMMAND_CATALOG_FRESH_MS) {
+      return known.commands
+    }
     if (await this.terminalController.has(sessionId)) {
       const stored = this.store.get(sessionId)
       if (!stored) {
         throw new Error('Session not found')
       }
-      const cacheKey = stored.cwd
-      const cached = this.externalCommandCache.get(cacheKey)
-      if (cached && cached.expiresAt > Date.now()) {
-        return cached.commands
-      }
+      return this.folderCommandCatalog(stored.cwd)
+    }
+    const session = await this.ensureLoaded(sessionId)
+    return (
+      await session.rpc.commands.list({
+        includeBuiltins: true,
+        includeSkills: true,
+        includeClientCommands: true,
+      })
+    ).commands
+  }
+
+  /**
+   * A terminal session's commands are its folder's, which only a temporary
+   * SDK session can read. A failed background read keeps the catalog it was
+   * replacing.
+   */
+  private async folderCommandCatalog(cwd: string): Promise<ExternalCommandCatalog> {
+    const cached = this.externalCommandCache.get(cwd)
+    const age = cached ? Date.now() - cached.readAt : Infinity
+    if (!cached || age >= COMMAND_CATALOG_MAX_AGE_MS) {
+      return this.readFolderCommands(cwd)
+    }
+    if (age >= COMMAND_CATALOG_FRESH_MS && !this.stopped) {
+      this.readFolderCommands(cwd).catch((error: unknown) => {
+        console.warn('Unable to refresh a folder command catalog:', error)
+      })
+    }
+    return cached.commands
+  }
+
+  private readFolderCommands(cwd: string): Promise<ExternalCommandCatalog> {
+    const pending = this.externalCommandReads.get(cwd)
+    if (pending) return pending
+    const read = (async () => {
       const temporarySession = await this.client.createSession({
         ...COPILOT_SDK_SESSION_DISCOVERY,
-        workingDirectory: stored.cwd,
+        workingDirectory: cwd,
         streaming: false,
         infiniteSessions: { enabled: false },
         onPermissionRequest: () => ({ kind: 'user-not-available' }),
@@ -6883,10 +6932,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             includeClientCommands: true,
           })
         ).commands
-        this.externalCommandCache.set(cacheKey, {
-          expiresAt: Date.now() + 60_000,
-          commands,
-        })
+        this.externalCommandCache.set(cwd, { readAt: Date.now(), commands })
         return commands
       } finally {
         await temporarySession.disconnect().catch(() => undefined)
@@ -6894,15 +6940,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           .deleteSession(temporarySession.sessionId)
           .catch(() => undefined)
       }
-    }
-    const session = await this.ensureLoaded(sessionId)
-    return (
-      await session.rpc.commands.list({
-        includeBuiltins: true,
-        includeSkills: true,
-        includeClientCommands: true,
-      })
-    ).commands
+    })().finally(() => {
+      if (this.externalCommandReads.get(cwd) === read) this.externalCommandReads.delete(cwd)
+    })
+    this.externalCommandReads.set(cwd, read)
+    return read
   }
 
   private async sessionCommandCatalog(sessionId: string) {

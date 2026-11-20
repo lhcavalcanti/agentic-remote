@@ -3,23 +3,12 @@ import type { FormEvent } from 'react'
 import { Trash2, Wifi, WifiOff } from 'lucide-react'
 import type { ComputerSummary } from '../../shared/contracts'
 import { addComputer, removeComputer } from '../api'
-import { DialogFrame } from '../components/DialogFrame'
 
 export type ComputersBodyProps = {
   computers: ComputerSummary[]
   onAdded: (computer: ComputerSummary) => void
   onRemoved: (computerId: string) => void
   onCheckConnection?: () => Promise<ComputerSummary[]>
-  enhanced?: boolean
-  open?: boolean
-  onClose?: () => void
-}
-
-export function ComputersDialog({ open, onClose, ...props }: ComputersBodyProps & {
-  open: boolean
-  onClose: () => void
-}) {
-  return <ComputersBody {...props} open={open} onClose={onClose} />
 }
 
 export function ComputersBody({
@@ -27,9 +16,6 @@ export function ComputersBody({
   onAdded,
   onRemoved,
   onCheckConnection,
-  enhanced = false,
-  open = true,
-  onClose,
 }: ComputersBodyProps) {
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
@@ -38,7 +24,6 @@ export function ComputersBody({
   const [error, setError] = useState<string>()
   const [checking, setChecking] = useState(false)
   const [connection, setConnection] = useState<string>()
-  if (!open) return null
 
   async function check() {
     if (!onCheckConnection) return
@@ -88,7 +73,7 @@ export function ComputersBody({
     }
   }
 
-  const body = (
+  return (
     <>
       <div className="computer-list">
         {computers.map((computer) => (
@@ -97,7 +82,7 @@ export function ComputersBody({
             <span>
               <strong>{computer.name}</strong>
               <small>{computer.isLocal ? 'This computer' : computer.baseUrl}</small>
-              {enhanced ? <small>{computer.online ? 'Online' : 'Offline'} · {computer.isLocal ? 'Hub' : 'Node'} · Version {computer.version ?? 'not reported'}</small> : null}
+              <small>{computer.online ? 'Online' : 'Offline'} · {computer.isLocal ? 'Hub' : 'Node'} · Version {computer.version ?? 'not reported'}</small>
             </span>
             {!computer.isLocal ? (
               <button
@@ -112,11 +97,9 @@ export function ComputersBody({
           </div>
         ))}
       </div>
-      {enhanced ? <>
-        <button className="secondary-button" disabled={checking || !onCheckConnection} onClick={() => void check()} type="button">{checking ? 'Checking…' : 'Check connection'}</button>
-        {connection ? <p role="status">{connection}</p> : null}
-        <p className="dialog-message">Pair a computer below. Its name can be set when pairing.</p>
-      </> : null}
+      <button className="secondary-button" disabled={checking || !onCheckConnection} onClick={() => void check()} type="button">{checking ? 'Checking…' : 'Check connection'}</button>
+      {connection ? <p role="status">{connection}</p> : null}
+      <p className="dialog-message">Pair a computer below. Its name can be set when pairing.</p>
       <form className="computer-form" onSubmit={submit}>
         <label className="field">
           <span>Name (optional)</span>
@@ -159,5 +142,4 @@ export function ComputersBody({
       </form>
     </>
   )
-  return onClose ? <DialogFrame eyebrow="Hub settings" onClose={onClose} title="Computers">{body}</DialogFrame> : body
 }

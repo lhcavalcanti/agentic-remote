@@ -1,6 +1,5 @@
 import { Clock3, SquareTerminal, UserRound } from 'lucide-react'
 import type { SessionProvenance } from '../shared/contracts'
-import { usePreviewFeature } from './preview-features'
 import { OracleIcon } from './oracle-icon'
 import { sessionOriginDescription } from './session-origin'
 
@@ -8,11 +7,8 @@ const icons = { manager: OracleIcon, schedule: Clock3, discovered: SquareTermina
 const labels = { manager: 'Oracle', schedule: 'Schedule', discovered: 'External', user: '' }
 
 export function SessionOriginBadge({
-  provenance, legacyManaged = false, compact = false,
-}: { provenance?: SessionProvenance; legacyManaged?: boolean; compact?: boolean }) {
-  const enabled = usePreviewFeature('composerRefresh')
-  if (!enabled) return legacyManaged
-    ? <em className="provider-badge manager-badge" title="Started by Oracle">Oracle</em> : null
+  provenance, compact = false,
+}: { provenance?: SessionProvenance; compact?: boolean }) {
   if (!provenance) return null
   const Icon = icons[provenance.origin]
   if (!Icon) return null

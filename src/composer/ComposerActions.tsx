@@ -1,8 +1,7 @@
 import {
-  ArrowUp, History, ListPlus, LoaderCircle, MessageCircleQuestion, Mic, Paperclip, Plus, Search, SlidersHorizontal, Square,
+  ArrowUp, History, ListPlus, LoaderCircle, MessageCircleQuestion, Mic, Plus, Search, SlidersHorizontal, Square,
 } from 'lucide-react'
 import { useState } from 'react'
-import { usePreviewFeature } from '../preview-features'
 import { SessionActions } from '../SessionActions'
 import { ContextRing } from './ContextRing'
 import { SentMessages } from './SentMessages'
@@ -54,10 +53,9 @@ export function ComposerActions({
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
   'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage' | 'phoneEnterCreatesNewline'
 >) {
-  const refresh = usePreviewFeature('composerRefresh')
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyChosen, setHistoryChosen] = useState(false)
-  const busyChoices = refresh && foregroundTurnActive &&
+  const busyChoices = foregroundTurnActive &&
     !readonlyResourceCommand && !editingQueuedPromptId && !expandedComposer.trim().startsWith('/')
   // Where Return adds a line, as on a phone, no keyboard shortcut is named.
   const shortcut = (keys: string) => phoneEnterCreatesNewline ? '' : ` (${keys})`
@@ -96,7 +94,7 @@ export function ComposerActions({
       </button>
     </div>
   ) : askingAside ? (
-    <div className={`composer-actions${refresh ? ' composer-actions--refresh' : ''}`}>
+    <div className="composer-actions composer-actions--refresh">
       <span className="composer-actions__spacer" />
       <button
         aria-label="Ask side question"
@@ -125,7 +123,7 @@ export function ComposerActions({
     </div>
   ) : (
     <>
-    <div className={`composer-actions${refresh ? ' composer-actions--refresh' : ''}`}>
+    <div className="composer-actions composer-actions--refresh">
       <button
         aria-label={transcribing
           ? 'Transcribing audio'
@@ -137,15 +135,13 @@ export function ComposerActions({
       >
         {transcribing || uploadingFile ? (
           <LoaderCircle className="activity-message__spinner" size={17} />
-        ) : refresh ? <Plus size={19} /> : <Paperclip size={17} />}
+        ) : <Plus size={19} />}
       </button>
-      {refresh ? (
-        <div className="composer-secondary-tools">
-          {setupButton}
-          {historyButton}
-          <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
-        </div>
-      ) : null}
+      <div className="composer-secondary-tools">
+        {setupButton}
+        {historyButton}
+        <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
+      </div>
       <button
         aria-label="Start microphone recording"
         className="send-button composer-record-button"
@@ -156,21 +152,19 @@ export function ComposerActions({
       >
         <Mic size={17} />
       </button>
-      {refresh ? (
-        <SessionActions className="composer-session-panel" label="Session panel" description="This session">
-          <div className="composer-secondary-overflow">
-            {setupButton}
-            {historyButton}
-            <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
-          </div>
-          {sessionActions?.map((action) => (
-            <button
-              className="session-action" disabled={action.disabled}
-              key={action.label} onClick={action.onClick} type="button"
-            >{action.label}</button>
-          ))}
-        </SessionActions>
-      ) : null}
+      <SessionActions className="composer-session-panel" label="Session panel" description="This session">
+        <div className="composer-secondary-overflow">
+          {setupButton}
+          {historyButton}
+          <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
+        </div>
+        {sessionActions?.map((action) => (
+          <button
+            className="session-action" disabled={action.disabled}
+            key={action.label} onClick={action.onClick} type="button"
+          >{action.label}</button>
+        ))}
+      </SessionActions>
       <span className="composer-actions__spacer" />
       {selectedQueueAvailable ? (
         <button
@@ -232,7 +226,7 @@ export function ComposerActions({
         </button>
       ) : null}
     </div>
-    {refresh && historyOpen ? (
+    {historyOpen ? (
       <SentMessages
         messages={selected.messages}
         receipts={selected.promptReceipts}

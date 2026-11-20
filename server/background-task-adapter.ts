@@ -74,6 +74,12 @@ export interface CopilotTasksApi {
 
 export interface BackgroundTaskEventOptions {
   assumeBackground?: boolean
+  /**
+   * How many tasks to return, live ones first and then the newest: the
+   * panel's MAX_BACKGROUND_TASKS unless given. A decision that would act
+   * beside a task it cannot see asks for every one with Infinity.
+   */
+  limit?: number
 }
 
 export const MAX_BACKGROUND_TASKS = 100
@@ -2230,5 +2236,5 @@ export function backgroundTasksFromEvents(
           ) ||
         right.startedAt.localeCompare(left.startedAt),
     )
-    .slice(0, MAX_BACKGROUND_TASKS)
+    .slice(0, options.limit ?? MAX_BACKGROUND_TASKS)
 }

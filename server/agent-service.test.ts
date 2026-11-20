@@ -26,9 +26,10 @@ import {
   statusFromEvents,
   terminalFormSteps,
 } from './agent-service.js'
-import type {
-  CopilotTaskInfo,
-  CopilotTaskProgress,
+import {
+  MAX_BACKGROUND_TASKS,
+  type CopilotTaskInfo,
+  type CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
 import { parseTerminalPermission, TerminalFormReplyError, TmuxTerminalSessionController, type TerminalCancelOptions } from './terminal-session.js'
@@ -10942,6 +10943,12 @@ describe('AgentService deletion', () => {
       async () => events,
       async () => eventVersion,
       terminal,
+      // Every transcript pass reads the workspace metadata. Left on the real
+      // filesystem, a pass with no retry due can still be reading when the
+      // faked clock reaches the poll the retry is due on, and that poll, like
+      // the refreshes below, joins the stale pass instead of starting one.
+      async () => undefined,
+      async () => undefined,
     )
     const errors: string[] = []
     let published = 0
@@ -11260,6 +11267,43 @@ describe('AgentService deletion', () => {
       current.pane = pane(shellsWaits[0])
 
       await retry()
+
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'idle',
+        queueState: { state: 'waiting' },
+        queuedPrompts: [{ content: prompt }],
+      })
+    })
+
+    // A message wakes an idle agent without restarting it, so a turn can
+    // leave more shells than the panel lists, all newer than an agent that is
+    // working again. The rows cut to a spinner cannot say which is waited on.
+    it('keeps waiting, with nothing typed, beside a woken agent older than a hundred shells', async () => {
+      const { service, terminal, sessionId, log, endTurn } = await queuedBehindTurn(
+        pane(shellsWaits[3]), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
+      )
+      const at = (offset: number) => new Date(Date.now() - 58_000 + offset).toISOString()
+      const agent = { toolCallId: 'review-call', agentId: 'reviewer' }
+      log('subagent.started', { timestamp: at(0), data: agent })
+      log('subagent.completed', { timestamp: at(1_000), data: agent })
+      log('system.notification', {
+        timestamp: at(2_000), data: { kind: { type: 'agent_idle', agentId: 'reviewer' } },
+      })
+      for (let index = 0; index <= MAX_BACKGROUND_TASKS; index += 1) {
+        log('tool.execution_start', {
+          timestamp: at(3_000 + index * 100),
+          data: {
+            toolCallId: `shell-call-${index}`, toolName: 'bash',
+            arguments: { command: 'sleep 300', mode: 'async' },
+          },
+        })
+      }
+      log('user.message', { timestamp: at(20_000), agentId: 'reviewer', data: { content: 'Rebase again' } })
+      log('assistant.turn_start', { timestamp: at(20_100), agentId: 'reviewer', data: { turnId: '0' } })
+
+      await endTurn()
 
       expect(terminal.send).not.toHaveBeenCalled()
       expect(terminal.sendWhenIdle).not.toHaveBeenCalled()

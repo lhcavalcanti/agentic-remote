@@ -26,11 +26,6 @@ const props = (overrides: Partial<ComposerProps> = {}): ComposerProps => ({
   sideQuestionPending: false, showCommandMenu: false, commandSuggestions: [], selectedCommandIndex: 0,
   selectedAttachments: [], recording: false, recordingSeconds: 0, cancelling: false,
   composerDraftRecovered: false,
-  statusline: {
-    enabled: false, computer: false, provider: false, path: false, status: false, queue: false,
-    backgroundTasks: false, sessionId: false, model: false, effort: false, contextTier: false,
-    contextUsage: false, mode: false, permissions: false, update: false,
-  },
   phoneEnterCreatesNewline: false, composerRef: createRef(), audioInputRef: createRef(), sensors: undefined,
   attachmentSize: String, recordingDuration: (seconds) => `0:${String(seconds).padStart(2, '0')}`,
   compactTokens: String, onQueueDragEnd: vi.fn(), onEditQueuedPrompt: vi.fn(), onRemoveQueuedPrompt: vi.fn(),
@@ -62,9 +57,24 @@ describe('line below the composer', () => {
     expect(line(container)).toBeNull()
   })
 
+  // The recording panel is the status while recording, whatever else applies:
+  // it shows the timer, and the buttons the other lines name are behind it.
   it.each([
-    { state: 'recording', overrides: { recording: true, recordingSeconds: 7 },
-      desktop: 'Recording 0:07…', phone: 'Recording 0:07…' },
+    { during: '', overrides: {} },
+    { during: ' during a queued edit', overrides: { editingQueuedPromptId: 'first' } },
+    { during: ' during a queued edit with Send now',
+      overrides: { editingQueuedPromptId: 'first', supportsQueuedPromptDispatch: true } },
+    { during: ' during a retried upload', overrides: { uploadingFile: true } },
+    { during: ' during a side answer',
+      overrides: { askingAside: true, sideQuestionDraft: '', sideQuestionPending: true } },
+  ])('is not shown while recording$during; the recording panel keeps the timer', ({ overrides }) => {
+    const { container } = render(<Composer {...props({ ...overrides, recording: true, recordingSeconds: 7 })} />)
+    expect(line(container)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Stop & transcribe' }).closest('[role="status"]'))
+      .toHaveTextContent('Recording 0:07')
+  })
+
+  it.each([
     { state: 'transcribing', overrides: { transcribing: true },
       desktop: 'Transcribing audio…', phone: 'Transcribing audio…' },
     { state: 'uploading a file', overrides: { uploadingFile: true },
@@ -92,15 +102,45 @@ describe('send and queue tooltips', () => {
     { phoneEnterCreatesNewline: false, foregroundTurnActive: false,
       send: 'Send immediately (Enter)', queue: 'Queue for later delivery (Ctrl/⌘+Enter)' },
     { phoneEnterCreatesNewline: false, foregroundTurnActive: true,
-      send: 'Send into the current response (Enter)', queue: 'Queue for later delivery (Ctrl/⌘+Enter)' },
+      send: 'Choose Steer or Queue', queue: 'Queue for later delivery (Ctrl/⌘+Enter)' },
     { phoneEnterCreatesNewline: true, foregroundTurnActive: false,
       send: 'Send immediately', queue: 'Queue for later delivery' },
     { phoneEnterCreatesNewline: true, foregroundTurnActive: true,
-      send: 'Send into the current response', queue: 'Queue for later delivery' },
+      send: 'Choose Steer or Queue', queue: 'Queue for later delivery' },
   ])('name shortcuts only where Enter sends (phone Enter newline: $phoneEnterCreatesNewline, busy: $foregroundTurnActive)',
     ({ phoneEnterCreatesNewline, foregroundTurnActive, send, queue }) => {
       render(<Composer {...props({ phoneEnterCreatesNewline, foregroundTurnActive })} />)
       expect(screen.getByRole('button', { name: 'Send message' })).toHaveAttribute('title', send)
       expect(screen.getByRole('button', { name: 'Queue message' })).toHaveAttribute('title', queue)
     })
+})
+
+const follows = (first: Element, second: Element) =>
+  Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+describe('runtime setup button', () => {
+  it('sits in the buttons row after the microphone and before Queue and Send', () => {
+    const { container } = render(<Composer {...props()} />)
+    const runtime = screen.getByRole('button', { name: 'Configure model, effort, and context' })
+    expect(screen.getAllByTestId('composer-runtime')).toEqual([runtime])
+    expect(runtime.closest('.composer-actions')).toBe(container.querySelector('.composer-actions'))
+    expect(follows(screen.getByRole('button', { name: 'Start microphone recording' }), runtime)).toBe(true)
+    expect(follows(screen.getByRole('button', { name: 'Session panel' }), runtime)).toBe(true)
+    expect(follows(runtime, screen.getByRole('button', { name: 'Queue message' }))).toBe(true)
+    expect(follows(runtime, screen.getByRole('button', { name: 'Send message' }))).toBe(true)
+  })
+
+  it('leaves no runtime line below the composer', () => {
+    const { container } = render(<Composer {...props()} />)
+    expect(container.querySelector('.composer-area > .composer-runtime')).toBeNull()
+    expect(container.querySelector('.composer-area > .composer')!.nextElementSibling).toBeNull()
+  })
+
+  it.each([
+    { state: 'recording', overrides: { recording: true, recordingSeconds: 7 } },
+    { state: 'asking aside', overrides: { askingAside: true, sideQuestionDraft: '' } },
+  ])('is not shown while $state', ({ overrides }) => {
+    render(<Composer {...props(overrides)} />)
+    expect(screen.queryByTestId('composer-runtime')).toBeNull()
+  })
 })

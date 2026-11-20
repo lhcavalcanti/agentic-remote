@@ -11,6 +11,11 @@ import {
 } from './active-sessions.js'
 import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
 import { SessionPaneRoots, type SessionPaneRoot } from './host-telemetry/session-pane-roots.js'
+import {
+  isSessionScopeLauncher,
+  sessionLaunchCommand,
+  sessionScopeAvailable,
+} from './session-scope.js'
 import type {
   ConfigureRuntimeInput,
   PendingPermission,
@@ -70,15 +75,16 @@ export interface TerminalSendOptions {
    * Narrows allowDuringAgentExecution to Copilot waiting only for background
    * shells after its turn ended. Copilot cuts that row's status to fit, down
    * to nothing, so the row cannot tell the wait from other work. Under the
-   * send lock, before the paste and again before Enter, a live prompt with
-   * nothing open over it must have the keyboard, the footer must name no
-   * other work and no background agents, and `eventLog` must find the turn
-   * over with no background agent, and a shell running while a busy row shows.
-   * Whatever stands in the way before the paste, a draft, dialog or
+   * send lock, right before the paste and again right before Enter, `eventLog`
+   * must find the turn over with no background agent, and a pane captured
+   * after it must show a live prompt with nothing open over it, a footer
+   * naming no other work and no background agents, and a busy row only while
+   * a shell is running; the terminal's owner is checked again after each
+   * reading. Whatever stands in the way before the paste, a draft, dialog or
    * full-screen view included, is refused quietly: nothing was typed, so the
    * queued prompt waits at the head of its queue. With replaceExistingInput, a
    * draft is cleared instead, beside that wait only while the same evidence
-   * holds before and after the clear.
+   * holds before and after the clear and before the paste.
    */
   backgroundShellsOnly?: { eventLog: () => Promise<BackgroundShellsEvidence> }
   /**
@@ -453,6 +459,14 @@ export class TmuxTerminalSessionController
   private readonly settledOwnerAgeMs = SETTLED_OWNER_AGE_MS
   /** When Stop last sent each session Ctrl+C. */
   private readonly interruptedAt = new Map<string, number>()
+  /** Whether Copilot can be started in a systemd scope of its own. */
+  private readonly sessionScope: () => Promise<boolean>
+
+  constructor(
+    options: { sessionScope?: () => Promise<boolean> } = {},
+  ) {
+    this.sessionScope = options.sessionScope ?? sessionScopeAvailable
+  }
 
   listSessionPaneRoots(): Promise<SessionPaneRoot[]> {
     return this.processPaneRoots.listSessionPaneRoots()
@@ -568,11 +582,15 @@ export class TmuxTerminalSessionController
     const name = `${PROBE_SESSION_PREFIX}${sessionId.slice(0, 8)}`
     if (signal?.aborted) throw new Error('The probe was cancelled before it started')
     const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
+    const command = await sessionLaunchCommand(
+      [copilot, '--yolo', '--session-id', sessionId],
+      this.sessionScope,
+    )
     const [target, panePid] = (await execFileAsync('tmux', [
       'new-session', '-d', '-P', '-F', '#{pane_id}\t#{pane_pid}', '-s', name,
       '-x', String(PROBE_COLUMNS), '-y', String(PROBE_ROWS), '-c', cwd,
       '-e', 'COLORTERM=truecolor',
-      copilot, '--yolo', '--session-id', sessionId,
+      ...command,
     ])).stdout.trim().split('\t')
     let owner: TerminalOwner | undefined
     let failure: Error | undefined
@@ -1859,8 +1877,9 @@ export class TmuxTerminalSessionController
       parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane) ||
-      (isTerminalAgentWorking(pane) &&
-        !(await busyOnlyWithBackgroundShells(pane, backgroundShellsOnly)))
+      // Beside background shells, the busy row is weighed below, on a pane
+      // captured after the event log.
+      (isTerminalAgentWorking(pane) && !backgroundShellsOnly)
     ) {
       throw new TerminalDraftConflictError('changed-before-clear')
     }
@@ -2209,15 +2228,7 @@ export class TmuxTerminalSessionController
           },
         )
       }
-      if (
-        options.backgroundShellsOnly
-          ? !(await backgroundShellsAllow(paneBeforePaste, options.backgroundShellsOnly))
-          : idleOnly && isTerminalAgentWorking(paneBeforePaste)
-      ) {
-        // A replacement refuses as it would have without the evidence.
-        if (options.replaceExistingInput) {
-          throw new TerminalDraftConflictError('changed-before-clear')
-        }
+      if (idleOnly && isTerminalAgentWorking(paneBeforePaste)) {
         throw Object.assign(
           new Error('The terminal started working before queued delivery; nothing was sent'),
           {
@@ -2225,17 +2236,6 @@ export class TmuxTerminalSessionController
             uncertainDelivery: false,
             reasonCode: 'terminal-not-ready.queue',
           },
-        )
-      }
-      // The event log was read since the owner was checked. A replacement
-      // checks it again once it has read the pane for the paste.
-      if (
-        options.backgroundShellsOnly &&
-        !options.replaceExistingInput &&
-        !(await this.sameOwner(sessionId, currentOwner))
-      ) {
-        throw queuedDeliveryRefusal(
-          new Error('The terminal owner changed before queued delivery; nothing was sent'),
         )
       }
       const allowWorking =
@@ -2249,7 +2249,7 @@ export class TmuxTerminalSessionController
           {
             statusCode: 409,
             uncertainDelivery: false,
-            ...(idleOnly
+            ...(idleOnly || besideShells
               ? { reasonCode: 'terminal-not-ready.queue' }
               : allowWorking && !enqueue && !options.replaceExistingInput
                 ? { reasonCode: 'terminal-not-ready.steer' }
@@ -2284,8 +2284,8 @@ export class TmuxTerminalSessionController
         if (options.replaceExistingInput) {
           // With nothing cleared, the send keeps the working tolerance the
           // first readiness check granted; a cleared composer must be idle.
-          // Beside background shells, only their wait is borne, read after
-          // the event log said it is all that is left.
+          // Beside background shells, only their wait is borne, on a pane
+          // captured after the event log said it is all that is left.
           const ownerBeforePaste = await this.owner(
             sessionId,
             currentOwner.target,
@@ -2319,6 +2319,26 @@ export class TmuxTerminalSessionController
           ) {
             throw new TerminalDraftConflictError('new-text')
           }
+        } else if (options.backgroundShellsOnly) {
+          // Checked last, right before the paste, on a pane captured once the
+          // event log has been read: nothing opened over the prompt while the
+          // log was read goes unseen.
+          const pane = await backgroundShellsAllow(
+            () => capturePane(currentOwner.target),
+            options.backgroundShellsOnly,
+          )
+          if (!pane || composerHoldsText(pane)) {
+            throw queuedDeliveryRefusal(
+              new Error('The terminal prompt is no longer free for queued delivery; nothing was sent'),
+            )
+          }
+          // The event log was read since the owner was checked.
+          if (!(await this.sameOwner(sessionId, currentOwner))) {
+            throw queuedDeliveryRefusal(
+              new Error('The terminal owner changed before queued delivery; nothing was sent'),
+            )
+          }
+          paneBeforePaste = pane
         }
         // Outside the delivery try below: a refusal here typed nothing.
         options.confirm?.()
@@ -2455,19 +2475,16 @@ export class TmuxTerminalSessionController
         }
       }
       try {
-        if (idleOnly || backgroundShellsOnly) {
+        if (backgroundShellsOnly) {
+          // Enter goes to whatever has the keyboard, so only a live prompt
+          // with nothing open over it, captured once the event log has been
+          // read, is pressed.
+          if (!(await backgroundShellsAllow(() => capturePane(target), backgroundShellsOnly))) {
+            throw new Error('The terminal changed before queued submission')
+          }
+        } else if (idleOnly) {
           const current = await capturePane(target)
-          // Enter goes to whatever has the keyboard. Beside background
-          // shells it goes only to a live prompt with nothing open over it,
-          // as read after the event log, which work drawn during the read
-          // shows on.
-          const agreed = backgroundShellsOnly
-            ? await paneAgreeingWithBackgroundShells(target, current, backgroundShellsOnly)
-            : current
-          if (
-            agreed === undefined ||
-            (!backgroundShellsOnly && (isTerminalOverlay(current) || isTerminalAgentWorking(current)))
-          ) {
+          if (isTerminalOverlay(current) || isTerminalAgentWorking(current)) {
             throw new Error('The terminal changed before queued submission')
           }
         }
@@ -2643,8 +2660,9 @@ export class TmuxTerminalSessionController
   ): Promise<TerminalOwner> {
     for (let attempt = 0; attempt < 150; attempt += 1) {
       const owner = await this.owner(sessionId, expectedTarget)
-      // The wait in front of a relaunch carries the command it becomes, so
-      // discovery can find it first. It is the owner once it has become it.
+      // The wait in front of a relaunch carries the command it becomes, as
+      // does the scope it starts that command in, so discovery can find either
+      // first. It is the owner once it has become that command.
       if (
         owner &&
         owner.pid !== previousPid &&
@@ -2671,7 +2689,10 @@ export class TmuxTerminalSessionController
       target,
       '-c',
       cwd,
-      ...afterExit(replaced, command),
+      ...afterExit(
+        replaced,
+        await sessionLaunchCommand(command, this.sessionScope),
+      ),
     ])
   }
 
@@ -2714,7 +2735,7 @@ export class TmuxTerminalSessionController
     const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
     const windowName = safeWindowName(title)
     const format = '#{session_name}\t#{window_id}'
-    const command = [
+    const command = await sessionLaunchCommand([
       copilot,
       ...(allowAllPermissions ? ['--yolo'] : []),
       resumeExisting ? '--resume' : '--session-id',
@@ -2725,7 +2746,7 @@ export class TmuxTerminalSessionController
         : []),
       ...(runtime?.contextTier ? ['--context', runtime.contextTier] : []),
       ...(runtime?.mode ? ['--mode', runtime.mode] : []),
-    ]
+    ], this.sessionScope)
     // Copilot draws its composer with half-block glyphs when the terminal
     // advertises truecolor, and with plain rules when it does not. The frame
     // is what says the composer is live, so a window that inherits no
@@ -3672,75 +3693,35 @@ export function terminalDraftMayBeBesideBackgroundShells(pane: string): boolean 
 }
 
 /**
- * Whether queued text may still go in beside background shells: a live prompt
- * with nothing open over it has the keyboard, the footer names no other work
- * and no background agents, and the event log finds the turn over with no
- * background agent and, while a busy row shows, a shell running. A question
- * opened since would take the text as its answer, and once its freeform
- * answer holds that text it no longer reads as a question, so the prompt
- * itself has to be found.
+ * The pane, when queued text may still go in beside background shells: the
+ * event log finds the turn over with no background agent, and then a pane
+ * captured after that reading shows a live prompt with nothing open over it,
+ * a footer naming no other work and no background agents, and a busy row only
+ * while a shell is running. Read in that order, nothing opened over the prompt
+ * while the log was read goes unseen, and the keys follow the capture. A
+ * question opened since would take the text as its answer, and once its
+ * freeform answer holds that text it no longer reads as a question, so the
+ * prompt itself has to be found. Undefined when the text may not go in.
  */
 async function backgroundShellsAllow(
-  pane: string,
+  capture: () => Promise<string>,
   backgroundShellsOnly: NonNullable<TerminalSendOptions['backgroundShellsOnly']>,
-): Promise<boolean> {
-  const reading = shellsReading(pane)
-  if (!reading) return false
-  return shellsEvidenceAgrees(reading, await backgroundShellsOnly.eventLog())
-}
-
-/** The footer's reading, while a live prompt with nothing over it has the keyboard. */
-function shellsReading(pane: string): 'idle' | 'shells' | undefined {
-  return terminalInputReady(pane, true) ? idleButForBackgroundShells(pane) : undefined
-}
-
-function shellsEvidenceAgrees(
-  reading: 'idle' | 'shells' | undefined,
-  log: BackgroundShellsEvidence,
-): boolean {
-  return reading !== undefined && log.turnOver && (reading === 'idle' || log.shellsRunning)
-}
-
-/**
- * As backgroundShellsAllow, then the pane read once more: Copilot can draw a
- * turn, an agent or a dialog while the log is read and before the log has it,
- * so what a send does next goes by a pane drawn after the read. That pane,
- * while its prompt is still live and free and it agrees with the log;
- * otherwise undefined.
- */
-async function paneAgreeingWithBackgroundShells(
-  target: string,
-  pane: string,
-  backgroundShellsOnly: NonNullable<TerminalSendOptions['backgroundShellsOnly']>,
-  timeout?: number,
 ): Promise<string | undefined> {
-  const reading = shellsReading(pane)
-  if (!reading) return undefined
   const log = await backgroundShellsOnly.eventLog()
-  if (!shellsEvidenceAgrees(reading, log)) return undefined
-  const after = await capturePane(target, timeout)
-  return shellsEvidenceAgrees(shellsReading(after), log) ? after : undefined
-}
-
-/**
- * Whether the pane is busy only with Copilot's wait for background shells, as
- * the event log in `backgroundShellsOnly` still has it, so that a replacement
- * may take its prompt as idle. Without that evidence it never is, and the log
- * is not read while the pane shows no work.
- */
-async function busyOnlyWithBackgroundShells(
-  pane: string,
-  backgroundShellsOnly: TerminalSendOptions['backgroundShellsOnly'],
-): Promise<boolean> {
-  return backgroundShellsOnly !== undefined &&
-    isTerminalAgentWorking(pane) &&
-    await backgroundShellsAllow(pane, backgroundShellsOnly)
+  if (!log.turnOver) return undefined
+  const pane = await capture()
+  if (!terminalInputReady(pane, true)) return undefined
+  const reading = idleButForBackgroundShells(pane)
+  return reading === 'idle' || (reading === 'shells' && log.shellsRunning) ? pane : undefined
 }
 
 /**
  * Reads the pane for a replacement to act on, and whether its busy row is only
- * Copilot's wait for background shells by the evidence. When the log has to be
- * read, the pane is read again after it, and that later reading is returned.
+ * Copilot's wait for background shells by the evidence. Only a busy pane has
+ * the log read, and then, as backgroundShellsAllow does, the pane is captured
+ * again after it and that later capture is returned. When the evidence fails,
+ * the first capture comes back, busy and with besideShells false, so the
+ * caller refuses it.
  */
 async function captureForReplacement(
   target: string,
@@ -3751,7 +3732,7 @@ async function captureForReplacement(
   if (!backgroundShellsOnly || !isTerminalAgentWorking(pane)) {
     return { pane, besideShells: false }
   }
-  const after = await paneAgreeingWithBackgroundShells(target, pane, backgroundShellsOnly, timeout)
+  const after = await backgroundShellsAllow(() => capturePane(target, timeout), backgroundShellsOnly)
   return after === undefined ? { pane, besideShells: false } : { pane: after, besideShells: true }
 }
 
@@ -5101,10 +5082,11 @@ function afterExit(replaced: number[], command: string[]): string[] {
   ]
 }
 
-/** Whether `pid` is still the wait in front of a relaunched command. */
+/** Whether `pid` is still the wait or scope in front of a relaunched command. */
 async function awaitingRelaunch(pid: number): Promise<boolean> {
   try {
-    return (await processCommand(pid))[3] === RELAUNCH_LABEL
+    const command = await processCommand(pid)
+    return command[3] === RELAUNCH_LABEL || isSessionScopeLauncher(command)
   } catch {
     return true
   }

@@ -17,54 +17,20 @@ import {
   mergeRuntimeModelOptions,
   sameRuntimeSelection,
 } from './runtime-defaults'
-import { navigableSettingsSections, schedulerSettingsSection, settingsSections, skillsSettingsSection } from './sections'
+import { navigableSettingsSections, schedulerSettingsSection, skillsSettingsSection } from './sections'
 import { SettingsNavigation } from './SettingsNavigation'
 import { usePreviewFeature } from '../preview-features'
 import type { SettingsSectionProps } from './sections'
 import type { AppSettingsDialogProps } from './types'
 
-/**
- * Scrolls App settings, and only App settings, so the element sits just
- * below the jump bar. `scrollIntoView` also scrolls whatever holds the
- * dialog when the element cannot reach the top, such as the last group,
- * which moved the dialog off screen and left the app scrolled behind it.
- */
-function scrollSettingsTo(id: string, { focus = false } = {}) {
-  const target = document.getElementById(id)
-  const container = target?.closest<HTMLElement>('.app-settings-dialog')
-  if (!target || !container) return
-  const nav = container.querySelector<HTMLElement>('.app-settings-nav')
-  const top = Math.max(0, Math.round(
-    container.scrollTop
-      + target.getBoundingClientRect().top
-      - container.getBoundingClientRect().top
-      - (nav?.offsetHeight ?? 0)
-      - 8,
-  ))
-  if (typeof container.scrollTo === 'function') container.scrollTo({ top })
-  else container.scrollTop = top
-  // Moving the focus too takes keyboard and screen reader users there, not
-  // just the eye; Tab carries on from the heading into that part.
-  if (focus) {
-    target.querySelector<HTMLElement>(':scope > h3, :scope > h4')?.focus({ preventScroll: true })
-  }
-}
-
-/** Anything that shows you have taken over scrolling App settings yourself. */
-const settingsTakeoverEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const
-
 export function AppSettingsDialog(props: AppSettingsDialogProps) {
-  const navigation = usePreviewFeature('settingsNavigation')
   const scheduler = usePreviewFeature('schedulerView')
-  const healthCardEnabled = usePreviewFeature('healthCard')
   const schedulerSections = scheduler
     ? [...navigableSettingsSections.slice(0, 5), schedulerSettingsSection, ...navigableSettingsSections.slice(5)]
     : navigableSettingsSections
-  const skills = usePreviewFeature('skillToggles')
-  const legacySections = skills ? [...settingsSections, skillsSettingsSection] : settingsSections
-  const navigationSections = skills
-    ? [...schedulerSections.slice(0, -1), skillsSettingsSection, schedulerSections.at(-1)!]
-    : schedulerSections
+  const navigationSections = [
+    ...schedulerSections.slice(0, -1), skillsSettingsSection, schedulerSections.at(-1)!,
+  ]
   const {
     open,
     computers,
@@ -280,37 +246,6 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
     runtimeModels,
   ])
 
-  // Opened from somewhere in particular, such as Oracle's model, it starts
-  // there; otherwise at the top. The catalogs above it load afterwards and,
-  // stacked on a phone, would push it away, so it stays with that part as
-  // the settings grow until you scroll, tap or type yourself.
-  useEffect(() => {
-    if (!open || !initialSection || navigation) return
-    const section = initialSection
-    let observer: ResizeObserver | undefined
-    let dialog: HTMLElement | null | undefined
-    const stopFollowing = () => {
-      observer?.disconnect()
-      observer = undefined
-    }
-    const frame = window.requestAnimationFrame(() => {
-      scrollSettingsTo(section, { focus: true })
-      dialog = document.getElementById(section)?.closest<HTMLElement>('.app-settings-dialog')
-      const sections = dialog?.querySelector('.app-settings-dialog__sections')
-      if (!dialog || !sections || typeof ResizeObserver === 'undefined') return
-      for (const type of settingsTakeoverEvents) {
-        dialog.addEventListener(type, stopFollowing, { passive: true })
-      }
-      observer = new ResizeObserver(() => scrollSettingsTo(section))
-      observer.observe(sections)
-    })
-    return () => {
-      window.cancelAnimationFrame(frame)
-      stopFollowing()
-      for (const type of settingsTakeoverEvents) dialog?.removeEventListener(type, stopFollowing)
-    }
-  }, [initialSection, open, navigation])
-
   if (!open) {
     return null
   }
@@ -387,8 +322,6 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
 
   const sectionProps: SettingsSectionProps = {
     ...props,
-    categoryNavigation: navigation,
-    healthCardEnabled,
     oracle,
     runtimeErrors,
     runtimeLoading,
@@ -414,38 +347,13 @@ export function AppSettingsDialog(props: AppSettingsDialogProps) {
 
   return (
     <DialogFrame
-      className={`app-settings-dialog${navigation ? ' app-settings-dialog--navigation' : ''}`}
+      className="app-settings-dialog app-settings-dialog--navigation"
       eyebrow="Application"
       onClose={onClose}
       title="App settings"
     >
-      {navigation ? <SettingsNavigation key={initialSection ?? 'default'} initialSection={initialSection}
-        sectionProps={sectionProps} sections={navigationSections} /> : <>
-      <nav aria-label="Settings sections" className="app-settings-nav">
-        {legacySections.map((group) => (
-          <button
-            key={group.id}
-            onClick={() => scrollSettingsTo(group.id, { focus: true })}
-            type="button"
-          >
-            {group.title}
-          </button>
-        ))}
-      </nav>
-      <div className="app-settings-dialog__sections">
-        {legacySections.map((section) => (
-          <section
-            aria-labelledby={`${section.id}-heading`}
-            className="app-settings-group"
-            id={section.id}
-            key={section.id}
-          >
-            <h3 id={`${section.id}-heading`} tabIndex={-1}>{section.title}</h3>
-            {section.render(sectionProps)}
-          </section>
-        ))}
-      </div>
-      </>}
+      <SettingsNavigation key={initialSection ?? 'default'} initialSection={initialSection}
+        sectionProps={sectionProps} sections={navigationSections} />
     </DialogFrame>
   )
 }

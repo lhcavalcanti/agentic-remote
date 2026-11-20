@@ -735,7 +735,6 @@ export function ManagerAssistant({
   onOpenChange,
   onIndicatorChange,
   onOpenSession,
-  onManagedSessionsChange,
   onOpenSettings,
   controlRef,
   reservedLeft = 0,
@@ -757,7 +756,6 @@ export function ManagerAssistant({
   onOpenChange: (open: boolean) => void
   onIndicatorChange: (indicator: OracleIndicator) => void
   onOpenSession: (ref: ManagerSessionRef) => boolean
-  onManagedSessionsChange: (keys: string[]) => void
   onOpenSettings: () => void
   controlRef?: MutableRefObject<OracleControl | undefined>
   /** Width taken on the left, such as the sessions list, that the panel may not reach into. */
@@ -967,11 +965,9 @@ export function ManagerAssistant({
     }
   }
   const openRef = useRef(open)
-  const managedRef = useRef(onManagedSessionsChange)
   const indicatorRef = useRef(onIndicatorChange)
   useEffect(() => {
     openRef.current = open
-    managedRef.current = onManagedSessionsChange
     indicatorRef.current = onIndicatorChange
   })
   // Opening is reading: a reply waiting for you is seen once the panel shows.
@@ -1027,11 +1023,6 @@ export function ManagerAssistant({
       setAnnouncement('Oracle replied.')
     }
   }), [subscribe, updateSnapshot])
-
-  const managedKey = snapshot?.managedSessions.join('\n') ?? ''
-  useEffect(() => {
-    managedRef.current(managedKey ? managedKey.split('\n') : [])
-  }, [managedKey])
 
   const available = Boolean(snapshot?.available)
   const shownWidth = available && open ? panelWidth.width : undefined

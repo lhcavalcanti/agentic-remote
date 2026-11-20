@@ -314,7 +314,7 @@ test('phone All settings restores category focus and supports keyboard re-entry'
   } finally { fixture.assertHealthy() }
 })
 
-test('settings preview searches fields, navigates by keyboard, deep-links computers and closes with Escape', async ({ page, baseURL }) => {
+test('settings searches fields, navigates by keyboard, deep-links computers and closes with Escape', async ({ page, baseURL }) => {
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-navigation')!.setup(page)
   try {
     const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
@@ -322,9 +322,9 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
     await dialog.getByRole('button', { name: /^Interface/ }).click()
     await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeVisible()
     await expect(dialog.getByRole('heading', { name: 'Keyboard shortcuts', exact: true })).toBeHidden()
-    await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Settings navigation')
+    await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Desktop rail')
     await dialog.getByRole('button', { name: /^Interface/ }).click()
-    await expect(dialog.getByRole('checkbox', { name: 'Settings navigation', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('checkbox', { name: 'Desktop rail', exact: true })).toBeVisible()
     await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeHidden()
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
@@ -337,13 +337,10 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
   } finally { fixture.assertHealthy() }
 })
 
-test('Health search leads to its preview toggle while off and its card after enabling', async ({ page, baseURL }) => {
+test('Health search leads directly to the App card', async ({ page, baseURL }) => {
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-health-search')!.setup(page)
   try {
     const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
-    await expect(dialog.getByRole('button', { name: /^App This device/ })).toHaveCount(0)
-    await dialog.getByRole('checkbox', { name: 'Health card', exact: true }).check()
-    await dialog.getByRole('button', { name: /^App This device/ }).click()
     await expect(dialog.getByRole('region', { name: 'Health', exact: true })).toBeVisible()
   } finally { fixture.assertHealthy() }
 })
@@ -417,29 +414,110 @@ for (const width of [320, 360, 600, 601, 820, 960, 961, 1440]) {
   })
 }
 
-for (const width of [320, 360]) {
-  test.describe(`narrow composer ${width}px`, () => {
-    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
-    test('shows the idle-only hint without hover while retaining the model glyph and mode', async ({ page, baseURL }) => {
+for (const viewport of uiViewports) {
+  test.describe(`runtime in the buttons row ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    test('sits between the microphone and Queue/Send instead of a line below the composer', async ({ page, baseURL }) => {
       const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
       try {
         const summary = page.getByTestId('composer-runtime')
-        await expect(summary.getByText('applies when idle', { exact: true })).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({ ratio: 1 })
+        const busy = await runtimeInRow(page)
+        expectRuntimeInRow(busy)
+        expect(busy.name.full, 'a long model name truncates').toBeGreaterThan(busy.name.visible)
+        // The idle-only hint shows where it fits; the title and description always carry it.
+        await expect(summary).toHaveAccessibleDescription(/applies when idle/)
+        await expect(summary).toHaveAttribute('title', /applies when idle/)
+        if (viewport.name === 'desktop') expect(busy.shown).toEqual({ effort: true, context: true, mode: true, hint: true })
+        await assertNoHorizontalOverflow(page)
+
+        const session = fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+        session.status = 'idle'
+        session.revision = (session.revision ?? 0) + 1
+        fixture.emit({ type: 'session.upserted', session })
+        await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeHidden()
+        const idle = await runtimeInRow(page)
+        expectRuntimeInRow(idle)
+        expect(idle.runtime.width, 'takes the room Queue and Stop leave').toBeGreaterThan(busy.runtime.width)
+        expect(idle.shown.mode, 'mode beside the name while idle').toBe(true)
+        await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({ ratio: 1 })
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
+// From 361 to 530 px a running turn keeps Queue as its own button and Send
+// opens Steer or Queue itself; at 360 px and below Queue folds into that menu,
+// and from 531 px the arrow returns beside Send.
+for (const { width, queue, arrow } of [
+  { width: 376, queue: 'menu', arrow: true }, { width: 377, queue: 'button', arrow: false },
+  { width: 390, queue: 'button', arrow: false }, { width: 546, queue: 'button', arrow: false },
+  { width: 547, queue: 'button', arrow: true },
+] as const) {
+  test.describe(`busy composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test(`queues from ${queue === 'button' ? 'its own button in one tap' : 'the Send menu'} and opens Steer or Queue from Send`, async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const send = page.getByRole('button', { name: 'Send message', exact: true })
+        const queueButton = page.getByRole('button', { name: 'Queue message', exact: true })
+        const options = page.getByRole('button', { name: 'Send options', exact: true })
+        const menu = page.getByRole('menu', { name: 'Message delivery' })
+        await message(page).fill('Check the release notes next.')
+        expectRuntimeInRow(await runtimeInRow(page))
+        if (arrow) await expect(options).toBeVisible()
+        else await expect(options).toBeHidden()
+        const queued = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/messages`)
+        if (queue === 'button') {
+          await queueButton.click()
+        } else {
+          await expect(queueButton).toBeHidden()
+          await options.click()
+          await menu.getByRole('menuitem', { name: /Queue —/ }).click()
+        }
+        expect((await queued).postDataJSON()).toMatchObject({ content: 'Check the release notes next.', enqueue: true })
+        await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the release notes next.')
+
+        await message(page).fill('Steer toward the recovery checklist.')
+        await expect(send).toHaveAttribute('aria-haspopup', 'menu')
+        await expect(send).toHaveAttribute('aria-expanded', 'false')
+        await send.focus()
+        await page.keyboard.press('Enter')
+        await expect(menu.getByRole('menuitem', { name: /Steer —/ })).toBeFocused()
+        await expect(menu.getByRole('menuitem', { name: /Queue —/ })).toBeVisible()
+        await expect(send).toHaveAttribute('aria-expanded', 'true')
+        const rect = (await menu.boundingBox())!
+        expect(rect.x).toBeGreaterThanOrEqual(0)
+        expect(rect.x + rect.width).toBeLessThanOrEqual(width)
+        await page.keyboard.press('Escape')
+        await expect(menu).toBeHidden()
+        await expect(send).toBeFocused()
+        expect(fixture.requests.filter((request) => request.method === 'POST' && request.path === `${sessionPath}/messages`))
+          .toHaveLength(1)
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
+for (const width of [320, 360]) {
+  test.describe(`narrow composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test('keeps the model glyph and a truncated name in the row, with the idle-only hint in its description', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const summary = page.getByTestId('composer-runtime')
         await expect(summary.locator('[data-model-family]')).toBeVisible()
-        await expect(summary.locator('.composer-runtime__mode')).toHaveText('plan')
-        const layout = await summary.evaluate((element) => {
-          const button = element.getBoundingClientRect()
-          return {
-            height: button.height,
-            childrenFit: [...element.children].filter((child) => child.getBoundingClientRect().width > 0)
-              .every((child) => {
-                const rect = child.getBoundingClientRect()
-                return rect.left >= button.left && rect.right <= button.right
-              }),
-          }
-        })
-        expect(layout.height).toBeGreaterThanOrEqual(40)
-        expect(layout.childrenFit).toBe(true)
+        await expect(summary.getByText('applies when idle', { exact: true })).toBeHidden()
+        await expect(summary).toHaveAccessibleDescription(/applies when idle/)
+        await expect(summary).toHaveAttribute('title', /applies when idle/)
+        const layout = await runtimeInRow(page)
+        expectRuntimeInRow(layout)
         await assertNoHorizontalOverflow(page)
       } finally {
         fixture.assertHealthy()
@@ -567,6 +645,62 @@ for (const width of [320, 360]) {
 
 type ComposerPart = { left: number, right: number, top: number, bottom: number, width: number }
 
+/** Where the refreshed runtime summary sits in the buttons row, and which of its parts show. */
+async function runtimeInRow(page: Page) {
+  return page.locator('.composer-actions--refresh').evaluate((row) => {
+    const box = (element: Element | null) => {
+      if (!element || element.getClientRects().length === 0) return undefined
+      const { left, right, top, bottom, width, height } = element.getBoundingClientRect()
+      return { left, right, top, bottom, width, height }
+    }
+    const runtime = row.querySelector(':scope > [data-testid="composer-runtime"]')!
+    const runtimeBox = box(runtime)!
+    const name = runtime.querySelector<HTMLElement>('.composer-runtime__model')!
+    const composer = row.closest('.composer')!
+    const area = composer.closest('.composer-area')!
+    const shown = (selector: string) => Boolean(box(runtime.querySelector(selector)))
+    return {
+      row: box(row)!,
+      runtime: runtimeBox,
+      glyph: box(runtime.querySelector('[data-model-family]')),
+      mic: box(row.querySelector(':scope > [aria-label="Start microphone recording"]'))!,
+      panel: box(row.querySelector(':scope > .composer-session-panel'))!,
+      queue: box(row.querySelector(':scope > [aria-label="Queue message"]')),
+      send: box(row.querySelector(':scope > [aria-label="Send message"]'))!,
+      controlHeight: Math.max(...[...row.querySelectorAll(':scope > button, :scope > .composer-session-panel > button')]
+        .filter((control) => control !== runtime).map((control) => box(control)?.height ?? 0)),
+      shown: {
+        effort: shown('.composer-runtime__detail--effort'), context: shown('.composer-runtime__detail--context'),
+        mode: shown('.composer-runtime__detail--mode'), hint: shown('.composer-runtime__hint'),
+      },
+      clipped: [...runtime.querySelectorAll('.composer-runtime-model, .composer-runtime__detail, .composer-runtime__hint')]
+        .map(box).some((part) => part && (part.left < runtimeBox.left || part.right > runtimeBox.right)),
+      name: { visible: name.clientWidth, full: name.scrollWidth, textOverflow: getComputedStyle(name).textOverflow },
+      belowComposer: area.getBoundingClientRect().bottom - composer.getBoundingClientRect().bottom -
+        parseFloat(getComputedStyle(area).paddingBottom),
+    }
+  })
+}
+
+function expectRuntimeInRow(layout: Awaited<ReturnType<typeof runtimeInRow>>) {
+  const { row, runtime, mic, panel, queue, send, shown, name } = layout
+  expect(runtime.left, 'after the microphone and session panel').toBeGreaterThanOrEqual(Math.max(mic.right, panel.right))
+  expect(runtime.right, 'before Queue and Send').toBeLessThanOrEqual((queue ?? send).left)
+  expect(send.right, 'Send inside the row').toBeLessThanOrEqual(row.right)
+  expect(runtime.top, 'runtime top inside the row').toBeGreaterThanOrEqual(row.top)
+  expect(runtime.bottom, 'runtime bottom inside the row').toBeLessThanOrEqual(row.bottom)
+  expect(runtime.height, 'as tall as the other controls').toBeGreaterThanOrEqual(layout.controlHeight)
+  expect(runtime.width, 'runtime target width').toBeGreaterThanOrEqual(40)
+  expect(layout.belowComposer, 'no line below the composer').toBeLessThanOrEqual(1)
+  expect(layout.glyph, 'model glyph').toBeDefined()
+  expect(name.visible, 'model name').toBeGreaterThan(0)
+  expect(name.textOverflow, 'model name truncation').toBe('ellipsis')
+  expect(layout.clipped, 'a detail cut short').toBe(false)
+  // Whole details drop out: the hint first, then context, effort and mode.
+  const steps = [shown.mode, shown.effort, shown.context, shown.hint]
+  expect(steps, JSON.stringify(shown)).toEqual([...steps].sort((a, b) => Number(b) - Number(a)))
+}
+
 /** Pastes a screenshot from the clipboard into the message box. */
 async function pasteImage(page: Page) {
   await message(page).focus()
@@ -653,35 +787,9 @@ for (const viewport of [uiViewports[0].viewport, { width: 1000, height: 640 }]) 
           .toBeCloseTo(attached.text.top - attached.composer.top, 0)
         expect(recording.text.bottom - recording.text.top, 'message box height')
           .toBeCloseTo(attached.text.bottom - attached.text.top, 0)
-        // The line below the composer names the recording, under the box and in view.
-        const line = page.locator('.composer-area > .composer-hint')
-        await expect(line).toHaveText(/^Recording \d+:\d\d…$/)
-        expect((await line.boundingBox())!.y, 'recording line top').toBeGreaterThanOrEqual(recording.composer.bottom)
+        // The recording panel carries the timer; no line below the composer repeats it.
+        await expect(page.locator('.composer-area > .composer-hint')).toHaveCount(0)
         await expect(page.locator('.composer-area')).toBeInViewport({ ratio: 1 })
-        await assertNoHorizontalOverflow(page)
-      } finally {
-        fixture.assertHealthy()
-      }
-    })
-
-    test('classic composer keeps an attachment above the message box and its buttons', async ({ page, baseURL }) => {
-      const fixture = await open(page, baseURL, 'conversation')
-      try {
-        await pasteImage(page)
-        const { composer, attachments, text, actions, overflow } = await composerParts(page)
-        expect(overflow, 'composer overflow').toBeLessThanOrEqual(0)
-        expect(attachments!.width, 'attachment row').toBeGreaterThanOrEqual(composer.width - 2)
-        for (const [name, part] of [['message box', text], ['buttons', actions!]] as const) {
-          expect(part.top, `${name} top`).toBeGreaterThanOrEqual(attachments!.bottom - 1)
-          expect(part.bottom, `${name} bottom`).toBeLessThanOrEqual(composer.bottom)
-        }
-        expect(text.left, 'message box left').toBeGreaterThanOrEqual(composer.left)
-        expect(actions!.left, 'buttons beside the message box').toBeGreaterThanOrEqual(text.right - 1)
-        expect(actions!.top, 'buttons beside the message box').toBeLessThan(text.bottom)
-        expect(actions!.right, 'buttons right').toBeLessThanOrEqual(composer.right)
-        await startRecording(page)
-        const recording = await composerParts(page)
-        expectColumn(recording, [['attachment', recording.attachments], ['message box', recording.text], ['recording', recording.recording]])
         await assertNoHorizontalOverflow(page)
       } finally {
         fixture.assertHealthy()
@@ -932,7 +1040,7 @@ test.describe('browser interaction contracts', () => {
   for (const viewport of [uiViewports[0], uiViewports[2]]) {
     test.describe(`line below the composer ${viewport.name}`, () => {
       test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
-      test('takes no space while idle and appears only while audio is busy', async ({ page, baseURL }) => {
+      test('takes no space while idle or recording and appears only while transcribing', async ({ page, baseURL }) => {
         await mockMicrophone(page)
         let release = () => {}
         const held = new Promise<void>((resolve) => { release = resolve })
@@ -949,7 +1057,12 @@ test.describe('browser interaction contracts', () => {
         const idle = await height()
 
         await page.getByRole('button', { name: 'Start microphone recording', exact: true }).click()
-        await expect(line).toHaveText('Recording 0:00…')
+        // The recording panel is the status and carries the timer alone.
+        const recording = area.locator('.recording-panel')
+        await expect(recording).toHaveRole('status')
+        await expect(recording).toContainText(/Recording \d+:\d\d/)
+        await expect(line).toHaveCount(0)
+        await expect(area).toBeInViewport({ ratio: 1 })
         await page.getByRole('button', { name: 'Stop & transcribe', exact: true }).click()
         await expect(line).toHaveText('Transcribing audio…')
         // Nothing else changes while transcribing, so the idle composer is
@@ -1007,15 +1120,9 @@ test.describe('browser interaction contracts', () => {
     await expect(page.getByRole('combobox', { name: 'How new sessions start', exact: true })).toHaveValue('sdk')
   })
 
-  test('shows model-family glyphs only after opting in and follows runtime model changes', async ({ page, baseURL }) => {
+  test('shows model-family glyphs by default and follows runtime model changes', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'conversation')
     const summary = page.getByTestId('composer-runtime')
-    await expect(summary.locator('[data-model-family]')).toHaveCount(0)
-    await page.getByRole('button', { name: 'App settings', exact: true }).click()
-    const settings = page.getByRole('dialog', { name: 'App settings', exact: true })
-    await settings.getByRole('checkbox', { name: 'Composer refresh', exact: true }).check()
-    await expect.poll(() => handle.state.settings.values.previewFeatures?.composerRefresh).toBe(true)
-    await settings.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(summary.locator('[data-model-family]')).toHaveAttribute('data-model-family', 'generic')
 
     for (const [model, family] of [['fixture-claude-99', 'anthropic'], ['fixture-gpt-99', 'openai']]) {
@@ -1027,15 +1134,9 @@ test.describe('browser interaction contracts', () => {
       await expect(summary.locator('[data-model-family]')).toHaveAttribute('data-model-family', family)
       await expect(summary.locator('[data-model-family]')).toHaveAttribute('aria-hidden', 'true')
     }
-
-    await page.getByRole('button', { name: 'App settings', exact: true }).click()
-    await settings.getByRole('checkbox', { name: 'Composer refresh', exact: true }).uncheck()
-    await expect.poll(() => handle.state.settings.values.previewFeatures?.composerRefresh).toBe(false)
-    await settings.getByRole('button', { name: 'Close', exact: true }).click()
-    await expect(summary.locator('[data-model-family]')).toHaveCount(0)
   })
 
-  test('preview status is one setup button and explains idle-only changes while busy', async ({ page, baseURL }) => {
+  test('runtime status is one setup button and explains idle-only changes while busy', async ({ page, baseURL }) => {
     await open(page, baseURL, 'composer-status-busy')
     const summary = page.getByTestId('composer-runtime')
     await expect(summary).toHaveAccessibleDescription(/applies when idle/)
@@ -1046,7 +1147,7 @@ test.describe('browser interaction contracts', () => {
     await expect(page.getByRole('dialog', { name: 'Model and context' })).toBeVisible()
   })
 
-  test('preview row attaches using the existing pipeline and opens read-only session resources', async ({ page, baseURL }) => {
+  test('composer row attaches using the existing pipeline and opens read-only session resources', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'composer-button-row')
     const chooser = page.waitForEvent('filechooser')
     await page.getByRole('button', { name: 'Attach file or audio recording', exact: true }).click()
@@ -1061,7 +1162,7 @@ test.describe('browser interaction contracts', () => {
   })
 
   for (const viewport of uiViewports) {
-    test.describe(`preview row access ${viewport.name}`, () => {
+    test.describe(`composer row access ${viewport.name}`, () => {
       test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
       test('keeps touch targets and exposes secondary controls through the session panel', async ({ page, baseURL }) => {
         const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-button-row')!.setup(page)
@@ -1123,8 +1224,11 @@ test.describe('browser interaction contracts', () => {
           })
           await expect(message(page)).toHaveValue('')
           await message(page).fill('Run these checks afterward.')
-          const options = page.getByRole('button', { name: 'Send options', exact: true })
-          await options.focus()
+          // From 361 to 480 px Send opens the menu itself and its arrow is left out.
+          const opener = page.getByRole('button', {
+            name: viewport.name === 'phone' ? 'Send message' : 'Send options', exact: true,
+          })
+          await opener.focus()
           await page.keyboard.press('Enter')
           await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
           await page.keyboard.press('ArrowDown')
@@ -1184,6 +1288,7 @@ test.describe('browser interaction contracts', () => {
     await expect.poll(() => handle.state.settings.values.previewFeatures?.notificationPanel).toBe(true)
     await settings.getByRole('button', { name: 'Close', exact: true }).click()
     await page.getByRole('button', { name: 'App settings', exact: true }).click()
+    await settings.getByRole('button', { name: /^Interface/ }).click()
     await expect(notifications).toBeChecked()
 
     handle.state.hubFlags = { notificationCenter: false, hostMonitor: false, scheduler: false }

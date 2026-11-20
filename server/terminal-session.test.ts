@@ -44,6 +44,7 @@ import {
   waitForProcessCommand,
 } from './tmux-test-helpers.js'
 import * as tmuxErrors from './tmux-errors.js'
+import { sessionScopeAvailable } from './session-scope.js'
 import { fixtureReceiptWriter, readyComposer } from './terminal-test-fixtures.js'
 
 const execFileAsync = promisify(execFile)
@@ -421,6 +422,31 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it("runs a session's Copilot as its pane's own process, in a scope an out-of-memory kill does not stop", async ({ skip }) => {
+    skip(!(await sessionScopeAvailable()), 'This host cannot start a user systemd scope')
+    const { controller, sessionId } = await ownedStartupFixture()
+    const owner = await (controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{
+        pid: number
+        target: string
+        rootPid: number
+      } | undefined>
+    }).owner(sessionId, undefined, true)
+    const panePid = Number.parseInt((await execFileAsync('tmux', [
+      'display-message', '-p', '-t', owner?.target ?? '', '#{pane_pid}',
+    ])).stdout.trim(), 10)
+
+    // systemd-run becomes Copilot rather than starting it, so discovery and
+    // tmux both still find the session as the pane's own process.
+    expect(owner).toMatchObject({ pid: panePid, rootPid: panePid })
+    const cgroup = (await readFile(`/proc/${panePid}/cgroup`, 'utf8')).trim()
+    const unit = path.basename(cgroup.slice(cgroup.lastIndexOf(':') + 1))
+    expect(unit).toMatch(/^run-.+\.scope$/u)
+    expect((await execFileAsync('systemctl', [
+      '--user', 'show', '--property=OOMPolicy', '--value', unit,
+    ])).stdout.trim()).toBe('continue')
+  }, 15_000)
+
   it('keeps startup ownership when a wrapper is replaced in the same pane', async () => {
     const overlay = [
       'Settings',
@@ -2511,7 +2537,10 @@ process.stdin.on('data', () => undefined)
     })).rejects.toThrow('Replacement write refused')
     const restored = await snapshot()
     expect(restored.pid).not.toBe(original.pid)
-    expect(restored.command).toEqual(original.command)
+    // A command started in a scope of its own runs by its absolute path:
+    // systemd-run resolves the program before it execs it.
+    const program = ([executable = '', ...rest]: string[]) => [path.basename(executable), ...rest]
+    expect(program(restored.command)).toEqual(program(original.command))
     expect(restored.cwd).toBe(original.cwd)
     expect(await controller.has(sessionId)).toBe(true)
     expect(await controller.has(replacementId)).toBe(false)
@@ -5150,21 +5179,19 @@ draw()
       const { controller, sessionId, received, startWork } = await slowCopilot({
         draft: leftover, footer: shellsWaits[0][0],
       })
-      // The next read of the log is the last before the step: once the clear's
-      // owner check follows a read, once the clear is confirmed, or once the
-      // paste is in.
-      let logRead = false
+      // The read of the log that is the last before the step: the first,
+      // which the clear makes once it has checked the owner; the next once the
+      // clear is confirmed; or the next once the paste is in.
       let armed = false
       let started = false
       const owner = controller['owner'].bind(controller)
       controller['owner'] = async (...args: Parameters<typeof owner>) => {
-        const { clears } = await received()
-        if (step === 'the clear' ? logRead && !clears : step === 'the paste' && clears) armed = true
+        if (step === 'the paste' && (await received()).clears) armed = true
         return owner(...args)
       }
       const eventLog = async () => {
-        logRead = true
-        if (step === 'Enter' && (await received()).pastes.length) armed = true
+        const { clears, pastes } = await received()
+        if (step === 'the clear' ? !clears : step === 'Enter' && pastes.length) armed = true
         if (armed && !started) {
           started = true
           await startWork(takeovers[takeover])
@@ -5212,16 +5239,14 @@ draw()
     ['Enter', undefined, { pastes: [message], clears: 1, submits: [] }],
   ] as const)('sends nothing before %s to an owner that started while the log was read', async (step, reasonCode, expected) => {
     const { controller, sessionId, received } = await slowCopilot({ draft: leftover, footer: shellsWaits[0][0] })
-    let logRead = false
     let armed = false
     const owner = ownerChangesWhile(controller, async () => {
-      const { clears } = await received()
-      if (step === 'the clear' ? logRead && !clears : step === 'the paste' && clears) armed = true
+      if (step === 'the paste' && (await received()).clears) armed = true
       return false
     })
     const eventLog = async () => {
-      logRead = true
-      if (step === 'Enter' && (await received()).pastes.length) armed = true
+      const { clears, pastes } = await received()
+      if (step === 'the clear' ? !clears : step === 'Enter' && pastes.length) armed = true
       if (armed) owner.change()
       return shellsOnly
     }

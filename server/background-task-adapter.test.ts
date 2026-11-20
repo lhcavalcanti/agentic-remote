@@ -2,6 +2,7 @@ import type { SessionEvent } from '@github/copilot-sdk'
 import { describe, expect, it } from 'vitest'
 import {
   backgroundTasksFromEvents,
+  MAX_BACKGROUND_TASKS,
   MAX_TASK_ACTIVITY_LINES,
   MAX_TASK_TEXT_LENGTH,
   normalizeBackgroundTask,
@@ -1388,6 +1389,45 @@ describe('background task adapter', () => {
       status: 'completed', completedAt: '2026-09-03T09:03:00.000Z',
     })
     expect(taskAfter(9, 'other-call')).toMatchObject({ status: 'completed' })
+  })
+
+  it('keeps only the newest hundred live tasks unless asked for every one', () => {
+    // A woken agent keeps its first start, so shells started since can fill
+    // the list ahead of it while it works again.
+    const events = [
+      lifecycleEvent('start', 'subagent.started', '2026-09-03T08:00:00.000Z', {
+        toolCallId: 'task-call', agentId: 'agent-1',
+      }),
+      lifecycleEvent('done', 'subagent.completed', '2026-09-03T08:05:00.000Z', {
+        toolCallId: 'task-call', agentId: 'agent-1',
+      }),
+      lifecycleEvent('idle', 'system.notification', '2026-09-03T08:05:01.000Z', {
+        kind: { type: 'agent_idle', agentId: 'agent-1' },
+      }),
+      ...Array.from({ length: MAX_BACKGROUND_TASKS + 1 }, (_, index) => lifecycleEvent(
+        `shell-${index}`,
+        'tool.execution_start',
+        new Date(Date.parse('2026-09-03T08:10:00.000Z') + index * 1_000).toISOString(),
+        {
+          toolCallId: `shell-call-${index}`,
+          toolName: 'bash',
+          arguments: { command: 'sleep 300', mode: 'async' },
+        },
+      )),
+      lifecycleEvent('wake', 'user.message', '2026-09-03T09:00:00.000Z', { content: 'Rebase again' }, 'agent-1'),
+      lifecycleEvent('turn', 'assistant.turn_start', '2026-09-03T09:00:01.000Z', { turnId: '0' }, 'agent-1'),
+    ] as unknown as SessionEvent[]
+    const agent = (tasks: ReturnType<typeof backgroundTasksFromEvents>) =>
+      tasks.find((task) => task.id === 'task-call')
+
+    const listed = backgroundTasksFromEvents(events, { assumeBackground: true })
+    expect(listed).toHaveLength(MAX_BACKGROUND_TASKS)
+    expect(listed.every((task) => task.type === 'shell' && task.status === 'running')).toBe(true)
+    expect(agent(listed)).toBeUndefined()
+
+    const every = backgroundTasksFromEvents(events, { assumeBackground: true, limit: Infinity })
+    expect(every).toHaveLength(MAX_BACKGROUND_TASKS + 2)
+    expect(agent(every)).toMatchObject({ type: 'agent', status: 'running' })
   })
 
   it("ends a subagent's shell once the agent stops after last seeing it run", () => {

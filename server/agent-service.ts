@@ -1638,6 +1638,7 @@ export function statusFromEvents(events: SessionEvent[]): SessionStatus {
     (emptyResponse.agentsWorking ||
       backgroundTasksFromEvents(events.slice(0, emptyResponse.index + 1), {
         assumeBackground: true,
+        limit: Infinity,
       }).some((task) => task.status === 'running' || task.status === 'queued'))
   ) {
     // A steer typed over a foreground command makes Copilot move the command
@@ -1680,10 +1681,12 @@ export function foregroundTurnOpen(events: SessionEvent[]): boolean {
 /**
  * What the event log says of the work a finished turn left behind: whether
  * the turn is over with no background agent running, which would hold queued
- * text, and whether a background shell is still running.
+ * text, and whether a background shell is still running. Every task counts,
+ * not only the panel's newest: a woken agent keeps its first start, and
+ * shells started since can push it out of that list while it works.
  */
 function backgroundShellsEvidence(events: SessionEvent[]): BackgroundShellsEvidence {
-  const live = backgroundTasksFromEvents(events, { assumeBackground: true })
+  const live = backgroundTasksFromEvents(events, { assumeBackground: true, limit: Infinity })
     .filter((task) => task.status === 'running' || task.status === 'queued')
   return {
     turnOver: statusFromEvents(events) === 'idle' && !live.some((task) => task.type === 'agent'),
@@ -4124,6 +4127,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         const running = backgroundTasksFromEvents(live, {
           assumeBackground: true,
+          limit: Infinity,
         }).filter(
           (task) => task.status === 'running' || task.status === 'queued',
         )
@@ -7834,7 +7838,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !latestLifecycle ||
       !isForegroundCompletionEvent(latestLifecycle) ||
       statusFromEvents(events) !== 'idle' ||
-      backgroundTasksFromEvents(events).some(
+      backgroundTasksFromEvents(events, { limit: Infinity }).some(
         (task) => task.status === 'running' || task.status === 'queued',
       )
     ) {
@@ -10469,7 +10473,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!hasLifecycleEvent) {
         const hasBackgroundTaskActivity =
           relevant.some(isBackgroundTaskEvent) ||
-          backgroundTasksFromEvents(relevant, { assumeBackground: true }).some(
+          backgroundTasksFromEvents(relevant, { assumeBackground: true, limit: Infinity }).some(
             (task) => task.executionMode === 'background',
           )
         if (

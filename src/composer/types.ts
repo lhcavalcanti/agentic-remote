@@ -10,7 +10,6 @@ import type {
 } from 'react'
 import type { DndContext, DragEndEvent } from '@dnd-kit/core'
 import type { AgentProviderCapability, ManagedSession, QueuedPrompt, SlashCommand } from '../../shared/contracts'
-import type { StatuslineSettings } from '../settings/types'
 import type { SessionResourceTab } from '../session-resource-commands'
 
 export type ComposerAttachment = {
@@ -63,7 +62,6 @@ export type ComposerProps = {
   cancelling: boolean
   readonlyResourceCommand?: { tab: SessionResourceTab; filter: string }
   composerDraftRecovered: boolean
-  statusline: StatuslineSettings
   phoneEnterCreatesNewline: boolean
   composerRef: RefObject<HTMLTextAreaElement | null>
   audioInputRef: RefObject<HTMLInputElement | null>

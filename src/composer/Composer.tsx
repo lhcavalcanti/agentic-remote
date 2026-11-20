@@ -1,17 +1,12 @@
-import { Pencil, SlidersHorizontal, X } from 'lucide-react'
+import { Pencil, X } from 'lucide-react'
 import { SIDE_QUESTION_MAX_LENGTH } from '../../shared/side-question'
-import { executionModeName, providerName } from '../session-presentation'
-import { RuntimeModelName } from '../RuntimeModelName'
-import { usePreviewFeature } from '../preview-features'
 import { AttachmentStrip } from './AttachmentStrip'
 import { ComposerActions } from './ComposerActions'
 import { QueuedPromptList } from './QueuedPromptList'
 import { SlashCommandMenu } from './SlashCommandMenu'
-import { RuntimeStatus } from './RuntimeStatus'
 import type { ComposerProps } from './types'
 
 export function Composer(props: ComposerProps) {
-  const refresh = usePreviewFeature('composerRefresh')
   const {
     selected,
     selectedRetained,
@@ -35,14 +30,10 @@ export function Composer(props: ComposerProps) {
     showCommandMenu,
     selectedAttachments,
     recording,
-    recordingSeconds,
     composerDraftRecovered,
-    statusline,
     phoneEnterCreatesNewline,
     composerRef,
     audioInputRef,
-    recordingDuration,
-    compactTokens,
     onDiscardUnconfirmed,
     onSaveQueuedPromptEdit,
     onCancelQueuedPromptEdit,
@@ -54,25 +45,26 @@ export function Composer(props: ComposerProps) {
     onKeyDown,
     onPaste,
     onFileChange,
-    onOpenRuntime,
   } = props
   // The line below the composer only explains a live state or mode; an idle
   // composer keeps no line. Send and Queue name their shortcuts in tooltips.
-  const stateLine = askingAside
-    ? (
-      <>
-        <span className="composer-hint__desktop">
-          {sideQuestionPending
-            ? 'Answering… you can type your follow-up · Esc back to your message'
-            : 'Enter asks · Shift+Enter newline · Esc back to your message'}
-        </span>
-        <span className="composer-hint__mobile">
-          {sideQuestionPending ? 'Answering… you can type your follow-up' : 'Tap Ask · Return adds a line'}
-        </span>
-      </>
-    )
-    : recording
-      ? `Recording ${recordingDuration(recordingSeconds)}…`
+  // Recording has none either, whatever else applies: its panel is the status
+  // and shows the timer, and it hides the buttons the other lines name.
+  const stateLine = recording
+    ? null
+    : askingAside
+      ? (
+        <>
+          <span className="composer-hint__desktop">
+            {sideQuestionPending
+              ? 'Answering… you can type your follow-up · Esc back to your message'
+              : 'Enter asks · Shift+Enter newline · Esc back to your message'}
+          </span>
+          <span className="composer-hint__mobile">
+            {sideQuestionPending ? 'Answering… you can type your follow-up' : 'Tap Ask · Return adds a line'}
+          </span>
+        </>
+      )
       : transcribing
         ? 'Transcribing audio…'
         : uploadingFile
@@ -185,7 +177,7 @@ export function Composer(props: ComposerProps) {
       <div
         className={`composer ${
           selectedQueueAvailable && !askingAside ? 'composer--running' : ''
-        } ${askingAside ? 'composer--aside' : ''} ${refresh ? 'composer--refresh' : ''}`}
+        } ${askingAside ? 'composer--aside' : ''} composer--refresh`}
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
@@ -252,53 +244,6 @@ export function Composer(props: ComposerProps) {
         <p aria-label="Session draft status" className="composer-draft-status" role="status">
           Recovered saved draft
         </p>
-      ) : null}
-      {refresh ? (
-        <RuntimeStatus session={selected} compactTokens={compactTokens} onOpen={onOpenRuntime} />
-      ) : (statusline.provider ||
-        (statusline.model && selected.runtime?.model) ||
-        (statusline.effort && selected.runtime?.reasoningEffort) ||
-        (statusline.contextTier && selected.runtime?.contextTier) ||
-        (statusline.contextUsage &&
-          selected.runtime?.contextTokens !== undefined &&
-          selected.runtime.contextTokenLimit)) ? (
-        <button
-          aria-label="Configure model, effort, and context"
-          className="composer-runtime"
-          data-testid="composer-runtime"
-          onClick={onOpenRuntime}
-          type="button"
-        >
-          <SlidersHorizontal aria-hidden="true" size={12} />
-          {statusline.provider ? (
-            <span>
-              {providerName(selected.provider)}
-              {executionModeName(selected.executionMode) ? ` · ${executionModeName(selected.executionMode)}` : ''}
-            </span>
-          ) : null}
-          {statusline.model && selected.runtime?.model ? <RuntimeModelName modelId={selected.runtime.model} /> : null}
-          {statusline.effort && selected.runtime?.reasoningEffort ? (
-            <span>effort {selected.runtime.reasoningEffort}</span>
-          ) : null}
-          {statusline.contextTier && selected.runtime?.contextTier ? (
-            <span>
-              {selected.runtime.contextTokenLimit
-                ? `${compactTokens(selected.runtime.contextTokenLimit)} context`
-                : 'auto context'}
-            </span>
-          ) : null}
-          {statusline.contextUsage &&
-          selected.runtime?.contextTokens !== undefined &&
-          selected.runtime.contextTokenLimit ? (
-            <span>
-                ctx {selected.runtime.contextEstimated ? '~' : ''}
-                {compactTokens(selected.runtime.contextTokens)}/
-                {compactTokens(selected.runtime.contextTokenLimit)} (
-                {Math.round((selected.runtime.contextTokens / selected.runtime.contextTokenLimit) * 100)}
-                %)
-            </span>
-          ) : null}
-        </button>
       ) : null}
       {stateLine ? <p className="composer-hint">{stateLine}</p> : null}
     </footer>

@@ -45,10 +45,11 @@ describe('SettingsProfileStore', () => {
       revision: 7, values: { previewFeatures: { desktopRail: true, hostMonitorView: true } },
     })
     expect(await readFile(file)).toEqual(bytes)
-    // The next preview change writes only known names, so a rollback after it
-    // no longer finds the graduated opt-ins.
-    await reopened.update({ previewFeatures: { value: { desktopRail: false }, baseRevision: 7 } })
-    expect(JSON.parse(await readFile(file, 'utf8')).values.previewFeatures).toEqual({ desktopRail: false })
+    // Saving any setting writes only known names, so a rollback after it no
+    // longer finds the graduated opt-ins.
+    await reopened.update({ accent: { value: 'teal', baseRevision: 7 } })
+    expect(JSON.parse(await readFile(file, 'utf8')).values.previewFeatures)
+      .toEqual({ desktopRail: true, hostMonitorView: true })
   })
 
   it('starts empty with a stable profile identity', async () => {

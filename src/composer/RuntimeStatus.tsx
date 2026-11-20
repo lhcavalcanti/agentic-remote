@@ -18,7 +18,7 @@ export function RuntimeStatus({
     <button
       aria-description={description}
       aria-label="Configure model, effort, and context"
-      className="composer-runtime composer-runtime--refresh"
+      className="composer-runtime"
       data-testid="composer-runtime"
       onClick={onOpen}
       title={description}

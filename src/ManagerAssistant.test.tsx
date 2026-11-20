@@ -153,7 +153,6 @@ function setup(snapshot: ManagerSnapshot = empty, overrides: Partial<Parameters<
   vi.mocked(getManager).mockResolvedValue(snapshot)
   const listeners = new Set<(event: ManagerEvent) => void>()
   const onOpenSession = vi.fn(() => true)
-  const onManagedSessionsChange = vi.fn()
   const onOpenSettings = vi.fn()
   const props = {
     connectionEpoch: 1,
@@ -164,7 +163,6 @@ function setup(snapshot: ManagerSnapshot = empty, overrides: Partial<Parameters<
     defaults: { computerId: 'hub', mode: 'autopilot' as const },
     openSessions: 3,
     onOpenSession,
-    onManagedSessionsChange,
     onOpenSettings,
     ...overrides,
   }
@@ -177,7 +175,6 @@ function setup(snapshot: ManagerSnapshot = empty, overrides: Partial<Parameters<
     emit,
     props,
     onOpenSession,
-    onManagedSessionsChange,
     onOpenSettings,
   }
 }
@@ -999,7 +996,7 @@ describe('ManagerAssistant', () => {
     const props = {
       connectionEpoch: 1, subscribe: () => () => undefined, defaults: {}, openSessions: 0,
       open: false, onOpenChange: vi.fn(), onIndicatorChange, onOpenSession: vi.fn(() => true),
-      onManagedSessionsChange: vi.fn(), onOpenSettings: vi.fn(),
+      onOpenSettings: vi.fn(),
     }
     const view = render(<ManagerAssistant {...props} />)
     await waitFor(() => expect(onIndicatorChange).toHaveBeenLastCalledWith(
@@ -1159,7 +1156,6 @@ describe('ManagerAssistant', () => {
             connectionEpoch={1}
             defaults={{}}
             onIndicatorChange={setIndicator}
-            onManagedSessionsChange={vi.fn()}
             onOpenChange={setOpen}
             onOpenSession={vi.fn(() => true)}
             onOpenSettings={vi.fn()}
@@ -2282,13 +2278,6 @@ describe('ManagerAssistant', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start over' }))
     await waitFor(() => expect(resetManager).toHaveBeenCalled())
     expect(await screen.findByText('Ask about your sessions')).toBeInTheDocument()
-  })
-
-  it('reports the sessions it started and follows changes', async () => {
-    const { emit, onManagedSessionsChange } = setup({ ...empty, managedSessions: ['hub:s1'] })
-    await waitFor(() => expect(onManagedSessionsChange).toHaveBeenLastCalledWith(['hub:s1']))
-    emit({ type: 'manager.sessions', managedSessions: ['hub:s1', 'hub:s2'] })
-    expect(onManagedSessionsChange).toHaveBeenLastCalledWith(['hub:s1', 'hub:s2'])
   })
 
   it('closes on Escape and returns focus to the bubble', async () => {

@@ -40,12 +40,12 @@ describe('hub feature flags', () => {
 
 describe('preview feature authority', () => {
   it('retains known opt-ins and ignores unknown preview names without mutating the input', () => {
-    const previews = { composerRefresh: true, schedulerView: false, futurePreview: true, futureOptions: { enabled: true } }
+    const previews = { desktopRail: true, schedulerView: false, futurePreview: true, futureOptions: { enabled: true } }
     expect(parseSettingValue('previewFeatures', previews)).toEqual({
-      ok: true, value: { composerRefresh: true, schedulerView: false },
+      ok: true, value: { desktopRail: true, schedulerView: false },
     })
     expect(settingsValuesFrom({ appearance: 'light', previewFeatures: previews })).toEqual({
-      appearance: 'light', previewFeatures: { composerRefresh: true, schedulerView: false },
+      appearance: 'light', previewFeatures: { desktopRail: true, schedulerView: false },
     })
     expect(previews.futureOptions).toEqual({ enabled: true })
     expect(parseSettingValue('previewFeatures', { futurePreview: true })).toEqual({ ok: true, value: {} })
@@ -59,14 +59,12 @@ describe('preview feature authority', () => {
 
   it('allows independent previews but masks dependent preferences without changing them', () => {
     const preferences = {
-      composerRefresh: true, desktopRail: true, settingsNavigation: true,
+      desktopRail: true,
       notificationPanel: true, hostMonitorView: true, schedulerView: true,
-      healthCard: true,
-      skillToggles: true,
     }
     expect(effectivePreviewFeatures(preferences, defaultHubFeatureFlags)).toEqual({
-      composerRefresh: true, desktopRail: true, settingsNavigation: true,
-      notificationPanel: false, hostMonitorView: false, schedulerView: false, healthCard: true, skillToggles: true,
+      desktopRail: true,
+      notificationPanel: false, hostMonitorView: false, schedulerView: false,
     })
     expect(preferences.notificationPanel).toBe(true)
     expect(effectivePreviewFeatures(preferences, {
@@ -79,13 +77,13 @@ describe('preview feature authority', () => {
     expect(isPreviewAvailable('notificationPanel', flags)).toBe(true)
     expect(isPreviewAvailable('hostMonitorView', flags)).toBe(false)
     expect(isPreviewAvailable('schedulerView', flags)).toBe(false)
-    expect(isPreviewAvailable('composerRefresh', flags)).toBe(true)
+    expect(isPreviewAvailable('desktopRail', flags)).toBe(true)
   })
 
   it('validates partial boolean preferences and drops malformed cached settings', () => {
-    expect(parseSettingValue('previewFeatures', { composerRefresh: true, schedulerView: false }))
-      .toEqual({ ok: true, value: { composerRefresh: true, schedulerView: false } })
-    for (const invalid of [null, [], true, { composerRefresh: 'on' }]) {
+    expect(parseSettingValue('previewFeatures', { desktopRail: true, schedulerView: false }))
+      .toEqual({ ok: true, value: { desktopRail: true, schedulerView: false } })
+    for (const invalid of [null, [], true, { desktopRail: 'on' }]) {
       expect(parseSettingValue('previewFeatures', invalid).ok).toBe(false)
       expect(settingsValuesFrom({ previewFeatures: invalid })).toEqual({})
     }

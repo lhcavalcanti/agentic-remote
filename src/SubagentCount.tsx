@@ -1,16 +1,14 @@
 import { UsersRound } from 'lucide-react'
 import type { BackgroundTaskSnapshot } from '../shared/contracts'
-import { usePreviewFeature } from './preview-features'
 
 export function SubagentCount({ snapshot, onOpen }: {
   snapshot?: BackgroundTaskSnapshot
   onOpen: () => void
 }) {
-  const enabled = usePreviewFeature('composerRefresh')
   const count = snapshot?.supported ? new Set(snapshot.tasks.filter(
     (task) => task.type === 'agent' && task.status === 'running',
   ).map((task) => task.id)).size : 0
-  if (!enabled || !count) return null
+  if (!count) return null
   return (
     <button
       aria-label={`${count} subagent${count === 1 ? '' : 's'} running`}

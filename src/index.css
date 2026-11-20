@@ -3817,7 +3817,6 @@ button {
 }
 
 .composer-area > .composer,
-.composer-area > .composer-runtime,
 .composer-area > .composer-draft-status,
 .composer-area > .composer-hint {
   flex: 0 0 auto;
@@ -3988,62 +3987,34 @@ button {
   }
 }
 
+/* The session-setup summary sits in the buttons row, in the width its
+   controls leave, and is as tall as they are. */
 .composer-runtime {
   display: flex;
-  width: fit-content;
-  max-width: var(--composer-max-width);
   min-width: 0;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px 10px;
-  margin: 6px 0 0 auto;
-  padding: 2px 3px;
+  min-height: 40px;
+  flex: 1 1 auto;
+  align-items: center;
+  padding: 0 6px;
+  overflow: hidden;
   color: var(--muted);
   border: 0;
-  border-radius: 5px;
+  border-radius: 10px;
   background: transparent;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 9px;
   line-height: 1.35;
-  text-align: right;
+  text-align: left;
   cursor: pointer;
 }
 
 .composer-runtime:hover {
   color: var(--muted-strong);
-  background: var(--panel-raised);
+  background: var(--panel-soft);
 }
 
 .composer-runtime svg {
   flex: 0 0 auto;
-}
-
-.composer-runtime-model {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-/* The refreshed summary sits in the buttons row, in the width its controls
-   leave, and is as tall as they are. */
-.composer-runtime.composer-runtime--refresh {
-  width: auto;
-  max-width: none;
-  min-width: 0;
-  min-height: 40px;
-  flex: 1 1 auto;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: flex-start;
-  margin: 0;
-  padding: 0 6px;
-  overflow: hidden;
-  border-radius: 10px;
-  text-align: left;
-}
-
-.composer-runtime--refresh:hover {
-  background: var(--panel-soft);
 }
 
 /* Sized by the row rather than by its text, so its details drop out by the
@@ -4058,8 +4029,11 @@ button {
   gap: 7px;
 }
 
-.composer-runtime--refresh .composer-runtime-model {
+.composer-runtime-model {
+  display: inline-flex;
   min-width: 0;
+  align-items: center;
+  gap: 4px;
   overflow: hidden;
 }
 
@@ -4887,48 +4861,9 @@ button {
 
 /* Settings are grouped by what they are about: each group's heading, then
    its parts, side by side on a wide screen. */
-.app-settings-nav {
-  position: sticky;
-  z-index: 2;
-  top: -22px;
-  display: flex;
-  gap: 6px;
-  margin: 0 -22px 4px;
-  padding: 10px 22px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  scrollbar-width: none;
-}
-
-.app-settings-nav button {
-  flex: 0 0 auto;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel-soft);
-  color: var(--muted-strong);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.app-settings-nav button:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
-.app-settings-nav button:focus-visible {
-  outline: 2px solid var(--accent-foreground);
-  outline-offset: 2px;
-}
-
 .app-settings-group {
   padding: 20px 0;
   border-top: 1px solid var(--border);
-  /* Clears the sticky jump bar when a group is reached by keyboard. */
-  scroll-margin-top: 64px;
 }
 
 .app-settings-group:first-of-type {
@@ -5818,19 +5753,6 @@ button {
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
   }
 
-  /*
-   * The row, which wraps an attachment or a recording onto a full row of its
-   * own, is the classic composer's. The refreshed composer stays the column it
-   * is on touch, and leaving it out of these rules is simpler than undoing
-   * each one: in a column, a full-row basis takes the whole height and pushes
-   * the text panel and buttons into a second column outside the box.
-   */
-  .composer:not(.composer--refresh) {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: flex-end;
-  }
-
   .composer:focus-within {
     border-color: var(--accent-focus);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 5.5%, transparent);
@@ -5842,11 +5764,6 @@ button {
     border-radius: 0;
     background: transparent;
     box-shadow: none;
-  }
-
-  .composer:not(.composer--refresh) > .composer-attachments {
-    flex: 1 0 100%;
-    padding: 7px 8px 0;
   }
 
   .composer > .composer-text-panel {
@@ -5863,28 +5780,6 @@ button {
      buttons away from it. */
   .composer-actions__spacer {
     display: none;
-  }
-
-  /* Recording replaces the buttons with a status panel that needs the full
-     width, and reads better as its own card than nested inside the box. The
-     refreshed composer gives it the buttons' own full-width row instead. */
-  .composer:not(.composer--refresh):has(.recording-panel) {
-    border-color: transparent;
-    background: transparent;
-    box-shadow: none;
-    gap: 7px;
-  }
-
-  .composer:not(.composer--refresh):has(.recording-panel) > .composer-text-panel {
-    border: 1px solid var(--border-strong);
-    border-radius: 14px;
-    background: var(--panel-raised);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
-    padding: 7px 14px;
-  }
-
-  .composer:not(.composer--refresh) > .recording-panel {
-    flex: 1 0 100%;
   }
  }
 }
@@ -8154,12 +8049,6 @@ button {
     overflow-x: hidden;
   }
 
-  .composer-runtime {
-    gap: 3px 8px;
-    padding: 0 3px;
-    font-size: 9px;
-  }
-
   .composer-text-panel,
   .composer-actions,
   .recording-panel {
@@ -9697,13 +9586,6 @@ button {
   margin: 4px 0 0;
   color: var(--warning);
   font-size: 12px;
-}
-
-.manager-badge {
-  padding-left: 5px;
-  border-left: 1px solid var(--border-strong);
-  border-radius: 0;
-  color: var(--accent);
 }
 
 @media (max-width: 960px) {

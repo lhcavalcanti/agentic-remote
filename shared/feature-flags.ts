@@ -26,25 +26,9 @@ export const defaultHubFeatureFlags: HubFeatureFlags = Object.freeze({
 })
 
 export const previewFeatureCatalogue = {
-  composerRefresh: {
-    label: 'Composer refresh',
-    description: 'Try the refreshed composer controls and session status.',
-  },
   desktopRail: {
     label: 'Desktop rail',
     description: 'Try compact navigation alongside the session list.',
-  },
-  settingsNavigation: {
-    label: 'Settings navigation',
-    description: 'Browse app settings by category.',
-  },
-  healthCard: {
-    label: 'Health card',
-    description: 'View read-only hub startup, version and connection diagnostics.',
-  },
-  skillToggles: {
-    label: 'Skill toggles',
-    description: 'Review and explicitly enable or disable skills on each computer.',
   },
   notificationPanel: {
     label: 'Notification panel',

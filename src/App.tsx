@@ -400,7 +400,6 @@ import { DialogFrame } from './components/DialogFrame'
 import { CloseSessionDialog, RecentlyClosedDialog } from './RecentlyClosed'
 import { useRecentlyClosed } from './use-recently-closed'
 import { CLOSED_SESSION_RETENTION_DAYS } from '../shared/closed-sessions'
-import { ComputersDialog } from './computers/ComputersDialog'
 import { MessageTime } from './MessageTime'
 import { drawnInParts } from './markdown-document/drawing'
 import { useMarkdownDocument } from './markdown-document/use-markdown-document'
@@ -3815,7 +3814,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setShellView('scheduler')
     initialScheduleLink.current = undefined
   }, [schedulerView])
-  const composerRefresh = usePreviewFeature('composerRefresh')
   const initialLocationSelection = useRef(readSelectionFromLocation())
   const initialSessionNavigation = useRef(readStoredSessionNavigation())
   const [sessions, setSessions] = useState<ManagedSession[]>([])
@@ -3826,7 +3824,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const authoritativeRefreshGeneration = useRef(0)
   const [refreshState, setRefreshState] = useState<'fresh' | 'refreshing' | 'stale'>('fresh')
   const [refreshMessage, setRefreshMessage] = useState<string>()
-  const [managedSessionKeys, setManagedSessionKeys] = useState<ReadonlySet<string>>(() => new Set())
   const subscribeManager = useCallback((listener: (event: ManagerEvent) => void) => {
     managerListenersRef.current.add(listener)
     return () => {
@@ -3861,9 +3858,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const measureDesktop = () => setViewportWidth(window.innerWidth)
     window.addEventListener('resize', measureDesktop)
     return () => window.removeEventListener('resize', measureDesktop)
-  }, [])
-  const changeManagedSessions = useCallback((keys: string[]) => {
-    setManagedSessionKeys(new Set(keys))
   }, [])
   const [backgroundTaskSnapshots, setBackgroundTaskSnapshots] = useState<
     Record<string, BackgroundTaskSnapshot>
@@ -4285,8 +4279,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     PendingSessionCreation[]
   >([])
   const [sessionCreationError, setSessionCreationError] = useState<string>()
-  const [computersOpen, setComputersOpen] = useState(false)
-  const settingsNavigation = usePreviewFeature('settingsNavigation')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const navigationWidth = sidebarWidth + (desktopRail && desktopLayout ? 64 : 0)
   const oracleDockReservedLeft =
@@ -5507,7 +5499,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     newSessionOpen ||
     Boolean(closeRequestSession) ||
     recentlyClosedOpen ||
-    computersOpen ||
     statuslineOpen ||
     settingsOpen ||
     runtimeOpen ||
@@ -9607,7 +9598,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       [Boolean(closeRequestSession), () => setCloseRequest(undefined)],
       [recentlyClosedOpen, () => setRecentlyClosedOpen(false)],
       [newSessionOpen, closeNewSession],
-      [computersOpen, () => setComputersOpen(false)],
       [settingsOpen, () => setSettingsOpen(false)],
       [statuslineOpen, () => setStatuslineOpen(false)],
       [runtimeOpen, () => setRuntimeOpen(false)],
@@ -11054,7 +11044,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         sessionsRef.current = upsertSession(sessionsRef.current, updated)
         setSessions((current) => upsertSession(current, updated))
       }
-      if (composerRefresh && !isCommand && !shouldEnqueue && !queuedInstead) {
+      if (!isCommand && !shouldEnqueue && !queuedInstead) {
         foregroundHandoff.accepted(updated, sessionEventSequenceRef.current.get(liveKey) || 0)
       }
     } catch (caught) {
@@ -13541,7 +13531,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               sensors={sensors}
             >
               <SessionNavigation
-                managedSessions={managedSessionKeys}
                 onOpenScheduleRun={(target) => {
                   setScheduleLink(target); setSidebarOpen(false); setShellView('scheduler')
                 }}
@@ -13844,10 +13833,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             aria-label="Manage computers"
             className="icon-button manage-computers-button"
             onClick={() => {
-              if (settingsNavigation) {
-                setSettingsSection('settings-computers')
-                setSettingsOpen(true)
-              } else setComputersOpen(true)
+              setSettingsSection('settings-computers')
+              setSettingsOpen(true)
             }}
             type="button"
           >
@@ -14429,7 +14416,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             cancelling={cancelling}
             readonlyResourceCommand={readonlyResourceCommand}
             composerDraftRecovered={composerDraftRecovered}
-            statusline={statusline}
             phoneEnterCreatesNewline={phoneEnterCreatesNewline()}
             composerRef={composerRef}
             audioInputRef={audioInputRef}
@@ -14792,14 +14778,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         onCreated={created}
         open={newSessionOpen}
       />
-      <ComputersDialog
-        computers={computers}
-        onAdded={computerAdded}
-        onClose={() => setComputersOpen(false)}
-        onRemoved={computerRemoved}
-        onCheckConnection={checkComputerConnections}
-        open={computersOpen}
-      />
       <StatuslineDialog
         onChange={setStatusline}
         onClose={() => setStatuslineOpen(false)}
@@ -15016,7 +14994,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         controlRef={oracleControlRef}
         defaults={managerDefaults}
         onIndicatorChange={setOracleIndicator}
-        onManagedSessionsChange={changeManagedSessions}
         onOpenChange={setOracleOpen}
         onOpenSession={openManagedSession}
         onOpenSettings={() => {

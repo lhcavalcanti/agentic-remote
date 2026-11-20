@@ -1,9 +1,10 @@
-import { Clock3, Sparkles, SquareTerminal, UserRound } from 'lucide-react'
+import { Clock3, SquareTerminal, UserRound } from 'lucide-react'
 import type { SessionProvenance } from '../shared/contracts'
 import { usePreviewFeature } from './preview-features'
+import { OracleIcon } from './oracle-icon'
 import { sessionOriginDescription } from './session-origin'
 
-const icons = { manager: Sparkles, schedule: Clock3, discovered: SquareTerminal, user: UserRound }
+const icons = { manager: OracleIcon, schedule: Clock3, discovered: SquareTerminal, user: UserRound }
 const labels = { manager: 'Oracle', schedule: 'Schedule', discovered: 'External', user: '' }
 
 export function SessionOriginBadge({

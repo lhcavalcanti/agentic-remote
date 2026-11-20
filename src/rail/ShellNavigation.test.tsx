@@ -7,6 +7,7 @@ import { ShellNavigation } from './ShellNavigation'
 import { initials } from './display-name'
 import { DisplayNameSetting } from './DisplayNameSetting'
 import { request } from '../api'
+import { OracleIcon } from '../oracle-icon'
 
 vi.mock('../api', () => ({ request: vi.fn() }))
 afterEach(() => { cleanup(); vi.resetAllMocks() })
@@ -32,6 +33,10 @@ it('gates entries with both previews and authoritative flags and orders actions'
   expect(onSettings).toHaveBeenCalledOnce()
   fireEvent.click(screen.getByRole('button', { name: 'Open Oracle' }))
   expect(onOracle).toHaveBeenCalledOnce()
+  // Oracle's own mark, the one its launcher and panel show.
+  const { container: mark } = render(<OracleIcon aria-hidden="true" />)
+  expect(screen.getByRole('button', { name: 'Open Oracle' }).querySelector('svg')?.getAttribute('class'))
+    .toBe(mark.querySelector('svg')?.getAttribute('class'))
   expect(initials('  Zoë   Lee ')).toBe('ZL')
 })
 

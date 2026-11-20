@@ -1,4 +1,5 @@
-import { Bell, CalendarClock, Monitor, Plus, Settings, Sparkles } from 'lucide-react'
+import { Bell, CalendarClock, Monitor, Plus, Settings } from 'lucide-react'
+import { OracleIcon } from '../oracle-icon'
 import { railEntries, type ClientFeature } from '../features/registry'
 import { usePreviewFeatures } from '../preview-features'
 import { initials, useDisplayName } from './display-name'
@@ -26,7 +27,7 @@ export function ShellNavigation({ displayName, onNewSession, onSettings, onOracl
   if (!entries.length) return null
   return <nav className="shell-rail" aria-label="App navigation" inert={offscreen} aria-hidden={offscreen || undefined}>
     {effective.desktopRail && <div className="shell-rail__top">
-      {oracleAvailable && <button type="button" aria-label="Open Oracle" title="Open Oracle" className="icon-button" onClick={onOracle}><Sparkles aria-hidden="true" size={24} /></button>}
+      {oracleAvailable && <button type="button" aria-label="Open Oracle" title="Open Oracle" className="icon-button" onClick={onOracle}><OracleIcon aria-hidden="true" size={24} strokeWidth={1.8} /></button>}
       <button aria-label="New session" title="New session" onClick={onNewSession} className="icon-button"><Plus size={22} /></button>
     </div>}
     <div className="shell-rail__footer">

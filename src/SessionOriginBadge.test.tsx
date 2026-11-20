@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultHubFeatureFlags, effectivePreviewFeatures } from '../shared/feature-flags'
 import type { BackgroundTask, BackgroundTaskSnapshot, SessionProvenance } from '../shared/contracts'
+import { OracleIcon } from './oracle-icon'
 import { PreviewFeaturesContext } from './preview-features'
 import { readScheduleLink } from './notifications/schedule-link'
 import { SessionOriginBadge } from './SessionOriginBadge'
@@ -28,6 +29,12 @@ describe('session origin badges', () => {
     render(preview(<SessionOriginBadge provenance={{ origin, scheduleName: 'Morning review' }} />))
     expect(screen.getByRole('img', { name: description })).toHaveAttribute('title', description)
     expect(screen.getByRole('img').querySelector('[data-model-family]')).toBeNull()
+  })
+  it("marks a session Oracle started with Oracle's own icon", () => {
+    const { container: mark } = render(<OracleIcon aria-hidden="true" />)
+    render(preview(<SessionOriginBadge provenance={{ origin: 'manager' }} />))
+    expect(screen.getByRole('img', { name: 'Started by Oracle' }).querySelector('svg')?.getAttribute('class'))
+      .toBe(mark.querySelector('svg')?.getAttribute('class'))
   })
   it('preserves the original Oracle badge only when the preview is off', () => {
     const result = render(preview(<SessionOriginBadge provenance={{ origin: 'schedule' }} legacyManaged />, false))

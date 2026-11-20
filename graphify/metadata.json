@@ -636,9 +636,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 260,
+  "communities": 254,
   "community_algorithm": "louvain-seed-42",
-  "edges": 25734,
+  "edges": 25741,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -1201,8 +1201,8 @@
     "server/terminal-process-roots.test.ts": "4dcb5e7333623e53d543a590b06e88712837ba887caa1bf7f04246697a56ce15",
     "server/terminal-queue-delivery.test.ts": "06014e06ae290a7609d8b19688bba5d844eb6c7268338ffb4ad9ef018c46a1f8",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "0e284d06f090c2abd67b09e044b650a31beaacd22b81713b26a9a11346a2bf8b",
-    "server/terminal-session.ts": "034e3d26948b553c1b6789326f324a34b20a9795e72a778458e8f0343e372276",
+    "server/terminal-session.test.ts": "3e738d937d2e00953c59af918a1d9712c937f582cae42ffa7bf4b2e33ab2c089",
+    "server/terminal-session.ts": "f4d1e7767d186137f4ccbd8cb17c46c4f2087b0b5b75a5f129658b22858d39af",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "be15c41392f70dd2d8976f72441d972c885c7bc796e77e94ea186cc4ba22e93c",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -1517,7 +1517,7 @@
     "vite.config.ts": "a60a896cfb1d57a3837faf5c428fe1c90f874a3b0a4136b5a63d21737d54d139"
   },
   "mode": "local-ast-only",
-  "nodes": 8901,
+  "nodes": 8903,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1759,16 +1759,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "28ad610d3d9a0452bf9644ceacde9f4e5f786c371d44d544ec894bbdd5b58fb3",
-    "communities.json": "571107d440c4ea702b35a2a80c240628f89bce6c0a3117d45889288a4f0c2d86",
-    "graph.html": "c6194d46d05c0f87569e4ea7a8dc52c1b5dad24c0fd9f32a465c2c309216d44e",
-    "graph.json": "bcd90013e647ccb827b9ff1888d47e4833ce41d532d52ddb287f61af46f4daeb"
+    "GRAPH_REPORT.md": "28949c0c8e10ecc1c2bb8c06e3e4641b220f36a09501ebc543345c09c9dc41ac",
+    "communities.json": "db9feb644683579bcdb99bb6cc643000f348c05f1e43e7630a38e71896ddcbd1",
+    "graph.html": "b2e80bed3e85a946dcc32edfd39459ca327698656997cb7c49b4fe71f6912217",
+    "graph.json": "8165eaa22ab14fc2317dcf53cbd655cbb328847dabe1ed9a168d477a802a8464"
   },
   "schema_version": 1,
-  "source_commit": "56c04e437c59a284febe51a581cb761c061df96d",
-  "source_fingerprint": "91c3318e5c6fbd7f1c6ff065a44b3aa682ce6745c57d5e34c33925cffb80e81f",
+  "source_commit": "c8e6bae13a5f5dc225496d014995bef7656bb390",
+  "source_fingerprint": "4cd69b02483556f4c579514ebcfdb9506e36459e3167c97c724cdff7baa4473e",
   "working_tree_changes": [
-    "server/terminal-queue-delivery.test.ts",
     "server/terminal-session.test.ts",
     "server/terminal-session.ts"
   ]

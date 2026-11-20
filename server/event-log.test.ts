@@ -205,4 +205,38 @@ describe('readSessionEvents', () => {
     forgetSessionEvents('session-3')
     expect(await readSessionEvents('session-3')).toHaveLength(1)
   })
+
+  it('lets reads that overlap share the cached parse', async () => {
+    // A read that found the cache taken by another in flight parsed the whole
+    // log again: a second copy of every event, for the length of a long log.
+    const directory = await mkdtemp(path.join(tmpdir(), 'event-log-test-'))
+    directories.push(directory)
+    vi.stubEnv('COPILOT_HOME', directory)
+    const sessionDirectory = path.join(directory, 'session-state', 'session-5')
+    await mkdir(sessionDirectory, { recursive: true })
+    const logPath = path.join(sessionDirectory, 'events.jsonl')
+    const event = (id: string) =>
+      `${JSON.stringify({
+        type: 'user.message',
+        id,
+        parentId: null,
+        timestamp: '2026-07-22T00:00:00.000Z',
+        // Past the head sample, so the append alone is not taken for a rewrite.
+        data: { content: 'hello '.repeat(60) },
+      })}\n`
+    await writeFile(logPath, `${event('event-1')}${event('event-2')}`)
+    const [first] = await readSessionEvents('session-5')
+    await appendFile(logPath, event('event-3'))
+
+    const reads = await Promise.all([
+      readSessionEvents('session-5'),
+      readSessionEvents('session-5'),
+      readSessionEvents('session-5'),
+    ])
+
+    for (const events of reads) {
+      expect(events.map((entry) => entry.id)).toEqual(['event-1', 'event-2', 'event-3'])
+      expect(events[0]).toBe(first)
+    }
+  })
 })

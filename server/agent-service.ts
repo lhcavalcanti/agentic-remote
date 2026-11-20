@@ -3450,6 +3450,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return session ? this.publicSession(session) : undefined
   }
 
+  hasSession(id: string): boolean {
+    return this.store.has(id)
+  }
+
   async openSession(id: string): Promise<SessionDetail> {
     const stored = await this.store.readAfterWrites(id)
     // Read as kept: opening one of these must not start its runtime.
@@ -7981,8 +7985,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async listBackgroundTasks(
     sessionId: string,
   ): Promise<BackgroundTaskSnapshot> {
-    const stored = this.store.get(sessionId)
-    if (!stored) {
+    // Asked for every session as the app loads, so the session is read where
+    // it is kept rather than copied with its whole transcript.
+    const suspended = this.store.inspect(sessionId, (session) => Boolean(session.suspended))
+    if (suspended === undefined) {
       throw new Error('Session not found')
     }
     if (this.externalSessionIds.has(sessionId)) {
@@ -7996,7 +8002,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         true,
       )
     }
-    if (stored.suspended) {
+    if (suspended) {
       // Attaching to find out would start the runtime that suspending just
       // put down, and the panel asks for every session as the app loads.
       return this.backgroundTaskTracker.get(sessionId)
@@ -10135,7 +10141,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.stopped ||
       this.activePrompts.has(sessionId) ||
       this.deletedSessionIds.has(sessionId) ||
-      !this.store.get(sessionId)
+      !this.store.has(sessionId)
     ) {
       return
     }
@@ -10159,7 +10165,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.takeInTranscript(sessionId, observed, version, takeIn)
     } finally {
       // Not for a session deleted while it was being read.
-      if (this.store.get(sessionId)) {
+      if (this.store.has(sessionId)) {
         this.transcriptTakeInCosts.set(
           sessionId,
           (takeIn.endedAt ?? performance.now()) - takeIn.startedAt,
@@ -10245,7 +10251,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       this.activePrompts.has(sessionId) ||
       this.deletedSessionIds.has(sessionId) ||
-      !this.store.get(sessionId)
+      !this.store.has(sessionId)
     ) {
       return
     }
@@ -10341,8 +10347,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!this.terminalController.updateNotice) {
       return
     }
-    const stored = this.store.get(sessionId)
-    if (!stored || this.deletedSessionIds.has(sessionId)) {
+    if (!this.store.has(sessionId) || this.deletedSessionIds.has(sessionId)) {
       return
     }
     const now = Date.now()
@@ -10381,14 +10386,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     events?: SessionEvent[],
   ): Promise<void> {
-    const stored = this.store.get(sessionId)
     if (
-      !stored ||
-      stored.pendingUserInput ||
-      stored.pendingPermission ||
       this.activePrompts.has(sessionId) ||
       this.deletedSessionIds.has(sessionId) ||
-      !this.hasUnansweredUserInputRow(stored)
+      !this.store.inspect(sessionId, (session) =>
+        !session.pendingUserInput &&
+        !session.pendingPermission &&
+        this.hasUnansweredUserInputRow(session))
     ) {
       return
     }
@@ -10430,7 +10434,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * Reads the newest running tool row only: an ask-user request that reached
    * the transcript but not the session keeps this cheap for every other poll.
    */
-  private hasUnansweredUserInputRow(stored: SessionDetail): boolean {
+  private hasUnansweredUserInputRow(stored: Pick<SessionDetail, 'messages'>): boolean {
     for (let index = stored.messages.length - 1; index >= 0; index -= 1) {
       const message = stored.messages[index]
       if (
@@ -10491,15 +10495,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return
     }
-    const stored = this.store.get(sessionId)
+    // Polled for every terminal session, so only which requests are pending
+    // is read, not a copy of the session and its whole transcript.
+    const stored = this.store.inspect(sessionId, (session) => ({
+      waiting: Boolean(session.pendingUserInput || session.pendingPermission),
+      permissionId: session.pendingPermission?.requestId,
+      userInputId: session.pendingUserInput?.requestId,
+    }))
     if (!stored || this.deletedSessionIds.has(sessionId)) {
       return
     }
     const now = Date.now()
     const lastCheck = this.terminalUserInputChecks.get(sessionId) || 0
     if (
-      !stored.pendingUserInput &&
-      !stored.pendingPermission &&
+      !stored.waiting &&
       now - lastCheck < 2_000
     ) {
       return
@@ -10514,7 +10523,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } else if (answered?.requestId === permission.requestId) {
         return
       }
-      if (stored.pendingPermission?.requestId === permission.requestId) {
+      if (stored.permissionId === permission.requestId) {
         return
       }
       const updated = await this.store.update(sessionId, (session) => {
@@ -10527,7 +10536,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     if (
-      stored.pendingPermission?.requestId.startsWith('terminal-permission:')
+      stored.permissionId?.startsWith('terminal-permission:')
     ) {
       const continuation = await this.terminalContinuationState(
         sessionId,
@@ -10548,7 +10557,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } else if (answered?.requestId === pending.requestId) {
         return
       }
-      if (stored.pendingUserInput?.requestId === pending.requestId) {
+      if (stored.userInputId === pending.requestId) {
         return
       }
       const updated = await this.store.update(sessionId, (session) => {
@@ -10559,7 +10568,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(updated)
       return
     }
-    if (stored.pendingUserInput?.requestId.startsWith('terminal:')) {
+    if (stored.userInputId?.startsWith('terminal:')) {
       const continuation = await this.terminalContinuationState(
         sessionId,
         this.answeredTerminalInputs.get(sessionId)?.repliedAt,

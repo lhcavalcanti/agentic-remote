@@ -1022,6 +1022,23 @@ export class SessionStore {
     return session ? cloneSession(session) : undefined
   }
 
+  /** Whether `get` would find the session, without copying its history. */
+  has(id: string): boolean {
+    return this.inspect(id, () => true) ?? false
+  }
+
+  /**
+   * Reads a session without copying it, which `get` does with its whole
+   * history. `read` must neither keep nor change what it is given.
+   */
+  inspect<T>(id: string, read: (session: Readonly<StoredSession>) => T): T | undefined {
+    if (!Object.hasOwn(this.state.sessions, id) || this.isRetiredSession(id)) {
+      return undefined
+    }
+    const session = this.state.sessions[id]
+    return session ? read(session) : undefined
+  }
+
   isRetiredSession(id: string): boolean {
     return this.retiredIds(this.state).has(id)
   }

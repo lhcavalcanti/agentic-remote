@@ -95,6 +95,8 @@ async function terminalService(initial: SessionEvent[]) {
       cancel: async () => true,
       capture: async () => '',
       inputReady: async () => true,
+      pendingPermission: async () => undefined,
+      pendingUserInput: async () => undefined,
     },
     async () => undefined,
     async () => undefined,
@@ -171,6 +173,21 @@ describe('tmux session event projection', () => {
 
     expect((await service.listBackgroundTasks(sessionId)).tasks).toEqual(projected(after))
     expect(service.store.get(sessionId)?.messages).toEqual(messagesFromHistory(log.events))
+  })
+
+  it('lists tasks and polls an unchanged log without copying the session', async () => {
+    // A copy carries the whole transcript: for a long session it costs more
+    // than everything else the list or the poll does.
+    const { service, log, refresh } = await terminalService([])
+    await refresh([...launch('first', 1), ...finish('first', 2)])
+    const copies = vi.spyOn(service.store, 'get')
+
+    const { tasks } = await service.listBackgroundTasks(sessionId)
+    await (service as unknown as { syncSessionTranscript(id: string): Promise<void> })
+      .syncSessionTranscript(sessionId)
+
+    expect(copies).not.toHaveBeenCalled()
+    expect(tasks).toEqual(projected(log.events))
   })
 
   it.each([

@@ -37,6 +37,7 @@ const tmuxTests = [
 const slowTests = [
   'e2e/capture-screens.test.ts',
   'graphify/manage.test.ts',
+  'server/agent-service-event-projection.test.ts',
   'server/agent-service-recovery.test.ts',
   'server/agent-service-side-question.test.ts',
   'server/agent-service.test.ts',

@@ -11306,10 +11306,12 @@ describe('AgentService deletion', () => {
 
     // A session whose turn started `sleep 300` in the background, unless
     // `shell` is false, and ended unless `turnOver` is false; `agent` starts
-    // a background agent in it too.
+    // a background agent in it too. `send` replaces the draft with `prompt`.
     async function sendBesideShells(
       initialPane: string,
       { shell = true, turnOver = true, agent = false }: { shell?: boolean; turnOver?: boolean; agent?: boolean } = {},
+      send = (service: AgentService, sessionId: string): Promise<unknown> =>
+        service.sendMessage(sessionId, prompt, false, undefined, true),
     ) {
       const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
       directories.push(directory)
@@ -11360,7 +11362,7 @@ describe('AgentService deletion', () => {
         terminal,
       )
       await service.start()
-      await service.sendMessage(sessionId, prompt, false, undefined, true)
+      await send(service, sessionId)
       return { terminal, sessionId }
     }
 
@@ -11388,6 +11390,20 @@ describe('AgentService deletion', () => {
       const { terminal, sessionId } = await sendBesideShells(initialPane, setup)
 
       expect(terminal.send.mock.calls).toEqual([[sessionId, prompt, false, replacing]])
+    })
+
+    // A command a loaded Copilot drew too late is left behind the same way.
+    it.each([
+      ['in place of its leftover draft', '/usage', { backgroundShellsOnly: { eventLog: expect.any(Function) } }],
+      ['as it always has to an empty prompt', '', {}],
+    ])('hands a command the event log %s', async (_case, draft, evidence) => {
+      const { terminal, sessionId } = await sendBesideShells(
+        pane(shellsWait, draft),
+        {},
+        (service, sessionId) => service.executeCommand(sessionId, '/usage', false, undefined, true),
+      )
+
+      expect(terminal.send.mock.calls).toEqual([[sessionId, '/usage', false, { ...replacing, ...evidence }]])
     })
   })
 

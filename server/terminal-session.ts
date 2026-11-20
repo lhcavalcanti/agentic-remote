@@ -1846,8 +1846,10 @@ export class TmuxTerminalSessionController
     ) {
       throw new TerminalDraftConflictError('owner-changed-before-clear')
     }
-    const currentPane = await capturePane(owner.target)
-    const besideShells = await busyOnlyWithBackgroundShells(currentPane, backgroundShellsOnly)
+    const { pane: currentPane, besideShells } = await captureForReplacement(
+      owner.target,
+      backgroundShellsOnly,
+    )
     if (
       composerText(currentPane) === undefined ||
       !terminalInputReady(currentPane, besideShells) ||
@@ -1882,15 +1884,13 @@ export class TmuxTerminalSessionController
     let previousEmpty: string | undefined
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50))
-      const clearedPane = await capturePane(owner.target, 2_000)
+      const { pane: clearedPane, besideShells: clearedBesideShells } =
+        await captureForReplacement(owner.target, backgroundShellsOnly, 2_000)
       const text = composerText(clearedPane)
       if (
         text !== undefined &&
         !composerHoldsText(clearedPane) &&
-        terminalInputReady(
-          clearedPane,
-          await busyOnlyWithBackgroundShells(clearedPane, backgroundShellsOnly),
-        )
+        terminalInputReady(clearedPane, clearedBesideShells)
       ) {
         if (text === previousEmpty) {
           const finalOwner = await this.owner(sessionId, owner.target, true)
@@ -2233,30 +2233,35 @@ export class TmuxTerminalSessionController
         }
         if (options.replaceExistingInput) {
           // With nothing cleared, the send keeps the working tolerance the
-          // first readiness check granted; a cleared composer must be idle,
-          // or wait only for background shells as the event log still has it.
-          const toleratesWorking = allowWorking && !existingInput
+          // first readiness check granted; a cleared composer must be idle.
+          // Beside background shells, only their wait is borne, read after
+          // the event log said it is all that is left.
           const ownerBeforePaste = await this.owner(
             sessionId,
             currentOwner.target,
             true,
           )
-          paneBeforePaste = await capturePane(currentOwner.target)
-          const besideShells = existingInput &&
-            await busyOnlyWithBackgroundShells(paneBeforePaste, options.backgroundShellsOnly)
+          const reading = await captureForReplacement(
+            currentOwner.target,
+            options.backgroundShellsOnly,
+          )
+          paneBeforePaste = reading.pane
+          const toleratesWorking = options.backgroundShellsOnly
+            ? reading.besideShells
+            : allowWorking && !existingInput
           if (
             !ownerBeforePaste ||
             ownerBeforePaste.pid !== currentOwner.pid ||
             ownerBeforePaste.rootPid !== currentOwner.rootPid ||
             ownerBeforePaste.target !== currentOwner.target ||
             composerText(paneBeforePaste) === undefined ||
-            !terminalInputReady(paneBeforePaste, toleratesWorking || besideShells) ||
+            !terminalInputReady(paneBeforePaste, toleratesWorking) ||
             composerHoldsText(paneBeforePaste) ||
             isTerminalOverlay(paneBeforePaste) ||
             parseTerminalPermission(paneBeforePaste) ||
             parseTerminalUserInput(paneBeforePaste) ||
             parseTerminalFormPrompt(paneBeforePaste) ||
-            (!toleratesWorking && !besideShells && isTerminalAgentWorking(paneBeforePaste))
+            (!toleratesWorking && isTerminalAgentWorking(paneBeforePaste))
           ) {
             throw new TerminalDraftConflictError('new-text')
           }
@@ -2397,11 +2402,16 @@ export class TmuxTerminalSessionController
       try {
         if (idleOnly || backgroundShellsOnly) {
           const current = await capturePane(target)
+          // Beside background shells, Enter goes by the pane read after the
+          // event log, which work drawn during the read shows on.
+          const agreed = backgroundShellsOnly
+            ? await paneAgreeingWithBackgroundShells(target, current, backgroundShellsOnly)
+            : current
           if (
+            agreed === undefined ||
             isTerminalOverlay(current) ||
-            (backgroundShellsOnly
-              ? !(await backgroundShellsAllow(current, backgroundShellsOnly))
-              : isTerminalAgentWorking(current))
+            isTerminalOverlay(agreed) ||
+            (!backgroundShellsOnly && isTerminalAgentWorking(current))
           ) {
             throw new Error('The terminal changed before queued submission')
           }
@@ -3613,8 +3623,34 @@ async function backgroundShellsAllow(
 ): Promise<boolean> {
   const reading = idleButForBackgroundShells(pane)
   if (!reading) return false
+  return shellsEvidenceAgrees(reading, await backgroundShellsOnly.eventLog())
+}
+
+function shellsEvidenceAgrees(
+  reading: 'idle' | 'shells' | undefined,
+  log: BackgroundShellsEvidence,
+): boolean {
+  return reading !== undefined && log.turnOver && (reading === 'idle' || log.shellsRunning)
+}
+
+/**
+ * As backgroundShellsAllow, then the pane read once more: Copilot can draw a
+ * turn or an agent while the log is read and before the log has it, so what
+ * a send does next goes by a pane drawn after the read. That pane, while it
+ * still agrees with the log; otherwise undefined.
+ */
+async function paneAgreeingWithBackgroundShells(
+  target: string,
+  pane: string,
+  backgroundShellsOnly: NonNullable<TerminalSendOptions['backgroundShellsOnly']>,
+  timeout?: number,
+): Promise<string | undefined> {
+  const reading = idleButForBackgroundShells(pane)
+  if (!reading) return undefined
   const log = await backgroundShellsOnly.eventLog()
-  return log.turnOver && (reading === 'idle' || log.shellsRunning)
+  if (!shellsEvidenceAgrees(reading, log)) return undefined
+  const after = await capturePane(target, timeout)
+  return shellsEvidenceAgrees(idleButForBackgroundShells(after), log) ? after : undefined
 }
 
 /**
@@ -3630,6 +3666,24 @@ async function busyOnlyWithBackgroundShells(
   return backgroundShellsOnly !== undefined &&
     isTerminalAgentWorking(pane) &&
     await backgroundShellsAllow(pane, backgroundShellsOnly)
+}
+
+/**
+ * Reads the pane for a replacement to act on, and whether its busy row is only
+ * Copilot's wait for background shells by the evidence. When the log has to be
+ * read, the pane is read again after it, and that later reading is returned.
+ */
+async function captureForReplacement(
+  target: string,
+  backgroundShellsOnly: TerminalSendOptions['backgroundShellsOnly'],
+  timeout?: number,
+): Promise<{ pane: string; besideShells: boolean }> {
+  const pane = await capturePane(target, timeout)
+  if (!backgroundShellsOnly || !isTerminalAgentWorking(pane)) {
+    return { pane, besideShells: false }
+  }
+  const after = await paneAgreeingWithBackgroundShells(target, pane, backgroundShellsOnly, timeout)
+  return after === undefined ? { pane, besideShells: false } : { pane: after, besideShells: true }
 }
 
 function isKnownTerminalFooterRow(

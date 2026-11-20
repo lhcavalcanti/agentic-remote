@@ -4834,10 +4834,12 @@ Permission request (1 remaining)
 describe('a slow Copilot and the draft it leaves behind', () => {
   const message = 'Deliver this once the prompt shows it'
   const leftover = 'An earlier message drawn too late to be sent'
+  const backgroundAgentsWait = ' ● Waiting for background a… · 273 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)'
 
   // A fake Copilot that can be slow to draw a paste, as a heavily loaded one
   // is: `pasteDrawnAfterMs` delays it, and `null` never draws it. Below its
-  // prompt it draws `footer`, or `draftFooter` while the prompt holds text.
+  // prompt it draws `footer`, or `draftFooter` while the prompt holds text,
+  // until `startWork()` has it draw a background agent's busy row instead.
   // It records every paste, clear and submit it receives.
   async function slowCopilot({
     draft = '',
@@ -4869,6 +4871,10 @@ const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + makeComposer(drawn, 
 let input = ''
 process.stdin.setRawMode(true)
 process.stdout.write('\\x1b[?2004h')
+process.on('SIGUSR1', () => {
+  footers.empty = footers.typing = ${JSON.stringify(backgroundAgentsWait)}
+  draw()
+})
 process.stdin.on('data', (data) => {
   input += data.toString()
   while (input) {
@@ -4923,7 +4929,15 @@ draw()
     const received = async () => JSON.parse(await readFile(output, 'utf8')) as {
       pastes: string[]; clears: number; submits: string[]
     }
-    return { controller, sessionId, received }
+    // Read straight from tmux, so that nothing of the controller's runs.
+    const startWork = async () => {
+      process.kill(Number(panePid), 'SIGUSR1')
+      await eventually(
+        async () => (await execFileAsync('tmux', ['capture-pane', '-p', '-t', tmuxSession])).stdout,
+        (pane) => pane.includes('Waiting for background a'),
+      )
+    }
+    return { controller, sessionId, received, startWork }
   }
 
   // What the send logged about this session's paste: never its content.
@@ -4995,7 +5009,6 @@ draw()
       ' ● Waitin… · 136 B ctrl+c interrupt · ctrl+q enqueue GPT-6.1 Sol · High · (9%)',
     ],
   ] as const
-  const backgroundAgentsWait = ' ● Waiting for background a… · 273 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)'
   const shellsOnly = { turnOver: true, shellsRunning: true }
   const replacingBesideShells = (eventLog: () => Promise<{ turnOver: boolean; shellsRunning: boolean }>) => ({
     allowDuringAgentExecution: true,
@@ -5060,6 +5073,52 @@ draw()
     expect(turnOpened).toBe(true)
     await new Promise((resolve) => setTimeout(resolve, 300))
     expect(await received()).toEqual({ pastes: [], clears: 1, submits: [] })
+  }, 20_000)
+
+  // Copilot can draw an agent at work while the event log is being read, and
+  // before the log has it. Whatever the send does next must go by a pane
+  // drawn after that read.
+  it.each([
+    ['the clear', 'terminal-draft-conflict.changed-before-clear', { pastes: [], clears: 0, submits: [] }],
+    ['the paste', 'terminal-draft-conflict.new-text', { pastes: [], clears: 1, submits: [] }],
+    ['Enter', undefined, { pastes: [message], clears: 1, submits: [] }],
+  ] as const)('does nothing over work drawn while the log is read before %s', async (step, reasonCode, expected) => {
+    const { controller, sessionId, received, startWork } = await slowCopilot({
+      draft: leftover, footer: shellsWaits[0][0],
+    })
+    // The next read of the log is the last before the step: once the clear's
+    // owner check follows a read, once the clear is confirmed, or once the
+    // paste is in.
+    let logRead = false
+    let armed = false
+    let started = false
+    const owner = controller['owner'].bind(controller)
+    controller['owner'] = async (...args: Parameters<typeof owner>) => {
+      const { clears } = await received()
+      if (step === 'the clear' ? logRead && !clears : step === 'the paste' && clears) armed = true
+      return owner(...args)
+    }
+    const eventLog = async () => {
+      logRead = true
+      if (step === 'Enter' && (await received()).pastes.length) armed = true
+      if (armed && !started) {
+        started = true
+        await startWork()
+      }
+      // Not yet in the log.
+      return shellsOnly
+    }
+
+    await expect(controller.send(sessionId, message, false, replacingBesideShells(eventLog)))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: step === 'Enter',
+        ...(reasonCode ? { reasonCode } : {}),
+      })
+
+    expect(started).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual(expected)
   }, 20_000)
 })
 

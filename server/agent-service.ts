@@ -5782,13 +5782,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // and replacing it means clearing it. When only shells outlive the turn,
     // Copilot keeps its busy row beside that draft, cut to fit, and the row
     // cannot tell that wait from work: the event log decides, as it does for
-    // the queue, and the terminal asks it again before and after the clear.
-    let besideBackgroundShells = false
-    if (steer && replaceTerminalDraft && terminalPane !== undefined &&
-        terminalDraftMayBeBesideBackgroundShells(terminalPane)) {
-      const log = await this.readBackgroundShellsEvidence(sessionId)
-      besideBackgroundShells = log.turnOver && log.shellsRunning
-    }
+    // the queue, and the terminal asks it again around the clear.
+    const besideBackgroundShells = steer && replaceTerminalDraft &&
+      (await this.draftBesideBackgroundShells(sessionId, terminalPane))
     // Discovery can hold the queue behind Reopen while this send reads the
     // pane and decides, or while the controller reads it again before typing.
     // A held session is not eligible to queue, so the send would otherwise be
@@ -7458,10 +7454,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         current.queuedDispatch?.attemptId !== queuedDelivery.attemptId
       ) throw queueConflict('The session is no longer idle and available for this command.')
     }
+    // As for a message: a command drawn too late is left in the prompt too.
+    const besideBackgroundShells = !catalog.session &&
+      commandInfo?.allowDuringAgentExecution === true && replaceTerminalDraft &&
+      (await this.draftBesideBackgroundShells(
+        sessionId,
+        before ?? (await this.terminalController.capture?.(sessionId)),
+      ))
     const sendOptions: TerminalSendOptions | undefined = commandInfo?.allowDuringAgentExecution
       ? {
           allowDuringAgentExecution: true,
           ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+          ...(besideBackgroundShells
+            ? { backgroundShellsOnly: { eventLog: () => this.readBackgroundShellsEvidence(sessionId) } }
+            : {}),
         }
       : replaceTerminalDraft
         ? { replaceExistingInput: true }
@@ -11861,6 +11867,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } catch {
       return { turnOver: false, shellsRunning: false }
     }
+  }
+
+  /**
+   * Whether the pane holds a draft beside what may be Copilot's wait for
+   * background shells, and the event log agrees that only shells are left.
+   */
+  private async draftBesideBackgroundShells(sessionId: string, pane: string | undefined): Promise<boolean> {
+    if (pane === undefined || !terminalDraftMayBeBesideBackgroundShells(pane)) return false
+    const log = await this.readBackgroundShellsEvidence(sessionId)
+    return log.turnOver && log.shellsRunning
   }
 
   private hasStartupQueueLifecycle(sessionId: string, session: SessionDetail | undefined): boolean {

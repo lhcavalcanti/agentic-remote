@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { filterSentMessages } from '../src/composer/composer-state.js'
-import { messagesFromHistory } from './agent-service.js'
+import { checkedMessagesFromHistory as messagesFromHistory } from './transcript-test-helpers.js'
 import {
   forgetSessionEvents,
   readSessionEvents,

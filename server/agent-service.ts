@@ -591,8 +591,8 @@ function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
 function activityGroupIdFor(
   parentToolCallId: string | undefined,
   agentId: string | undefined,
-  toolStartsByCallId: Map<string, ActivityToolStart>,
-  subagentParentsByAgentId: Map<string, string>,
+  toolStartsByCallId: Pick<ReadonlyMap<string, ActivityToolStart>, 'get'>,
+  subagentParentsByAgentId: Pick<ReadonlyMap<string, string>, 'get'>,
 ): string | undefined {
   const candidateParents = [
     parentToolCallId,
@@ -618,8 +618,41 @@ function activityGroupIdFor(
   return undefined
 }
 
+/** A transcript projection that takes in its log a few events at a time. */
+export interface TranscriptBuilder {
+  /** Takes in events that follow every event applied so far. */
+  apply(events: readonly SessionEvent[]): void
+  /**
+   * The transcript as of the events applied so far. Its rows are frozen, and
+   * one that has not changed since the previous call is that call's row again,
+   * so a snapshot of a long history copies only what changed.
+   */
+  messages(): ChatMessage[]
+}
+
 /** Provider-owned events, shared by tmux/discovery and SDK history hydration. */
-export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
+export function messagesFromHistory(events: readonly SessionEvent[]): ChatMessage[] {
+  const builder = createTranscriptBuilder()
+  builder.apply(events)
+  return builder.messages()
+}
+
+/** A row as handed out: a frozen copy the builder never changes afterwards. */
+function publishedMessage(message: ChatMessage): ChatMessage {
+  const copy = { ...message }
+  // The only nested value the builder writes.
+  if (message.taskCompletion) {
+    copy.taskCompletion = Object.freeze({ ...message.taskCompletion })
+  }
+  return Object.freeze(copy)
+}
+
+/**
+ * `messagesFromHistory` as state that persists between calls, so a growing log
+ * costs only its new events. Applying a log in any number of pieces gives the
+ * same transcript as applying it whole.
+ */
+export function createTranscriptBuilder(): TranscriptBuilder {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
   const pendingTaskCompletions = new Map<
@@ -638,33 +671,47 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     ActivityToolStart
   >()
   const subagentParentsByAgentId = new Map<string, string>()
-  for (const event of events) {
-    if (event.type === 'tool.execution_start') {
-      toolStartsByCallId.set(event.data.toolCallId, {
-        kind: activityKind(event.data),
-        parentToolCallId: stringValue(
-          recordValue(event.data).parentToolCallId,
-        ),
-        toolCallId: event.data.toolCallId,
-      })
-    } else if (event.type === 'subagent.started' && event.agentId) {
-      subagentParentsByAgentId.set(event.agentId, event.data.toolCallId)
-    }
+  // A row's group is read from what each call and agent was started as, and a
+  // start logged after the row can change it. The starts every grouping
+  // consulted are remembered, so the rows are regrouped only when a later
+  // start changes one of those.
+  const groupedRows: Array<{
+    message: ChatMessage
+    parentToolCallId?: string
+    agentId?: string
+  }> = []
+  const consultedCalls = new Set<string>()
+  const consultedAgents = new Set<string>()
+  let regroup = false
+  const consultedStarts = {
+    get: (toolCallId: string) => {
+      consultedCalls.add(toolCallId)
+      return toolStartsByCallId.get(toolCallId)
+    },
   }
-  const activityGroupId = (event: SessionEvent): string | undefined => {
-    return activityGroupIdFor(
-      stringValue(recordValue(event.data).parentToolCallId),
-      event.agentId,
-      toolStartsByCallId,
-      subagentParentsByAgentId,
-    )
+  const consultedParents = {
+    get: (agentId: string) => {
+      consultedAgents.add(agentId)
+      return subagentParentsByAgentId.get(agentId)
+    },
   }
+  const activityGroupId = (
+    parentToolCallId: string | undefined,
+    agentId: string | undefined,
+  ): string | undefined =>
+    activityGroupIdFor(parentToolCallId, agentId, consultedStarts, consultedParents)
   // Every running activity, and the first message for each ID, so neither
   // finishing activities nor completing a tool rescans the whole transcript.
   // Long histories otherwise cost time quadratic in their length.
   const runningActivities = new Set<ChatMessage>()
   const messagesById = new Map<string, ChatMessage>()
+  // What the last snapshot handed out, where each row sits, and the rows
+  // changed since.
+  let published: ChatMessage[] = []
+  const positions = new Map<ChatMessage, number>()
+  const changed = new Set<ChatMessage>()
   const append = (message: ChatMessage) => {
+    positions.set(message, messages.length)
     messages.push(message)
     if (!messagesById.has(message.id)) messagesById.set(message.id, message)
     if (message.role === 'activity' && message.activityStatus === 'running') {
@@ -676,6 +723,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   ) => {
     for (const message of runningActivities) {
       message.activityStatus = activityStatus
+      changed.add(message)
     }
     runningActivities.clear()
   }
@@ -698,151 +746,207 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       toolCallId,
       completedAt,
     }
+    changed.add(message)
   }
-  for (const event of events) {
-    if (event.type === 'user.message') {
-      if (stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
+  const apply = (events: readonly SessionEvent[]): void => {
+    for (const event of events) {
+      if (event.type === 'tool.execution_start') {
+        const start: ActivityToolStart = {
+          kind: activityKind(event.data),
+          parentToolCallId: stringValue(
+            recordValue(event.data).parentToolCallId,
+          ),
+          toolCallId: event.data.toolCallId,
+        }
+        const previous = toolStartsByCallId.get(start.toolCallId)
+        regroup ||= consultedCalls.has(start.toolCallId) && (
+          previous?.kind !== start.kind ||
+          previous.parentToolCallId !== start.parentToolCallId
+        )
+        toolStartsByCallId.set(start.toolCallId, start)
+      } else if (event.type === 'subagent.started' && event.agentId) {
+        regroup ||= consultedAgents.has(event.agentId) &&
+          subagentParentsByAgentId.get(event.agentId) !== event.data.toolCallId
+        subagentParentsByAgentId.set(event.agentId, event.data.toolCallId)
+      }
+    }
+    for (const event of events) {
+      if (event.type === 'user.message') {
+        if (stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
+          continue
+        }
+        pendingTaskCompletions.clear()
+        const content = visibleUserContent(event.data.content)
+        if (content) {
+          finishRunningActivities()
+          append({
+            id: event.id,
+            role: 'user',
+            content,
+            createdAt: event.timestamp,
+            deliveryConfirmed: true,
+          })
+        }
         continue
       }
-      pendingTaskCompletions.clear()
-      const content = visibleUserContent(event.data.content)
-      if (content) {
-        finishRunningActivities()
-        append({
-          id: event.id,
-          role: 'user',
-          content,
-          createdAt: event.timestamp,
-          deliveryConfirmed: true,
-        })
-      }
-      continue
-    }
-    if (event.type === 'assistant.message' && !eventAgentId(event)) {
-      const content = event.data.content.trim()
-      if (content) {
-        finishRunningActivities()
-        append({
-          id: event.data.messageId || event.id,
-          role: 'assistant',
-          content,
-          createdAt: event.timestamp,
-        })
-      }
-      continue
-    }
-    if (event.type === 'tool.execution_start') {
-      const toolCallId = event.data.toolCallId
-      const toolName = event.data.toolName
-        .toLowerCase()
-        .replaceAll('-', '_')
-      if (toolName === 'task_complete' && !eventAgentId(event)) {
-        const summary = stringValue(
-          recordValue(event.data.arguments).summary,
-        )?.trim()
-        taskCompletionSummaries.set(toolCallId, summary || '')
-      }
-      append({
-        id: `tool:${toolCallId}`,
-        role: 'activity',
-        content: toolActivityContent(event.data),
-        createdAt: event.timestamp,
-        activityStatus: 'running',
-        activityKind: activityKind(event.data),
-        activityGroupId: activityGroupId(event),
-      })
-      continue
-    }
-    if (event.type === 'tool.execution_complete') {
-      const toolCallId = event.data.toolCallId
-      const message = messagesById.get(`tool:${toolCallId}`)
-      if (message) {
-        runningActivities.delete(message)
-        message.activityStatus = event.data.success ? 'completed' : 'failed'
-        const resultContent = activityResult(event.data, event.data.success)
-        const duration = activityDuration(message.createdAt, event.timestamp)
-        if (resultContent) {
-          message.activityResult = resultContent
-        }
-        if (duration !== undefined) {
-          message.activityDurationMs = duration
-        }
-        if (event.data.success && taskCompletionSummaries.has(toolCallId)) {
-          const fallbackSummary =
-            taskCompletionSummaries.get(toolCallId) || undefined
-          if (fallbackSummary) {
-            finishRunningActivities()
-          }
-          pendingTaskCompletions.set(event.id, {
-            activityContent: message.content,
-            completedAt: event.timestamp,
-            fallbackSummary,
-            message,
-            startedAt: message.createdAt,
-            toolCallId,
+      if (event.type === 'assistant.message' && !eventAgentId(event)) {
+        const content = event.data.content.trim()
+        if (content) {
+          finishRunningActivities()
+          append({
+            id: event.data.messageId || event.id,
+            role: 'assistant',
+            content,
+            createdAt: event.timestamp,
           })
-          if (fallbackSummary) {
-            renderTaskCompletion(
-              message,
-              toolCallId,
+        }
+        continue
+      }
+      if (event.type === 'tool.execution_start') {
+        const toolCallId = event.data.toolCallId
+        const toolName = event.data.toolName
+          .toLowerCase()
+          .replaceAll('-', '_')
+        if (toolName === 'task_complete' && !eventAgentId(event)) {
+          const summary = stringValue(
+            recordValue(event.data.arguments).summary,
+          )?.trim()
+          taskCompletionSummaries.set(toolCallId, summary || '')
+        }
+        const parentToolCallId = stringValue(
+          recordValue(event.data).parentToolCallId,
+        )
+        const message: ChatMessage = {
+          id: `tool:${toolCallId}`,
+          role: 'activity',
+          content: toolActivityContent(event.data),
+          createdAt: event.timestamp,
+          activityStatus: 'running',
+          activityKind: activityKind(event.data),
+          activityGroupId: activityGroupId(parentToolCallId, event.agentId),
+        }
+        append(message)
+        groupedRows.push({ message, parentToolCallId, agentId: event.agentId })
+        continue
+      }
+      if (event.type === 'tool.execution_complete') {
+        const toolCallId = event.data.toolCallId
+        const message = messagesById.get(`tool:${toolCallId}`)
+        if (message) {
+          runningActivities.delete(message)
+          changed.add(message)
+          message.activityStatus = event.data.success ? 'completed' : 'failed'
+          const resultContent = activityResult(event.data, event.data.success)
+          const duration = activityDuration(message.createdAt, event.timestamp)
+          if (resultContent) {
+            message.activityResult = resultContent
+          }
+          if (duration !== undefined) {
+            message.activityDurationMs = duration
+          }
+          if (event.data.success && taskCompletionSummaries.has(toolCallId)) {
+            const fallbackSummary =
+              taskCompletionSummaries.get(toolCallId) || undefined
+            if (fallbackSummary) {
+              finishRunningActivities()
+            }
+            pendingTaskCompletions.set(event.id, {
+              activityContent: message.content,
+              completedAt: event.timestamp,
               fallbackSummary,
-              event.timestamp,
-            )
+              message,
+              startedAt: message.createdAt,
+              toolCallId,
+            })
+            if (fallbackSummary) {
+              renderTaskCompletion(
+                message,
+                toolCallId,
+                fallbackSummary,
+                event.timestamp,
+              )
+            }
           }
         }
       }
-    }
-    if (event.type === 'session.task_complete' && !eventAgentId(event)) {
-      const completionEventId =
-        event.parentId && pendingTaskCompletions.has(event.parentId)
-          ? event.parentId
-        : pendingTaskCompletions.size === 1
-          ? pendingTaskCompletions.keys().next().value
+      if (event.type === 'session.task_complete' && !eventAgentId(event)) {
+        const completionEventId =
+          event.parentId && pendingTaskCompletions.has(event.parentId)
+            ? event.parentId
+          : pendingTaskCompletions.size === 1
+            ? pendingTaskCompletions.keys().next().value
+            : undefined
+        const completion = completionEventId
+          ? pendingTaskCompletions.get(completionEventId)
           : undefined
-      const completion = completionEventId
-        ? pendingTaskCompletions.get(completionEventId)
-        : undefined
-      const summary =
-        event.data.summary?.trim() || completion?.fallbackSummary
-      if (completion && summary && taskCompletionAccepted(event)) {
-        renderTaskCompletion(
-          completion.message,
-          completion.toolCallId,
-          summary,
-          completion.completedAt,
-          !completion.fallbackSummary,
-        )
-      } else if (completion?.fallbackSummary) {
-        completion.message.role = 'activity'
-        completion.message.content = completion.activityContent
-        completion.message.createdAt = completion.startedAt
-        completion.message.activityStatus = 'completed'
-        delete completion.message.taskCompletion
+        const summary =
+          event.data.summary?.trim() || completion?.fallbackSummary
+        if (completion && summary && taskCompletionAccepted(event)) {
+          renderTaskCompletion(
+            completion.message,
+            completion.toolCallId,
+            summary,
+            completion.completedAt,
+            !completion.fallbackSummary,
+          )
+        } else if (completion?.fallbackSummary) {
+          completion.message.role = 'activity'
+          completion.message.content = completion.activityContent
+          completion.message.createdAt = completion.startedAt
+          completion.message.activityStatus = 'completed'
+          delete completion.message.taskCompletion
+          changed.add(completion.message)
+        }
+        if (completionEventId) {
+          pendingTaskCompletions.delete(completionEventId)
+        }
       }
-      if (completionEventId) {
-        pendingTaskCompletions.delete(completionEventId)
+      if (
+        event.type === 'assistant.turn_end' ||
+        event.type === 'session.idle' ||
+        event.type === 'abort' ||
+        event.type === 'session.error' ||
+        event.type === 'session.shutdown'
+      ) {
+        if (!eventAgentId(event)) {
+          pendingTaskCompletions.clear()
+        }
+        finishRunningActivities(
+          event.type === 'abort' ||
+            event.type === 'session.error' ||
+            event.type === 'session.shutdown'
+            ? 'failed'
+            : 'completed',
+        )
       }
     }
-    if (
-      event.type === 'assistant.turn_end' ||
-      event.type === 'session.idle' ||
-      event.type === 'abort' ||
-      event.type === 'session.error' ||
-      event.type === 'session.shutdown'
-    ) {
-      if (!eventAgentId(event)) {
-        pendingTaskCompletions.clear()
+    if (regroup) {
+      regroup = false
+      for (const row of groupedRows) {
+        const groupId = activityGroupId(row.parentToolCallId, row.agentId)
+        if (row.message.activityGroupId !== groupId) {
+          row.message.activityGroupId = groupId
+          changed.add(row.message)
+        }
       }
-      finishRunningActivities(
-        event.type === 'abort' ||
-          event.type === 'session.error' ||
-          event.type === 'session.shutdown'
-          ? 'failed'
-          : 'completed',
-      )
     }
   }
-  return messages
+  const snapshot = (): ChatMessage[] => {
+    const next = published.slice()
+    for (const message of changed) {
+      const position = positions.get(message)
+      if (position !== undefined && position < published.length) {
+        next[position] = publishedMessage(message)
+      }
+    }
+    for (let position = published.length; position < messages.length; position += 1) {
+      next.push(publishedMessage(messages[position]))
+    }
+    changed.clear()
+    published = next
+    return next.slice()
+  }
+  return { apply, messages: snapshot }
 }
 
 function stringArray(value: unknown): string[] {

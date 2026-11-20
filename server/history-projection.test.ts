@@ -1,6 +1,7 @@
 import type { SessionEvent } from '@github/copilot-sdk'
 import { describe, expect, it } from 'vitest'
-import { messagesFromHistory } from './agent-service.js'
+import { createTranscriptBuilder, messagesFromHistory } from './agent-service.js'
+import { checkedMessagesFromHistory } from './transcript-test-helpers.js'
 
 /** A soak run sets this to explore new seeds; failures name the seed. */
 const seedOffset = Number(process.env.PROPERTY_SEED_OFFSET ?? 0)
@@ -140,7 +141,7 @@ describe('messagesFromHistory', () => {
 
   it('completes the first activity sharing a tool call ID and leaves a later duplicate running', () => {
     const at = '2026-01-01T00:00:00.000Z'
-    const messages = messagesFromHistory([
+    const messages = checkedMessagesFromHistory([
       { type: 'tool.execution_start', id: 'a', parentId: null, timestamp: at, data: { toolCallId: 'same', toolName: 'bash', arguments: {} } },
       { type: 'tool.execution_start', id: 'b', parentId: null, timestamp: at, data: { toolCallId: 'same', toolName: 'bash', arguments: {} } },
       { type: 'tool.execution_complete', id: 'c', parentId: null, timestamp: at, data: { toolCallId: 'same', success: false } },
@@ -162,5 +163,119 @@ describe('messagesFromHistory', () => {
     const small = time(5_000)
     const large = time(20_000)
     expect(large / small).toBeLessThan(10)
+  })
+})
+
+describe('transcript builder', () => {
+  const at = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString()
+  const start = (id: string, second: number, data: Record<string, unknown>, agentId?: string) =>
+    ({
+      type: 'tool.execution_start', id, parentId: null, timestamp: at(second),
+      ...(agentId ? { agentId } : {}), data: { arguments: {}, ...data },
+    }) as SessionEvent
+
+  it('regroups an activity when the tool that groups it is logged after it', () => {
+    const child = start('child', 1, { toolCallId: 'child-call', toolName: 'view', parentToolCallId: 'agent-call' })
+    const parent = start('parent', 2, { toolCallId: 'agent-call', toolName: 'task', arguments: { agent_type: 'explore' } })
+    const builder = createTranscriptBuilder()
+
+    builder.apply([child])
+    expect(builder.messages()[0].activityGroupId).toBeUndefined()
+    builder.apply([parent])
+
+    expect(builder.messages()[0].activityGroupId).toBe('tool:agent-call')
+    expect(builder.messages()).toStrictEqual(messagesFromHistory([child, parent]))
+  })
+
+  it("regroups an agent's activity when its start is logged after it", () => {
+    const task = start('task', 1, { toolCallId: 'agent-call', toolName: 'task', arguments: { agent_type: 'explore' } })
+    const work = start('work', 2, { toolCallId: 'work-call', toolName: 'view' }, 'agent-1')
+    const started = {
+      type: 'subagent.started', id: 'started', parentId: null, timestamp: at(3), agentId: 'agent-1',
+      data: { toolCallId: 'agent-call', agentName: 'explore', agentDisplayName: 'Explore', agentDescription: 'Explore' },
+    } as SessionEvent
+    const builder = createTranscriptBuilder()
+
+    builder.apply([task, work])
+    expect(builder.messages()[1].activityGroupId).toBeUndefined()
+    builder.apply([started])
+
+    expect(builder.messages()[1].activityGroupId).toBe('tool:agent-call')
+  })
+
+  it('hands out frozen rows and reuses those that have not changed since', () => {
+    const builder = createTranscriptBuilder()
+    builder.apply([
+      { type: 'user.message', id: 'ask', parentId: null, timestamp: at(0), data: { content: 'Look around' } } as SessionEvent,
+      start('look', 1, { toolCallId: 'look-call', toolName: 'view' }),
+    ])
+    const first = builder.messages()
+    builder.apply([{
+      type: 'tool.execution_complete', id: 'looked', parentId: null, timestamp: at(2),
+      data: { toolCallId: 'look-call', success: true },
+    } as SessionEvent])
+    const second = builder.messages()
+
+    expect(first.every((message) => Object.isFrozen(message))).toBe(true)
+    expect(second[0]).toBe(first[0])
+    expect(first[1].activityStatus).toBe('running')
+    expect(second[1].activityStatus).toBe('completed')
+  })
+
+  /**
+   * Histories with everything that groups, renames or reverts a row: nested
+   * tool calls whose parents may be logged late, agents whose start may come
+   * after their work, repeated call ids, and task completions.
+   */
+  function groupedEventsFor(seed: number, length: number): SessionEvent[] {
+    const next = random(seed)
+    const pick = <T,>(values: readonly T[]) => values[Math.floor(next() * values.length)]
+    const events: SessionEvent[] = []
+    for (let index = 0; index < length; index += 1) {
+      const base = { id: `event-${index}`, parentId: null, timestamp: at(index) }
+      const toolCallId = `call-${Math.floor(next() * 8)}`
+      const agentId = next() < 0.3 ? pick(['agent-1', 'agent-2']) : undefined
+      const kind = next()
+      if (kind < 0.1) {
+        events.push({ ...base, type: 'user.message', data: { content: `ask ${index}`, ...(next() < 0.2 ? { source: 'agent-x' } : {}) } } as SessionEvent)
+      } else if (kind < 0.18) {
+        events.push({ ...base, ...(agentId ? { agentId } : {}), type: 'assistant.message', data: { messageId: `message-${index}`, content: `reply ${index}` } } as SessionEvent)
+      } else if (kind < 0.5) {
+        const toolName = pick(['bash', 'view', 'task', 'skill', 'task_complete'])
+        events.push({
+          ...base, ...(agentId ? { agentId } : {}), type: 'tool.execution_start',
+          data: {
+            toolCallId, toolName,
+            ...(next() < 0.5 ? { parentToolCallId: `call-${Math.floor(next() * 8)}` } : {}),
+            arguments: toolName === 'task_complete' ? { summary: next() < 0.7 ? `summary ${index}` : '' } : { command: 'true' },
+          },
+        } as SessionEvent)
+      } else if (kind < 0.72) {
+        events.push({
+          ...base, type: 'tool.execution_complete',
+          data: { toolCallId, success: next() < 0.8, ...(next() < 0.5 ? { result: { content: `result ${index}` } } : {}) },
+        } as SessionEvent)
+      } else if (kind < 0.8) {
+        events.push({ ...base, agentId: pick(['agent-1', 'agent-2']), type: 'subagent.started', data: { toolCallId, agentName: 'explore' } } as unknown as SessionEvent)
+      } else if (kind < 0.88) {
+        events.push({
+          ...base,
+          ...(next() < 0.5 ? { parentId: `event-${Math.max(0, index - 1 - Math.floor(next() * 3))}` } : {}),
+          ...(agentId ? { agentId } : {}),
+          type: 'session.task_complete',
+          data: { summary: next() < 0.6 ? `final ${index}` : '', ...(next() < 0.2 ? { success: false } : {}), ...(next() < 0.1 ? { outcome: 'continue' } : {}) },
+        } as SessionEvent)
+      } else {
+        events.push({ ...base, ...(agentId ? { agentId } : {}), type: pick(terminalTypes), data: {} } as SessionEvent)
+      }
+    }
+    return events
+  }
+
+  it('agrees with the full scan at every prefix of generated histories', () => {
+    for (let seed = seedOffset + 1; seed <= seedOffset + 120; seed += 1) {
+      checkedMessagesFromHistory(eventsFor(seed, 5 + (seed % 25)), `plain seed ${seed}`)
+      checkedMessagesFromHistory(groupedEventsFor(seed, 5 + (seed % 35)), `grouped seed ${seed}`)
+    }
   })
 })

@@ -235,16 +235,6 @@ interface PendingTerminalQueueSettlement {
   quiet?: boolean
 }
 
-/**
- * A terminal queue head known to be waiting, kept apart from what the reader
- * is shown of it: a wait for Copilot's prompt usually ends by itself.
- */
-interface TerminalQueueWait {
-  promptId: string
-  /** When the pane was first found empty or unreadable in this wait. */
-  unreadableSince?: number
-}
-
 type UserInputHandler = NonNullable<SessionConfig['onUserInputRequest']>
 type UserInputRequest = Parameters<UserInputHandler>[0]
 type UserInputResponse = Awaited<ReturnType<UserInputHandler>>
@@ -2122,7 +2112,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly terminalQueueRetryTimers = new Map<string, NodeJS.Timeout>()
   /** What the reader is shown of a waiting terminal queue head. */
   private readonly terminalQueueStates = new Map<string, QueueState>()
-  private readonly terminalQueueWaits = new Map<string, TerminalQueueWait>()
+  /**
+   * The head each terminal queue is known to be waiting with, whether or not
+   * the reader is told: a wait for Copilot's prompt usually ends by itself.
+   */
+  private readonly terminalQueueWaits = new Map<string, string>()
+  /** When a waiting head's pane was first found empty or unreadable. */
+  private readonly terminalQueueUnreadable = new Map<string, { promptId: string; since: number }>()
   private terminalComposerUnreadableGraceMs = TERMINAL_COMPOSER_UNREADABLE_GRACE_MS
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
@@ -3099,6 +3095,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.terminalQueueRetryTimers.clear()
     this.terminalQueueStates.clear()
     this.terminalQueueWaits.clear()
+    this.terminalQueueUnreadable.clear()
     for (const session of this.store.list()) {
       this.backgroundTaskTracker.remove(session.id)
     }
@@ -11723,7 +11720,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (stored.status !== 'idle' && !midTurnSteer) {
         this.retryTerminalQueueClaim(sessionId)
         // Copilot is working by its log, which ends this wait by itself.
-        this.withdrawTerminalQueueNotice(sessionId, stored)
+        this.quietTerminalQueueWait(sessionId, stored)
         return false
       }
       if (!isCurrent()) {
@@ -11737,12 +11734,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const before = await this.terminalController.capture?.(sessionId)
       if (before && isTerminalSessionInUseConflict(before)) {
         if (this.retryTerminalQueueClaim(sessionId)) {
+          this.terminalQueueUnreadable.delete(sessionId)
           this.showTerminalQueueNotice(sessionId, stored, next.id, sessionInUseQueueMessage(before))
         }
         return false
       }
       if (startup && (!before?.trim() || composerHoldsText(before))) {
-        this.retryTerminalQueueClaim(sessionId, !before?.trim(), TERMINAL_COMPOSER_RETRY_MAX_MS)
+        if (this.retryTerminalQueueClaim(sessionId, !before?.trim(), TERMINAL_COMPOSER_RETRY_MAX_MS)) {
+          this.showTerminalComposerWait(sessionId, stored, next.id, before ?? '')
+        }
         return false
       }
       const knownWait = this.terminalQueueWaits.get(sessionId)
@@ -11769,7 +11769,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           isTerminalOverlay(before) ||
           isTerminalAgentWorking(before) ||
           /waiting for background shells/i.test(before) ||
-          knownWait?.promptId === next.id
+          knownWait === next.id
         )
       if (!midTurnSteer && composerKnownUnavailable) {
         this.waitForTerminalQueueComposer(sessionId, stored, next.id, before)
@@ -11782,6 +11782,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? !before || !terminalInputReady(before, true) || composerHoldsText(before)
         : !besideBackgroundShells && before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
         this.retryTerminalQueueClaim(sessionId)
+        // A steer waits on the turn running by the log, which ends by itself.
+        if (midTurnSteer) this.quietTerminalQueueWait(sessionId, stored)
         return false
       }
       let claimed: Awaited<ReturnType<SessionStore['claimTerminalQueuedPrompt']>>
@@ -11981,12 +11983,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   /**
    * Holds the head until Copilot's prompt is back, looking again within
-   * seconds. The reader is told only what they can do about the wait: close
-   * a full-screen view, or look at a pane that has stayed empty or unreadable.
-   * Copilot working, waiting on background shells or agents, or redrawing
-   * ends by itself, so that is not shown. Without a pane, as after input the
-   * terminal refused, nothing is shown until the next look. Returns whether
-   * the session was published.
+   * seconds, and tells the reader only what they can do about the wait.
+   * Without a pane, as after input the terminal refused, nothing is shown
+   * until the next look. Returns whether the session was published.
    */
   private waitForTerminalQueueComposer(
     sessionId: string,
@@ -12012,24 +12011,44 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (previous) this.publish(session)
       return Boolean(previous)
     }
-    const known = this.terminalQueueWaits.get(sessionId)
+    this.terminalQueueWaits.set(sessionId, promptId)
+    return pane === undefined
+      ? this.showTerminalQueueNotice(sessionId, session, promptId, undefined)
+      : this.showTerminalComposerWait(sessionId, session, promptId, pane)
+  }
+
+  /**
+   * Tells the reader, from the pane holding Copilot's prompt back, what they
+   * can do: close a full-screen view, or look at a pane that has stayed
+   * empty or unreadable past the grace period. Copilot working, waiting on
+   * background shells or agents, or redrawing ends by itself and is not
+   * shown. Returns whether the session was published.
+   */
+  private showTerminalComposerWait(
+    sessionId: string,
+    session: SessionDetail,
+    promptId: string,
+    pane: string,
+  ): boolean {
     const now = Date.now()
-    let unreadableSince = known?.promptId === promptId ? known.unreadableSince : undefined
-    if (pane !== undefined) {
-      unreadableSince = terminalComposerUnreadable(pane) ? unreadableSince ?? now : undefined
+    let unreadableSince: number | undefined
+    if (!terminalInputReady(pane) && terminalComposerUnreadable(pane)) {
+      const seen = this.terminalQueueUnreadable.get(sessionId)
+      unreadableSince = seen?.promptId === promptId ? seen.since : now
+      this.terminalQueueUnreadable.set(sessionId, { promptId, since: unreadableSince })
+    } else {
+      this.terminalQueueUnreadable.delete(sessionId)
     }
-    this.terminalQueueWaits.set(sessionId, {
+    return this.showTerminalQueueNotice(
+      sessionId,
+      session,
       promptId,
-      ...(unreadableSince !== undefined ? { unreadableSince } : {}),
-    })
-    const message = pane === undefined
-      ? undefined
-      : isTerminalOverlay(pane)
+      isTerminalOverlay(pane)
         ? TERMINAL_QUEUE_OVERLAY_MESSAGE
         : unreadableSince !== undefined && now - unreadableSince >= this.terminalComposerUnreadableGraceMs
           ? TERMINAL_QUEUE_UNREADABLE_MESSAGE
-          : undefined
-    return this.showTerminalQueueNotice(sessionId, session, promptId, message)
+          : undefined,
+    )
   }
 
   /** Holds a terminal queue head behind Reopen, telling the reader once. */
@@ -12039,7 +12058,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     promptId: string,
     previous = this.terminalQueueStates.get(sessionId),
   ): boolean {
-    this.terminalQueueWaits.set(sessionId, { promptId })
+    this.terminalQueueWaits.set(sessionId, promptId)
+    this.terminalQueueUnreadable.delete(sessionId)
     this.terminalQueueStates.set(sessionId, {
       state: 'waiting',
       promptId,
@@ -12082,8 +12102,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return true
   }
 
-  /** Takes back what the reader was told to do; Reopen stays until reopened. */
-  private withdrawTerminalQueueNotice(sessionId: string, session: SessionDetail): void {
+  /**
+   * Copilot is at work, which ends the wait by itself: takes back what the
+   * reader was told to do, and a blank pane seen next starts a new grace
+   * period. Reopen stays until the session is reopened.
+   */
+  private quietTerminalQueueWait(sessionId: string, session: SessionDetail): void {
+    this.terminalQueueUnreadable.delete(sessionId)
     const previous = this.terminalQueueStates.get(sessionId)
     if (!previous || previous.message === QUEUE_REOPEN_MESSAGE) return
     this.terminalQueueStates.delete(sessionId)
@@ -12094,6 +12119,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private forgetTerminalQueueWait(sessionId: string): void {
     this.terminalQueueStates.delete(sessionId)
     this.terminalQueueWaits.delete(sessionId)
+    this.terminalQueueUnreadable.delete(sessionId)
   }
 
   private settleTerminalRecoveryForActivation(sessionId: string): void {

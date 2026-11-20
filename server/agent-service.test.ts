@@ -11535,6 +11535,38 @@ describe('AgentService deletion', () => {
       expect(terminal.send).not.toHaveBeenCalled()
     })
 
+    // The pane going blank again after Copilot worked, or after it found the
+    // session in use, is a new wait: the earlier blank pane counts for nothing.
+    it.each(['Copilot works', 'Copilot finds the session in use'] as const)(
+      'waits out the grace period afresh once %s in between',
+      async (between) => {
+        const { service, current, log, endTurn, wait, shown } = await queuedForPrompt('')
+        await endTurn()
+        for (let waited = 0; waited < 25_000; waited += 5_000) await wait(5_000)
+        expect(shown()).toBeUndefined()
+
+        if (between === 'Copilot works') {
+          current.pane = busy
+          log('assistant.turn_start')
+          // Taken in before the next look, which then finds the turn by the log.
+          await service.refreshTranscripts()
+          await wait(5_000)
+          current.pane = ''
+          await endTurn()
+        } else {
+          current.pane = `${composer}\n This session may already be in use by another CLI or application.`
+          await wait(5_000)
+          expect(shown()?.message).toMatch(/already in use/)
+          current.pane = ''
+          await wait(5_000)
+        }
+
+        expect(shown()).toBeUndefined()
+        for (let waited = 0; waited < 30_000; waited += 5_000) await wait(5_000)
+        expect(shown()?.message).toMatch(/has not appeared in the terminal/)
+      },
+    )
+
     it('withdraws the notice once Copilot is working again', async () => {
       const { service, current, log, endTurn, wait, shown } = await queuedForPrompt(overlay)
       await endTurn()

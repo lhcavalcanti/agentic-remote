@@ -540,6 +540,37 @@ describe('Persisted native queue startup', () => {
     expect(delivered.submits).toEqual(['Held through a long wait'])
   }, 20_000)
 
+  it.each([
+    ['empty', ''],
+    ['unreadable', undefined],
+    ['without a prompt', 'Native pane is still loading'],
+  ] as const)('tells the reader once a startup pane stays %s past the grace period', async (_case, pane) => {
+    const native = await fixture()
+    await native.seed(['Held until the pane shows a prompt'])
+    const runtime = native.connect()
+    const capture = runtime.terminal.capture.bind(runtime.terminal)
+    const captures = vi.spyOn(runtime.terminal, 'capture').mockResolvedValue(pane)
+    runtime.service['terminalComposerUnreadableGraceMs'] = 1_500
+    await runtime.service.start()
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+
+    const message = await eventually(
+      async () => runtime.service.getSession(native.id)?.queueState?.message,
+      (shown) => shown !== undefined,
+      retryReadinessTimeout,
+    )
+    expect(message).toBe(
+      'Copilot\'s prompt has not appeared in the terminal. Check the terminal to deliver queued messages.',
+    )
+    expect((await native.receipt()).pastes).toEqual([])
+
+    captures.mockImplementation(capture)
+    const delivered = await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 5_000 + retryReadinessTimeout)
+    expect(delivered.submits).toEqual(['Held until the pane shows a prompt'])
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+  }, 30_000)
+
   it('requires Reopen after a waiting startup queue loses its managed owner', async () => {
     const native = await fixture()
     await native.seed(['Wait for the retained owner'])

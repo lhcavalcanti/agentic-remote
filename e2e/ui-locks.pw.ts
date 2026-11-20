@@ -414,29 +414,110 @@ for (const width of [320, 360, 600, 601, 820, 960, 961, 1440]) {
   })
 }
 
-for (const width of [320, 360]) {
-  test.describe(`narrow composer ${width}px`, () => {
-    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
-    test('shows the idle-only hint without hover while retaining the model glyph and mode', async ({ page, baseURL }) => {
+for (const viewport of uiViewports) {
+  test.describe(`runtime in the buttons row ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    test('sits between the microphone and Queue/Send instead of a line below the composer', async ({ page, baseURL }) => {
       const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
       try {
         const summary = page.getByTestId('composer-runtime')
-        await expect(summary.getByText('applies when idle', { exact: true })).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({ ratio: 1 })
+        const busy = await runtimeInRow(page)
+        expectRuntimeInRow(busy)
+        expect(busy.name.full, 'a long model name truncates').toBeGreaterThan(busy.name.visible)
+        // The idle-only hint shows where it fits; the title and description always carry it.
+        await expect(summary).toHaveAccessibleDescription(/applies when idle/)
+        await expect(summary).toHaveAttribute('title', /applies when idle/)
+        if (viewport.name === 'desktop') expect(busy.shown).toEqual({ effort: true, context: true, mode: true, hint: true })
+        await assertNoHorizontalOverflow(page)
+
+        const session = fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+        session.status = 'idle'
+        session.revision = (session.revision ?? 0) + 1
+        fixture.emit({ type: 'session.upserted', session })
+        await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeHidden()
+        const idle = await runtimeInRow(page)
+        expectRuntimeInRow(idle)
+        expect(idle.runtime.width, 'takes the room Queue and Stop leave').toBeGreaterThan(busy.runtime.width)
+        expect(idle.shown.mode, 'mode beside the name while idle').toBe(true)
+        await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({ ratio: 1 })
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
+// From 361 to 530 px a running turn keeps Queue as its own button and Send
+// opens Steer or Queue itself; at 360 px and below Queue folds into that menu,
+// and from 531 px the arrow returns beside Send.
+for (const { width, queue, arrow } of [
+  { width: 376, queue: 'menu', arrow: true }, { width: 377, queue: 'button', arrow: false },
+  { width: 390, queue: 'button', arrow: false }, { width: 546, queue: 'button', arrow: false },
+  { width: 547, queue: 'button', arrow: true },
+] as const) {
+  test.describe(`busy composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test(`queues from ${queue === 'button' ? 'its own button in one tap' : 'the Send menu'} and opens Steer or Queue from Send`, async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const send = page.getByRole('button', { name: 'Send message', exact: true })
+        const queueButton = page.getByRole('button', { name: 'Queue message', exact: true })
+        const options = page.getByRole('button', { name: 'Send options', exact: true })
+        const menu = page.getByRole('menu', { name: 'Message delivery' })
+        await message(page).fill('Check the release notes next.')
+        expectRuntimeInRow(await runtimeInRow(page))
+        if (arrow) await expect(options).toBeVisible()
+        else await expect(options).toBeHidden()
+        const queued = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === `${sessionPath}/messages`)
+        if (queue === 'button') {
+          await queueButton.click()
+        } else {
+          await expect(queueButton).toBeHidden()
+          await options.click()
+          await menu.getByRole('menuitem', { name: /Queue —/ }).click()
+        }
+        expect((await queued).postDataJSON()).toMatchObject({ content: 'Check the release notes next.', enqueue: true })
+        await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the release notes next.')
+
+        await message(page).fill('Steer toward the recovery checklist.')
+        await expect(send).toHaveAttribute('aria-haspopup', 'menu')
+        await expect(send).toHaveAttribute('aria-expanded', 'false')
+        await send.focus()
+        await page.keyboard.press('Enter')
+        await expect(menu.getByRole('menuitem', { name: /Steer —/ })).toBeFocused()
+        await expect(menu.getByRole('menuitem', { name: /Queue —/ })).toBeVisible()
+        await expect(send).toHaveAttribute('aria-expanded', 'true')
+        const rect = (await menu.boundingBox())!
+        expect(rect.x).toBeGreaterThanOrEqual(0)
+        expect(rect.x + rect.width).toBeLessThanOrEqual(width)
+        await page.keyboard.press('Escape')
+        await expect(menu).toBeHidden()
+        await expect(send).toBeFocused()
+        expect(fixture.requests.filter((request) => request.method === 'POST' && request.path === `${sessionPath}/messages`))
+          .toHaveLength(1)
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
+for (const width of [320, 360]) {
+  test.describe(`narrow composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test('keeps the model glyph and a truncated name in the row, with the idle-only hint in its description', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const summary = page.getByTestId('composer-runtime')
         await expect(summary.locator('[data-model-family]')).toBeVisible()
-        await expect(summary.locator('.composer-runtime__mode')).toHaveText('plan')
-        const layout = await summary.evaluate((element) => {
-          const button = element.getBoundingClientRect()
-          return {
-            height: button.height,
-            childrenFit: [...element.children].filter((child) => child.getBoundingClientRect().width > 0)
-              .every((child) => {
-                const rect = child.getBoundingClientRect()
-                return rect.left >= button.left && rect.right <= button.right
-              }),
-          }
-        })
-        expect(layout.height).toBeGreaterThanOrEqual(40)
-        expect(layout.childrenFit).toBe(true)
+        await expect(summary.getByText('applies when idle', { exact: true })).toBeHidden()
+        await expect(summary).toHaveAccessibleDescription(/applies when idle/)
+        await expect(summary).toHaveAttribute('title', /applies when idle/)
+        const layout = await runtimeInRow(page)
+        expectRuntimeInRow(layout)
         await assertNoHorizontalOverflow(page)
       } finally {
         fixture.assertHealthy()
@@ -563,6 +644,62 @@ for (const width of [320, 360]) {
 }
 
 type ComposerPart = { left: number, right: number, top: number, bottom: number, width: number }
+
+/** Where the refreshed runtime summary sits in the buttons row, and which of its parts show. */
+async function runtimeInRow(page: Page) {
+  return page.locator('.composer-actions--refresh').evaluate((row) => {
+    const box = (element: Element | null) => {
+      if (!element || element.getClientRects().length === 0) return undefined
+      const { left, right, top, bottom, width, height } = element.getBoundingClientRect()
+      return { left, right, top, bottom, width, height }
+    }
+    const runtime = row.querySelector(':scope > [data-testid="composer-runtime"]')!
+    const runtimeBox = box(runtime)!
+    const name = runtime.querySelector<HTMLElement>('.composer-runtime__model')!
+    const composer = row.closest('.composer')!
+    const area = composer.closest('.composer-area')!
+    const shown = (selector: string) => Boolean(box(runtime.querySelector(selector)))
+    return {
+      row: box(row)!,
+      runtime: runtimeBox,
+      glyph: box(runtime.querySelector('[data-model-family]')),
+      mic: box(row.querySelector(':scope > [aria-label="Start microphone recording"]'))!,
+      panel: box(row.querySelector(':scope > .composer-session-panel'))!,
+      queue: box(row.querySelector(':scope > [aria-label="Queue message"]')),
+      send: box(row.querySelector(':scope > [aria-label="Send message"]'))!,
+      controlHeight: Math.max(...[...row.querySelectorAll(':scope > button, :scope > .composer-session-panel > button')]
+        .filter((control) => control !== runtime).map((control) => box(control)?.height ?? 0)),
+      shown: {
+        effort: shown('.composer-runtime__detail--effort'), context: shown('.composer-runtime__detail--context'),
+        mode: shown('.composer-runtime__detail--mode'), hint: shown('.composer-runtime__hint'),
+      },
+      clipped: [...runtime.querySelectorAll('.composer-runtime-model, .composer-runtime__detail, .composer-runtime__hint')]
+        .map(box).some((part) => part && (part.left < runtimeBox.left || part.right > runtimeBox.right)),
+      name: { visible: name.clientWidth, full: name.scrollWidth, textOverflow: getComputedStyle(name).textOverflow },
+      belowComposer: area.getBoundingClientRect().bottom - composer.getBoundingClientRect().bottom -
+        parseFloat(getComputedStyle(area).paddingBottom),
+    }
+  })
+}
+
+function expectRuntimeInRow(layout: Awaited<ReturnType<typeof runtimeInRow>>) {
+  const { row, runtime, mic, panel, queue, send, shown, name } = layout
+  expect(runtime.left, 'after the microphone and session panel').toBeGreaterThanOrEqual(Math.max(mic.right, panel.right))
+  expect(runtime.right, 'before Queue and Send').toBeLessThanOrEqual((queue ?? send).left)
+  expect(send.right, 'Send inside the row').toBeLessThanOrEqual(row.right)
+  expect(runtime.top, 'runtime top inside the row').toBeGreaterThanOrEqual(row.top)
+  expect(runtime.bottom, 'runtime bottom inside the row').toBeLessThanOrEqual(row.bottom)
+  expect(runtime.height, 'as tall as the other controls').toBeGreaterThanOrEqual(layout.controlHeight)
+  expect(runtime.width, 'runtime target width').toBeGreaterThanOrEqual(40)
+  expect(layout.belowComposer, 'no line below the composer').toBeLessThanOrEqual(1)
+  expect(layout.glyph, 'model glyph').toBeDefined()
+  expect(name.visible, 'model name').toBeGreaterThan(0)
+  expect(name.textOverflow, 'model name truncation').toBe('ellipsis')
+  expect(layout.clipped, 'a detail cut short').toBe(false)
+  // Whole details drop out: the hint first, then context, effort and mode.
+  const steps = [shown.mode, shown.effort, shown.context, shown.hint]
+  expect(steps, JSON.stringify(shown)).toEqual([...steps].sort((a, b) => Number(b) - Number(a)))
+}
 
 /** Pastes a screenshot from the clipboard into the message box. */
 async function pasteImage(page: Page) {
@@ -1117,8 +1254,11 @@ test.describe('browser interaction contracts', () => {
           })
           await expect(message(page)).toHaveValue('')
           await message(page).fill('Run these checks afterward.')
-          const options = page.getByRole('button', { name: 'Send options', exact: true })
-          await options.focus()
+          // From 361 to 480 px Send opens the menu itself and its arrow is left out.
+          const opener = page.getByRole('button', {
+            name: viewport.name === 'phone' ? 'Send message' : 'Send options', exact: true,
+          })
+          await opener.focus()
           await page.keyboard.press('Enter')
           await expect(page.getByRole('menu', { name: 'Message delivery' })).toBeVisible()
           await page.keyboard.press('ArrowDown')

@@ -14,7 +14,7 @@ const props = (): ComponentProps<typeof ComposerActions> => ({
   selectedComputerOnline: true, selectedQueueAvailable: true, foregroundTurnActive: true, supportsQueuedPromptDispatch: true,
   recording: false, recordingSeconds: 0, askingAside: false, sideQuestionPending: false, phoneEnterCreatesNewline: false,
   cancelling: false, transcribing: false, uploadingFile: false, composer: 'Draft', expandedComposer: 'Draft',
-  sending: false, queuedEditUnconfirmed: false, recordingDuration: String,
+  sending: false, queuedEditUnconfirmed: false, recordingDuration: String, compactTokens: String,
   onStopRecording: vi.fn(), onSubmitSideQuestion: vi.fn(), onStopSession: vi.fn(),
   onOpenAttachmentInput: vi.fn(), onStartRecording: vi.fn(), onSubmitMessage: vi.fn(),
   onOpenRuntime: vi.fn(), sessionActions: [{ label: 'Skills', onClick: vi.fn() }],

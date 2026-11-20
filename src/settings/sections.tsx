@@ -22,8 +22,6 @@ import { SkillsSettings } from './SkillsSettings'
 import { providerName } from '../session-presentation'
 
 export type SettingsSectionProps = AppSettingsDialogProps & {
-  categoryNavigation?: boolean
-  healthCardEnabled?: boolean
   oracle: ReturnType<typeof useOracleSettings>
   runtimeErrors: Partial<Record<AgentProvider, string>>
   runtimeLoading: boolean
@@ -77,7 +75,7 @@ function settingsSyncMessage(state: SettingsProfileState): string {
   }
 }
 
-export const settingsSections: readonly SettingsSection[] = [
+export const navigableSettingsSections: readonly SettingsSection[] = [
   {
     id: 'settings-models',
     title: 'Models',
@@ -215,6 +213,23 @@ export const settingsSections: readonly SettingsSection[] = [
           ))}
         </div>
         <OracleSettingsStatus oracle={oracle} part="folders" />
+      </>
+    ),
+  },
+  {
+    id: 'settings-computers',
+    title: 'Remote machines',
+    icon: MonitorCog,
+    scope: 'hub',
+    searchLabels: ({ computers }) => [
+      'Name (optional)', 'Node URL', 'Pairing token', 'Add computer', 'Remove', 'Check connection', 'Version', 'Status', 'Role', 'Host monitor',
+      ...computers.map((computer) => `Remove ${computer.name}`),
+    ],
+    render: ({ computers, onComputerAdded, onComputerRemoved, onCheckComputerConnections, onOpenHostMonitor }) => (
+      <>
+        {onOpenHostMonitor ? <button className="secondary-button" onClick={onOpenHostMonitor} type="button">Open Host monitor</button> : null}
+        <ComputersBody computers={computers} onAdded={onComputerAdded ?? (() => undefined)}
+          onRemoved={onComputerRemoved ?? (() => undefined)} onCheckConnection={onCheckComputerConnections} />
       </>
     ),
   },
@@ -416,9 +431,6 @@ export const settingsSections: readonly SettingsSection[] = [
       onShortcutsChange,
       shortcutOverrides,
       shortcuts,
-      schedulerAllowAllForOracle,
-      onSchedulerAllowAllForOracleChange,
-      categoryNavigation,
     }) => (
       <>
         <div className="app-settings-group__body">
@@ -517,7 +529,6 @@ export const settingsSections: readonly SettingsSection[] = [
             </p>
           </section>
           <PreviewFeaturesSettings />
-          {!categoryNavigation ? <SchedulerPermissionSettings allowed={schedulerAllowAllForOracle} onChange={onSchedulerAllowAllForOracleChange} /> : null}
         </div>
       </>
     ),
@@ -527,9 +538,9 @@ export const settingsSections: readonly SettingsSection[] = [
     title: 'App',
     icon: Settings,
     scope: 'device',
-    searchLabels: ({ healthCardEnabled }) => [
+    searchLabels: [
       'Display name', 'Settings sync', 'Hub connection', 'App updates', 'Version', 'Check for updates',
-      ...(healthCardEnabled ? ['Health', 'Refresh health'] : []),
+      'Health', 'Refresh health',
     ],
     render: ({
       settingsSync,
@@ -613,32 +624,6 @@ export const settingsSections: readonly SettingsSection[] = [
       </>
     ),
   },
-]
-
-export const navigableSettingsSections: readonly SettingsSection[] = [
-  settingsSections[0],
-  settingsSections[1],
-  {
-    id: 'settings-computers',
-    title: 'Remote machines',
-    icon: MonitorCog,
-    scope: 'hub',
-    searchLabels: ({ computers }) => [
-      'Name (optional)', 'Node URL', 'Pairing token', 'Add computer', 'Remove', 'Check connection', 'Version', 'Status', 'Role', 'Host monitor',
-      ...computers.map((computer) => `Remove ${computer.name}`),
-    ],
-    render: ({ computers, onComputerAdded, onComputerRemoved, onCheckComputerConnections, onOpenHostMonitor }) => (
-      <>
-        {onOpenHostMonitor ? <button className="secondary-button" onClick={onOpenHostMonitor} type="button">Open Host monitor</button> : null}
-        <ComputersBody computers={computers} enhanced onAdded={onComputerAdded ?? (() => undefined)}
-          onRemoved={onComputerRemoved ?? (() => undefined)} onCheckConnection={onCheckComputerConnections} />
-      </>
-    ),
-  },
-  settingsSections[2],
-  settingsSections[3],
-  settingsSections[4],
-  settingsSections[5],
 ]
 
 export const schedulerSettingsSection: SettingsSection = {

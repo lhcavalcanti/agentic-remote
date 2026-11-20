@@ -26,11 +26,6 @@ const props = (overrides: Partial<ComposerProps> = {}): ComposerProps => ({
   sideQuestionPending: false, showCommandMenu: false, commandSuggestions: [], selectedCommandIndex: 0,
   selectedAttachments: [], recording: false, recordingSeconds: 0, cancelling: false,
   composerDraftRecovered: false,
-  statusline: {
-    enabled: false, computer: false, provider: false, path: false, status: false, queue: false,
-    backgroundTasks: false, sessionId: false, model: false, effort: false, contextTier: false,
-    contextUsage: false, mode: false, permissions: false, update: false,
-  },
   phoneEnterCreatesNewline: false, composerRef: createRef(), audioInputRef: createRef(), sensors: undefined,
   attachmentSize: String, recordingDuration: (seconds) => `0:${String(seconds).padStart(2, '0')}`,
   compactTokens: String, onQueueDragEnd: vi.fn(), onEditQueuedPrompt: vi.fn(), onRemoveQueuedPrompt: vi.fn(),
@@ -107,11 +102,11 @@ describe('send and queue tooltips', () => {
     { phoneEnterCreatesNewline: false, foregroundTurnActive: false,
       send: 'Send immediately (Enter)', queue: 'Queue for later delivery (Ctrl/⌘+Enter)' },
     { phoneEnterCreatesNewline: false, foregroundTurnActive: true,
-      send: 'Send into the current response (Enter)', queue: 'Queue for later delivery (Ctrl/⌘+Enter)' },
+      send: 'Choose Steer or Queue', queue: 'Queue for later delivery (Ctrl/⌘+Enter)' },
     { phoneEnterCreatesNewline: true, foregroundTurnActive: false,
       send: 'Send immediately', queue: 'Queue for later delivery' },
     { phoneEnterCreatesNewline: true, foregroundTurnActive: true,
-      send: 'Send into the current response', queue: 'Queue for later delivery' },
+      send: 'Choose Steer or Queue', queue: 'Queue for later delivery' },
   ])('name shortcuts only where Enter sends (phone Enter newline: $phoneEnterCreatesNewline, busy: $foregroundTurnActive)',
     ({ phoneEnterCreatesNewline, foregroundTurnActive, send, queue }) => {
       render(<Composer {...props({ phoneEnterCreatesNewline, foregroundTurnActive })} />)

@@ -30,11 +30,11 @@ afterEach(async () => {
 })
 
 describe('SettingsProfileStore', () => {
-  it('loads known opt-ins alongside future preview names without rewriting stored bytes', async () => {
+  it('loads known opt-ins and ignores graduated and future preview names without rewriting stored bytes', async () => {
     const { directory } = await store()
     const file = path.join(directory, 'settings-profile.json')
     const stored = JSON.parse(await readFile(file, 'utf8'))
-    stored.values.previewFeatures = { composerRefresh: true, skillToggles: true, futurePreview: true }
+    stored.values.previewFeatures = { desktopRail: true, hostMonitorView: true, composerRefresh: true, futurePreview: true }
     stored.revision = 7
     stored.keyRevisions.previewFeatures = 7
     const bytes = Buffer.from(`${JSON.stringify(stored, null, 3)}\n  \n`)
@@ -42,9 +42,14 @@ describe('SettingsProfileStore', () => {
     const reopened = new SettingsProfileStore(directory)
     await reopened.initialize()
     expect(reopened.snapshot()).toMatchObject({
-      revision: 7, values: { previewFeatures: { composerRefresh: true, skillToggles: true } },
+      revision: 7, values: { previewFeatures: { desktopRail: true, hostMonitorView: true } },
     })
     expect(await readFile(file)).toEqual(bytes)
+    // Saving any setting writes only known names, so a rollback after it no
+    // longer finds the graduated opt-ins.
+    await reopened.update({ accent: { value: 'teal', baseRevision: 7 } })
+    expect(JSON.parse(await readFile(file, 'utf8')).values.previewFeatures)
+      .toEqual({ desktopRail: true, hostMonitorView: true })
   })
 
   it('starts empty with a stable profile identity', async () => {

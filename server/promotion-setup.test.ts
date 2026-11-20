@@ -51,6 +51,7 @@ async function setupFixture() {
       'AGENTIC_REMOTE_FEATURE_SCHEDULER=on',
       'AGENTIC_REMOTE_FEATURE_FUTURE_PREVIEW=off',
       'AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS=/fictional/allowed-worktrees',
+      'AGENTIC_REMOTE_SESSION_SCOPE=off',
       'AGENTIC_REMOTE_DEVTUNNEL_ID=fixture.usw2',
       'AGENTIC_REMOTE_ORACLE_VOICE=on',
       'AGENTIC_REMOTE_VOICE_COMPUTER=',
@@ -349,6 +350,7 @@ describe('reproducible promotion setup', () => {
       'AGENTIC_REMOTE_FEATURE_SCHEDULER=on',
       'AGENTIC_REMOTE_FEATURE_FUTURE_PREVIEW=off',
       'AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS=/fictional/allowed-worktrees',
+      'AGENTIC_REMOTE_SESSION_SCOPE=off',
     ]
     for (const value of values) expect(await readFile(fixture.environment, 'utf8')).toContain(`${value}\n`)
     await fixture.run({

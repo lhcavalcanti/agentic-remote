@@ -1569,7 +1569,7 @@ append_preserved_voice_configuration() {
       key="${line%%=*}"
       value="${line#*=}"
       case "$key" in
-        AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_* | AGENTIC_REMOTE_FEATURE_* | AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS)
+        AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_* | AGENTIC_REMOTE_FEATURE_* | AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS | AGENTIC_REMOTE_SESSION_SCOPE)
           voice_configuration["$key"]="$value"
           ;;
       esac
@@ -1577,7 +1577,7 @@ append_preserved_voice_configuration() {
   fi
   while IFS= read -r key; do
     case "$key" in
-      AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_* | AGENTIC_REMOTE_FEATURE_* | AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS)
+      AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_* | AGENTIC_REMOTE_FEATURE_* | AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS | AGENTIC_REMOTE_SESSION_SCOPE)
         voice_configuration["$key"]="${!key}"
         ;;
     esac

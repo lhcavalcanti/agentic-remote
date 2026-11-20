@@ -4,7 +4,6 @@ import { AttachmentStrip } from './AttachmentStrip'
 import { ComposerActions } from './ComposerActions'
 import { QueuedPromptList } from './QueuedPromptList'
 import { SlashCommandMenu } from './SlashCommandMenu'
-import { RuntimeStatus } from './RuntimeStatus'
 import type { ComposerProps } from './types'
 
 export function Composer(props: ComposerProps) {
@@ -35,7 +34,6 @@ export function Composer(props: ComposerProps) {
     phoneEnterCreatesNewline,
     composerRef,
     audioInputRef,
-    compactTokens,
     onDiscardUnconfirmed,
     onSaveQueuedPromptEdit,
     onCancelQueuedPromptEdit,
@@ -47,7 +45,6 @@ export function Composer(props: ComposerProps) {
     onKeyDown,
     onPaste,
     onFileChange,
-    onOpenRuntime,
   } = props
   // The line below the composer only explains a live state or mode; an idle
   // composer keeps no line. Send and Queue name their shortcuts in tooltips.
@@ -248,7 +245,6 @@ export function Composer(props: ComposerProps) {
           Recovered saved draft
         </p>
       ) : null}
-      <RuntimeStatus session={selected} compactTokens={compactTokens} onOpen={onOpenRuntime} />
       {stateLine ? <p className="composer-hint">{stateLine}</p> : null}
     </footer>
   )

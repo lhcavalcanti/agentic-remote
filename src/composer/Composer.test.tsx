@@ -114,3 +114,33 @@ describe('send and queue tooltips', () => {
       expect(screen.getByRole('button', { name: 'Queue message' })).toHaveAttribute('title', queue)
     })
 })
+
+const follows = (first: Element, second: Element) =>
+  Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+describe('runtime setup button', () => {
+  it('sits in the buttons row after the microphone and before Queue and Send', () => {
+    const { container } = render(<Composer {...props()} />)
+    const runtime = screen.getByRole('button', { name: 'Configure model, effort, and context' })
+    expect(screen.getAllByTestId('composer-runtime')).toEqual([runtime])
+    expect(runtime.closest('.composer-actions')).toBe(container.querySelector('.composer-actions'))
+    expect(follows(screen.getByRole('button', { name: 'Start microphone recording' }), runtime)).toBe(true)
+    expect(follows(screen.getByRole('button', { name: 'Session panel' }), runtime)).toBe(true)
+    expect(follows(runtime, screen.getByRole('button', { name: 'Queue message' }))).toBe(true)
+    expect(follows(runtime, screen.getByRole('button', { name: 'Send message' }))).toBe(true)
+  })
+
+  it('leaves no runtime line below the composer', () => {
+    const { container } = render(<Composer {...props()} />)
+    expect(container.querySelector('.composer-area > .composer-runtime')).toBeNull()
+    expect(container.querySelector('.composer-area > .composer')!.nextElementSibling).toBeNull()
+  })
+
+  it.each([
+    { state: 'recording', overrides: { recording: true, recordingSeconds: 7 } },
+    { state: 'asking aside', overrides: { askingAside: true, sideQuestionDraft: '' } },
+  ])('is not shown while $state', ({ overrides }) => {
+    render(<Composer {...props(overrides)} />)
+    expect(screen.queryByTestId('composer-runtime')).toBeNull()
+  })
+})

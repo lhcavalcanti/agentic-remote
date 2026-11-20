@@ -4,6 +4,7 @@ import {
 import { useState } from 'react'
 import { SessionActions } from '../SessionActions'
 import { ContextRing } from './ContextRing'
+import { RuntimeStatus } from './RuntimeStatus'
 import { SentMessages } from './SentMessages'
 import { SendControl } from './SendControl'
 import { composerSteeringUnavailableReason } from './composer-state'
@@ -31,6 +32,7 @@ export function ComposerActions({
   editingQueuedPromptId,
   readonlyResourceCommand,
   recordingDuration,
+  compactTokens,
   onStopRecording,
   onSubmitSideQuestion,
   onStopSession,
@@ -49,7 +51,7 @@ export function ComposerActions({
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
   'cancelling' | 'transcribing' | 'uploadingFile' | 'composer' | 'expandedComposer' | 'sending' | 'queueActionId' |
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
-  'recordingDuration' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
+  'recordingDuration' | 'compactTokens' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
   'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage' | 'phoneEnterCreatesNewline'
 >) {
@@ -165,7 +167,8 @@ export function ComposerActions({
           >{action.label}</button>
         ))}
       </SessionActions>
-      <span className="composer-actions__spacer" />
+      {/* The runtime summary takes the spacer's room rather than a line of its own. */}
+      <RuntimeStatus session={selected} compactTokens={compactTokens} onOpen={onOpenRuntime} />
       {selectedQueueAvailable ? (
         <button
           aria-description="Queues this message for later delivery"

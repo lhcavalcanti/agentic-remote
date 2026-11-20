@@ -11,7 +11,6 @@ import {
   LoaderCircle,
   MessageCircle,
   Mic,
-  Orbit,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
@@ -21,6 +20,7 @@ import {
   Square,
   X,
 } from 'lucide-react'
+import { OracleIcon } from './oracle-icon'
 import type {
   ManagerClientDefaults,
   ManagerAttachment,
@@ -718,7 +718,7 @@ export function OracleButton({
       type="button"
     >
       <span className="oracle-toggle__mark">
-        <Orbit aria-hidden="true" size={floating ? 22 : 18} strokeWidth={1.8} />
+        <OracleIcon aria-hidden="true" size={floating ? 22 : 18} strokeWidth={1.8} />
         {indicator.unread ? <span aria-hidden="true" className="oracle-toggle__unread" /> : null}
       </span>
       {compact || floating ? null : <span className="header-action-label">Oracle</span>}
@@ -1413,7 +1413,7 @@ export function ManagerAssistant({
       <div className="oracle-resizer" {...panelWidth.separator} />
       <header className="manager-panel__header">
         <span aria-hidden="true" className={`manager-panel__mark${working ? ' manager-panel__mark--working' : ''}`}>
-          <Orbit size={18} strokeWidth={1.8} />
+          <OracleIcon size={18} strokeWidth={1.8} />
         </span>
         <div className="manager-panel__title">
           <h2>Oracle</h2>

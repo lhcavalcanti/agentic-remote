@@ -43,6 +43,7 @@ const slowTests = [
   'server/api-origin.test.ts',
   'server/app-build.test.ts',
   'server/app-icon-assets.test.ts',
+  'server/background-task-adapter.test.ts',
   'server/background-task-stop.test.ts',
   'server/claude-agent-service.test.ts',
   'server/claude-recovery-admission.test.ts',

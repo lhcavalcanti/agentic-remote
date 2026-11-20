@@ -326,7 +326,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - A running SDK background agent MUST make the session row read as active even
   when no foreground turn is open. The composer MUST keep immediate Send
   available and MUST offer Queue; queued text waits for the tracked background
-  agent, while detached background shells do not block a new turn.
+  agent, while detached background shells do not block a new turn. Likewise, a
+  tmux session MUST deliver a queued prompt once its turn ends, even while
+  Copilot still waits for background shells. Copilot's event log, not its
+  cut-to-fit footer, decides that only shells remain; background agents still
+  hold the prompt.
 - Background task reads and cancellation MUST remain scoped to the owning
   computer and session. Task state MUST resynchronize after a reconnect
   instead of relying on a transient event count.

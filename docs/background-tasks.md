@@ -42,7 +42,10 @@ lifecycle events provide agent tasks, while attached or detached shell starts,
 background handoffs, shell-exit metadata, completion notifications, and tool
 telemetry provide shell tasks. Shell records use the CLI `/tasks` default of
 background execution when the runtime omits an explicit mode. This keeps shell
-work visible without attaching a second owner to the session.
+work visible without attaching a second owner to the session. Only the listed
+snapshot stops at 100 tasks: a tmux session's status, suspension, and queue
+delivery checks read every task its event log describes, so newer shells cannot
+hide a background agent from them.
 
 The current Copilot CLI release review found these relevant UI features:
 

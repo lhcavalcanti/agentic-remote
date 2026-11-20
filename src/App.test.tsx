@@ -156,6 +156,12 @@ function savedSetting<K extends keyof SettingsProfileValues>(key: K): SettingsPr
   return cache?.values?.[key] ?? cache?.imports?.[key]
 }
 
+function submitComposerMessage(enqueue = false) {
+  fireEvent.click(screen.getByRole('button', { name: enqueue ? 'Queue message' : 'Send message' }))
+  const steer = screen.queryByRole('menuitem', { name: /Steer —/ })
+  if (!enqueue && steer) fireEvent.click(steer)
+}
+
 /** The hub-owned custom session order the api mocks read and commit against. */
 let hubSessionOrder: {
   revision: number
@@ -219,6 +225,11 @@ vi.mock('./api', async (importOriginal) => ({
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
   checkHubSignIn: vi.fn(async () => undefined),
   fetchHubFeatureFlags: vi.fn(async () => defaultHubFeatureFlags),
+  getHubHealth: vi.fn(async () => ({
+    hub: { id: 'computer-1', name: 'development', role: 'hub', version: '1.0.0' },
+    startup: [], computers: [], hubFlags: defaultHubFeatureFlags,
+  })),
+  listComputerSkills: vi.fn(async () => ({ revision: 'a'.repeat(64), skills: [], warnings: [] })),
   getManager: vi.fn(),
   getSchedule: vi.fn(),
   listScheduleProposals: vi.fn(),
@@ -1464,6 +1475,7 @@ describe('App', () => {
       const rendered = render(<App />)
       await screen.findByLabelText('Message')
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
       expect(await screen.findByRole('radio', { name: 'System appearance' })).toBeChecked()
       fireEvent.click(screen.getByRole('radio', { name: 'Ocean accent' }))
       fireEvent.click(screen.getByRole('radio', { name: 'Light appearance' }))
@@ -1472,6 +1484,7 @@ describe('App', () => {
       expect(document.documentElement).toHaveAttribute('data-appearance', 'light')
       await waitFor(() =>
         expect(hubSettings.values).toEqual({ accent: 'ocean', appearance: 'light' }))
+      fireEvent.click(screen.getByRole('button', { name: /^App\s*This device/ }))
       expect(await screen.findByText('Saved on this hub.')).toBeVisible()
       // Nothing is kept per tab any more.
       expect(sessionStorage.getItem('agentic-remote:accent-theme')).toBeNull()
@@ -1496,6 +1509,7 @@ describe('App', () => {
       expect(appShell()).toHaveAttribute('data-appearance', 'graphite')
 
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
       fireEvent.click(await screen.findByRole('radio', { name: 'Graphite appearance' }))
       setDeviceLight(true)
       // A choice is a choice: the device's setting no longer moves it.
@@ -1546,6 +1560,7 @@ describe('App', () => {
         validateSettingsChanges({ accent: { value: 'violet', baseRevision: 0 } }),
       ).record
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
       fireEvent.click(await screen.findByRole('radio', { name: 'Teal accent' }))
       expect(await screen.findByText(
         'Accent was changed on another device first, so this device now uses that choice.',
@@ -1561,7 +1576,9 @@ describe('App', () => {
       await act(async () => {})
       vi.mocked(saveSettingsChanges).mockRejectedValueOnce(new TypeError('Failed to fetch'))
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
       fireEvent.click(await screen.findByRole('radio', { name: 'Light appearance' }))
+      fireEvent.click(screen.getByRole('button', { name: /^App\s*This device/ }))
       expect(await screen.findByText(
         'The hub can’t be reached. Changes are kept on this device and sync when it’s back.',
       )).toBeVisible()
@@ -1585,9 +1602,11 @@ describe('App', () => {
         render(<App />)
         await screen.findByLabelText('Message')
         fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+        fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
         fireEvent.click(await screen.findByRole('radio', { name: 'Light appearance' }))
         expect(appShell()).toHaveAttribute('data-appearance', 'light')
         await waitFor(() => expect(hubSettings.values).toEqual({ appearance: 'light' }))
+        fireEvent.click(screen.getByRole('button', { name: /^App\s*This device/ }))
         expect(await screen.findByText(
           'Saved on this hub. This browser can’t keep a copy, so settings load from the hub each time.',
         )).toBeVisible()
@@ -1623,6 +1642,7 @@ describe('App', () => {
       await screen.findByLabelText('Message')
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Oracle\s*Hub/ }))
       const style = await within(dialog).findByRole('combobox', { name: 'Oracle response style' })
       // Unset answers Balanced, as Oracle always has.
       expect(style).toHaveValue('balanced')
@@ -1680,6 +1700,7 @@ describe('App', () => {
       await screen.findByLabelText('Message')
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Oracle\s*Hub/ }))
       expect(await within(dialog).findAllByText(/Oracle is turned off on this hub/)).not.toHaveLength(0)
       expect(within(dialog).queryByRole('combobox', { name: 'Oracle response style' })).toBeNull()
     })
@@ -1702,6 +1723,7 @@ describe('App', () => {
       await screen.findByLabelText('Message')
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Oracle\s*Hub/ }))
       const scope = within(dialog).getByRole('group', { name: 'What notifies you' })
       const radio = (name: string) => within(scope).getByRole('radio', { name })
       // A hub that never chose sends everything, as before.
@@ -1716,11 +1738,6 @@ describe('App', () => {
         'Nothing, on any device. Each device stays set up, so turning them back on is instant.',
       )
       expect(scope.closest('section')!.querySelector('.settings-scope')).toHaveTextContent('Synced')
-      // This browser cannot receive push at all, which is its own business.
-      const device = within(dialog).getByRole('heading', { name: 'This device' }).closest('section')!
-      expect(device).toHaveTextContent('Push notifications are not supported in this browser.')
-      expect(device.querySelector('.settings-scope')).toHaveTextContent('This device')
-
       fireEvent.click(radio('Oracle only'))
       expect(radio('Oracle only')).toBeChecked()
       await waitFor(() => expect(hubSettings.values).toEqual({ notificationScope: 'oracle' }))
@@ -1732,6 +1749,11 @@ describe('App', () => {
         }),
       } as MessageEvent))
       expect(radio('Disabled')).toBeChecked()
+      // This browser cannot receive push at all, which is its own business.
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Notifications/ }))
+      const device = within(dialog).getByRole('heading', { name: 'This device' }).closest('section')!
+      expect(device).toHaveTextContent('Push notifications are not supported in this browser.')
+      expect(device.querySelector('.settings-scope')).toHaveTextContent('This device')
     })
 
     it('tells the hub while Oracle is on screen, so it holds Oracle’s pushes', async () => {
@@ -1902,7 +1924,9 @@ describe('App', () => {
         await screen.findByLabelText('Message')
         fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
         const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+        fireEvent.click(within(dialog).getByRole('button', { name: /^Notifications/ }))
         expect(within(dialog).getByText(/Notifications are blocked/)).toBeVisible()
+        fireEvent.click(within(dialog).getByRole('button', { name: /^Oracle\s*Hub/ }))
         fireEvent.click(within(dialog).getByRole('radio', { name: 'Disabled' }))
         await waitFor(() => expect(hubSettings.values).toEqual({ notificationScope: 'off' }))
       } finally {
@@ -1918,6 +1942,7 @@ describe('App', () => {
       await screen.findByLabelText('Message')
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
       const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^App\s*This device/ }))
       const sync = within(dialog).getByRole('heading', { name: 'Settings sync' }).closest('section')!
       expect(sync).toHaveTextContent(
         'Appearance, accent, status line, new-session models and folders, session sort, computer order, Oracle\'s response style, and what notifies you and preview features follow you to every device that opens this hub.',
@@ -1928,11 +1953,13 @@ describe('App', () => {
       const scope = (heading: string) =>
         within(dialog).getByRole('heading', { name: heading })
           .closest('.app-settings-section__title')?.querySelector('.settings-scope')
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Interface/ }))
       expect(scope('Appearance')).toHaveTextContent('Synced')
       expect(scope('Status line')).toHaveTextContent('Synced')
       expect(scope('Preview features')).toHaveTextContent('Synced')
-      expect(scope('New sessions')).toHaveTextContent('Synced')
       expect(scope('Keyboard shortcuts')).toHaveTextContent('This device')
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Models/ }))
+      expect(scope('New sessions')).toHaveTextContent('Synced')
     })
   })
 
@@ -2590,6 +2617,9 @@ describe('App', () => {
   })
 
   it('badges sessions Oracle started, opens Oracle from the header, and keeps its events out of errors', async () => {
+    const managed: ManagedSession = { ...session, provenance: { origin: 'manager' } }
+    vi.mocked(listSessions).mockResolvedValue([managed])
+    vi.mocked(getSession).mockResolvedValue(managed)
     vi.mocked(getManager).mockResolvedValue({
       available: true,
       status: 'idle',
@@ -2598,7 +2628,7 @@ describe('App', () => {
       managedSessions: [`${computer.id}:${session.id}`],
     })
     render(<App />)
-    const row = await screen.findByRole('button', { name: /Project chat, started by Oracle/ })
+    const row = await screen.findByRole('button', { name: /Project chat, Started by Oracle/ })
     expect(within(row).getByText('Oracle')).toBeInTheDocument()
     // A bubble at the bottom right of the conversation, not in its header,
     // sharing a dock with Scroll to latest so neither covers the other.
@@ -2846,6 +2876,7 @@ describe('App', () => {
       await waitFor(() => expect(oracleComposer).toHaveFocus())
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
       const settings = await screen.findByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(settings).getByRole('button', { name: /^Oracle\s*Hub/ }))
       const responseStyle = within(settings).getByRole('combobox', {
         name: 'Oracle response style',
       })
@@ -2879,6 +2910,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Oracle\s*Hub/ }))
     const responseStyle = await screen.findByRole('combobox', {
       name: 'Oracle response style',
     })
@@ -3535,6 +3567,7 @@ describe('App', () => {
       await screen.findByRole('dialog', { name: 'Oracle' })
       fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
       const settings = await screen.findByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(settings).getByRole('button', { name: /^Oracle\s*Hub/ }))
       const responseStyle = within(settings).getByRole('combobox', {
         name: 'Oracle response style',
       })
@@ -5461,8 +5494,11 @@ describe('App', () => {
     expect(
       screen.getByRole('dialog', { name: 'App settings' }),
     ).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Notifications/ }))
     expect(screen.getByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^App\s*This device/ }))
     expect(screen.getByRole('heading', { name: 'App updates' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     expect(screen.getByRole('heading', { name: 'Status line' })).toBeInTheDocument()
   })
 
@@ -5470,17 +5506,19 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     const section = within(screen.getByRole('region', { name: 'Interface' }))
       .getByRole('region', { name: 'Preview features' })
     const previews = within(section)
-    const composer = previews.getByRole('checkbox', { name: 'Composer refresh' })
-    expect(composer).not.toBeChecked()
+    const rail = previews.getByRole('checkbox', { name: 'Desktop rail' })
+    expect(rail).not.toBeChecked()
     expect(previews.getByRole('checkbox', { name: 'Notification panel' })).toBeDisabled()
-    fireEvent.click(composer)
-    await waitFor(() => expect(savedSetting('previewFeatures')).toEqual({ composerRefresh: true }))
+    fireEvent.click(rail)
+    await waitFor(() => expect(savedSetting('previewFeatures')).toEqual({ desktopRail: true }))
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-    expect(screen.getByRole('checkbox', { name: 'Composer refresh' })).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
+    expect(screen.getByRole('checkbox', { name: 'Desktop rail' })).toBeChecked()
   })
 
   it('groups app settings by what they are about', async () => {
@@ -5491,13 +5529,15 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
     const dialog = screen.getByRole('dialog', { name: 'App settings' })
-    const groups = [...dialog.querySelectorAll<HTMLElement>('.app-settings-group')]
-    expect(groups.map((group) => group.querySelector('h3')?.textContent)).toEqual([
-      'Models', 'Folders', 'Oracle', 'Notifications', 'Interface', 'App',
+    const categories = within(dialog).getByRole('navigation', { name: 'Settings categories' })
+    expect(within(categories).getAllByRole('button').map((button) => button.querySelector('span')?.firstChild?.textContent)).toEqual([
+      'Models', 'Folders', 'Remote machines', 'Oracle', 'Notifications', 'Interface', 'Skills', 'App',
     ])
-    const [models, folders, oracle, notifications, ui, app] = groups
+    const models = within(dialog).getByRole('region', { name: 'Models' })
     expect(within(models).getByRole('heading', { name: 'New sessions' })).toBeInTheDocument()
     expect(await within(models).findByLabelText('GitHub Copilot default model')).toBeInTheDocument()
+    fireEvent.click(within(categories).getByRole('button', { name: /^Oracle/ }))
+    const oracle = within(dialog).getByRole('region', { name: 'Oracle' })
     expect(await within(oracle).findByRole('combobox', { name: 'Oracle model' })).toBeInTheDocument()
     expect(within(oracle).getByRole('combobox', { name: 'Oracle response style' })).toBeInTheDocument()
     expect(within(oracle).getByRole('group', { name: 'What notifies you' })).toBeInTheDocument()
@@ -5506,117 +5546,50 @@ describe('App', () => {
     expect(within(oracle).queryByRole('heading', { name: 'Desktop panel' }))
       .not.toBeInTheDocument()
     // Every folder in one place, per computer: yours, then Oracle's.
+    fireEvent.click(within(categories).getByRole('button', { name: /^Folders/ }))
+    const folders = within(dialog).getByRole('region', { name: 'Folders' })
     const computerFolders = within(folders).getByRole('group', { name: 'Session folders on development' })
     expect(within(computerFolders).getByRole('button', { name: 'Browse default session folder for development' })).toBeInTheDocument()
     expect(await within(computerFolders).findByRole('button', { name: "Browse Oracle's session folder for development" }))
       .toBeInTheDocument()
     expect(within(computerFolders).getByText('Same as new sessions')).toBeInTheDocument()
-    expect(within(notifications).getByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
-    for (const name of ['Appearance', 'Status line', 'Keyboard shortcuts']) {
-      expect(within(ui).getByRole('heading', { name })).toBeInTheDocument()
-    }
-    expect(within(app).getByRole('heading', { name: 'App updates' })).toBeInTheDocument()
-
-    // A jump bar reaches each group.
-    const jump = within(dialog).getByRole('navigation', { name: 'Settings sections' })
-    expect(within(jump).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      'Models', 'Folders', 'Oracle', 'Notifications', 'Interface', 'App',
-    ])
-    // It scrolls the settings alone, placing the group under the jump bar;
-    // never the page behind the dialog.
-    const scrollTo = vi.fn()
-    Object.defineProperty(dialog, 'scrollTo', { configurable: true, value: scrollTo })
-    vi.spyOn(dialog, 'getBoundingClientRect').mockReturnValue({ top: 100 } as DOMRect)
-    vi.spyOn(folders, 'getBoundingClientRect').mockReturnValue({ top: 700 } as DOMRect)
-    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
-    scrollIntoView.mockClear()
-    fireEvent.click(within(jump).getByRole('button', { name: 'Folders' }))
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 592 })
-    expect(scrollIntoView).not.toHaveBeenCalled()
-    // It takes the focus there too, and Tab carries on into that group.
     const foldersHeading = within(folders).getByRole('heading', { name: 'Folders' })
-    expect(foldersHeading).toHaveFocus()
+    await waitFor(() => expect(foldersHeading).toHaveFocus())
     const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(100)
     try {
       fireEvent.keyDown(document, { key: 'Tab' })
       expect(within(computerFolders).getByRole('button', { name: 'Browse default session folder for development' }))
         .toHaveFocus()
-      foldersHeading.focus()
-      fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
-      expect(models.contains(document.activeElement)).toBe(true)
     } finally {
       width.mockRestore()
     }
+    fireEvent.click(within(categories).getByRole('button', { name: /^Notifications/ }))
+    expect(within(dialog).getByRole('heading', { name: 'Notifications' })).toBeInTheDocument()
+    fireEvent.click(within(categories).getByRole('button', { name: /^Interface/ }))
+    const ui = within(dialog).getByRole('region', { name: 'Interface' })
+    for (const name of ['Appearance', 'Status line', 'Keyboard shortcuts']) {
+      expect(within(ui).getByRole('heading', { name })).toBeInTheDocument()
+    }
+    fireEvent.click(within(categories).getByRole('button', { name: /^App\s*This device/ }))
+    expect(within(dialog).getByRole('heading', { name: 'App updates' })).toBeInTheDocument()
   })
 
   it("opens app settings at Oracle's model from Oracle's panel", async () => {
     vi.mocked(getManager).mockResolvedValue({
       available: true, status: 'idle', messages: [], queued: 0, managedSessions: [], settings: {},
     })
-    // Catches the observer that keeps Oracle in place while the settings load.
-    const watched: { target: Element; callback: ResizeObserverCallback; on: boolean }[] = []
-    vi.stubGlobal('ResizeObserver', class {
-      private entry?: (typeof watched)[number]
-      private readonly callback: ResizeObserverCallback
-      constructor(callback: ResizeObserverCallback) {
-        this.callback = callback
-      }
-      observe(target: Element) {
-        this.entry = { target, callback: this.callback, on: true }
-        watched.push(this.entry)
-      }
-      unobserve() {}
-      disconnect() {
-        if (this.entry) this.entry.on = false
-      }
-    })
-    const settingsGrow = () => {
-      for (const entry of watched) {
-        if (entry.on && entry.target.matches('.app-settings-dialog__sections')) {
-          entry.callback([], {} as ResizeObserver)
-        }
-      }
-    }
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(await within(document.querySelector<HTMLElement>('.timeline-dock')!).findByRole('button', { name: 'Oracle' }))
-    const scrollTo = vi.fn()
-    const scrollToBefore = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTo')
-    Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, value: scrollTo })
-    let oracleTop = 400
-    const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
-      const top = this.id === 'settings-oracle-model' ? oracleTop : this.classList.contains('app-settings-dialog') ? 100 : 0
-      return { top } as DOMRect
-    })
-    try {
-      fireEvent.click(await screen.findByRole('button', { name: /^Oracle model:/ }))
-      const dialog = await screen.findByRole('dialog', { name: 'App settings' })
-      await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 292 }))
-      expect(scrollTo.mock.contexts.at(-1)).toBe(dialog)
-      expect(within(dialog).getByRole('heading', { name: 'Model' })).toHaveFocus()
-      // Catalogs loading above it push it down; it follows.
-      oracleTop = 600
-      settingsGrow()
-      expect(scrollTo).toHaveBeenLastCalledWith({ top: 492 })
-      // Once you scroll yourself, it stays where you put it.
-      scrollTo.mockClear()
-      fireEvent.wheel(dialog)
-      oracleTop = 800
-      settingsGrow()
-      expect(scrollTo).not.toHaveBeenCalled()
-      // Opened from the sessions panel, it starts at the top.
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
-      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
-      await screen.findByRole('dialog', { name: 'App settings' })
-      await new Promise((resolve) => requestAnimationFrame(resolve))
-      settingsGrow()
-      expect(scrollTo).not.toHaveBeenCalled()
-    } finally {
-      rect.mockRestore()
-      vi.unstubAllGlobals()
-      if (scrollToBefore) Object.defineProperty(Element.prototype, 'scrollTo', scrollToBefore)
-      else Reflect.deleteProperty(Element.prototype, 'scrollTo')
-    }
+    fireEvent.click(await screen.findByRole('button', { name: /^Oracle model:/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'App settings' })
+    expect(within(dialog).getByRole('button', { name: /^Oracle\s*Hub/ })).toHaveAttribute('aria-current', 'page')
+    expect(await within(dialog).findByRole('combobox', { name: 'Oracle model' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('heading', { name: 'Model' })).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    expect(screen.getByRole('button', { name: /^Models\s*Hub/ })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('heading', { name: 'New sessions' })).toBeInTheDocument()
   })
 
   it('keeps the fixed Relay icon whichever accent is chosen', async () => {
@@ -5633,6 +5606,7 @@ describe('App', () => {
     expect(document.querySelector('.brand__mark')).toHaveAttribute('alt', '')
     const initialIcon = icon()
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     fireEvent.click(screen.getByRole('radio', { name: 'Violet accent' }))
 
     expect(shell).toHaveAttribute('data-accent-theme', 'violet')
@@ -6043,6 +6017,7 @@ describe('App', () => {
     expect(within(model).getByRole('option', { name: 'Hub Model' })).toBeInTheDocument()
     expect(within(model).getByRole('option', { name: 'Node Model' })).toBeInTheDocument()
     // Oracle runs on the hub, so it offers only the hub's own models.
+    fireEvent.click(screen.getByRole('button', { name: /^Oracle\s*Hub/ }))
     const oracleModel = await screen.findByRole('combobox', { name: 'Oracle model' })
     await waitFor(() =>
       expect(within(oracleModel).getByRole('option', { name: 'Hub Model' })).toBeInTheDocument(),
@@ -6226,6 +6201,7 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Folders/ }))
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Browse default session folder for development',
@@ -6293,6 +6269,7 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Folders/ }))
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Browse default session folder for development',
@@ -6324,6 +6301,7 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Folders/ }))
     expect(screen.getByText('~/reloaded')).toBeInTheDocument()
     expect(screen.getByText('Home directory (blank)')).toBeInTheDocument()
   })
@@ -6445,6 +6423,7 @@ describe('App', () => {
     ).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('button', { name: /^App\s*This device/ }))
     expect(screen.getByRole('button', { name: 'Update now' })).toBeInTheDocument()
   })
 
@@ -7122,9 +7101,7 @@ describe('App', () => {
       },
     )
     try {
-      fireEvent.click(screen.getByRole('button', {
-        name: enqueue ? 'Queue message' : 'Send message',
-      }))
+      submitComposerMessage(enqueue)
       await screen.findByText(/Message was not sent/)
       expect(sendMessage).not.toHaveBeenCalled()
       expect(executeCommand).not.toHaveBeenCalled()
@@ -7153,9 +7130,7 @@ describe('App', () => {
         )['computer-1:session-1']).toBe(`Before ${pasted} after edited`)
         return running
       })
-      fireEvent.click(screen.getByRole('button', {
-        name: enqueue ? 'Queue message' : 'Send message',
-      }))
+      submitComposerMessage(enqueue)
       await waitFor(() =>
         expect(sendMessage).toHaveBeenCalledWith('computer-1', 'session-1', {
           content: `Before ${pasted} after edited`,
@@ -8194,9 +8169,7 @@ describe('App', () => {
       let rendered = render(<StrictMode><App /></StrictMode>)
       const textarea = await screen.findByLabelText('Message')
       fireEvent.paste(textarea, { clipboardData: { getData: () => pasted } })
-      fireEvent.click(
-        screen.getByRole('button', { name: enqueue ? 'Queue message' : 'Send message' }),
-      )
+      submitComposerMessage(enqueue)
       await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
       expect(textarea).toHaveValue('')
 
@@ -8217,7 +8190,7 @@ describe('App', () => {
       expect(await screen.findByLabelText('Message')).toHaveValue('[Paste #1 - 21 lines]')
       expect(screen.getByText(/Delivery could not be confirmed/)).toBeInTheDocument()
       expect(sendMessage).toHaveBeenCalledOnce()
-      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      submitComposerMessage()
       await waitFor(() =>
         expect(sendMessage).toHaveBeenLastCalledWith('computer-1', 'session-1', {
           content: pasted,
@@ -8371,7 +8344,7 @@ describe('App', () => {
     let rendered = render(<App />)
     let textarea = await screen.findByLabelText('Message')
     fireEvent.paste(textarea, { clipboardData: { getData: () => submitted } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    submitComposerMessage()
     await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
     expect(textarea).toBeEnabled()
     fireEvent.paste(textarea, { clipboardData: { getData: () => newer } })
@@ -8396,7 +8369,7 @@ describe('App', () => {
     expect(await screen.findByLabelText('Message')).toHaveValue(
       '[Paste #2 - 21 lines]\n\n[Paste #1 - 22 lines]',
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    submitComposerMessage()
     await waitFor(() =>
       expect(sendMessage).toHaveBeenLastCalledWith('computer-1', 'session-1', {
         content: `${submitted}\n\n${newer}`,
@@ -11782,7 +11755,7 @@ describe('App', () => {
     await waitFor(() => expect(listCommands).toHaveBeenCalled())
 
     fireEvent.change(textarea, { target: { value: 'Steer the current response' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    submitComposerMessage()
     await waitFor(() =>
       expect(sendMessage).toHaveBeenCalledWith(
         'computer-1',
@@ -11837,7 +11810,7 @@ describe('App', () => {
 
       const longSteer = Array.from({ length: 14 }, (_, index) => `Also check step ${index + 1}.`).join('\n')
       fireEvent.change(textarea, { target: { value: longSteer } })
-      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      submitComposerMessage()
 
       const bubble = await screen.findByRole('article', {
         name: 'Your message was sent to the terminal and is waiting for the agent',
@@ -11856,7 +11829,7 @@ describe('App', () => {
       await act(async () => {})
 
       fireEvent.change(textarea, { target: { value: steer } })
-      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      submitComposerMessage()
 
       const bubble = await screen.findByRole('article', {
         name: 'Your message was sent to the terminal and is waiting for the agent',
@@ -11892,7 +11865,7 @@ describe('App', () => {
       await act(async () => {})
 
       fireEvent.change(textarea, { target: { value: steer } })
-      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      submitComposerMessage()
 
       const bubble = await screen.findByRole('article', {
         name: 'Your message was sent to the terminal and is waiting for the agent',
@@ -11914,7 +11887,7 @@ describe('App', () => {
       await act(async () => {})
 
       fireEvent.change(textarea, { target: { value: steer } })
-      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      submitComposerMessage()
       expect(await screen.findByRole('article', {
         name: 'Your message was sent to the terminal and is waiting for the agent',
       })).toHaveTextContent(steer)
@@ -11932,7 +11905,7 @@ describe('App', () => {
       await act(async () => {})
 
       fireEvent.change(textarea, { target: { value: steer } })
-      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      submitComposerMessage()
       await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
       await waitFor(() => expect(textarea).not.toBeDisabled())
       expect(pendingBubble()).toBeNull()
@@ -11971,7 +11944,7 @@ describe('App', () => {
       await act(async () => {})
 
       fireEvent.change(textarea, { target: { value: steer } })
-      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      submitComposerMessage()
       const delivery = await screen.findByRole('region', { name: 'Steering prompts' })
       expect(delivery).toHaveTextContent('Steering when ready')
       expect(delivery).not.toHaveTextContent('Queued for later')
@@ -18620,7 +18593,6 @@ describe('App', () => {
   })
 
   it.each(['removed', 'offline'] as const)('keeps a newer %s computer state during a connection check', async (change) => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -18648,7 +18620,6 @@ describe('App', () => {
   })
 
   it('reconciles computers missing from a connection-check snapshot', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     vi.mocked(listComputers).mockResolvedValueOnce([computer, secondComputer]).mockResolvedValue([computer])
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -18661,7 +18632,6 @@ describe('App', () => {
   })
 
   it('removes unpaired computer sessions and task cache on a connection check', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remote = { ...secondComputer, providers: taskComputer.providers }
     const remoteSession = { ...session, id: 'remote-task-session', computerId: remote.id, computerName: remote.name, title: 'Remote task chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, remote])
@@ -18697,7 +18667,6 @@ describe('App', () => {
   })
 
   it('drops side answers for a computer a connection check finds unpaired', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remote: ComputerSummary = {
       ...secondComputer,
       providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
@@ -18754,7 +18723,6 @@ describe('App', () => {
   })
 
   it('drops side answers when a reconnect snapshot overtakes a connection check', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remote: ComputerSummary = {
       ...secondComputer,
       providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
@@ -18795,7 +18763,6 @@ describe('App', () => {
   })
 
   it('drops side answers when removing a computer while the event socket is down', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remote: ComputerSummary = {
       ...secondComputer,
       providers: (secondComputer.providers ?? computer.providers)?.map((provider) =>
@@ -18833,7 +18800,6 @@ describe('App', () => {
   })
 
   it.each(['computer', 'session', 're-added computer'] as const)('settles a newer %s update when a connection check omits its computer', async (changed) => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Live remote chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
@@ -18875,7 +18841,6 @@ describe('App', () => {
   })
 
   it('does not let a transcription that finishes after a local removal recreate the removed draft', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote-voice', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote voice chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
@@ -18908,7 +18873,6 @@ describe('App', () => {
   })
 
   it.each(['settings', 'event'] as const)('lifts unpairing tombstones when the computer is paired again (%s removal)', async (via) => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote-repaired', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote repaired chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
@@ -18943,7 +18907,6 @@ describe('App', () => {
   })
 
   it('drops a transcription started before unpairing even when the computer is paired again first', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote-late-voice', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote late voice chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
@@ -19005,7 +18968,6 @@ describe('App', () => {
   })
 
   it('does not let a send that settles after a local removal recreate the removed session', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remoteSession = { ...session, id: 'remote-send', computerId: secondComputer.id, computerName: secondComputer.name, title: 'Remote send chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     vi.mocked(listSessions).mockResolvedValue([session, remoteSession])
@@ -19033,7 +18995,6 @@ describe('App', () => {
   })
 
   it('does not refill task state from a read that settles after a local removal', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remote = { ...secondComputer, providers: taskComputer.providers }
     const remoteSession = { ...session, id: 'remote-task-removed', computerId: remote.id, computerName: remote.name, title: 'Remote removed task chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, remote])
@@ -19067,7 +19028,6 @@ describe('App', () => {
   })
 
   it('does not refill removed task state from an old response after the computer is re-paired', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     const remote = { ...secondComputer, providers: taskComputer.providers }
     const remoteSession = { ...session, id: 'remote-task-session', computerId: remote.id, computerName: remote.name, title: 'Remote task chat' }
     vi.mocked(listComputers).mockResolvedValue([computer, remote])
@@ -19104,7 +19064,6 @@ describe('App', () => {
   })
 
   it('ignores a connection check overtaken by a newer computer snapshot', async () => {
-    seedHubSettings({ previewFeatures: { settingsNavigation: true } })
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -19360,7 +19319,7 @@ describe('App', () => {
     })
   })
 
-  it('offers immediate send and queue buttons while the agent is running', async () => {
+  it('offers steering choices and an explicit queue button while the agent is running', async () => {
     const runningSession: ManagedSession = {
       ...session,
       status: 'running',
@@ -19392,7 +19351,7 @@ describe('App', () => {
     )
     expect(
       screen.getByRole('button', { name: 'Send message' }),
-    ).toHaveAttribute('title', 'Send into the current response (Enter)')
+    ).toHaveAttribute('title', 'Choose Steer or Queue')
     const actionButtons = [...document.querySelectorAll('.composer-actions > .send-button')]
     expect(actionButtons).toHaveLength(5)
     expect(actionButtons.filter((button) => button.querySelector('.send-button__label')))
@@ -19671,14 +19630,12 @@ describe('App', () => {
   })
 
   it.each([
-    { enabled: false, model: 'fixture-claude-99', provider: 'copilot' as const, family: undefined },
-    { enabled: true, model: 'fixture-claude-99', provider: 'copilot' as const, family: 'anthropic' },
-    { enabled: true, model: 'fixture-gpt-99', provider: 'copilot' as const, family: 'openai' },
-    { enabled: true, model: 'fixture-model', provider: 'claude' as const, family: 'generic' },
-  ])('gates the runtime model-family glyph for $model on $provider (preview $enabled)', async ({
-    enabled, model, provider, family,
+    { model: 'fixture-claude-99', provider: 'copilot' as const, family: 'anthropic' },
+    { model: 'fixture-gpt-99', provider: 'copilot' as const, family: 'openai' },
+    { model: 'fixture-model', provider: 'claude' as const, family: 'generic' },
+  ])('shows the runtime model-family glyph for $model on $provider by default', async ({
+    model, provider, family,
   }) => {
-    seedHubSettings({ previewFeatures: { composerRefresh: enabled } })
     const runtimeSession: ManagedSession = {
       ...session, provider, runtime: { model, reasoningEffort: 'high' },
     }
@@ -19690,15 +19647,9 @@ describe('App', () => {
     expect(summary).toHaveTextContent('effort high')
     await waitFor(() => {
       const icon = summary.querySelector('[data-model-family]')
-      if (family) {
-        expect(icon).toHaveAttribute('data-model-family', family)
-        expect(icon).toHaveAttribute('aria-hidden', 'true')
-        expect(icon?.parentElement).toHaveTextContent(model)
-      } else {
-        expect(icon).toBeNull()
-        expect([...summary.children].find((child) => child.textContent === model)?.outerHTML)
-          .toBe(`<span>${model}</span>`)
-      }
+      expect(icon).toHaveAttribute('data-model-family', family)
+      expect(icon).toHaveAttribute('aria-hidden', 'true')
+      expect(icon?.parentElement).toHaveTextContent(model)
     })
     fireEvent.click(summary)
     expect(await screen.findByRole('dialog', { name: 'Model and context' })).toBeInTheDocument()
@@ -19708,8 +19659,7 @@ describe('App', () => {
     { provider: 'copilot' as const, supportsSteering: true, reason: undefined },
     { provider: 'claude' as const, supportsSteering: false, reason: /does not support steering/ },
     { provider: 'copilot' as const, supportsSteering: undefined, reason: /Update this computer/ },
-  ])('gates busy preview delivery for $provider steering=$supportsSteering', async ({ provider, supportsSteering, reason }) => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
+  ])('gates busy delivery for $provider steering=$supportsSteering', async ({ provider, supportsSteering, reason }) => {
     vi.mocked(listComputers).mockResolvedValue([{
       ...taskComputer,
       providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
@@ -19753,7 +19703,6 @@ describe('App', () => {
   ])('sends directly during background-only work (steering=$supportsSteering, foreground=$foregroundTurnActive)', async ({
     supportsSteering, foregroundTurnActive,
   }) => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     vi.mocked(listComputers).mockResolvedValue([{
       ...taskComputer,
       providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
@@ -19783,7 +19732,6 @@ describe('App', () => {
   })
 
   it('keeps Enter immediate delivery instead of opening the busy preview menu', async () => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const busy = { ...session, status: 'running' as const }
     vi.mocked(listSessions).mockResolvedValue([busy])
     vi.mocked(getSession).mockResolvedValue(busy)
@@ -19798,7 +19746,6 @@ describe('App', () => {
   })
 
   it('shows projected origin in the header and runtime subagents beside background work only in the preview', async () => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     vi.mocked(listComputers).mockResolvedValue([{
       ...computer, providers: computer.providers!.map((capability) => ({ ...capability, supportsBackgroundTasks: true })),
     }])
@@ -19820,7 +19767,6 @@ describe('App', () => {
   })
 
   it.each([undefined, true])('offers delivery choices for a rapid second Send before polling (steering=%s)', async (supportsSteering) => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     vi.mocked(listComputers).mockResolvedValue([{
       ...taskComputer,
       providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
@@ -19869,7 +19815,6 @@ describe('App', () => {
   })
 
   it.each([undefined, true])('offers delivery choices immediately after a terminal queue upsert (steering=%s)', async (supportsSteering) => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     vi.mocked(listComputers).mockResolvedValue([{
       ...taskComputer,
       providers: taskComputer.providers!.map((capability) => ({ ...capability, supportsSteering })),
@@ -19910,7 +19855,6 @@ describe('App', () => {
   })
 
   it('clears the local foreground handoff when a follow-up send fails', async () => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     vi.mocked(listComputers).mockResolvedValue([taskComputer])
     vi.mocked(listBackgroundTasks).mockResolvedValue({
       tasks: [{
@@ -19940,7 +19884,6 @@ describe('App', () => {
   })
 
   it.each(['Cancel', 'Escape'])('previews searched sent messages and restores the parked draft on %s', async (cancel) => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const sentSession = {
       ...session,
       messages: [
@@ -19976,7 +19919,6 @@ describe('App', () => {
   })
 
   it.each([false, true])('commits Use message as the durable draft without resurrecting its predecessor (reload=%s)', async (reload) => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const chosen = 'Chosen sent-message text'
     const historySession = {
       ...session, messages: [{
@@ -20013,7 +19955,6 @@ describe('App', () => {
   })
 
   it('omits an automatic recovery brief from sent-message search and ArrowUp recall', async () => {
-    seedHubSettings({ previewFeatures: { composerRefresh: true } })
     const recovered = {
       ...session,
       messages: [
@@ -20067,9 +20008,8 @@ describe('App', () => {
       expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
         '922k context',
       )
-      expect(screen.getByTestId('composer-runtime')).toHaveTextContent(
-        'ctx ~200k/922k (22%)',
-      )
+      expect(screen.getByRole('button', { name: 'Context: 22% used' }))
+        .toHaveAccessibleDescription('Estimated context usage; not plan usage')
       expect(screen.getByTestId('web-statusline')).not.toHaveTextContent(
         'fixture-model',
       )
@@ -21828,7 +21768,7 @@ describe('App', () => {
         const rendered = render(<App />)
         const composer = (await screen.findByLabelText('Message')) as HTMLTextAreaElement
         fireEvent.paste(composer, { clipboardData: { getData: () => original } })
-        fireEvent.click(screen.getByRole('button', { name: enqueue ? 'Queue message' : 'Send message' }))
+        submitComposerMessage(enqueue)
         await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
         const pending = JSON.parse(
           localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
@@ -25336,6 +25276,7 @@ describe('App', () => {
     await screen.findAllByText('Project chat')
 
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     expect(
       await screen.findByLabelText('Change the keys for Open or close knowledge'),
     ).toHaveTextContent('Alt + K')
@@ -25343,7 +25284,7 @@ describe('App', () => {
 
   it('makes every visible settings field label searchable in its category', async () => {
     seedHubSettings({
-      previewFeatures: { settingsNavigation: true, desktopRail: true, schedulerView: true },
+      previewFeatures: { desktopRail: true, schedulerView: true },
       newSessionRuntimes: {
         copilot: { model: 'fixture-model', reasoningEffort: 'high', contextTier: 'default', mode: '' },
         claude: { model: 'provider-model', reasoningEffort: 'high', contextTier: 'default', mode: '' },
@@ -25406,6 +25347,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
 
     // Held with nothing: refused, so the default stands.
     expect(
@@ -25430,6 +25372,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     fireEvent.click(
       await screen.findByLabelText(
         'Change the keys for Open, close, or focus Oracle',
@@ -25454,6 +25397,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     fireEvent.click(
       await screen.findByLabelText(
         'Change the keys for Dock or undock Oracle',
@@ -25484,6 +25428,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     fireEvent.click(
       await screen.findByLabelText('Change the keys for View background tasks'),
     )
@@ -25526,6 +25471,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
 
     expect(
       await screen.findByLabelText('Change the keys for Open or close knowledge'),
@@ -25550,6 +25496,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
 
     expect(
       await screen.findByLabelText('Change the keys for Open or close knowledge'),
@@ -25579,6 +25526,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
 
     // Both back to their defaults, so each can still be pressed.
     expect(
@@ -25596,6 +25544,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
 
     // Move background tasks off Alt+T...
     fireEvent.click(
@@ -25642,6 +25591,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
 
     const change = await screen.findByLabelText(
       'Change the keys for Open or close knowledge',
@@ -25682,6 +25632,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
 
     const change = await screen.findByLabelText(
       'Change the keys for View background tasks',
@@ -25716,6 +25667,7 @@ describe('App', () => {
     const first = render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     fireEvent.click(
       await screen.findByLabelText('Change the keys for View background tasks'),
     )
@@ -25733,6 +25685,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByLabelText('App settings'))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
     const kept = await screen.findByLabelText(
       'Change the keys for View background tasks',
     )
@@ -25971,6 +25924,7 @@ describe('App', () => {
     render(<App />)
     await screen.findAllByText('Project chat')
     fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Interface/ }))
 
     const shortcuts = await screen.findByRole('heading', {
       name: 'Keyboard shortcuts',

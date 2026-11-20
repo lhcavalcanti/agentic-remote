@@ -311,7 +311,7 @@ test('phone All settings restores category focus and supports keyboard re-entry'
   } finally { fixture.assertHealthy() }
 })
 
-test('settings preview searches fields, navigates by keyboard, deep-links computers and closes with Escape', async ({ page, baseURL }) => {
+test('settings searches fields, navigates by keyboard, deep-links computers and closes with Escape', async ({ page, baseURL }) => {
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-navigation')!.setup(page)
   try {
     const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
@@ -319,9 +319,9 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
     await dialog.getByRole('button', { name: /^Interface/ }).click()
     await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeVisible()
     await expect(dialog.getByRole('heading', { name: 'Keyboard shortcuts', exact: true })).toBeHidden()
-    await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Settings navigation')
+    await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Desktop rail')
     await dialog.getByRole('button', { name: /^Interface/ }).click()
-    await expect(dialog.getByRole('checkbox', { name: 'Settings navigation', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('checkbox', { name: 'Desktop rail', exact: true })).toBeVisible()
     await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeHidden()
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
@@ -334,13 +334,10 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
   } finally { fixture.assertHealthy() }
 })
 
-test('Health search leads to its preview toggle while off and its card after enabling', async ({ page, baseURL }) => {
+test('Health search leads directly to the App card', async ({ page, baseURL }) => {
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-health-search')!.setup(page)
   try {
     const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
-    await expect(dialog.getByRole('button', { name: /^App This device/ })).toHaveCount(0)
-    await dialog.getByRole('checkbox', { name: 'Health card', exact: true }).check()
-    await dialog.getByRole('button', { name: /^App This device/ }).click()
     await expect(dialog.getByRole('region', { name: 'Health', exact: true })).toBeVisible()
   } finally { fixture.assertHealthy() }
 })
@@ -879,15 +876,9 @@ test.describe('browser interaction contracts', () => {
     await expect(page.getByRole('combobox', { name: 'How new sessions start', exact: true })).toHaveValue('sdk')
   })
 
-  test('shows model-family glyphs only after opting in and follows runtime model changes', async ({ page, baseURL }) => {
+  test('shows model-family glyphs by default and follows runtime model changes', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'conversation')
     const summary = page.getByTestId('composer-runtime')
-    await expect(summary.locator('[data-model-family]')).toHaveCount(0)
-    await page.getByRole('button', { name: 'App settings', exact: true }).click()
-    const settings = page.getByRole('dialog', { name: 'App settings', exact: true })
-    await settings.getByRole('checkbox', { name: 'Composer refresh', exact: true }).check()
-    await expect.poll(() => handle.state.settings.values.previewFeatures?.composerRefresh).toBe(true)
-    await settings.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(summary.locator('[data-model-family]')).toHaveAttribute('data-model-family', 'generic')
 
     for (const [model, family] of [['fixture-claude-99', 'anthropic'], ['fixture-gpt-99', 'openai']]) {
@@ -899,15 +890,9 @@ test.describe('browser interaction contracts', () => {
       await expect(summary.locator('[data-model-family]')).toHaveAttribute('data-model-family', family)
       await expect(summary.locator('[data-model-family]')).toHaveAttribute('aria-hidden', 'true')
     }
-
-    await page.getByRole('button', { name: 'App settings', exact: true }).click()
-    await settings.getByRole('checkbox', { name: 'Composer refresh', exact: true }).uncheck()
-    await expect.poll(() => handle.state.settings.values.previewFeatures?.composerRefresh).toBe(false)
-    await settings.getByRole('button', { name: 'Close', exact: true }).click()
-    await expect(summary.locator('[data-model-family]')).toHaveCount(0)
   })
 
-  test('preview status is one setup button and explains idle-only changes while busy', async ({ page, baseURL }) => {
+  test('runtime status is one setup button and explains idle-only changes while busy', async ({ page, baseURL }) => {
     await open(page, baseURL, 'composer-status-busy')
     const summary = page.getByTestId('composer-runtime')
     await expect(summary).toHaveAccessibleDescription(/applies when idle/)
@@ -918,7 +903,7 @@ test.describe('browser interaction contracts', () => {
     await expect(page.getByRole('dialog', { name: 'Model and context' })).toBeVisible()
   })
 
-  test('preview row attaches using the existing pipeline and opens read-only session resources', async ({ page, baseURL }) => {
+  test('composer row attaches using the existing pipeline and opens read-only session resources', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'composer-button-row')
     const chooser = page.waitForEvent('filechooser')
     await page.getByRole('button', { name: 'Attach file or audio recording', exact: true }).click()
@@ -933,7 +918,7 @@ test.describe('browser interaction contracts', () => {
   })
 
   for (const viewport of uiViewports) {
-    test.describe(`preview row access ${viewport.name}`, () => {
+    test.describe(`composer row access ${viewport.name}`, () => {
       test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
       test('keeps touch targets and exposes secondary controls through the session panel', async ({ page, baseURL }) => {
         const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-button-row')!.setup(page)
@@ -1056,6 +1041,7 @@ test.describe('browser interaction contracts', () => {
     await expect.poll(() => handle.state.settings.values.previewFeatures?.notificationPanel).toBe(true)
     await settings.getByRole('button', { name: 'Close', exact: true }).click()
     await page.getByRole('button', { name: 'App settings', exact: true }).click()
+    await settings.getByRole('button', { name: /^Interface/ }).click()
     await expect(notifications).toBeChecked()
 
     handle.state.hubFlags = { notificationCenter: false, hostMonitor: false, scheduler: false }

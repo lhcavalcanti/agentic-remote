@@ -12,8 +12,6 @@ import type {
 import { SessionNavigation, type PendingSessionCreation } from './SessionNavigation'
 import type { SessionSort } from './session-presentation'
 import { sessionNavigationView, type SessionFilter } from './session-navigation-view'
-import { PreviewFeaturesContext } from './preview-features'
-import { defaultHubFeatureFlags, effectivePreviewFeatures } from '../shared/feature-flags'
 
 const computers: ComputerSummary[] = [
   { id: 'studio', name: 'Studio', isLocal: true, online: true },
@@ -213,12 +211,7 @@ describe('session navigation', () => {
       { ...session, id: 'schedule', provenance: { origin: 'schedule' as const, scheduleName: 'Morning review', scheduleRunId: 'run' } },
       { ...session, id: 'unknown', title: 'Oracle schedule title without provenance' },
     ]]])
-    render(
-      <PreviewFeaturesContext.Provider value={{
-        hubFlags: defaultHubFeatureFlags, preferences: { composerRefresh: true },
-        effective: effectivePreviewFeatures({ composerRefresh: true }, defaultHubFeatureFlags), set: vi.fn(),
-      }}>{navigation(listed)}</PreviewFeaturesContext.Provider>,
-    )
+    render(navigation(listed))
     expect(screen.getByRole('button', { name: /Review the release, Started by you/ })).toBeVisible()
     expect(screen.getByRole('button', { name: /Review the release, Started by Oracle/ })).toBeVisible()
     expect(screen.getByRole('button', { name: /Review the release, Found on this computer/ })).toBeVisible()

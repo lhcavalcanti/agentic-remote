@@ -4838,48 +4838,9 @@ button {
 
 /* Settings are grouped by what they are about: each group's heading, then
    its parts, side by side on a wide screen. */
-.app-settings-nav {
-  position: sticky;
-  z-index: 2;
-  top: -22px;
-  display: flex;
-  gap: 6px;
-  margin: 0 -22px 4px;
-  padding: 10px 22px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  scrollbar-width: none;
-}
-
-.app-settings-nav button {
-  flex: 0 0 auto;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--panel-soft);
-  color: var(--muted-strong);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.app-settings-nav button:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-
-.app-settings-nav button:focus-visible {
-  outline: 2px solid var(--accent-foreground);
-  outline-offset: 2px;
-}
-
 .app-settings-group {
   padding: 20px 0;
   border-top: 1px solid var(--border);
-  /* Clears the sticky jump bar when a group is reached by keyboard. */
-  scroll-margin-top: 64px;
 }
 
 .app-settings-group:first-of-type {
@@ -9637,13 +9598,6 @@ button {
   margin: 4px 0 0;
   color: var(--warning);
   font-size: 12px;
-}
-
-.manager-badge {
-  padding-left: 5px;
-  border-left: 1px solid var(--border-strong);
-  border-radius: 0;
-  color: var(--accent);
 }
 
 @media (max-width: 960px) {

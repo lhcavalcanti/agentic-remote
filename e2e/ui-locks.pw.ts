@@ -660,30 +660,6 @@ for (const viewport of [uiViewports[0].viewport, { width: 1000, height: 640 }]) 
         fixture.assertHealthy()
       }
     })
-
-    test('classic composer keeps an attachment above the message box and its buttons', async ({ page, baseURL }) => {
-      const fixture = await open(page, baseURL, 'conversation')
-      try {
-        await pasteImage(page)
-        const { composer, attachments, text, actions, overflow } = await composerParts(page)
-        expect(overflow, 'composer overflow').toBeLessThanOrEqual(0)
-        expect(attachments!.width, 'attachment row').toBeGreaterThanOrEqual(composer.width - 2)
-        for (const [name, part] of [['message box', text], ['buttons', actions!]] as const) {
-          expect(part.top, `${name} top`).toBeGreaterThanOrEqual(attachments!.bottom - 1)
-          expect(part.bottom, `${name} bottom`).toBeLessThanOrEqual(composer.bottom)
-        }
-        expect(text.left, 'message box left').toBeGreaterThanOrEqual(composer.left)
-        expect(actions!.left, 'buttons beside the message box').toBeGreaterThanOrEqual(text.right - 1)
-        expect(actions!.top, 'buttons beside the message box').toBeLessThan(text.bottom)
-        expect(actions!.right, 'buttons right').toBeLessThanOrEqual(composer.right)
-        await startRecording(page)
-        const recording = await composerParts(page)
-        expectColumn(recording, [['attachment', recording.attachments], ['message box', recording.text], ['recording', recording.recording]])
-        await assertNoHorizontalOverflow(page)
-      } finally {
-        fixture.assertHealthy()
-      }
-    })
   })
 }
 

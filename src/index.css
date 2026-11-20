@@ -3292,9 +3292,12 @@ button {
   color: var(--danger);
 }
 
+/* Tool rows are the most numerous in a transcript, so a touch row stays
+   compact: the whole full-width row is the target, at least 28px tall. The
+   open panel's buttons get the full 44px. */
 @media (pointer: coarse) {
   .activity-message--toggle {
-    min-height: 44px;
+    min-height: 28px;
     align-items: center;
   }
 

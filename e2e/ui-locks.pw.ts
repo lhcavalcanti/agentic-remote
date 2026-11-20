@@ -269,10 +269,15 @@ for (const viewport of uiViewports) {
       try {
         const bash = bashRow(page)
         const search = searchRow(page)
-        for (const row of [bash, search]) {
-          await expect(row).toHaveAttribute('aria-expanded', 'false')
-          if (viewport.hasTouch) expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44)
+        // Compact on touch too: the whole full-width row is the target.
+        const rowHeights = await page.locator('.activity-message--toggle')
+          .evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height))
+        expect(rowHeights).toHaveLength(fixtureActivityMessages.length)
+        for (const height of rowHeights) {
+          expect(height).toBeGreaterThanOrEqual(viewport.hasTouch ? 28 : 20)
+          expect(height).toBeLessThanOrEqual(viewport.hasTouch ? 29 : 24)
         }
+        for (const row of [bash, search]) await expect(row).toHaveAttribute('aria-expanded', 'false')
         const open = (row: typeof bash) => viewport.hasTouch ? row.tap() : row.click()
 
         await open(bash)
@@ -281,7 +286,12 @@ for (const viewport of uiViewports) {
         await expect(bashPanel).toContainText('pnpm run check-links docs/field-guide.md --format table')
         await expect(bashPanel).toContainText('Checked 18 links: 17 ok, 1 redirected')
         await expect(bashPanel).toContainText('reading-patterns-for-long-documents')
-        await expect(bashPanel.getByRole('button', { name: 'Copy output' })).toBeVisible()
+        const copyOutput = bashPanel.getByRole('button', { name: 'Copy output' })
+        await expect(copyOutput).toBeVisible()
+        if (viewport.hasTouch) {
+          const copyBox = (await copyOutput.boundingBox())!
+          expect(Math.min(copyBox.width, copyBox.height)).toBeGreaterThanOrEqual(44)
+        }
 
         await open(search)
         const searchPanel = await panelOf(page, search)

@@ -5,6 +5,8 @@ import {
   FIXTURE_NOW,
   SELECTED_SESSION_ID,
   createWorkspaceFixtureState,
+  fixtureActivityDetails,
+  fixtureActivityMessages,
   fixtureBaseUrl,
   fixtureSchedules as provenanceSchedules,
   fixtureScheduleRuns as provenanceRuns,
@@ -30,6 +32,7 @@ export const uiContextOptions = {
 
 export const uiSceneNames = [
   'conversation',
+  'conversation-tool-rows',
   'composer-busy-queue',
   'composer-family-claude',
   'composer-family-openai',
@@ -99,6 +102,13 @@ export function createUIScenes(
         ? await oracleHostStatusFixture() : undefined
       const originTasks = name === 'session-origin-tasks' || name === 'session-origin-tasks-short'
       const origins = name === 'session-origins' || originTasks || name === 'session-origin-run' || name === 'session-subagents'
+      // Tool rows are the most numerous rows in a real transcript; this scene
+      // keeps their collapsed density locked on every viewport.
+      const toolRows = name === 'conversation-tool-rows'
+      if (toolRows) {
+        state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+          .messages.splice(1, 0, ...structuredClone(fixtureActivityMessages))
+      }
       if (origins) {
         state.settings = {
           revision: 1, values: { previewFeatures: { composerRefresh: true, schedulerView: true, desktopRail: true } },
@@ -217,6 +227,7 @@ export function createUIScenes(
         appearance: 'graphite',
         state,
         notifications: name === 'notification-panel' ? fixtureNotifications : undefined,
+        activityDetails: toolRows ? fixtureActivityDetails : undefined,
         hostMonitor: Boolean(hostStatus) || name === 'host-monitor' || name === 'host-processes' || name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-health' || name === 'settings-skills' || name === 'settings-skill-confirmation',
         hostMonitorWsl: name === 'host-monitor' || name === 'host-processes',
         scheduler: name === 'oracle-schedule-approval' ? {
@@ -254,6 +265,10 @@ export function createUIScenes(
       await expect.poll(() => state.settings.revision).toBeGreaterThan(0)
       if (name === 'composer-busy-queue') {
         await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the release notes next.')
+      } else if (toolRows) {
+        const rows = page.getByRole('button', { name: /^(Completed|Failed): / })
+        await expect(rows).toHaveCount(fixtureActivityMessages.length)
+        for (const row of await rows.all()) await expect(row).toHaveAttribute('aria-expanded', 'false')
       } else if (name === 'composer-family-claude' || name === 'composer-family-openai') {
         const family = name === 'composer-family-claude' ? 'anthropic' : 'openai'
         await expect(page.getByTestId('composer-runtime').locator('[data-model-family]'))

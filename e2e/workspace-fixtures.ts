@@ -532,8 +532,21 @@ const fixtureLinkCheck = [
 
 const fixtureMcpArguments = { query: 'recovery checklist', perPage: 5 }
 
-/** Synthetic tool rows: tests add them to a session, so no shared scene changes. */
+/**
+ * Synthetic tool rows, each for a call its computer logged. Tests and the
+ * tool-row scene add them to a session, so the shared scenes are unchanged.
+ */
 export const fixtureActivityMessages: ChatMessage[] = [
+  {
+    id: 'tool:fixture-call-read',
+    role: 'activity',
+    content: 'View\nhandbook/agent-workspace.md',
+    createdAt: '2026-09-04T16:16:05.000Z',
+    activityStatus: 'completed',
+    activityKind: 'tool',
+    activityResult: '24 lines',
+    activityDurationMs: 80,
+  },
   {
     id: 'tool:fixture-call-links',
     role: 'activity',
@@ -545,6 +558,16 @@ export const fixtureActivityMessages: ChatMessage[] = [
     activityDurationMs: 2_400,
   },
   {
+    id: 'tool:fixture-call-missing',
+    role: 'activity',
+    content: 'View\nreference/old-checklist.md',
+    createdAt: '2026-09-04T16:16:50.000Z',
+    activityStatus: 'failed',
+    activityKind: 'tool',
+    activityResult: 'Error: reference/old-checklist.md does not exist',
+    activityDurationMs: 40,
+  },
+  {
     id: 'tool:fixture-call-search',
     role: 'activity',
     content: `MCP · GitHub · Search Code\n${fixtureMcpArguments.query}`,
@@ -554,14 +577,43 @@ export const fixtureActivityMessages: ChatMessage[] = [
     activityResult: '3 results',
     activityDurationMs: 900,
   },
+  {
+    id: 'tool:fixture-call-edit',
+    role: 'activity',
+    content: 'Edit\nhandbook/release-checklist.md',
+    createdAt: '2026-09-04T16:17:40.000Z',
+    activityStatus: 'completed',
+    activityKind: 'tool',
+    activityResult: 'Updated the recovery section',
+    activityDurationMs: 260,
+  },
 ]
 
 function fixtureText(text: string) {
   return { text, truncated: false, originalBytes: new TextEncoder().encode(text).length }
 }
 
+function fixtureArguments(value: object) {
+  return { format: 'json' as const, ...fixtureText(JSON.stringify(value, null, 2)) }
+}
+
 /** What each synthetic call's computer logged, by `computerId:sessionId:toolCallId`. */
 export const fixtureActivityDetails: Record<string, ActivityDetail> = {
+  [`fixture-studio:${SELECTED_SESSION_ID}:fixture-call-read`]: {
+    toolCallId: 'fixture-call-read',
+    toolName: 'view',
+    kind: 'tool',
+    status: 'completed',
+    startedAt: '2026-09-04T16:16:05.000Z',
+    completedAt: '2026-09-04T16:16:05.080Z',
+    durationMs: 80,
+    arguments: fixtureArguments({ path: 'handbook/agent-workspace.md' }),
+    result: fixtureText([
+      '1. # Agent workspace field guide',
+      '2. ',
+      '3. A quiet place to supervise work, read a note, and decide what comes next.',
+    ].join('\n')),
+  },
   [`fixture-studio:${SELECTED_SESSION_ID}:fixture-call-links`]: {
     toolCallId: 'fixture-call-links',
     toolName: 'bash',
@@ -590,6 +642,32 @@ export const fixtureActivityDetails: Record<string, ActivityDetail> = {
       'reference/recovery-checklist.md:1',
       'handbook/agent-workspace.md:14',
     ].join('\n')),
+  },
+  [`fixture-studio:${SELECTED_SESSION_ID}:fixture-call-missing`]: {
+    toolCallId: 'fixture-call-missing',
+    toolName: 'view',
+    kind: 'tool',
+    status: 'failed',
+    startedAt: '2026-09-04T16:16:50.000Z',
+    completedAt: '2026-09-04T16:16:50.040Z',
+    durationMs: 40,
+    arguments: fixtureArguments({ path: 'reference/old-checklist.md' }),
+    error: fixtureText('Path does not exist: reference/old-checklist.md'),
+  },
+  [`fixture-studio:${SELECTED_SESSION_ID}:fixture-call-edit`]: {
+    toolCallId: 'fixture-call-edit',
+    toolName: 'edit',
+    kind: 'tool',
+    status: 'completed',
+    startedAt: '2026-09-04T16:17:40.000Z',
+    completedAt: '2026-09-04T16:17:40.260Z',
+    durationMs: 260,
+    arguments: fixtureArguments({
+      path: 'handbook/release-checklist.md',
+      old_str: 'Keep the selected session, its draft, and its reading position together.',
+      new_str: 'Keep the selected session, its draft, its open tool rows, and its reading position together.',
+    }),
+    result: fixtureText('File handbook/release-checklist.md updated with changes.'),
   },
 }
 

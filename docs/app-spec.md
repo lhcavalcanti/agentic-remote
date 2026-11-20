@@ -1171,13 +1171,14 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
 - A tool row for a call its session logged MUST be a disclosure button
-  (`aria-expanded`, `aria-controls`, Enter/Space, a visible focus ring, and at
-  least 44px tall on touch) that opens in place onto the complete call: the
-  command as a shell line or the arguments as JSON or text, the output, and the
-  error, each as plain text, never Markdown or HTML, in a monospace block with
-  its own scroll that wraps on a phone, with **Copy**; and its status,
-  duration, and start and finish times. Skill and agent rows MUST stay headings
-  with the button inside.
+  (`aria-expanded`, `aria-controls`, Enter/Space, a visible focus ring) that
+  opens in place onto the complete call: the command as a shell line or the
+  arguments as JSON or text, the output, and the error, each as plain text,
+  never Markdown or HTML, in a monospace block with its own scroll that wraps
+  on a phone, with **Copy**; and its status, duration, and start and finish
+  times. Rows MUST stay compact: on touch at least 28px tall, the whole
+  full-width row being the target, while the open panel's buttons are at least
+  44px. Skill and agent rows MUST stay headings with the button inside.
 - The call MUST be read only when its row opens, from the owning computer's
   Copilot event log through
   `GET /api/computers/:computerId/sessions/:sessionId/activities/:toolCallId`,

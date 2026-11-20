@@ -11562,7 +11562,9 @@ describe('AgentService deletion', () => {
         }
 
         expect(shown()).toBeUndefined()
-        for (let waited = 0; waited < 30_000; waited += 5_000) await wait(5_000)
+        for (let waited = 0; waited < 25_000; waited += 5_000) await wait(5_000)
+        expect(shown()).toBeUndefined()
+        for (let waited = 0; waited < 15_000; waited += 5_000) await wait(5_000)
         expect(shown()?.message).toMatch(/has not appeared in the terminal/)
       },
     )

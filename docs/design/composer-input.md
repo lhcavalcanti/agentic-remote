@@ -1,6 +1,6 @@
 # Composer input compatibility
 
-These safeguards apply to the default-off Composer refresh preview described in the [application specification](../app-spec.md).
+These safeguards apply to the default composer described in the [application specification](../app-spec.md).
 
 ## Touch delivery choices
 

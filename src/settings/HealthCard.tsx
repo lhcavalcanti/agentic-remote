@@ -1,14 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { HubHealth } from '../../shared/hub-health'
 import { getHubHealth } from '../api'
-import { usePreviewFeature } from '../preview-features'
 
 export function HealthCard() {
-  const enabled = usePreviewFeature('healthCard')
-  return enabled ? <HealthDetails /> : null
-}
-
-function HealthDetails() {
   const [health, setHealth] = useState<HubHealth>()
   const [error, setError] = useState<string>()
   const [refresh, setRefresh] = useState(0)

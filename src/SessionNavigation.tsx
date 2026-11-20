@@ -44,7 +44,6 @@ import type { SessionFilter, SessionNavigationView } from './session-navigation-
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
 import { sessionOriginDescription } from './session-origin'
-import { usePreviewFeature } from './preview-features'
 import type { ScheduleLink } from './notifications/schedule-link'
 
 export type PendingSessionCreation = Pick<
@@ -59,8 +58,6 @@ export type PendingSessionCreation = Pick<
 const sessionListScrollStorageKey = 'agentic-remote:session-list-scroll-v1'
 
 type SessionActions = {
-  /** `computerId:sessionId` of the sessions Oracle started. */
-  managedSessions?: ReadonlySet<string>
   onOpenScheduleRun?: (target: ScheduleLink) => void
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
@@ -172,7 +169,6 @@ function SortableSessionItem({
   unreadSessions,
   markingUnreadSessions,
   onToggleSessionUnread,
-  managedSessions,
   recoverableClose,
 }: SessionActions & {
   session: ManagedSession
@@ -197,7 +193,6 @@ function SortableSessionItem({
     disabled: reorderDisabled || sorting,
   })
   const presentation = sessionPresentation(session, backgroundTasks, online)
-  const originPreview = usePreviewFeature('composerRefresh')
   const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
   // Each session waits only for its own close or suspend; the owning computer
@@ -251,8 +246,7 @@ function SortableSessionItem({
           aria-label={[
             session.title,
             unread ? 'unread' : undefined,
-            originPreview ? sessionOriginDescription(session.provenance) :
-              managedSessions?.has(sessionKey(session)) ? 'started by Oracle' : undefined,
+            sessionOriginDescription(session.provenance),
             session.retention?.pinned ? 'kept for review' : undefined,
             hidden ? 'hidden from the list' : undefined,
             providerName(session.provider),
@@ -276,7 +270,7 @@ function SortableSessionItem({
                   {executionModeName(session.executionMode)}
                 </em>
               ) : null}
-              <SessionOriginBadge provenance={session.provenance} legacyManaged={managedSessions?.has(sessionKey(session))} />
+              <SessionOriginBadge provenance={session.provenance} />
               {session.retention?.pinned ? (
                 <em className="provider-badge" title="Protected from automatic archival">For review</em>
               ) : null}

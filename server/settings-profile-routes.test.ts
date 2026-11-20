@@ -107,10 +107,10 @@ describe('hub settings profile routes', () => {
     try {
       const saved = await app.inject({
         method: 'PATCH', url: '/api/settings', headers: local,
-        payload: { changes: { previewFeatures: { value: { composerRefresh: true, schedulerView: true }, baseRevision: 0 } } },
+        payload: { changes: { previewFeatures: { value: { desktopRail: true, schedulerView: true }, baseRevision: 0 } } },
       })
       expect(saved.statusCode).toBe(200)
-      expect(saved.json().settings.values.previewFeatures).toEqual({ composerRefresh: true, schedulerView: true })
+      expect(saved.json().settings.values.previewFeatures).toEqual({ desktopRail: true, schedulerView: true })
       for (const value of [{ schedulerView: 'on' }]) {
         expect((await app.inject({
           method: 'PATCH', url: '/api/settings', headers: local,
@@ -120,11 +120,11 @@ describe('hub settings profile routes', () => {
       const future = await app.inject({
         method: 'PATCH', url: '/api/settings', headers: local,
         payload: { changes: { previewFeatures: {
-          value: { composerRefresh: true, schedulerView: true, scheduler: true, futurePreview: true }, baseRevision: 1,
+          value: { desktopRail: true, schedulerView: true, composerRefresh: true, scheduler: true, futurePreview: true }, baseRevision: 1,
         } } },
       })
       expect(future.statusCode).toBe(200)
-      expect(future.json().settings.values.previewFeatures).toEqual({ composerRefresh: true, schedulerView: true })
+      expect(future.json().settings.values.previewFeatures).toEqual({ desktopRail: true, schedulerView: true })
       expect(store.snapshot().revision).toBe(1)
     } finally {
       await app.close()

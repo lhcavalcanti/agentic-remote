@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import {
+  assertMousePointer,
   assertNoHorizontalOverflow,
   createUIScenes,
   uiContextOptions,
@@ -12,6 +13,11 @@ import { FIXTURE_NOW, SELECTED_SESSION_ID, createWorkspaceFixtureState, setupWor
 import { scheduleSchema, scheduleRunSchema } from '../shared/schedules'
 
 test.use(uiContextOptions)
+
+const lockedScreenshot = {
+  // Rounded-corner compositing can vary by one RGB level in Chromium.
+  animations: 'disabled', caret: 'hide', maxDiffPixels: 0, threshold: 0.01,
+} as const
 
 for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' || entry.name === 'phone')) {
   test.describe(`schedule abandonment ${viewport.name}`, () => {
@@ -217,10 +223,7 @@ for (const viewport of uiViewports) {
             expect(await page.locator('.sidebar').evaluate((sidebar) =>
               (window.innerWidth >= 1024 ? sidebar.firstElementChild : sidebar.lastElementChild)?.matches('.shell-rail'))).toBe(true)
           }
-          await expect(page).toHaveScreenshot(`${viewport.name}-${name}.png`, {
-            // Rounded-corner compositing can vary by one RGB level in Chromium.
-            animations: 'disabled', caret: 'hide', maxDiffPixels: 0, threshold: 0.01,
-          })
+          await expect(page).toHaveScreenshot(`${viewport.name}-${name}.png`, lockedScreenshot)
         } finally {
           fixture.assertHealthy()
         }
@@ -311,7 +314,7 @@ test('phone All settings restores category focus and supports keyboard re-entry'
   } finally { fixture.assertHealthy() }
 })
 
-test('settings preview searches fields, navigates by keyboard, deep-links computers and closes with Escape', async ({ page, baseURL }) => {
+test('settings searches fields, navigates by keyboard, deep-links computers and closes with Escape', async ({ page, baseURL }) => {
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-navigation')!.setup(page)
   try {
     const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
@@ -319,9 +322,9 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
     await dialog.getByRole('button', { name: /^Interface/ }).click()
     await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeVisible()
     await expect(dialog.getByRole('heading', { name: 'Keyboard shortcuts', exact: true })).toBeHidden()
-    await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Settings navigation')
+    await dialog.getByRole('searchbox', { name: 'Search settings' }).fill('Desktop rail')
     await dialog.getByRole('button', { name: /^Interface/ }).click()
-    await expect(dialog.getByRole('checkbox', { name: 'Settings navigation', exact: true })).toBeVisible()
+    await expect(dialog.getByRole('checkbox', { name: 'Desktop rail', exact: true })).toBeVisible()
     await expect(dialog.getByRole('radiogroup', { name: 'Accent color' })).toBeHidden()
     await page.keyboard.press('Escape')
     await expect(dialog).toBeHidden()
@@ -334,13 +337,10 @@ test('settings preview searches fields, navigates by keyboard, deep-links comput
   } finally { fixture.assertHealthy() }
 })
 
-test('Health search leads to its preview toggle while off and its card after enabling', async ({ page, baseURL }) => {
+test('Health search leads directly to the App card', async ({ page, baseURL }) => {
   const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'settings-health-search')!.setup(page)
   try {
     const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
-    await expect(dialog.getByRole('button', { name: /^App This device/ })).toHaveCount(0)
-    await dialog.getByRole('checkbox', { name: 'Health card', exact: true }).check()
-    await dialog.getByRole('button', { name: /^App This device/ }).click()
     await expect(dialog.getByRole('region', { name: 'Health', exact: true })).toBeVisible()
   } finally { fixture.assertHealthy() }
 })
@@ -554,6 +554,107 @@ for (const width of [320, 360]) {
         await lastAction.scrollIntoViewIfNeeded()
         await expect(lastAction).toBeInViewport({ ratio: 1 })
         await expect(lastAction).toBeEnabled()
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
+type ComposerPart = { left: number, right: number, top: number, bottom: number, width: number }
+
+/** Pastes a screenshot from the clipboard into the message box. */
+async function pasteImage(page: Page) {
+  await message(page).focus()
+  await message(page).evaluate((element) => {
+    const image = new Uint8Array(232_448)
+    image.set([137, 80, 78, 71, 13, 10, 26, 10])
+    const clipboardData = new DataTransfer()
+    clipboardData.items.add(new File([image], 'image.png', { type: 'image/png' }))
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }))
+  })
+  await expect(page.getByRole('listitem', { name: 'image.png attachment' })).toContainText('Attached · 227 KiB')
+}
+
+async function composerParts(page: Page) {
+  return page.locator('.composer').evaluate((composer) => {
+    const part = (element: Element | null): ComposerPart | undefined => {
+      if (!element) return undefined
+      const { left, right, top, bottom, width } = element.getBoundingClientRect()
+      return { left, right, top, bottom, width }
+    }
+    return {
+      viewportWidth: document.documentElement.clientWidth,
+      overflow: composer.scrollWidth - composer.clientWidth,
+      composer: part(composer)!,
+      attachments: part(composer.querySelector(':scope > .composer-attachments')),
+      text: part(composer.querySelector(':scope > .composer-text-panel'))!,
+      actions: part(composer.querySelector(':scope > .composer-actions')),
+      recording: part(composer.querySelector(':scope > .recording-panel')),
+    }
+  })
+}
+
+/** Each part lies inside the composer's box, below the one before it. */
+function expectColumn(layout: Awaited<ReturnType<typeof composerParts>>, parts: [string, ComposerPart | undefined][]) {
+  const { composer } = layout
+  expect(layout.overflow, 'composer overflow').toBeLessThanOrEqual(0)
+  expect(composer.left, 'composer left').toBeGreaterThanOrEqual(0)
+  expect(composer.right, 'composer right').toBeLessThanOrEqual(layout.viewportWidth)
+  let above = composer.top
+  for (const [name, part] of parts) {
+    expect(part, name).toBeDefined()
+    expect(part!.left, `${name} left`).toBeGreaterThanOrEqual(composer.left)
+    expect(part!.right, `${name} right`).toBeLessThanOrEqual(composer.right)
+    expect(part!.top, `${name} top`).toBeGreaterThanOrEqual(above - 1)
+    expect(part!.bottom, `${name} bottom`).toBeLessThanOrEqual(composer.bottom)
+    above = part!.bottom
+  }
+}
+
+// A mouse and a composer at least 620px wide get the `(hover: hover)` layout,
+// which the desktop scene locks cover only without an attachment or recording.
+for (const viewport of [uiViewports[0].viewport, { width: 1000, height: 640 }]) {
+  test.describe(`composer with a mouse ${viewport.width}x${viewport.height}`, () => {
+    test.use({ viewport, isMobile: false, hasTouch: false })
+
+    async function open(page: Page, baseURL: string | undefined, name: UISceneName) {
+      await mockMicrophone(page)
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === name)!.setup(page)
+      await assertMousePointer(page)
+      expect((await page.locator('.composer').boundingBox())!.width).toBeGreaterThanOrEqual(620)
+      return fixture
+    }
+
+    async function startRecording(page: Page) {
+      await page.getByRole('button', { name: 'Start microphone recording', exact: true }).click()
+      await expect(page.locator('.recording-panel')).toContainText(/Recording \d+:\d\d/)
+    }
+
+    test('refreshed composer stacks an attachment, the message box and its buttons or recording', async ({ page, baseURL }) => {
+      const fixture = await open(page, baseURL, 'composer-button-row')
+      try {
+        await pasteImage(page)
+        const attached = await composerParts(page)
+        expectColumn(attached, [['attachment', attached.attachments], ['message box', attached.text], ['buttons', attached.actions]])
+        await assertNoHorizontalOverflow(page)
+        if (viewport.width === uiViewports[0].viewport.width) {
+          await expect(page.locator('.composer-area')).toHaveScreenshot('desktop-composer-refresh-attachment.png', lockedScreenshot)
+        }
+        await startRecording(page)
+        const recording = await composerParts(page)
+        expectColumn(recording, [['attachment', recording.attachments], ['message box', recording.text], ['recording', recording.recording]])
+        // The recording takes the buttons' row, as it does on a touch screen; nothing above it moves.
+        expect(recording.text.top - recording.composer.top, 'message box offset')
+          .toBeCloseTo(attached.text.top - attached.composer.top, 0)
+        expect(recording.text.bottom - recording.text.top, 'message box height')
+          .toBeCloseTo(attached.text.bottom - attached.text.top, 0)
+        // The line below the composer names the recording, under the box and in view.
+        const line = page.locator('.composer-area > .composer-hint')
+        await expect(line).toHaveText(/^Recording \d+:\d\d…$/)
+        expect((await line.boundingBox())!.y, 'recording line top').toBeGreaterThanOrEqual(recording.composer.bottom)
+        await expect(page.locator('.composer-area')).toBeInViewport({ ratio: 1 })
         await assertNoHorizontalOverflow(page)
       } finally {
         fixture.assertHealthy()
@@ -879,15 +980,9 @@ test.describe('browser interaction contracts', () => {
     await expect(page.getByRole('combobox', { name: 'How new sessions start', exact: true })).toHaveValue('sdk')
   })
 
-  test('shows model-family glyphs only after opting in and follows runtime model changes', async ({ page, baseURL }) => {
+  test('shows model-family glyphs by default and follows runtime model changes', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'conversation')
     const summary = page.getByTestId('composer-runtime')
-    await expect(summary.locator('[data-model-family]')).toHaveCount(0)
-    await page.getByRole('button', { name: 'App settings', exact: true }).click()
-    const settings = page.getByRole('dialog', { name: 'App settings', exact: true })
-    await settings.getByRole('checkbox', { name: 'Composer refresh', exact: true }).check()
-    await expect.poll(() => handle.state.settings.values.previewFeatures?.composerRefresh).toBe(true)
-    await settings.getByRole('button', { name: 'Close', exact: true }).click()
     await expect(summary.locator('[data-model-family]')).toHaveAttribute('data-model-family', 'generic')
 
     for (const [model, family] of [['fixture-claude-99', 'anthropic'], ['fixture-gpt-99', 'openai']]) {
@@ -899,15 +994,9 @@ test.describe('browser interaction contracts', () => {
       await expect(summary.locator('[data-model-family]')).toHaveAttribute('data-model-family', family)
       await expect(summary.locator('[data-model-family]')).toHaveAttribute('aria-hidden', 'true')
     }
-
-    await page.getByRole('button', { name: 'App settings', exact: true }).click()
-    await settings.getByRole('checkbox', { name: 'Composer refresh', exact: true }).uncheck()
-    await expect.poll(() => handle.state.settings.values.previewFeatures?.composerRefresh).toBe(false)
-    await settings.getByRole('button', { name: 'Close', exact: true }).click()
-    await expect(summary.locator('[data-model-family]')).toHaveCount(0)
   })
 
-  test('preview status is one setup button and explains idle-only changes while busy', async ({ page, baseURL }) => {
+  test('runtime status is one setup button and explains idle-only changes while busy', async ({ page, baseURL }) => {
     await open(page, baseURL, 'composer-status-busy')
     const summary = page.getByTestId('composer-runtime')
     await expect(summary).toHaveAccessibleDescription(/applies when idle/)
@@ -918,7 +1007,7 @@ test.describe('browser interaction contracts', () => {
     await expect(page.getByRole('dialog', { name: 'Model and context' })).toBeVisible()
   })
 
-  test('preview row attaches using the existing pipeline and opens read-only session resources', async ({ page, baseURL }) => {
+  test('composer row attaches using the existing pipeline and opens read-only session resources', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'composer-button-row')
     const chooser = page.waitForEvent('filechooser')
     await page.getByRole('button', { name: 'Attach file or audio recording', exact: true }).click()
@@ -933,7 +1022,7 @@ test.describe('browser interaction contracts', () => {
   })
 
   for (const viewport of uiViewports) {
-    test.describe(`preview row access ${viewport.name}`, () => {
+    test.describe(`composer row access ${viewport.name}`, () => {
       test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
       test('keeps touch targets and exposes secondary controls through the session panel', async ({ page, baseURL }) => {
         const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-button-row')!.setup(page)
@@ -1056,6 +1145,7 @@ test.describe('browser interaction contracts', () => {
     await expect.poll(() => handle.state.settings.values.previewFeatures?.notificationPanel).toBe(true)
     await settings.getByRole('button', { name: 'Close', exact: true }).click()
     await page.getByRole('button', { name: 'App settings', exact: true }).click()
+    await settings.getByRole('button', { name: /^Interface/ }).click()
     await expect(notifications).toBeChecked()
 
     handle.state.hubFlags = { notificationCenter: false, hostMonitor: false, scheduler: false }

@@ -54,9 +54,9 @@ function declaration(css: string, selector: string, property: string): string {
   return (value?.[1] ?? '').trim()
 }
 
-// On a pointer device the send, attach and record buttons sit inside the text
-// panel. A touch device keeps them in a separate bar, where they stay large
-// enough to hit with a thumb.
+// On a pointer device the text and its buttons are drawn as one panel. A touch
+// device keeps them in a separate bar, where they stay large enough to hit
+// with a thumb.
 describe('desktop composer layout', () => {
   it('stacks the actions below the text panel by default', async () => {
     const css = await stylesheet()
@@ -64,13 +64,12 @@ describe('desktop composer layout', () => {
     expect(declaration(css, '.composer', 'flex-direction')).toBe('column')
   })
 
-  it('only merges the actions in for a wide pointer-driven composer', async () => {
-    const css = await stylesheet()
-    const desktop = pointerLayout(css)
+  it('keeps the composer a column with a mouse too', async () => {
+    const desktop = pointerLayout(await stylesheet())
 
-    expect(declaration(desktop, '.composer', 'flex-direction')).toBe('row')
-    // Bottom-aligned, so the buttons stay with the last line as the box grows.
-    expect(declaration(desktop, '.composer', 'align-items')).toBe('flex-end')
+    // In a row, a full-row attachment or recording pushes the text panel and
+    // buttons into a second column outside the box.
+    expect(desktop).not.toMatch(/flex-direction\s*:\s*row/)
   })
 
   // The sidebar is resizable, so a wide window can still leave a narrow
@@ -111,20 +110,6 @@ describe('desktop composer layout', () => {
     expect(declaration(desktop, '.composer-actions__spacer', 'display')).toBe(
       'none',
     )
-  })
-
-  it('gives the recording panel its own card', async () => {
-    const css = await stylesheet()
-    const desktop = pointerLayout(css)
-
-    // Full width on its own line rather than beside the text.
-    expect(declaration(desktop, '.composer > .recording-panel', 'flex')).toBe(
-      '1 0 100%',
-    )
-    // Nested inside the merged border it would read as a panel within a panel.
-    expect(
-      declaration(desktop, '.composer:has(.recording-panel)', 'border-color'),
-    ).toBe('transparent')
   })
 
   // `phoneEnterCreatesNewline` gates on a coarse pointer as well as on width,

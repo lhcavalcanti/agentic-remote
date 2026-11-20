@@ -253,6 +253,15 @@ Copilot sessions can be tmux-backed:
 tmux attach
 ```
 
+Where a user systemd manager is available, each tmux-backed Copilot runs in a
+systemd scope of its own with `OOMPolicy=continue`: when the kernel kills a
+tool it started for memory, that tool fails and the session keeps running,
+where tmux's own pane scope would have stopped the whole session. Elsewhere
+(macOS, and WSL, Linux, or containers without systemd) Copilot starts directly
+in its pane. Set `AGENTIC_REMOTE_SESSION_SCOPE=off` in the service environment
+file to always start it directly; `setup` and `update` keep the setting. Either
+way it applies to sessions started or relaunched afterwards.
+
 Claude Agent sessions are SDK-only.
 
 Resource views distinguish live session reports, configured folder defaults,

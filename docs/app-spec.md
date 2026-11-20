@@ -516,6 +516,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   recreated in tmux with the same Copilot session ID, cwd, title, allow-all
   setting, model, effort, context tier, and agent mode.
 - Existing live tmux sessions MUST be detected and MUST NOT be duplicated.
+- Where the owning computer's user systemd manager can create one, a
+  tmux-backed Copilot MUST run in a systemd scope of its own with
+  `OOMPolicy=continue`, so an out-of-memory kill of a tool it started fails
+  only that tool and does not stop the session.
+  `AGENTIC_REMOTE_SESSION_SCOPE=off` MUST start Copilot directly instead.
 - SDK sessions MUST remain visible and MAY resume lazily when opened.
 - Claude Agent sessions MUST resume by their persisted provider session ID
   after an Agentic Remote restart.

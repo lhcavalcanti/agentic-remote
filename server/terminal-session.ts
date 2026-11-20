@@ -11,6 +11,11 @@ import {
 } from './active-sessions.js'
 import { noTmuxServer, tmuxNotInstalled } from './tmux-errors.js'
 import { SessionPaneRoots, type SessionPaneRoot } from './host-telemetry/session-pane-roots.js'
+import {
+  isSessionScopeLauncher,
+  sessionLaunchCommand,
+  sessionScopeAvailable,
+} from './session-scope.js'
 import type {
   ConfigureRuntimeInput,
   PendingPermission,
@@ -444,6 +449,14 @@ export class TmuxTerminalSessionController
   private readonly settledOwnerAgeMs = SETTLED_OWNER_AGE_MS
   /** When Stop last sent each session Ctrl+C. */
   private readonly interruptedAt = new Map<string, number>()
+  /** Whether Copilot can be started in a systemd scope of its own. */
+  private readonly sessionScope: () => Promise<boolean>
+
+  constructor(
+    options: { sessionScope?: () => Promise<boolean> } = {},
+  ) {
+    this.sessionScope = options.sessionScope ?? sessionScopeAvailable
+  }
 
   listSessionPaneRoots(): Promise<SessionPaneRoot[]> {
     return this.processPaneRoots.listSessionPaneRoots()
@@ -559,11 +572,15 @@ export class TmuxTerminalSessionController
     const name = `${PROBE_SESSION_PREFIX}${sessionId.slice(0, 8)}`
     if (signal?.aborted) throw new Error('The probe was cancelled before it started')
     const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
+    const command = await sessionLaunchCommand(
+      [copilot, '--yolo', '--session-id', sessionId],
+      this.sessionScope,
+    )
     const [target, panePid] = (await execFileAsync('tmux', [
       'new-session', '-d', '-P', '-F', '#{pane_id}\t#{pane_pid}', '-s', name,
       '-x', String(PROBE_COLUMNS), '-y', String(PROBE_ROWS), '-c', cwd,
       '-e', 'COLORTERM=truecolor',
-      copilot, '--yolo', '--session-id', sessionId,
+      ...command,
     ])).stdout.trim().split('\t')
     let owner: TerminalOwner | undefined
     let failure: Error | undefined
@@ -2581,8 +2598,9 @@ export class TmuxTerminalSessionController
   ): Promise<TerminalOwner> {
     for (let attempt = 0; attempt < 150; attempt += 1) {
       const owner = await this.owner(sessionId, expectedTarget)
-      // The wait in front of a relaunch carries the command it becomes, so
-      // discovery can find it first. It is the owner once it has become it.
+      // The wait in front of a relaunch carries the command it becomes, as
+      // does the scope it starts that command in, so discovery can find either
+      // first. It is the owner once it has become that command.
       if (
         owner &&
         owner.pid !== previousPid &&
@@ -2609,7 +2627,10 @@ export class TmuxTerminalSessionController
       target,
       '-c',
       cwd,
-      ...afterExit(replaced, command),
+      ...afterExit(
+        replaced,
+        await sessionLaunchCommand(command, this.sessionScope),
+      ),
     ])
   }
 
@@ -2652,7 +2673,7 @@ export class TmuxTerminalSessionController
     const copilot = process.env.COPILOT_BIN?.trim() || '/usr/local/bin/copilot'
     const windowName = safeWindowName(title)
     const format = '#{session_name}\t#{window_id}'
-    const command = [
+    const command = await sessionLaunchCommand([
       copilot,
       ...(allowAllPermissions ? ['--yolo'] : []),
       resumeExisting ? '--resume' : '--session-id',
@@ -2663,7 +2684,7 @@ export class TmuxTerminalSessionController
         : []),
       ...(runtime?.contextTier ? ['--context', runtime.contextTier] : []),
       ...(runtime?.mode ? ['--mode', runtime.mode] : []),
-    ]
+    ], this.sessionScope)
     // Copilot draws its composer with half-block glyphs when the terminal
     // advertises truecolor, and with plain rules when it does not. The frame
     // is what says the composer is live, so a window that inherits no
@@ -4966,10 +4987,11 @@ function afterExit(replaced: number[], command: string[]): string[] {
   ]
 }
 
-/** Whether `pid` is still the wait in front of a relaunched command. */
+/** Whether `pid` is still the wait or scope in front of a relaunched command. */
 async function awaitingRelaunch(pid: number): Promise<boolean> {
   try {
-    return (await processCommand(pid))[3] === RELAUNCH_LABEL
+    const command = await processCommand(pid)
+    return command[3] === RELAUNCH_LABEL || isSessionScopeLauncher(command)
   } catch {
     return true
   }

@@ -44,6 +44,7 @@ import {
   waitForProcessCommand,
 } from './tmux-test-helpers.js'
 import * as tmuxErrors from './tmux-errors.js'
+import { sessionScopeAvailable } from './session-scope.js'
 import { fixtureReceiptWriter, readyComposer } from './terminal-test-fixtures.js'
 
 const execFileAsync = promisify(execFile)
@@ -421,6 +422,31 @@ describe('tmux test isolation', () => {
 })
 
 describe('TmuxTerminalSessionController', () => {
+  it("runs a session's Copilot as its pane's own process, in a scope an out-of-memory kill does not stop", async ({ skip }) => {
+    skip(!(await sessionScopeAvailable()), 'This host cannot start a user systemd scope')
+    const { controller, sessionId } = await ownedStartupFixture()
+    const owner = await (controller as unknown as {
+      owner(id: string, target?: string, fresh?: boolean): Promise<{
+        pid: number
+        target: string
+        rootPid: number
+      } | undefined>
+    }).owner(sessionId, undefined, true)
+    const panePid = Number.parseInt((await execFileAsync('tmux', [
+      'display-message', '-p', '-t', owner?.target ?? '', '#{pane_pid}',
+    ])).stdout.trim(), 10)
+
+    // systemd-run becomes Copilot rather than starting it, so discovery and
+    // tmux both still find the session as the pane's own process.
+    expect(owner).toMatchObject({ pid: panePid, rootPid: panePid })
+    const cgroup = (await readFile(`/proc/${panePid}/cgroup`, 'utf8')).trim()
+    const unit = path.basename(cgroup.slice(cgroup.lastIndexOf(':') + 1))
+    expect(unit).toMatch(/^run-.+\.scope$/u)
+    expect((await execFileAsync('systemctl', [
+      '--user', 'show', '--property=OOMPolicy', '--value', unit,
+    ])).stdout.trim()).toBe('continue')
+  }, 15_000)
+
   it('keeps startup ownership when a wrapper is replaced in the same pane', async () => {
     const overlay = [
       'Settings',
@@ -2511,7 +2537,10 @@ process.stdin.on('data', () => undefined)
     })).rejects.toThrow('Replacement write refused')
     const restored = await snapshot()
     expect(restored.pid).not.toBe(original.pid)
-    expect(restored.command).toEqual(original.command)
+    // A command started in a scope of its own runs by its absolute path:
+    // systemd-run resolves the program before it execs it.
+    const program = ([executable = '', ...rest]: string[]) => [path.basename(executable), ...rest]
+    expect(program(restored.command)).toEqual(program(original.command))
     expect(restored.cwd).toBe(original.cwd)
     expect(await controller.has(sessionId)).toBe(true)
     expect(await controller.has(replacementId)).toBe(false)

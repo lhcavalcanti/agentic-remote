@@ -101,7 +101,7 @@ export function createUIScenes(
       const origins = name === 'session-origins' || originTasks || name === 'session-origin-run' || name === 'session-subagents'
       if (origins) {
         state.settings = {
-          revision: 1, values: { previewFeatures: { composerRefresh: true, schedulerView: true, desktopRail: true } },
+          revision: 1, values: { previewFeatures: { schedulerView: true, desktopRail: true } },
           keyRevisions: { previewFeatures: 1 },
         }
         state.sessions[0].provenance = {
@@ -119,17 +119,8 @@ export function createUIScenes(
         const model = { ...state.models[0], id: `fixture-${family}-99`, name: `${family} fictional model` }
         state.models.push(model)
         state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.runtime!.model = model.id
-        state.settings = {
-          revision: 1,
-          values: { previewFeatures: { composerRefresh: true } },
-          keyRevisions: { previewFeatures: 1 },
-        }
       }
       if (['composer-status-busy', 'composer-session-setup', 'composer-button-row', 'composer-session-panel', 'composer-sent-messages', 'composer-delivery-menu', 'composer-delivery-unavailable'].includes(name)) {
-        state.settings = {
-          revision: 1, values: { previewFeatures: { composerRefresh: true } },
-          keyRevisions: { previewFeatures: 1 },
-        }
         const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
         if (name === 'composer-status-busy' || name === 'composer-session-setup') {
           session.runtime!.model = 'fictional-model-with-a-long-name-for-small-screens'
@@ -179,21 +170,21 @@ export function createUIScenes(
       }
       if (name === 'settings-skills' || name === 'settings-skill-confirmation' || name === 'settings-invalid-skill') {
         state.settings.values = {
-          previewFeatures: { settingsNavigation: true, skillToggles: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
+          previewFeatures: { desktopRail: true, hostMonitorView: true, schedulerView: true },
           displayName: 'Alex Morgan',
         }
         state.hubFlags = { ...state.hubFlags, hostMonitor: true, scheduler: true }
       }
       if (name === 'settings-health') {
         state.settings.values = {
-          previewFeatures: { settingsNavigation: true, healthCard: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
+          previewFeatures: { desktopRail: true, hostMonitorView: true, schedulerView: true },
           displayName: 'Alex Morgan',
         }
         state.hubFlags = { ...state.hubFlags, hostMonitor: true, scheduler: true }
       }
       if (name === 'settings-navigation' || name === 'settings-remote-machines' || name === 'settings-search' || name === 'settings-health-search') {
         state.settings.values = {
-          previewFeatures: { settingsNavigation: true, desktopRail: true, hostMonitorView: true, schedulerView: true },
+          previewFeatures: { desktopRail: true, hostMonitorView: true, schedulerView: true },
           displayName: 'Alex Morgan',
         }
         state.hubFlags = { ...state.hubFlags, hostMonitor: true, scheduler: true }
@@ -323,7 +314,7 @@ export function createUIScenes(
         await openSessions(page)
         await page.getByRole('button', { name: 'App settings', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
-        await dialog.getByRole('button', { name: /^App This device/ }).click()
+        await dialog.getByRole('button', { name: /^App\s*This device/ }).click()
         const health = dialog.getByRole('region', { name: 'Health', exact: true })
         await expect(health).toContainText('fixture-release-2026-09-04')
         await health.scrollIntoViewIfNeeded()
@@ -333,10 +324,14 @@ export function createUIScenes(
         const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
         await expect(dialog.getByRole('textbox', { name: 'Search settings' }).or(dialog.getByRole('searchbox', { name: 'Search settings' }))).toBeVisible()
         if (name === 'settings-search' || name === 'settings-health-search') {
-          const label = name === 'settings-search' ? 'Settings navigation' : 'Health'
+          const label = name === 'settings-search' ? 'Desktop rail' : 'Health'
           await dialog.getByRole('searchbox', { name: 'Search settings' }).fill(label)
-          await dialog.getByRole('button', { name: /^Interface/ }).click()
-          await expect(dialog.getByRole('checkbox', { name: label === 'Health' ? 'Health card' : label, exact: true })).toBeVisible()
+          await dialog.getByRole('button', { name: label === 'Health' ? /^App\s*This device/ : /^Interface/ }).click()
+          if (label === 'Health') {
+            await expect(dialog.getByRole('region', { name: 'Health', exact: true })).toBeVisible()
+          } else {
+            await expect(dialog.getByRole('checkbox', { name: label, exact: true })).toBeVisible()
+          }
         } else if (name === 'settings-remote-machines') {
           await expect(dialog.getByRole('button', { name: 'Check connection', exact: true })).toBeVisible()
         } else {
@@ -350,22 +345,19 @@ export function createUIScenes(
         await page.getByRole('button', {
           name: appSettings ? 'App settings' : 'Manage computers', exact: true,
         }).click()
-        const dialog = page.getByRole('dialog', { name: appSettings ? 'App settings' : 'Computers', exact: true })
+        const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
         await expect(dialog).toBeVisible()
         if (appSettings) {
+          if (page.viewportSize()!.width < 600) await dialog.getByRole('button', { name: /^Models/ }).click()
           await expect(dialog.getByRole('combobox', { name: 'GitHub Copilot default model', exact: true })).toBeEnabled()
           await expect(dialog.getByRole('combobox', { name: 'Claude Agent default model', exact: true })).toBeEnabled()
           await dialog.evaluate((element) => { element.scrollTop = 0 })
           await expect(dialog.getByRole('heading', { name: 'Models', exact: true })).toBeInViewport()
           if (name === 'preview-features') {
-            await dialog.getByRole('button', { name: 'Interface', exact: true }).click()
+            if (page.viewportSize()!.width < 600) await dialog.getByRole('button', { name: 'All settings', exact: true }).click()
+            await dialog.getByRole('button', { name: /^Interface/ }).click()
             const previews = dialog.getByRole('region', { name: 'Preview features', exact: true })
-            await previews.evaluate((target) => {
-              const container = target.closest<HTMLElement>('.app-settings-dialog')!
-              const nav = container.querySelector<HTMLElement>('.app-settings-nav')!
-              container.scrollTop += target.getBoundingClientRect().top
-                - container.getBoundingClientRect().top - nav.offsetHeight - 8
-            })
+            await previews.scrollIntoViewIfNeeded()
             await expect(previews.getByRole('heading', { name: 'Preview features', exact: true })).toBeInViewport()
             await expect(previews.getByRole('checkbox', { name: 'Notification panel', exact: true })).toBeEnabled()
             await expect(previews.getByRole('checkbox', { name: 'Host monitor', exact: true })).toBeDisabled()
@@ -466,7 +458,7 @@ export async function assertMousePointer(page: Page) {
 export async function assertNoHorizontalOverflow(page: Page) {
   const layout = await page.evaluate(() => {
     const width = document.documentElement.clientWidth
-    // Internal scrollers (for example the settings jump bar) may scroll;
+    // Internal scrollers (for example the settings content pane) may scroll;
     // the document and visible surfaces must still fit the viewport.
     const outside = [...document.querySelectorAll('.dialog, #oracle-panel')]
       .filter((element) => element.clientWidth > 0 && element.getClientRects().length > 0)

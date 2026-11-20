@@ -13,9 +13,9 @@ import { SessionOriginRunLink } from './SessionOriginRunLink'
 import { SubagentCount } from './SubagentCount'
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
-function preview(children: ReactNode, composerRefresh = true, schedulerView = false, scheduler = false) {
+function preview(children: ReactNode, schedulerView = false, scheduler = false) {
   const hubFlags = { ...defaultHubFeatureFlags, scheduler }
-  const preferences = { composerRefresh, schedulerView }
+  const preferences = { schedulerView }
   return <PreviewFeaturesContext.Provider value={{
     hubFlags, preferences, effective: effectivePreviewFeatures(preferences, hubFlags), set: vi.fn(),
   }}>{children}</PreviewFeaturesContext.Provider>
@@ -26,27 +26,20 @@ describe('session origin badges', () => {
     ['user', 'Started by you'], ['manager', 'Started by Oracle'],
     ['discovered', 'Found on this computer'], ['schedule', 'Started by schedule Morning review'],
   ] as const)('renders %s with an accessible description distinct from model family', (origin, description) => {
-    render(preview(<SessionOriginBadge provenance={{ origin, scheduleName: 'Morning review' }} />))
+    render(<SessionOriginBadge provenance={{ origin, scheduleName: 'Morning review' }} />)
     expect(screen.getByRole('img', { name: description })).toHaveAttribute('title', description)
     expect(screen.getByRole('img').querySelector('[data-model-family]')).toBeNull()
   })
   it("marks a session Oracle started with Oracle's own icon", () => {
     const { container: mark } = render(<OracleIcon aria-hidden="true" />)
-    render(preview(<SessionOriginBadge provenance={{ origin: 'manager' }} />))
+    render(<SessionOriginBadge provenance={{ origin: 'manager' }} />)
     expect(screen.getByRole('img', { name: 'Started by Oracle' }).querySelector('svg')?.getAttribute('class'))
       .toBe(mark.querySelector('svg')?.getAttribute('class'))
   })
-  it('preserves the original Oracle badge only when the preview is off', () => {
-    const result = render(preview(<SessionOriginBadge provenance={{ origin: 'schedule' }} legacyManaged />, false))
-    expect(screen.getByText('Oracle').outerHTML).toBe('<em class="provider-badge manager-badge" title="Started by Oracle">Oracle</em>')
-    result.rerender(preview(<SessionOriginBadge legacyManaged />))
-    expect(screen.queryByText('Oracle')).not.toBeInTheDocument()
-    expect(screen.queryByRole('img')).not.toBeInTheDocument()
-  })
-  it('removes the previous origin badge for unknown provenance without guessing from legacy ownership', () => {
-    const result = render(preview(<SessionOriginBadge provenance={{ origin: 'user' }} legacyManaged />))
+  it('removes the previous origin badge for unknown provenance', () => {
+    const result = render(<SessionOriginBadge provenance={{ origin: 'user' }} />)
     expect(screen.getByRole('img', { name: 'Started by you' })).toBeVisible()
-    result.rerender(preview(<SessionOriginBadge provenance={undefined} legacyManaged />))
+    result.rerender(<SessionOriginBadge provenance={undefined} />)
     expect(result.container).toBeEmptyDOMElement()
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
     expect(screen.queryByText('Oracle')).not.toBeInTheDocument()
@@ -55,16 +48,16 @@ describe('session origin badges', () => {
 
 describe('schedule run provenance links', () => {
   const provenance: SessionProvenance = { origin: 'schedule', scheduleName: 'Morning review', scheduleId: 'morning', scheduleRunId: 'run' }
-  it.each([[false, true, true], [true, false, true], [true, true, false]])(
-    'does not expose run access unless both previews and the hub are enabled (%s, %s, %s)',
-    (composer, schedulerView, hub) => {
-      render(preview(<SessionOriginRunLink provenance={provenance} />, composer, schedulerView, hub))
+  it.each([[false, true], [true, false]])(
+    'does not expose run access unless the scheduler preview and hub are enabled (%s, %s)',
+    (schedulerView, hub) => {
+      render(preview(<SessionOriginRunLink provenance={provenance} />, schedulerView, hub))
       expect(screen.queryByRole('link')).not.toBeInTheDocument()
     },
   )
   it('opens the existing scheduler using the recorded identities and a bookmarkable URL', () => {
     const onOpenRun = vi.fn()
-    render(preview(<SessionOriginRunLink provenance={provenance} onOpenRun={onOpenRun} />, true, true, true))
+    render(preview(<SessionOriginRunLink provenance={provenance} onOpenRun={onOpenRun} />, true, true))
     const link = screen.getByRole('link', { name: 'View run from schedule Morning review' })
     expect(readScheduleLink(link.getAttribute('href')!)).toEqual({ scheduleId: 'morning', runId: 'run' })
     fireEvent.click(link)
@@ -72,9 +65,9 @@ describe('schedule run provenance links', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
   it('does not invent a run destination when only a schedule or run identity is known', () => {
-    const result = render(preview(<SessionOriginRunLink provenance={{ ...provenance, scheduleId: undefined }} />, true, true, true))
+    const result = render(preview(<SessionOriginRunLink provenance={{ ...provenance, scheduleId: undefined }} />, true, true))
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
-    result.rerender(preview(<SessionOriginRunLink provenance={{ ...provenance, scheduleRunId: undefined }} />, true, true, true))
+    result.rerender(preview(<SessionOriginRunLink provenance={{ ...provenance, scheduleRunId: undefined }} />, true, true))
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 })
@@ -92,17 +85,16 @@ describe('runtime-reported subagent count', () => {
   }
   it('counts reported running agents, including sync agents, rather than total background work', () => {
     const onOpen = vi.fn()
-    render(preview(<SubagentCount snapshot={snapshot} onOpen={onOpen} />))
+    render(<SubagentCount snapshot={snapshot} onOpen={onOpen} />)
     fireEvent.click(screen.getByRole('button', { name: '2 subagents running' }))
     expect(onOpen).toHaveBeenCalledOnce()
   })
   it.each([
-    { enabled: false, value: snapshot },
-    { enabled: true, value: undefined },
-    { enabled: true, value: { ...snapshot, supported: false } },
-    { enabled: true, value: { ...snapshot, tasks: [] } },
-  ])('does not invent a count when hidden, unsupported, or unreported', ({ enabled, value }) => {
-    render(preview(<SubagentCount snapshot={value} onOpen={vi.fn()} />, enabled))
+    undefined,
+    { ...snapshot, supported: false },
+    { ...snapshot, tasks: [] },
+  ])('does not invent a count when unsupported or unreported', (value) => {
+    render(<SubagentCount snapshot={value} onOpen={vi.fn()} />)
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 })

@@ -69,9 +69,9 @@ Signing and notarization remove this step entirely and are planned; see
 ### Linux
 
 ```bash
-sudo apt install ./agentic-remote_1.57.7_amd64.deb
+sudo apt install ./agentic-remote_1.58.3_amd64.deb
 # or make the AppImage executable and run it
-chmod +x Agentic\ Remote_1.57.7_amd64.AppImage
+chmod +x Agentic\ Remote_1.58.3_amd64.AppImage
 ```
 
 ### iOS

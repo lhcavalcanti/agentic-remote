@@ -236,10 +236,7 @@ matrix.
 - **Skills / MCP servers**: use **Session actions** or `/skill`, `/skills`, and
   `/mcp` to inspect resource metadata without sending a prompt or changing
   configuration. Optional text after the command filters the list.
-- **App settings**: grouped as Models, Folders, Notifications, Interface, and
-  App, with a jump bar. Models holds separate default models and agent modes
-  for Copilot and Claude, and Oracle's model; Folders holds each computer's
-  folder for new sessions and for Oracle.
+- **App settings**: searchable categories for Models, Folders, Remote machines, Oracle, Notifications, Interface, Skills, and App, plus Scheduler when its preview is enabled. Models holds separate default models and agent modes for Copilot and Claude; Oracle holds its own model. Folders holds each computer's folder for new sessions and for Oracle; App includes read-only Health details.
 - **Session files**: browse, search, preview, and save Knowledge paths.
 - **Knowledge**: a per-session panel that docks beside the conversation or
   expands over it, with an in-place folder tree, remembered expansion and
@@ -288,7 +285,7 @@ agentic-remote uninstall
 
 Hub features default off: `notificationCenter` (`AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER`), `hostMonitor` (`AGENTIC_REMOTE_FEATURE_HOST_MONITOR`), and `scheduler` (`AGENTIC_REMOTE_FEATURE_SCHEDULER`). Set a variable only to `on` or `off` in the service environment file (case-insensitive; surrounding whitespace is ignored). Any other value stops hub startup and names the variable. Restart the hub after changing flags. `setup` and `update` preserve every `AGENTIC_REMOTE_FEATURE_*` variable; an exported value overrides the saved value during setup.
 
-App settings → Interface → **Preview features** holds the client opt-ins, all off by default and synced across devices on this hub. A preview cannot enable a server feature: dependent toggles show **Turned off on this hub** while their hub flag is off. These flags reserve rollout controls; enabling one does not add a feature that is not implemented yet.
+App settings → Interface → **Preview features** holds the Desktop rail, Notification panel, Host monitor, and Scheduler client opt-ins, all off by default and synced across devices on this hub. A preview cannot enable a server feature: dependent toggles show **Turned off on this hub** while their hub flag is off. The refreshed composer, category-based settings navigation, Health card, and Skills settings are standard behavior and need no opt-in.
 
 The scheduler flag enables the hub-only durable schedule/run store, dispatcher, `/api/schedules` API, and the runner that starts scheduled sessions on the target computer. Oracle's schedule tools only propose changes; each one runs after you approve that exact proposal. Scheduled sessions ask for permissions and folder trust by default, and Allow-all needs explicit confirmation. The Scheduler view is the separate `schedulerView` preview. See [Scheduler](docs/design/scheduler.md) for the runner, recovery/stop guarantees, notifications, and API contract.
 

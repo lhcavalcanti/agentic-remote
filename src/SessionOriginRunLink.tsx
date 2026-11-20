@@ -7,9 +7,8 @@ export function SessionOriginRunLink({ provenance, onOpenRun }: {
   provenance?: SessionProvenance
   onOpenRun?: (target: ScheduleLink) => void
 }) {
-  const enabled = usePreviewFeature('composerRefresh')
   const scheduler = usePreviewFeature('schedulerView')
-  if (!enabled || !scheduler || provenance?.origin !== 'schedule' ||
+  if (!scheduler || provenance?.origin !== 'schedule' ||
       !provenance.scheduleId || !provenance.scheduleRunId) return null
   const params = new URLSearchParams(window.location.search)
   params.set('schedule', provenance.scheduleId)

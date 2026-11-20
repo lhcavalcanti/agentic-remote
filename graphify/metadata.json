@@ -756,7 +756,7 @@
     "e2e/session-unread.pw.ts": "54a5776c28698324d268a43edc49517674c7e6425311114bb9d64836cff57312",
     "e2e/shell-fixtures.ts": "75d818141cbf8c849a212885fd945ff37ed70c54d2e3b7de15acce7dc08aabd8",
     "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
-    "e2e/ui-locks.pw.ts": "4e0801168d90a132b713fb919f95b18f5e93bc021d8e7e617191afa65f68ead6",
+    "e2e/ui-locks.pw.ts": "ffa952fefb916f26c9721bf84d1884b2936bc1a9b66cc5b039e35a1a91f0f234",
     "e2e/ui-locks.pw.ts-snapshots/desktop-app-settings-chromium-linux.png": "77383bbdbbae3152a9d5f8f067983b5174419d9c55c5862c130f7f3c0a264dd4",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-busy-queue-chromium-linux.png": "95d0d623993a5a7f2bdae752d6b263a4531ea5b08c68532bb77ce1a025f576b6",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-button-row-chromium-linux.png": "468a943d1083612bb952778cb2c8647a82351bd6de33c08d05efc03847b1d782",
@@ -1390,7 +1390,7 @@
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
     "src/hub-reachability.ts": "39d2789075d58fd20585eeb706bdeabefba6f507c2d28764ebeb4f5b7e99e3cd",
     "src/hub-sign-in.ts": "bb68abb53da257f7c544d3824934d97768e110009412ea3d1a91d9202580d976",
-    "src/index.css": "1a395ce8ee75c2f23231897302b802d8ba7579f4aa1951ff23ab72f3e405ebf0",
+    "src/index.css": "4454a239d939fe2747888b5ea03e0914cb34b84010f97a226289af9f13b8b7d5",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -1759,13 +1759,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "60e3668aa79786edf497cd0913b2211e0ddb63af9c699c29abe06aaa8597e5ff",
+    "GRAPH_REPORT.md": "4fc08398e047d7975679529abcfe1f9bc5e780c2debd01609d5f4d4fcfe4705a",
     "communities.json": "3e4b9bb17a8dfbd695dbdbe4b8feec58ab196ce836ed256fbb077685652d46e1",
-    "graph.html": "286f1734e39257e869e8eac553f6c1e9a3e3266b858a25fc03ecd7cbba41892f",
-    "graph.json": "2ebd8ede97eb0a4e5b9e34bce6f0e65ca78ce229b5aa4146b04fff8b0bbf9253"
+    "graph.html": "cb93b12f5ed01f793ce0aeb015f566978d1bb1f099ac5b0a25adbf16d2f8bfe6",
+    "graph.json": "e094a62cc32c29786893a9c2d6bb50afa66f8106b61b68e6a718b16ed95223b5"
   },
   "schema_version": 1,
-  "source_commit": "94bc60db0050bff956022af89a82d78b3f19cca4",
-  "source_fingerprint": "57ec79870118c6625cbcf2d3209fb8130fe7fdf7c289224632e0c8b0dd7887bd",
+  "source_commit": "eb9116ac0b1f6027365fae2594a4104a46c14b6d",
+  "source_fingerprint": "19667c1e9b7f1eeed892a3225489472c28d52fc7e25b73cafc7a0b963fe33e81",
   "working_tree_changes": []
 }

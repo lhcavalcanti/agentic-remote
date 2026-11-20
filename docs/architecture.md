@@ -207,6 +207,15 @@ observations are not written to stored session or pairing state.
   discovered in some other tmux pane is listed while it runs but is not
   recreated after it exits. Recovery intent recorded by earlier releases'
   discovery is kept until that session is closed.
+- tmux built with systemd support starts each pane in a systemd scope that is
+  stopped, with everything in it, when the kernel kills any process in it for
+  memory. Where the user's systemd manager can create a scope
+  (`server/session-scope.ts` asks once), every tmux launch of Copilot goes
+  through `systemd-run --user --scope -p OOMPolicy=continue` instead, so an
+  out-of-memory kill fails only the tool that was killed. systemd-run execs
+  Copilot in place, so the pane's own process is still the session and
+  discovery is unchanged. `AGENTIC_REMOTE_SESSION_SCOPE=off` starts Copilot
+  directly, as hosts without a user systemd manager do.
 - Each node checks every Copilot CLI version it updates to by starting a
   retired, disposable session in a detached tmux session of its own
   (`server/cli-canary.ts`). It records the result in

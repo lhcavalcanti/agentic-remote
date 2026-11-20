@@ -963,6 +963,7 @@ class SessionEventProjection {
   private count = 0
   private readonly backgroundTasks = createBackgroundTaskProjector({ assumeBackground: true })
   private readonly transcript = createTranscriptBuilder()
+  private readonly question = createPendingUserInputTracker()
 
   /**
    * Whether `events` continue the log taken in so far: the same first event,
@@ -983,6 +984,7 @@ class SessionEventProjection {
     const appended = events.slice(this.count)
     this.backgroundTasks.apply(appended)
     this.transcript.apply(appended)
+    this.question.apply(appended)
     if (this.count === 0) this.firstId = events[0]?.id
     this.count = events.length
     this.lastId = events[events.length - 1]?.id
@@ -994,6 +996,10 @@ class SessionEventProjection {
 
   messages(): ChatMessage[] {
     return this.transcript.messages()
+  }
+
+  pendingUserInput(): PendingUserInput | undefined {
+    return this.question.pending()
   }
 }
 
@@ -1273,9 +1279,23 @@ function validateUserInputForm(
   }
 }
 
+/** `pendingUserInputFromEvents` that takes in its log a few events at a time. */
+export interface PendingUserInputTracker {
+  /** Takes in events that follow every event applied so far. */
+  apply(events: readonly SessionEvent[]): void
+  /** The question still waiting as of the events applied so far, as a copy. */
+  pending(): PendingUserInput | undefined
+}
+
 export function pendingUserInputFromEvents(
-  events: SessionEvent[],
+  events: readonly SessionEvent[],
 ): PendingUserInput | undefined {
+  const tracker = createPendingUserInputTracker()
+  tracker.apply(events)
+  return tracker.pending()
+}
+
+export function createPendingUserInputTracker(): PendingUserInputTracker {
   const pendingInputFromTool = (
     toolCallIdValue: unknown,
     toolNameValue: unknown,
@@ -1334,57 +1354,63 @@ export function pendingUserInputFromEvents(
         input: PendingUserInput
       }
     | undefined
-  for (const event of events) {
-    if (eventAgentId(event)) {
-      continue
-    }
-    if (event.type === 'user.message') {
-      pending = undefined
-      continue
-    }
-    if (event.type === 'assistant.message') {
-      const toolRequests = recordValue(event.data).toolRequests
-      if (Array.isArray(toolRequests)) {
-        for (const requestValue of toolRequests) {
-          const request = recordValue(requestValue)
+  return {
+    apply(events) {
+      for (const event of events) {
+        if (eventAgentId(event)) {
+          continue
+        }
+        if (event.type === 'user.message') {
+          pending = undefined
+          continue
+        }
+        if (event.type === 'assistant.message') {
+          const toolRequests = recordValue(event.data).toolRequests
+          if (Array.isArray(toolRequests)) {
+            for (const requestValue of toolRequests) {
+              const request = recordValue(requestValue)
+              const next = pendingInputFromTool(
+                request.toolCallId,
+                request.name || request.toolName,
+                request.arguments,
+              )
+              if (next) {
+                pending = next
+              }
+            }
+          }
+          continue
+        }
+        if (event.type === 'tool.execution_start') {
+          const data = recordValue(event.data)
           const next = pendingInputFromTool(
-            request.toolCallId,
-            request.name || request.toolName,
-            request.arguments,
+            data.toolCallId,
+            data.toolName,
+            data.arguments,
           )
           if (next) {
             pending = next
           }
+          continue
+        }
+        if (
+          event.type === 'tool.execution_complete' &&
+          pending?.toolCallId === stringValue(recordValue(event.data).toolCallId)
+        ) {
+          pending = undefined
+        } else if (
+          event.type === 'abort' ||
+          event.type === 'session.error' ||
+          event.type === 'session.shutdown'
+        ) {
+          pending = undefined
         }
       }
-      continue
-    }
-    if (event.type === 'tool.execution_start') {
-      const data = recordValue(event.data)
-      const next = pendingInputFromTool(
-        data.toolCallId,
-        data.toolName,
-        data.arguments,
-      )
-      if (next) {
-        pending = next
-      }
-      continue
-    }
-    if (
-      event.type === 'tool.execution_complete' &&
-      pending?.toolCallId === stringValue(recordValue(event.data).toolCallId)
-    ) {
-      pending = undefined
-    } else if (
-      event.type === 'abort' ||
-      event.type === 'session.error' ||
-      event.type === 'session.shutdown'
-    ) {
-      pending = undefined
-    }
+    },
+    pending() {
+      return pending && structuredClone(pending.input)
+    },
   }
-  return pending?.input
 }
 
 /**
@@ -10205,7 +10231,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     const historyMessages = projection ? projection.messages() : messagesFromHistory(events)
-    const eventUserInput = pendingUserInputFromEvents(events)
+    const eventUserInput = projection
+      ? projection.pendingUserInput()
+      : pendingUserInputFromEvents(events)
     const external = this.externalSessionIds.has(sessionId)
     const watermark = this.liveTranscriptWatermarks.get(sessionId)
     const lastEventTimestamp = events.at(-1)?.timestamp
@@ -10402,9 +10430,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (answered && answered.expiresAt <= now) {
       this.answeredPersistedInputs.delete(sessionId)
     }
-    const pending = pendingUserInputFromEvents(
-      events || (await this.sessionEventReader(sessionId)),
-    )
+    const log = events || (await this.sessionEventReader(sessionId))
+    const pending = this.externalSessionIds.has(sessionId)
+      ? this.eventProjection(sessionId, log).pendingUserInput()
+      : pendingUserInputFromEvents(log)
     if (
       !pending ||
       this.answeredPersistedInputs.get(sessionId)?.requestId ===

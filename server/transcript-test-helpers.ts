@@ -1,7 +1,12 @@
 import type { SessionEvent } from '@github/copilot-sdk'
 import { expect } from 'vitest'
-import type { ChatMessage } from '../shared/contracts.js'
-import { createTranscriptBuilder, messagesFromHistory } from './agent-service.js'
+import type { ChatMessage, PendingUserInput } from '../shared/contracts.js'
+import {
+  createPendingUserInputTracker,
+  createTranscriptBuilder,
+  messagesFromHistory,
+  pendingUserInputFromEvents,
+} from './agent-service.js'
 import { expectIncrementalEquivalence, vandalize } from './projection-test-helpers.js'
 
 /**
@@ -35,4 +40,25 @@ export function checkedMessagesFromHistory(
     label,
   )
   return messagesFromHistory(events)
+}
+
+/**
+ * `pendingUserInputFromEvents`, after proving that a tracker taking the same
+ * events in a few at a time agrees with it at every prefix.
+ */
+export function checkedPendingUserInput(
+  events: SessionEvent[],
+  label = '',
+): PendingUserInput | undefined {
+  expectIncrementalEquivalence(
+    events,
+    () => {
+      const tracker = createPendingUserInputTracker()
+      return { apply: (chunk) => tracker.apply(chunk), snapshot: () => tracker.pending() }
+    },
+    pendingUserInputFromEvents,
+    vandalize,
+    label,
+  )
+  return pendingUserInputFromEvents(events)
 }

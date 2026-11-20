@@ -1,7 +1,7 @@
 import type { SessionEvent } from '@github/copilot-sdk'
 import { describe, expect, it } from 'vitest'
 import { createTranscriptBuilder, messagesFromHistory } from './agent-service.js'
-import { checkedMessagesFromHistory } from './transcript-test-helpers.js'
+import { checkedMessagesFromHistory, checkedPendingUserInput } from './transcript-test-helpers.js'
 
 /** A soak run sets this to explore new seeds; failures name the seed. */
 const seedOffset = Number(process.env.PROPERTY_SEED_OFFSET ?? 0)
@@ -276,6 +276,59 @@ describe('transcript builder', () => {
     for (let seed = seedOffset + 1; seed <= seedOffset + 120; seed += 1) {
       checkedMessagesFromHistory(eventsFor(seed, 5 + (seed % 25)), `plain seed ${seed}`)
       checkedMessagesFromHistory(groupedEventsFor(seed, 5 + (seed % 35)), `grouped seed ${seed}`)
+    }
+  })
+})
+
+describe('pending user input tracker', () => {
+  /** Questions asked by tool starts and requests, answered, cancelled and repeated. */
+  function questionEventsFor(seed: number, length: number): SessionEvent[] {
+    const next = random(seed)
+    const pick = <T,>(values: readonly T[]) => values[Math.floor(next() * values.length)]
+    const events: SessionEvent[] = []
+    for (let index = 0; index < length; index += 1) {
+      const timestamp = new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString()
+      const agent = next() < 0.2 ? (next() < 0.5 ? { agentId: 'agent-1' } : { data: { agentId: 'agent-1' } }) : {}
+      const base = { id: `event-${index}`, parentId: null, timestamp, ...('agentId' in agent ? agent : {}) }
+      const toolCallId = `call-${Math.floor(next() * 4)}`
+      const question = () => ({
+        ...(next() < 0.5 ? { question: `Pick ${index}` } : { message: next() < 0.8 ? `Choose ${index}` : ' ' }),
+        ...(next() < 0.5 ? { choices: ['One', ' ', 'Two'] } : {}),
+        ...(next() < 0.3 ? { allowFreeform: false } : {}),
+        ...(next() < 0.2 ? { requestedSchema: { properties: { size: { type: 'string', enum: ['S', 'M'] } } } } : {}),
+      })
+      const extra = 'data' in agent ? agent.data : {}
+      const kind = next()
+      if (kind < 0.3) {
+        events.push({
+          ...base, type: 'tool.execution_start',
+          data: { ...extra, toolCallId, toolName: pick(['ask_user', 'ask-user', 'Ask_User', 'bash']), arguments: question() },
+        } as unknown as SessionEvent)
+      } else if (kind < 0.45) {
+        events.push({
+          ...base, type: 'assistant.message',
+          data: {
+            ...extra, messageId: `message-${index}`, content: '',
+            toolRequests: [
+              { toolCallId, name: pick(['ask_user', 'view']), arguments: question() },
+              ...(next() < 0.3 ? [{ toolCallId: `call-${Math.floor(next() * 4)}`, toolName: 'ask_user', arguments: question() }] : []),
+            ],
+          },
+        } as unknown as SessionEvent)
+      } else if (kind < 0.7) {
+        events.push({ ...base, type: 'tool.execution_complete', data: { ...extra, toolCallId, success: next() < 0.8 } } as unknown as SessionEvent)
+      } else if (kind < 0.8) {
+        events.push({ ...base, type: 'user.message', data: { ...extra, content: 'Two' } } as unknown as SessionEvent)
+      } else {
+        events.push({ ...base, type: pick(['abort', 'session.error', 'session.shutdown', 'assistant.turn_end', 'session.idle']), data: extra } as unknown as SessionEvent)
+      }
+    }
+    return events
+  }
+
+  it('agrees with the full scan at every prefix of generated histories', () => {
+    for (let seed = seedOffset + 1; seed <= seedOffset + 150; seed += 1) {
+      checkedPendingUserInput(questionEventsFor(seed, 4 + (seed % 30)), `seed ${seed}`)
     }
   })
 })

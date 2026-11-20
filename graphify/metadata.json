@@ -698,7 +698,7 @@
     "docs/design/scheduler.md": "d1c4ecf8bdd59e436e34d4f1d97f064b36b8e0bf09587873002a10e101b7fd14",
     "docs/design/session-manager.md": "8dab250a4d8fb14b161f2b90708168de40b39263c69431aa8b397fce47d40f1e",
     "docs/design/session-provenance.md": "6a8cce433e5b8c10405bf87dc4cb2a334318cc9e8ce548daf773f9064bf77466",
-    "docs/design/settings-profile.md": "024672b09d8c118b0539aa4b3d23f692e90c6df8e7afd789030c9f6166122129",
+    "docs/design/settings-profile.md": "5a9b09c9a7c1f8f6f4ef5ee7e039f807c686bef98dc26f99e09341119bdbcb76",
     "docs/licenses/onnxruntime-1.24.2-third-party-notices.txt": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
     "docs/licenses/oracle-voice-browser.txt": "5c95620c5edfa4f80c62ad4c638444f7953bbc02e885f6834f173500633acd7b",
     "docs/licenses/oracle-voice.md": "98a9785b3710633515969429c80e70a216eb765a43e49dce18af92399923ffd2",
@@ -1179,7 +1179,7 @@
     "server/session-unread-tracker.ts": "e126fbb9d5bb6d23ab98a62a2848ec0586bcf64797f1350488285e11312d03b7",
     "server/settings-profile-routes.test.ts": "cda0def4b6ada81398420ff233f2a01874fa97d948adf14b13ab1a6f77f22a72",
     "server/settings-profile-routes.ts": "d853d3e113eebb5ce1618a64ead21f80e77b68be7988255e56eabf0382e100c7",
-    "server/settings-profile-store.test.ts": "0bc411834f98c7cf4f1054dbaee781fd48e9eb940ac20b2abe42c528d7e0d3c7",
+    "server/settings-profile-store.test.ts": "2ad6b5f0a16b67332ab51d770192257d0192a3e6246940b900c592220e7c4e1c",
     "server/settings-profile-store.ts": "a3f24526e1f2d3a30dbf4af191b02e3976276f50881a24a86db065350b601fe7",
     "server/sherpa-onnx-node.d.ts": "b47ceabc976c4df6581fc4d29b44e0613d900a89c5a6029325680e813ed4b4e2",
     "server/side-question.test.ts": "bb7fe56de6bf5ed357ca35929523244836eecd39fa6abceffeeb1f5a36548ac8",
@@ -1757,13 +1757,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "f9c4cd183d6ac59bac06f163cdfe756bf4ca9dcb8128970f20dee0845729eeb3",
+    "GRAPH_REPORT.md": "55e61506d4be7805e6a2482b8a860a747882f916202edd0d0b2a20254806e462",
     "communities.json": "d860734fa428e554c73c7086d9ca899c165c88a40a16084d42f17af13ec714ba",
-    "graph.html": "b53f8b061f1ebcabcf194a71422cae68e8280f26cbf55a607aab2b244a4ebb47",
-    "graph.json": "48b57b3aa5373caa285c688da9fca4a7d4c2ed6ef15b94b46a2d0ab3891dc06f"
+    "graph.html": "ec723eb670deb69af13c57cdf5080740222ea53f64acda3a35b2b07fead125c8",
+    "graph.json": "f112c097fbf863b57dee5309642f269e72d7841a0fc7b9c44ae7804f8ab35ce3"
   },
   "schema_version": 1,
-  "source_commit": "4958a4bf2d3f7d7b95684fc60ba7adda37dbf2e6",
-  "source_fingerprint": "263da69ac9e60afb11823943aa47a48690fb71a32acd01296af20155b804a0d6",
+  "source_commit": "5fade795656e577035c0947552f506c9e0d6c0f3",
+  "source_fingerprint": "b8b9a586a608c8bf60ca6d99559141e207352309cc0824713db05efebda76aec",
   "working_tree_changes": []
 }

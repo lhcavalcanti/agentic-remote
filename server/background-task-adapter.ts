@@ -1423,7 +1423,10 @@ export function createBackgroundTaskProjector(
   // the same way.
   let lastTurnEndAt: string | undefined
   let sessionEndedAt: string | undefined
+  // What the last snapshot settled, until another event is taken in.
+  let settledTasks: BackgroundTask[] | undefined
   const apply = (events: readonly SessionEvent[]): void => {
+    if (events.length > 0) settledTasks = undefined
     for (const event of events) {
       eventOrder += 1
       const data = recordValue(event.data)
@@ -2174,7 +2177,7 @@ export function createBackgroundTaskProjector(
    * is settled on copies, never in the projection, so a later event still finds
    * a swept shell running, exactly as a scan of the longer log would.
    */
-  const tasksAsOfNow = (): BackgroundTask[] => {
+  const settle = (): BackgroundTask[] => {
     // Only a live shell is ever swept, so only those are copied to sweep.
     const swept = new Map<BackgroundTask, BackgroundTask>()
     for (const task of tasks.values()) {
@@ -2297,8 +2300,13 @@ export function createBackgroundTaskProjector(
           right.startedAt.localeCompare(left.startedAt),
       )
       .slice(0, MAX_BACKGROUND_TASKS)
-      .map(copyTask)
   }
 
-  return { apply, tasks: tasksAsOfNow }
+  return {
+    apply,
+    tasks: () => {
+      settledTasks ??= settle()
+      return settledTasks.map(copyTask)
+    },
+  }
 }

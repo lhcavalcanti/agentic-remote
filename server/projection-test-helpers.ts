@@ -46,9 +46,10 @@ export function chunkings(length: number, seeds: readonly number[] = [1, 2, 3]):
 
 /**
  * Feeds `events` to a fresh projection in every chunking and expects its
- * snapshot after each chunk to equal `full` over the same prefix. Each
- * snapshot is then handed to `received`, which may vandalize it: a projection
- * that shares state with what it handed out shows it in a later prefix.
+ * snapshot after each chunk -- taken twice, so one may come from a cache -- to
+ * equal `full` over the same prefix. Each snapshot is then handed to
+ * `received`, which may vandalize it: a projection that shares state with what
+ * it handed out shows it in a later snapshot.
  */
 export function expectIncrementalEquivalence<T>(
   events: readonly SessionEvent[],
@@ -63,10 +64,13 @@ export function expectIncrementalEquivalence<T>(
     for (const size of sizes) {
       projection.apply(events.slice(applied, applied + size))
       applied += size
-      const snapshot = projection.snapshot()
-      expect(snapshot, `${label} ${applied} of ${events.length} events in chunks of ${sizes.join(',')}`)
-        .toStrictEqual(full(events.slice(0, applied)))
-      received(snapshot)
+      const expected = full(events.slice(0, applied))
+      for (const attempt of ['first', 'repeated']) {
+        const snapshot = projection.snapshot()
+        expect(snapshot, `${label} ${attempt} snapshot of ${applied} of ${events.length} events in chunks of ${sizes.join(',')}`)
+          .toStrictEqual(expected)
+        received(snapshot)
+      }
     }
   }
 }

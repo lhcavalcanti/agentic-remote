@@ -82,6 +82,7 @@ import {
 import { queuedSdkPrompt } from './queued-sdk-prompt.js'
 import {
   backgroundTasksFromEvents,
+  createBackgroundTaskProjector,
   isBackgroundTaskInfo,
   isBackgroundTaskProgress,
   MAX_BACKGROUND_TASKS,
@@ -947,6 +948,53 @@ export function createTranscriptBuilder(): TranscriptBuilder {
     return next.slice()
   }
   return { apply, messages: snapshot }
+}
+
+// Projections kept for this many tmux sessions at once, as for parsed logs.
+const MAX_EVENT_PROJECTIONS = 16
+
+/**
+ * What a tmux session's event log projects to, kept between reads so a growing
+ * log costs only its new events. It holds no copy of the events themselves.
+ */
+class SessionEventProjection {
+  private firstId?: string
+  private lastId?: string
+  private count = 0
+  private readonly backgroundTasks = createBackgroundTaskProjector({ assumeBackground: true })
+  private readonly transcript = createTranscriptBuilder()
+
+  /**
+   * Whether `events` continue the log taken in so far: the same first event,
+   * no fewer events, and the last one taken in still in its place. A log
+   * rewritten, shrunk or replaced does not, and is projected afresh.
+   */
+  continues(events: readonly SessionEvent[]): boolean {
+    if (this.count === 0) return true
+    return Boolean(this.firstId && this.lastId) &&
+      this.count <= events.length &&
+      events[0]?.id === this.firstId &&
+      events[this.count - 1]?.id === this.lastId
+  }
+
+  /** Takes in the events that follow those already taken in. */
+  takeIn(events: readonly SessionEvent[]): void {
+    if (events.length <= this.count) return
+    const appended = events.slice(this.count)
+    this.backgroundTasks.apply(appended)
+    this.transcript.apply(appended)
+    if (this.count === 0) this.firstId = events[0]?.id
+    this.count = events.length
+    this.lastId = events[events.length - 1]?.id
+  }
+
+  tasks(): BackgroundTask[] {
+    return this.backgroundTasks.tasks()
+  }
+
+  messages(): ChatMessage[] {
+    return this.transcript.messages()
+  }
 }
 
 function stringArray(value: unknown): string[] {
@@ -2397,6 +2445,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private discoveryGeneration = 0
   private readonly eventLogFingerprints = new Map<string, string>()
   private readonly eventLogVersions = new Map<string, string>()
+  // Each tmux session's event log as projected so far, least recently used
+  // first. Shared by the transcript refresh and the background task list.
+  private readonly eventProjections = new Map<string, SessionEventProjection>()
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly liveTaskCompletions = new Map<string, LiveTaskCompletion>()
@@ -2587,7 +2638,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * never discovered as a session after a restart.
    */
   private async discardSideQuestionFork(client: CopilotClientLike, forkId: string): Promise<void> {
-    forgetSessionEvents(forkId)
+    this.forgetEventLog(forkId)
     try {
       await withSideQuestionTimeout(client.deleteSession(forkId), this.sideQuestionCleanupMs)
     } catch (error) {
@@ -4756,7 +4807,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const replacementId = randomUUID()
     this.deletedSessionIds.add(id)
     this.deletedSessionIds.add(replacementId)
-    forgetSessionEvents(id)
+    this.forgetEventLog(id)
     this.discoveryGeneration += 1
     this.pendingSessionMetadata.set(replacementId, [])
     let fresh: CopilotSessionLike | undefined
@@ -7938,11 +7989,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // Projected from an event log rather than owned over RPC, so there is no
       // channel to cancel through and loading one would attach an SDK owner to
       // a session the live CLI already owns.
-      const projected = backgroundTasksFromEvents(
-        await this.sessionEventReader(sessionId),
-        { assumeBackground: true },
+      const events = await this.sessionEventReader(sessionId)
+      return this.replaceBackgroundTasks(
+        sessionId,
+        this.eventProjection(sessionId, events).tasks(),
+        true,
       )
-      return this.replaceBackgroundTasks(sessionId, projected, true)
     }
     if (stored.suspended) {
       // Attaching to find out would start the runtime that suspending just
@@ -8071,7 +8123,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.liveTerminalAdmissions.delete(sessionId)
       this.eventLogVersions.delete(sessionId)
       this.eventLogFingerprints.delete(sessionId)
-      forgetSessionEvents(sessionId)
+      this.forgetEventLog(sessionId)
       this.emit('event', { type: 'session.removed', sessionId, closed: true })
       return closed
     } finally {
@@ -8176,7 +8228,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     this.deletingSessions.add(sessionId)
     this.deletedSessionIds.add(sessionId)
-    forgetSessionEvents(sessionId)
+    this.forgetEventLog(sessionId)
     let completed = false
     try {
       const {
@@ -10130,13 +10182,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.awaitedTranscriptEchoes.delete(sessionId)
     }
     if (!this.store.isCurrentTranscript(sessionId, observed)) return
-    const terminalTasks = this.externalSessionIds.has(sessionId)
-      ? backgroundTasksFromEvents(events, { assumeBackground: true })
-      : []
-    if (this.externalSessionIds.has(sessionId)) {
+    // A terminal session's log is projected a few events at a time.
+    const projection = this.externalSessionIds.has(sessionId)
+      ? this.eventProjection(sessionId, events)
+      : undefined
+    if (projection) {
       this.replaceBackgroundTasks(
         sessionId,
-        terminalTasks,
+        projection.tasks(),
         true,
       )
     }
@@ -10145,7 +10198,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.recoverHiddenUserInput(sessionId, events)
       return
     }
-    const historyMessages = messagesFromHistory(events)
+    const historyMessages = projection ? projection.messages() : messagesFromHistory(events)
     const eventUserInput = pendingUserInputFromEvents(events)
     const external = this.externalSessionIds.has(sessionId)
     const watermark = this.liveTranscriptWatermarks.get(sessionId)
@@ -10705,6 +10758,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }),
     )
     return install(normalized, true)
+  }
+
+  /**
+   * A tmux session's projection as of `events`, taking in only what was
+   * appended since the last read.
+   */
+  private eventProjection(
+    sessionId: string,
+    events: readonly SessionEvent[],
+  ): SessionEventProjection {
+    const cached = this.eventProjections.get(sessionId)
+    this.eventProjections.delete(sessionId)
+    const projection = cached?.continues(events) ? cached : new SessionEventProjection()
+    projection.takeIn(events)
+    // Not kept for a session on its way out, which nothing would forget again.
+    if (this.deletedSessionIds.has(sessionId)) return projection
+    this.eventProjections.set(sessionId, projection)
+    for (const oldest of this.eventProjections.keys()) {
+      if (this.eventProjections.size <= MAX_EVENT_PROJECTIONS) break
+      this.eventProjections.delete(oldest)
+    }
+    return projection
+  }
+
+  /** Drops what is cached about a session's event log: its events and projection. */
+  private forgetEventLog(sessionId: string): void {
+    forgetSessionEvents(sessionId)
+    this.eventProjections.delete(sessionId)
   }
 
   private replaceBackgroundTasks(
@@ -12571,7 +12652,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // removed only for a session retired as a probe would have been.
     for (const leftover of (await this.terminalController.endLeftoverProbes?.()) ?? []) {
       if (!this.store.isRetiredSession(leftover)) continue
-      forgetSessionEvents(leftover)
+      this.forgetEventLog(leftover)
       await removeCopilotSessionFiles(leftover)
     }
     const id = randomUUID()
@@ -12582,7 +12663,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       await this.terminalController.probeStartup(id, cwd, signal)
     } finally {
-      forgetSessionEvents(id)
+      this.forgetEventLog(id)
       await removeCopilotSessionFiles(id)
     }
   }

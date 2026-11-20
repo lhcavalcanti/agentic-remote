@@ -94,7 +94,14 @@ const busyWithoutComposer = [
 // ended: the prompt is back, and the footer offers only to stop the agents.
 const backgroundAgentsFooter = ' ● Waiting for background agents · 273 B esc esc stop agents'
 
-type PaneState = 'idle' | 'working' | 'busy' | 'background' | keyof typeof dialogs
+// Copilot 1.0.106 once a turn has ended with shells it started still running:
+// the prompt is back, but the footer still offers the interrupt key, its
+// status cut to fit an 80-column pane. While the prompt holds text the row
+// adds the queue key, and cuts the status further.
+const backgroundShellsFooter = ' ● Waiting for background s… · 136 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)'
+const backgroundShellsTypingFooter = ' ● Waitin… · 136 B ctrl+c interrupt · ctrl+q enqueue GPT-6.1 Sol · High · (9%)'
+
+type PaneState = 'idle' | 'working' | 'busy' | 'background' | 'shells' | keyof typeof dialogs
 
 interface Row { pane: PaneState; status: SessionStatus }
 
@@ -261,15 +268,19 @@ const makeComposer = ${readyComposer.toString()}
 const dialogs = ${JSON.stringify(dialogs)}
 const busy = ${JSON.stringify(busyWithoutComposer)}
 const backgroundFooter = ${JSON.stringify(backgroundAgentsFooter)}
+const shellsFooter = ${JSON.stringify(backgroundShellsFooter)}
+const shellsTypingFooter = ${JSON.stringify(backgroundShellsTypingFooter)}
 let mode = ${JSON.stringify(pane)}
 let draft = ${JSON.stringify(draft)}
 const received = { pastes: [], submits: [], clears: 0, keys: '', draft }
 let input = ''
-const composing = () => mode === 'idle' || mode === 'working' || mode === 'background'
+const composing = () => mode === 'idle' || mode === 'working' || mode === 'background' || mode === 'shells'
 const draw = () => {
   const pane = mode === 'background'
     ? makeComposer(draft, false).replace(' / commands', backgroundFooter)
-    : composing() ? makeComposer(draft, mode === 'working') : mode === 'busy' ? busy : dialogs[mode]
+    : mode === 'shells'
+      ? makeComposer(draft, false).replace(' / commands', draft ? shellsTypingFooter : shellsFooter)
+      : composing() ? makeComposer(draft, mode === 'working') : mode === 'busy' ? busy : dialogs[mode]
   process.stdout.write('\\x1b[2J\\x1b[H' + pane.replaceAll('\\n', '\\r\\n'))
 }
 const save = () => { received.draft = draft; writeReceipt(received) }
@@ -322,6 +333,15 @@ draw()
   await writeFile(path.join(sessionState, 'events.jsonl'), [
     { type: 'session.start', id: 'start', parentId: null, timestamp: '2026-10-20T00:00:00.000Z', data: {} },
     { type: 'assistant.turn_start', id: 'turn', parentId: 'start', timestamp: '2026-10-20T00:00:01.000Z', data: {} },
+    ...(pane === 'shells'
+      ? [{
+          type: 'tool.execution_start', id: 'sleep-start', parentId: 'turn', timestamp: '2026-10-20T00:00:01.500Z',
+          data: {
+            toolCallId: 'sleep-call', toolName: 'bash',
+            arguments: { command: 'sleep 300', description: 'Sleep in the background', mode: 'async' },
+          },
+        }]
+      : []),
     ...(pane === 'background'
       ? [
           { type: 'subagent.started', id: 'agent', parentId: 'turn', agentId: 'agent-1', timestamp: '2026-10-20T00:00:02.000Z', data: {} },
@@ -555,6 +575,21 @@ describe('send matrix with the app’s real send options', () => {
     expect(session.queuedPrompts ?? []).toEqual([])
     const receipt = await eventually(fixture.receipt, (value) => Boolean(value?.submits.length))
     expect(receipt).toEqual({
+      pastes: [message], submits: [{ key: 'enter', text: message }], clears: 0, keys: '', draft: '',
+    })
+  }, 30_000)
+
+  // The turn ended with shells it started still running, so the session is
+  // idle while Copilot still offers its interrupt key. Queued text is typed
+  // into the prompt at once rather than held until the shells finish.
+  it('background shells running · Queue is delivered, not held', async () => {
+    const fixture = await terminal('shells', 'idle', '')
+    const session = await sendLikeTheApp(fixture, 'idle', true)
+    expect(session.activity).toBe('Sent queued prompt')
+    expect(session.queuedPrompts ?? []).toEqual([])
+    await eventually(fixture.receipt, (value) => Boolean(value?.submits.length))
+    await settle()
+    expect(await fixture.receipt()).toEqual({
       pastes: [message], submits: [{ key: 'enter', text: message }], clears: 0, keys: '', draft: '',
     })
   }, 30_000)

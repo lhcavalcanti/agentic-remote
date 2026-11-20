@@ -5187,6 +5187,82 @@ draw()
     },
     20_000,
   )
+
+  // A Copilot started again in the same pane while a send waits, here under
+  // the same pane root, is not the one that was checked: nothing goes to it.
+  // `changesAt` arms the change as the race test above arms its takeover;
+  // from then on the owner found has a new process id.
+  function ownerChangesWhile(
+    controller: TmuxTerminalSessionController,
+    changesAt: () => Promise<boolean>,
+  ) {
+    let changed = false
+    const owner = controller['owner'].bind(controller)
+    controller['owner'] = async (...args: Parameters<typeof owner>) => {
+      const found = await owner(...args)
+      if (!changed && (await changesAt())) changed = true
+      return changed && found ? { ...found, pid: found.pid + 100_000 } : found
+    }
+    return { change: () => { changed = true }, changed: () => changed }
+  }
+
+  it.each([
+    ['the clear', 'terminal-draft-conflict.owner-changed-before-clear', { pastes: [], clears: 0, submits: [] }],
+    ['the paste', 'terminal-draft-conflict.new-text', { pastes: [], clears: 1, submits: [] }],
+    ['Enter', undefined, { pastes: [message], clears: 1, submits: [] }],
+  ] as const)('sends nothing before %s to an owner that started while the log was read', async (step, reasonCode, expected) => {
+    const { controller, sessionId, received } = await slowCopilot({ draft: leftover, footer: shellsWaits[0][0] })
+    let logRead = false
+    let armed = false
+    const owner = ownerChangesWhile(controller, async () => {
+      const { clears } = await received()
+      if (step === 'the clear' ? logRead && !clears : step === 'the paste' && clears) armed = true
+      return false
+    })
+    const eventLog = async () => {
+      logRead = true
+      if (step === 'Enter' && (await received()).pastes.length) armed = true
+      if (armed) owner.change()
+      return shellsOnly
+    }
+
+    await expect(controller.send(sessionId, message, false, replacingBesideShells(eventLog)))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: step === 'Enter',
+        ...(reasonCode ? { reasonCode } : {}),
+      })
+
+    expect(owner.changed()).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual(expected)
+  }, 20_000)
+
+  it('pastes nothing queued for an owner that started while the log was read', async () => {
+    const { controller, sessionId, received } = await slowCopilot({ footer: shellsWaits[0][0] })
+    const owner = ownerChangesWhile(controller, async () => false)
+
+    await expect(controller.send(sessionId, message, false, {
+      allowDuringAgentExecution: true,
+      backgroundShellsOnly: { eventLog: async () => { owner.change(); return shellsOnly } },
+    })).rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.queue' })
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [], clears: 0, submits: [] })
+  }, 20_000)
+
+  // The wait for a slow Copilot to show the paste can be long.
+  it('presses Enter only for the owner the paste was typed into', async () => {
+    const { controller, sessionId, received } = await slowCopilot({ pasteDrawnAfterMs: 300 })
+    const owner = ownerChangesWhile(controller, async () => (await received()).pastes.length > 0)
+
+    await expect(controller.send(sessionId, message, false))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: true })
+
+    expect(owner.changed()).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [message], clears: 0, submits: [] })
+  }, 20_000)
 })
 
 describe('paneShowsText', () => {

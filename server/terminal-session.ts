@@ -1829,6 +1829,17 @@ export class TmuxTerminalSessionController
     return this.sendInternal(sessionId, content, false, true)
   }
 
+  /** Whether the session's terminal is still owned as `owner` records. */
+  private async sameOwner(sessionId: string, owner: TerminalOwner): Promise<boolean> {
+    const current = await this.owner(sessionId, owner.target, true)
+    return Boolean(
+      current &&
+        current.pid === owner.pid &&
+        current.rootPid === owner.rootPid &&
+        current.target === owner.target,
+    )
+  }
+
   private async clearComposerForReplacement(
     sessionId: string,
     owner: TerminalOwner,
@@ -1866,6 +1877,10 @@ export class TmuxTerminalSessionController
       owner.target,
       backgroundShellsOnly,
     )
+    // The event log was read since the owner was checked.
+    if (besideShells && !(await this.sameOwner(sessionId, owner))) {
+      throw new TerminalDraftConflictError('owner-changed-before-clear')
+    }
     if (
       composerText(currentPane) === undefined ||
       !terminalInputReady(currentPane, besideShells) ||
@@ -2212,6 +2227,17 @@ export class TmuxTerminalSessionController
           },
         )
       }
+      // The event log was read since the owner was checked. A replacement
+      // checks it again once it has read the pane for the paste.
+      if (
+        options.backgroundShellsOnly &&
+        !options.replaceExistingInput &&
+        !(await this.sameOwner(sessionId, currentOwner))
+      ) {
+        throw queuedDeliveryRefusal(
+          new Error('The terminal owner changed before queued delivery; nothing was sent'),
+        )
+      }
       const allowWorking =
         !idleOnly &&
         (enqueue || options.allowDuringAgentExecution === true)
@@ -2270,6 +2296,9 @@ export class TmuxTerminalSessionController
             options.backgroundShellsOnly,
           )
           paneBeforePaste = reading.pane
+          // The event log was read since the owner was checked.
+          const ownerKept = !reading.besideShells ||
+            (await this.sameOwner(sessionId, currentOwner))
           const toleratesWorking = options.backgroundShellsOnly
             ? reading.besideShells
             : allowWorking && !existingInput
@@ -2278,6 +2307,7 @@ export class TmuxTerminalSessionController
             ownerBeforePaste.pid !== currentOwner.pid ||
             ownerBeforePaste.rootPid !== currentOwner.rootPid ||
             ownerBeforePaste.target !== currentOwner.target ||
+            !ownerKept ||
             composerText(paneBeforePaste) === undefined ||
             !terminalInputReady(paneBeforePaste, toleratesWorking) ||
             composerHoldsText(paneBeforePaste) ||
@@ -2308,7 +2338,7 @@ export class TmuxTerminalSessionController
           pasteAcknowledged = true
           return await this.finishSend(
             sessionId,
-            owner.target,
+            currentOwner,
             content,
             confirmation,
             paneBeforePaste,
@@ -2348,7 +2378,7 @@ export class TmuxTerminalSessionController
 
   private async finishSend(
     sessionId: string,
-    target: string,
+    owner: TerminalOwner,
     content: string,
     confirmation: string,
     paneBeforePaste: string,
@@ -2356,6 +2386,7 @@ export class TmuxTerminalSessionController
     idleOnly = false,
     backgroundShellsOnly?: TerminalSendOptions['backgroundShellsOnly'],
   ): Promise<boolean> {
+      const target = owner.target
       const paste = await waitForComposerPaste(
         target,
         paneBeforePaste,
@@ -2439,6 +2470,11 @@ export class TmuxTerminalSessionController
           ) {
             throw new Error('The terminal changed before queued submission')
           }
+        }
+        // The paste may have been awaited for many seconds, and the event
+        // log read since: Enter goes only to the owner the paste was typed in.
+        if (!(await this.sameOwner(sessionId, owner))) {
+          throw new Error('The terminal owner changed before the message was submitted')
         }
         await execFileAsync(
           'tmux',

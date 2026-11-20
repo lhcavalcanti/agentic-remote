@@ -417,29 +417,54 @@ for (const width of [320, 360, 600, 601, 820, 960, 961, 1440]) {
   })
 }
 
-for (const width of [320, 360]) {
-  test.describe(`narrow composer ${width}px`, () => {
-    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
-    test('shows the idle-only hint without hover while retaining the model glyph and mode', async ({ page, baseURL }) => {
+for (const viewport of uiViewports) {
+  test.describe(`runtime in the buttons row ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    test('sits between the microphone and Queue/Send instead of a line below the composer', async ({ page, baseURL }) => {
       const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
       try {
         const summary = page.getByTestId('composer-runtime')
-        await expect(summary.getByText('applies when idle', { exact: true })).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({ ratio: 1 })
+        const busy = await runtimeInRow(page)
+        expectRuntimeInRow(busy)
+        expect(busy.name.full, 'a long model name truncates').toBeGreaterThan(busy.name.visible)
+        // The idle-only hint shows where it fits; the title and description always carry it.
+        await expect(summary).toHaveAccessibleDescription(/applies when idle/)
+        await expect(summary).toHaveAttribute('title', /applies when idle/)
+        if (viewport.name === 'desktop') expect(busy.shown).toEqual({ effort: true, context: true, mode: true, hint: true })
+        await assertNoHorizontalOverflow(page)
+
+        const session = fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+        session.status = 'idle'
+        session.revision = (session.revision ?? 0) + 1
+        fixture.emit({ type: 'session.upserted', session })
+        await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeHidden()
+        const idle = await runtimeInRow(page)
+        expectRuntimeInRow(idle)
+        expect(idle.runtime.width, 'takes the room Queue and Stop leave').toBeGreaterThan(busy.runtime.width)
+        expect(idle.shown.mode, 'mode beside the name while idle').toBe(true)
+        await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({ ratio: 1 })
+        await assertNoHorizontalOverflow(page)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
+for (const width of [320, 360]) {
+  test.describe(`narrow composer ${width}px`, () => {
+    test.use({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true })
+    test('keeps the model glyph and a truncated name in the row, with the idle-only hint in its description', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'composer-status-busy')!.setup(page)
+      try {
+        const summary = page.getByTestId('composer-runtime')
         await expect(summary.locator('[data-model-family]')).toBeVisible()
-        await expect(summary.locator('.composer-runtime__mode')).toHaveText('plan')
-        const layout = await summary.evaluate((element) => {
-          const button = element.getBoundingClientRect()
-          return {
-            height: button.height,
-            childrenFit: [...element.children].filter((child) => child.getBoundingClientRect().width > 0)
-              .every((child) => {
-                const rect = child.getBoundingClientRect()
-                return rect.left >= button.left && rect.right <= button.right
-              }),
-          }
-        })
-        expect(layout.height).toBeGreaterThanOrEqual(40)
-        expect(layout.childrenFit).toBe(true)
+        await expect(summary.getByText('applies when idle', { exact: true })).toBeHidden()
+        await expect(summary).toHaveAccessibleDescription(/applies when idle/)
+        await expect(summary).toHaveAttribute('title', /applies when idle/)
+        const layout = await runtimeInRow(page)
+        expectRuntimeInRow(layout)
         await assertNoHorizontalOverflow(page)
       } finally {
         fixture.assertHealthy()
@@ -566,6 +591,62 @@ for (const width of [320, 360]) {
 }
 
 type ComposerPart = { left: number, right: number, top: number, bottom: number, width: number }
+
+/** Where the refreshed runtime summary sits in the buttons row, and which of its parts show. */
+async function runtimeInRow(page: Page) {
+  return page.locator('.composer-actions--refresh').evaluate((row) => {
+    const box = (element: Element | null) => {
+      if (!element || element.getClientRects().length === 0) return undefined
+      const { left, right, top, bottom, width, height } = element.getBoundingClientRect()
+      return { left, right, top, bottom, width, height }
+    }
+    const runtime = row.querySelector(':scope > [data-testid="composer-runtime"]')!
+    const runtimeBox = box(runtime)!
+    const name = runtime.querySelector<HTMLElement>('.composer-runtime__model')!
+    const composer = row.closest('.composer')!
+    const area = composer.closest('.composer-area')!
+    const shown = (selector: string) => Boolean(box(runtime.querySelector(selector)))
+    return {
+      row: box(row)!,
+      runtime: runtimeBox,
+      glyph: box(runtime.querySelector('[data-model-family]')),
+      mic: box(row.querySelector(':scope > [aria-label="Start microphone recording"]'))!,
+      panel: box(row.querySelector(':scope > .composer-session-panel'))!,
+      queue: box(row.querySelector(':scope > [aria-label="Queue message"]')),
+      send: box(row.querySelector(':scope > [aria-label="Send message"]'))!,
+      controlHeight: Math.max(...[...row.querySelectorAll(':scope > button, :scope > .composer-session-panel > button')]
+        .filter((control) => control !== runtime).map((control) => box(control)?.height ?? 0)),
+      shown: {
+        effort: shown('.composer-runtime__detail--effort'), context: shown('.composer-runtime__detail--context'),
+        mode: shown('.composer-runtime__detail--mode'), hint: shown('.composer-runtime__hint'),
+      },
+      clipped: [...runtime.querySelectorAll('.composer-runtime-model, .composer-runtime__detail, .composer-runtime__hint')]
+        .map(box).some((part) => part && (part.left < runtimeBox.left || part.right > runtimeBox.right)),
+      name: { visible: name.clientWidth, full: name.scrollWidth, textOverflow: getComputedStyle(name).textOverflow },
+      belowComposer: area.getBoundingClientRect().bottom - composer.getBoundingClientRect().bottom -
+        parseFloat(getComputedStyle(area).paddingBottom),
+    }
+  })
+}
+
+function expectRuntimeInRow(layout: Awaited<ReturnType<typeof runtimeInRow>>) {
+  const { row, runtime, mic, panel, queue, send, shown, name } = layout
+  expect(runtime.left, 'after the microphone and session panel').toBeGreaterThanOrEqual(Math.max(mic.right, panel.right))
+  expect(runtime.right, 'before Queue and Send').toBeLessThanOrEqual((queue ?? send).left)
+  expect(send.right, 'Send inside the row').toBeLessThanOrEqual(row.right)
+  expect(runtime.top, 'runtime top inside the row').toBeGreaterThanOrEqual(row.top)
+  expect(runtime.bottom, 'runtime bottom inside the row').toBeLessThanOrEqual(row.bottom)
+  expect(runtime.height, 'as tall as the other controls').toBeGreaterThanOrEqual(layout.controlHeight)
+  expect(runtime.width, 'runtime target width').toBeGreaterThanOrEqual(40)
+  expect(layout.belowComposer, 'no line below the composer').toBeLessThanOrEqual(1)
+  expect(layout.glyph, 'model glyph').toBeDefined()
+  expect(name.visible, 'model name').toBeGreaterThan(0)
+  expect(name.textOverflow, 'model name truncation').toBe('ellipsis')
+  expect(layout.clipped, 'a detail cut short').toBe(false)
+  // Whole details drop out: the hint first, then context, effort and mode.
+  const steps = [shown.mode, shown.effort, shown.context, shown.hint]
+  expect(steps, JSON.stringify(shown)).toEqual([...steps].sort((a, b) => Number(b) - Number(a)))
+}
 
 /** Pastes a screenshot from the clipboard into the message box. */
 async function pasteImage(page: Page) {

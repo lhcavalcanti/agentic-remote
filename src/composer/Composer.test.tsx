@@ -1,12 +1,22 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { createRef } from 'react'
+import { createRef, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { defaultHubFeatureFlags, effectivePreviewFeatures } from '../../shared/feature-flags'
+import { PreviewFeaturesContext } from '../preview-features'
 import { Composer } from './Composer'
 import type { ComposerProps } from './types'
 
 afterEach(cleanup)
+
+function refreshed(children: ReactNode) {
+  const preferences = { composerRefresh: true }
+  return <PreviewFeaturesContext.Provider value={{
+    hubFlags: defaultHubFeatureFlags, preferences,
+    effective: effectivePreviewFeatures(preferences, defaultHubFeatureFlags), set: vi.fn(),
+  }}>{children}</PreviewFeaturesContext.Provider>
+}
 
 const props = (overrides: Partial<ComposerProps> = {}): ComposerProps => ({
   selected: {
@@ -103,4 +113,47 @@ describe('send and queue tooltips', () => {
       expect(screen.getByRole('button', { name: 'Send message' })).toHaveAttribute('title', send)
       expect(screen.getByRole('button', { name: 'Queue message' })).toHaveAttribute('title', queue)
     })
+})
+
+const follows = (first: Element, second: Element) =>
+  Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+describe('runtime setup button', () => {
+  it('sits in the refreshed buttons row after the microphone and before Queue and Send', () => {
+    const { container } = render(refreshed(<Composer {...props()} />))
+    const runtime = screen.getByRole('button', { name: 'Configure model, effort, and context' })
+    expect(screen.getAllByTestId('composer-runtime')).toEqual([runtime])
+    expect(runtime.closest('.composer-actions--refresh')).toBe(container.querySelector('.composer-actions--refresh'))
+    expect(follows(screen.getByRole('button', { name: 'Start microphone recording' }), runtime)).toBe(true)
+    expect(follows(screen.getByRole('button', { name: 'Session panel' }), runtime)).toBe(true)
+    expect(follows(runtime, screen.getByRole('button', { name: 'Queue message' }))).toBe(true)
+    expect(follows(runtime, screen.getByRole('button', { name: 'Send message' }))).toBe(true)
+  })
+
+  it('leaves no runtime line below the refreshed composer', () => {
+    const { container } = render(refreshed(<Composer {...props()} />))
+    expect(container.querySelector('.composer-area > .composer-runtime')).toBeNull()
+    expect(container.querySelector('.composer-area > .composer')!.nextElementSibling).toBeNull()
+  })
+
+  it.each([
+    { state: 'recording', overrides: { recording: true, recordingSeconds: 7 } },
+    { state: 'asking aside', overrides: { askingAside: true, sideQuestionDraft: '' } },
+  ])('is not shown while $state', ({ overrides }) => {
+    render(refreshed(<Composer {...props(overrides)} />))
+    expect(screen.queryByTestId('composer-runtime')).toBeNull()
+  })
+
+  it('keeps the classic status line below the classic composer', () => {
+    const base = props()
+    const { container } = render(<Composer {...props({
+      selected: { ...base.selected, runtime: { model: 'fixture-model' } },
+      statusline: { ...base.statusline, model: true },
+    })} />)
+    const runtime = screen.getByTestId('composer-runtime')
+    expect(runtime).toHaveTextContent('fixture-model')
+    expect(runtime.parentElement).toBe(container.querySelector('.composer-area'))
+    expect(follows(container.querySelector('.composer-area > .composer')!, runtime)).toBe(true)
+    expect(container.querySelector('.composer-actions .composer-runtime')).toBeNull()
+  })
 })

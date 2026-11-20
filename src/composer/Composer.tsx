@@ -7,7 +7,6 @@ import { AttachmentStrip } from './AttachmentStrip'
 import { ComposerActions } from './ComposerActions'
 import { QueuedPromptList } from './QueuedPromptList'
 import { SlashCommandMenu } from './SlashCommandMenu'
-import { RuntimeStatus } from './RuntimeStatus'
 import type { ComposerProps } from './types'
 
 export function Composer(props: ComposerProps) {
@@ -253,9 +252,7 @@ export function Composer(props: ComposerProps) {
           Recovered saved draft
         </p>
       ) : null}
-      {refresh ? (
-        <RuntimeStatus session={selected} compactTokens={compactTokens} onOpen={onOpenRuntime} />
-      ) : (statusline.provider ||
+      {!refresh && (statusline.provider ||
         (statusline.model && selected.runtime?.model) ||
         (statusline.effort && selected.runtime?.reasoningEffort) ||
         (statusline.contextTier && selected.runtime?.contextTier) ||

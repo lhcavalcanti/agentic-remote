@@ -705,6 +705,10 @@ test.describe('browser interaction contracts', () => {
           const navigation = page.getByRole('navigation', { name: 'App navigation', exact: true })
           const entry = navigation.getByRole('button', { name: new RegExp(`^${label}(?:,|$)`) })
           await expect(entry).toBeVisible()
+          // An icon beside App settings, named by its tooltip.
+          await expect(page.locator('.sidebar-settings').getByRole('navigation', { name: 'App navigation', exact: true })).toBeVisible()
+          await expect(entry).toHaveAttribute('title', label)
+          await expect(entry).not.toContainText(label)
           await expect(page.getByRole('button', { name: 'App settings', exact: true })).toHaveCount(1)
           await entry.click()
           await expect(dialog).toBeVisible()

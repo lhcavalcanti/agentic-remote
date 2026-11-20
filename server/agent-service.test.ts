@@ -10942,6 +10942,12 @@ describe('AgentService deletion', () => {
       async () => events,
       async () => eventVersion,
       terminal,
+      // Every transcript pass reads the workspace metadata. Left on the real
+      // filesystem, a pass with no retry due can still be reading when the
+      // faked clock reaches the poll the retry is due on, and that poll, like
+      // the refreshes below, joins the stale pass instead of starting one.
+      async () => undefined,
+      async () => undefined,
     )
     const errors: string[] = []
     let published = 0

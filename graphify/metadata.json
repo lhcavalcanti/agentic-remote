@@ -928,7 +928,7 @@
     "server/activity-spacing.test.ts": "b03df98ba6b03ed89042a63d1cfa61ced6230f09dc435ff74b2280589641d55e",
     "server/agent-service-recovery.test.ts": "6c3e3eac2e25f1d7c276bf3c78eff185683b4cecc7ba3d1b264634ed2ebc3202",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "1a8e245a4d4424efb6d9389083288914475133dc7f5256c0fa706a72c3c78baa",
+    "server/agent-service.test.ts": "0a11239782decac187413036269020fb31ee92876184533b5dbedc16a3243d84",
     "server/agent-service.ts": "a0db5173e7091bd75ad2c1c886181eb35819990a51850530633157e9f1a0dd04",
     "server/api-origin.test.ts": "7834409881aae57cda9ed1927f8e69b047e6891a1c05047ab0eb298b6371b99d",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
@@ -1759,13 +1759,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "f5c578daa0b6dd17bd4998a4e3525e256b31a22dca357d83b3c46dbc33716a71",
+    "GRAPH_REPORT.md": "b1e3cdca7d662e6b14ad5f3bb2d18aabfe81afc4e5d93b793d9b1afd29452b44",
     "communities.json": "37ca2abae006b1a1e862a0846d84ab07fe6527d406edd862a03a31c3a0cf0789",
-    "graph.html": "aef1c30e6b7d57596faa35da2485488dec49c0be8e74a1fef061538bba2664ec",
-    "graph.json": "e9e7d76ce09b2401b87f256fd2f2ade7ddd3c8f975ef841a1c9c833e27a29924"
+    "graph.html": "3ae38d5ce7793525e911b96634132652ab335fbcc80dd1e37f45c46f735a7955",
+    "graph.json": "01aef9df0ebf6503c9bc6d6a6ca356786e74c83ad7560952cc76fc374d1ea77e"
   },
   "schema_version": 1,
-  "source_commit": "23b3cb4fada3c4485c3e56ab34de8860c2b140c1",
-  "source_fingerprint": "438d7fd66689c8a91abca2efeae4e85d03f45827aa710ad674bcc2d386d2c425",
+  "source_commit": "9a2f0134c69cda311d03a519ecd4809515ea679e",
+  "source_fingerprint": "1762fc28bf8488ad17c04820ada8c19366d0877eaa887982b0d5164fbeae4005",
   "working_tree_changes": []
 }

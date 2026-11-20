@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "23b3cb4fada3c4485c3e56ab34de8860c2b140c1",
+  "built_at_commit": "9a2f0134c69cda311d03a519ecd4809515ea679e",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -47938,7 +47938,7 @@
       "relation": "contains",
       "source": "server_agent_service_test",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14558",
+      "source_location": "L14564",
       "target": "server_agent_service_test_closableservice",
       "weight": 1.0
     },
@@ -47993,7 +47993,7 @@
       "relation": "contains",
       "source": "server_agent_service_test",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14533",
+      "source_location": "L14539",
       "target": "server_agent_service_test_messagesasevents",
       "weight": 1.0
     },
@@ -48026,7 +48026,7 @@
       "relation": "contains",
       "source": "server_agent_service_test",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L11077",
+      "source_location": "L11083",
       "target": "server_agent_service_test_queuedbehindturn",
       "weight": 1.0
     },
@@ -48048,7 +48048,7 @@
       "relation": "contains",
       "source": "server_agent_service_test",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14601",
+      "source_location": "L14607",
       "target": "server_agent_service_test_sessionstate",
       "weight": 1.0
     },
@@ -48059,7 +48059,7 @@
       "relation": "contains",
       "source": "server_agent_service_test",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L12295",
+      "source_location": "L12301",
       "target": "server_agent_service_test_startupfifofixture",
       "weight": 1.0
     },
@@ -48070,7 +48070,7 @@
       "relation": "contains",
       "source": "server_agent_service_test",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14587",
+      "source_location": "L14593",
       "target": "server_agent_service_test_terminalfake",
       "weight": 1.0
     },
@@ -48311,7 +48311,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_closableservice",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14572",
+      "source_location": "L14578",
       "target": "server_agent_service_agentservice",
       "weight": 1.0
     },
@@ -48323,7 +48323,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_closableservice",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14569",
+      "source_location": "L14575",
       "target": "server_agent_service_test_configurablemodel",
       "weight": 1.0
     },
@@ -48335,7 +48335,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_closableservice",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14582",
+      "source_location": "L14588",
       "target": "server_agent_service_test_deferredsession_on",
       "weight": 1.0
     },
@@ -48347,7 +48347,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_closableservice",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14568",
+      "source_location": "L14574",
       "target": "server_agent_service_test_fakecopilotclient",
       "weight": 1.0
     },
@@ -48359,7 +48359,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_closableservice",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14583",
+      "source_location": "L14589",
       "target": "server_agent_service_test_fakecopilotclient_start",
       "weight": 1.0
     },
@@ -48371,7 +48371,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_closableservice",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14570",
+      "source_location": "L14576",
       "target": "server_agent_service_test_terminalfake",
       "weight": 1.0
     },
@@ -48383,7 +48383,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_closableservice",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14567",
+      "source_location": "L14573",
       "target": "server_session_store_sessionstore",
       "weight": 1.0
     },
@@ -48725,7 +48725,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_queuedbehindturn",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L11115",
+      "source_location": "L11121",
       "target": "server_agent_service_agentservice",
       "weight": 1.0
     },
@@ -48737,7 +48737,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_queuedbehindturn",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L11148",
+      "source_location": "L11154",
       "target": "server_agent_service_agentservice_refreshtranscripts",
       "weight": 1.0
     },
@@ -48749,7 +48749,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_queuedbehindturn",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L11128",
+      "source_location": "L11134",
       "target": "server_agent_service_test_deferredsession_on",
       "weight": 1.0
     },
@@ -48761,7 +48761,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_queuedbehindturn",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L11084",
+      "source_location": "L11090",
       "target": "server_agent_service_test_fakecopilotclient",
       "weight": 1.0
     },
@@ -48773,7 +48773,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_queuedbehindturn",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L11133",
+      "source_location": "L11139",
       "target": "server_agent_service_test_fakecopilotclient_start",
       "weight": 1.0
     },
@@ -48785,7 +48785,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_queuedbehindturn",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L11116",
+      "source_location": "L11122",
       "target": "server_session_store_sessionstore",
       "weight": 1.0
     },
@@ -48797,7 +48797,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_startupfifofixture",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L12324",
+      "source_location": "L12330",
       "target": "server_agent_service_agentservice",
       "weight": 1.0
     },
@@ -48809,7 +48809,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_startupfifofixture",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L12301",
+      "source_location": "L12307",
       "target": "server_agent_service_test_configurablemodel",
       "weight": 1.0
     },
@@ -48821,7 +48821,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_startupfifofixture",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L12300",
+      "source_location": "L12306",
       "target": "server_agent_service_test_fakecopilotclient",
       "weight": 1.0
     },
@@ -48833,7 +48833,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_startupfifofixture",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L12340",
+      "source_location": "L12346",
       "target": "server_agent_service_test_fakecopilotclient_start",
       "weight": 1.0
     },
@@ -48845,7 +48845,7 @@
       "relation": "calls",
       "source": "server_agent_service_test_startupfifofixture",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L12325",
+      "source_location": "L12331",
       "target": "server_session_store_sessionstore",
       "weight": 1.0
     },
@@ -317204,7 +317204,7 @@
       "label": "closableService()",
       "norm_label": "closableservice()",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14558"
+      "source_location": "L14564"
     },
     {
       "_callable": true,
@@ -317481,7 +317481,7 @@
       "label": "messagesAsEvents()",
       "norm_label": "messagesasevents()",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14533"
+      "source_location": "L14539"
     },
     {
       "_origin": "ast",
@@ -317516,7 +317516,7 @@
       "label": "queuedBehindTurn()",
       "norm_label": "queuedbehindturn()",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L11077"
+      "source_location": "L11083"
     },
     {
       "_origin": "ast",
@@ -317539,7 +317539,7 @@
       "label": "sessionState()",
       "norm_label": "sessionstate()",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14601"
+      "source_location": "L14607"
     },
     {
       "_callable": true,
@@ -317551,7 +317551,7 @@
       "label": "startupFifoFixture()",
       "norm_label": "startupfifofixture()",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L12295"
+      "source_location": "L12301"
     },
     {
       "_callable": true,
@@ -317563,7 +317563,7 @@
       "label": "terminalFake()",
       "norm_label": "terminalfake()",
       "source_file": "server/agent-service.test.ts",
-      "source_location": "L14587"
+      "source_location": "L14593"
     },
     {
       "_callable": true,

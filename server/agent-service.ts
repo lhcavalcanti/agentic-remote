@@ -1596,8 +1596,19 @@ function commandShortcut(value: string): string {
     : ''
 }
 
+const terminalEscape = String.fromCharCode(27)
+const terminalBell = String.fromCharCode(7)
+// Tried in order at each escape: CSI (colours, cursor moves); OSC (titles,
+// hyperlinks) ended by BEL or ST; DCS, SOS, PM and APC strings ended by ST;
+// any other escape with its final byte; and a stray escape or bell.
 const ansiSequence = new RegExp(
-  `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
+  [
+    `${terminalEscape}\\[[0-?]*[ -/]*[@-~]`,
+    `${terminalEscape}\\][^${terminalBell}${terminalEscape}]*(?:${terminalBell}|${terminalEscape}\\\\)`,
+    `${terminalEscape}[PX^_][^${terminalEscape}]*${terminalEscape}\\\\`,
+    `${terminalEscape}[ -/]*[0-~]`,
+    `[${terminalEscape}${terminalBell}]`,
+  ].join('|'),
   'g',
 )
 

@@ -17,6 +17,7 @@ import type { ComponentProps } from 'react'
 import type { DragEndEvent } from '@dnd-kit/core'
 import type {
   BackgroundTaskSnapshot,
+  ChatMessage,
   ComputerSummary,
   KnowledgeRoot,
   ManagedSession,
@@ -4919,6 +4920,40 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /^Completed: Bash/ })).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('All 42 tests passed')).toBeInTheDocument()
     expect(getActivityDetail).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an open tool row in view once newer messages push it past the rendered window', async () => {
+    const toolRow: ChatMessage = {
+      id: 'tool:call_window',
+      role: 'activity',
+      content: 'Bash\n$ pnpm build',
+      createdAt: '2026-07-22T00:00:00.500Z',
+      activityStatus: 'completed',
+    }
+    const toolSession: ManagedSession = { ...session, messages: [session.messages[0]!, toolRow] }
+    vi.mocked(listSessions).mockResolvedValue([toolSession])
+    vi.mocked(getSession).mockResolvedValue(toolSession)
+    vi.mocked(getActivityDetail).mockResolvedValue({
+      toolCallId: 'call_window', toolName: 'bash', kind: 'tool', status: 'completed',
+      result: { text: 'Built in 4.2s', truncated: false, originalBytes: 13 },
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Completed: Bash/ }))
+    expect(await screen.findByText('Built in 4.2s')).toBeInTheDocument()
+
+    const newer = Array.from({ length: 260 }, (_, index): ChatMessage => ({
+      id: `newer-${index}`, role: 'assistant', content: `Step ${index}`, createdAt: '2026-07-22T00:00:02.000Z',
+    }))
+    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'session.upserted',
+        session: { ...toolSession, updatedAt: '2026-07-22T00:00:02.000Z', messages: [...toolSession.messages, ...newer] },
+      }),
+    } as MessageEvent))
+    expect(await screen.findByText('Step 259')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Show \d+ earlier messages$/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Completed: Bash/ })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Built in 4.2s')).toBeInTheDocument()
   })
 
   it('renders transcript headings, statuses, results, and optional durations', async () => {

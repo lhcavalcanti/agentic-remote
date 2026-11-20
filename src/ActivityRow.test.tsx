@@ -96,6 +96,7 @@ describe('ActivityRow', () => {
     cleanup()
     delete (Element.prototype as Partial<Element>).scrollIntoView
     delete (navigator as Partial<Navigator> & { clipboard?: Clipboard }).clipboard
+    delete (document as Partial<Document>).execCommand
   })
 
   it('opens a tool row onto its complete call and closes it again, reading the call once', async () => {
@@ -243,6 +244,27 @@ describe('ActivityRow', () => {
     expect(await screen.findByRole('button', { name: 'Command copied' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Copy output' }))
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(output))
+  })
+
+  it('copies over plain HTTP, where browsers withhold the Clipboard API', async () => {
+    let copied: string | undefined
+    const execCommand = vi.fn((name: string) => {
+      copied = name === 'copy' ? document.getSelection()?.toString() : undefined
+      return Boolean(copied)
+    })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: execCommand })
+    vi.mocked(getActivityDetail).mockResolvedValue(bashDetail())
+    renderTranscript([row('completed')])
+    fireEvent.click(toggleFor(/^Completed: Bash/))
+    const copy = await screen.findByRole('button', { name: 'Copy output' })
+    copy.focus()
+
+    fireEvent.click(copy)
+    expect(await screen.findByRole('button', { name: 'Output copied' })).toHaveFocus()
+    expect(execCommand).toHaveBeenCalledExactlyOnceWith('copy')
+    expect(copied).toBe(output)
+    expect(document.getSelection()?.toString()).toBe('')
+    expect(document.body.textContent?.split(output)).toHaveLength(2)
   })
 
   it('shows every text as plain text, never as markup', async () => {

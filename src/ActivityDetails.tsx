@@ -11,6 +11,7 @@ import {
   type ActivityDetailFailure,
 } from './activity-details'
 import { activityStatusLabel, formatActivityDuration } from './activity-presentation'
+import { copyText } from './copy-text'
 import { MessageTime } from './MessageTime'
 
 interface PanelState {
@@ -183,15 +184,7 @@ function CopyTextButton({ label, text }: { label: string; text: string }) {
   async function copy() {
     clearTimeout(timeout.current)
     setOutcome(undefined)
-    let copied = false
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text)
-        copied = true
-      }
-    } catch {
-      copied = false
-    }
+    const copied = await copyText(text)
     if (!mounted.current) return
     setOutcome(copied ? 'copied' : 'failed')
     timeout.current = setTimeout(() => setOutcome(undefined), copied ? 2000 : 5000)

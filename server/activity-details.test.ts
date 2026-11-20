@@ -156,6 +156,20 @@ describe('activity details from the event log', () => {
     expect(detail?.result).toEqual(text('PASS all\ndone'))
   })
 
+  it('strips terminal titles, hyperlinks and other escapes too', () => {
+    const output = [
+      '\u001b]0;pnpm test\u0007\u001b]2;window\u001b\\Report',
+      '\u001b]8;;https://example.com/report\u0007open the report\u001b]8;;\u0007 now\u0007',
+      '\u001b(B\u001b=\u001b7plain\u001b8 text\u001bP1$r0m\u001b\\ done\u001b',
+    ].join('\n')
+    const detail = activityDetailFromEvents([
+      start('call_osc', 'bash', { command: 'pnpm test' }),
+      complete('call_osc', { success: true, result: { content: output } }),
+    ], 'call_osc')
+
+    expect(detail?.result?.text).toBe('Report\nopen the report now\nplain text done')
+  })
+
   it('cuts each text at 256 KiB on a character boundary and reports its whole size', () => {
     const output = 'é'.repeat(200_000)
     const command = `echo ${'x'.repeat(ACTIVITY_DETAIL_TEXT_LIMIT_BYTES)}`

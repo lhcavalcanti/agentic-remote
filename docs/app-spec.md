@@ -1184,13 +1184,16 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   never by the transcript poll. A finished call MUST be kept in a bounded
   cache rather than read again. A running call shows its arguments and
   **Running…** and MUST be read once more if it finishes while open.
-- Each text MUST be stripped of terminal colours and NUL and cut at 256 KiB,
-  saying how much is shown. A call missing from the log MUST say so and offer
-  **Try again**; a Claude Agent session, or a computer that cannot read calls
-  yet, MUST say that details are unavailable.
+- Each text MUST be stripped of terminal escape sequences (colours, titles,
+  hyperlinks) and NUL and cut at 256 KiB, saying how much is shown. **Copy**
+  MUST also work over plain HTTP, where browsers withhold the Clipboard API.
+  A call missing from the log MUST say so and offer **Try again**; a Claude
+  Agent session, or a computer that cannot read calls yet, MUST say that
+  details are unavailable.
 - Opening a tool row MUST keep it where it is and stop following the end;
   closing it MUST bring it back into view. Rows MUST stay open across
-  transcript updates, and an unchanged row MUST NOT redraw.
+  transcript updates, and an open row MUST stay rendered when newer messages
+  push it past the rendered history. An unchanged row MUST NOT redraw.
 - Parallel tools MUST retain independent running/completed/failed states.
 - Unfinished tools at abort or error MUST become failed rather than spinning
   forever.

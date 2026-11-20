@@ -1838,10 +1838,12 @@ const ConversationMessages = memo(function ConversationMessages({
     ? 0
     : Math.max(0, allMessages.length - RENDERED_HISTORY)
   const tail = cut ? allMessages.slice(cut) : allMessages
+  const openActivities = new Set(openActivityIds)
   // Some rows from before the cut have to come with it. An activity that is
   // still running is one: the separate activity indicator is suppressed while
   // one exists, so dropping the row leaves nothing on screen saying anything
-  // is happening. The parent of a visible child is another, or the child is
+  // is happening. One the reader has opened is another, or it vanishes from
+  // under them. The parent of a visible child is a third, or the child is
   // lifted out of the group it belongs to and read as work of its own.
   const carried: ChatMessage[] = []
   if (cut > 0) {
@@ -1856,7 +1858,11 @@ const ConversationMessages = memo(function ConversationMessages({
       if (message.role !== 'activity') {
         continue
       }
-      if (message.activityStatus === 'running' || wanted.has(message.id)) {
+      if (
+        message.activityStatus === 'running' ||
+        openActivities.has(message.id) ||
+        wanted.has(message.id)
+      ) {
         carried.unshift(message)
         // Groups nest, so the parent's own parent is needed as well.
         if (message.activityGroupId) {
@@ -1905,7 +1911,6 @@ const ConversationMessages = memo(function ConversationMessages({
       groupedActivityIds.add(message.id)
     }
   }
-  const openActivities = new Set(openActivityIds)
   const activityRow = (message: ChatMessage, key?: string): ReactNode => (
     <ActivityRow
       computerId={computerId}

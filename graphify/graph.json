@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "a0c8cc338625c1017e2cb95ba07ae269d74dcac0",
+  "built_at_commit": "add046f0a452325bdb3759c182c5826138a025e9",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -13127,7 +13127,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L700",
+      "source_location": "L698",
       "target": "e2e_ui_locks_pw_open",
       "weight": 1.0
     },
@@ -309351,7 +309351,7 @@
       "source_file": "shell/src-tauri/Cargo.toml",
       "source_location": "L1",
       "type": "package",
-      "version": "1.57.6"
+      "version": "1.57.8"
     },
     {
       "_origin": "ast",

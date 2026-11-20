@@ -178,19 +178,23 @@ describe('terminal command catalogs per folder', () => {
     expect(client.createSession).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps the previous catalog when a background refresh fails, and reports the failure', async () => {
+  it('keeps the previous catalog when a background refresh fails, and reports the failure once', async () => {
     const { service, client, reads, seed } = await fixture()
     await seed()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     at(9 * 60_000)
 
     expect(await soon(service.listCommands('terminal-a'))).toEqual(listed('Catalog A'))
+    expect(await soon(service.listCommands('terminal-b'))).toEqual(listed('Catalog A'))
+    expect(client.createSession).toHaveBeenCalledTimes(2)
     reads[1].reject(new Error('Synthetic catalog failure'))
     await vi.waitFor(() => expect(client.deleteSession).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(
-      expect.any(String), expect.objectContaining({ message: 'Synthetic catalog failure' }),
-    ))
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 20))
 
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      expect.any(String), expect.objectContaining({ message: 'Synthetic catalog failure' }),
+    )
     expect(await soon(service.listCommands('terminal-b'))).toEqual(listed('Catalog A'))
   })
 

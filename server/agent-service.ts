@@ -6905,7 +6905,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!cached || age >= COMMAND_CATALOG_MAX_AGE_MS) {
       return this.readFolderCommands(cwd)
     }
-    if (age >= COMMAND_CATALOG_FRESH_MS && !this.stopped) {
+    if (age >= COMMAND_CATALOG_FRESH_MS && !this.stopped && !this.externalCommandReads.has(cwd)) {
       this.readFolderCommands(cwd).catch((error: unknown) => {
         console.warn('Unable to refresh a folder command catalog:', error)
       })

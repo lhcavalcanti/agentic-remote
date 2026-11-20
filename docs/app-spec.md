@@ -1194,7 +1194,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Opening a tool row MUST keep it where it is and stop following the end;
   closing it MUST bring it back into view. Rows MUST stay open across
   transcript updates, and an open row MUST stay rendered when newer messages
-  push it past the rendered history. An unchanged row MUST NOT redraw.
+  push it past the rendered history. Closed there, it MUST stay in place until
+  it is back inside the rendered history or the reader moves to another
+  session. An unchanged row MUST NOT redraw.
 - Parallel tools MUST retain independent running/completed/failed states.
 - Unfinished tools at abort or error MUST become failed rather than spinning
   forever.

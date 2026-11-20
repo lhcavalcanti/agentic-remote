@@ -117,6 +117,7 @@ import {
   uploadSessionFile,
 } from './api'
 import { HubSignInExpiredError, setHubSignInExpired } from './hub-sign-in'
+import { activityPresentation } from './activity-presentation'
 import { composerMaximumHeight } from './composer-sizing'
 import { DreamerApiError, getDreamer } from './dreamer-api'
 import { documentParts, documentRenderEvents, renderDocumentTree } from './markdown-document/pipeline'
@@ -221,6 +222,12 @@ vi.mock('./dreamer-api', async (importOriginal) => ({
     available: true, revision: 0, settings: { enabled: false, timeZone: 'UTC' },
   })),
 }))
+
+// Every tool row draws its line through this, so its calls count redraws.
+vi.mock('./activity-presentation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./activity-presentation')>()
+  return { ...actual, activityPresentation: vi.fn(actual.activityPresentation) }
+})
 
 vi.mock('./api', async (importOriginal) => ({
   request: vi.fn(async () => ({ defaultDisplayName: 'Sample User' })),
@@ -4955,38 +4962,115 @@ describe('App', () => {
     expect(getActivityDetail).toHaveBeenCalledOnce()
   })
 
-  it('keeps an open tool row in view once newer messages push it past the rendered window', async () => {
-    const toolRow: ChatMessage = {
-      id: 'tool:call_window',
-      role: 'activity',
-      content: 'Bash\n$ pnpm build',
-      createdAt: '2026-07-22T00:00:00.500Z',
-      activityStatus: 'completed',
+  /**
+   * The first session with a Bash and a View row, next to a second session.
+   * The returned step adds 260 newer messages, which leaves both rows behind
+   * the rendered window.
+   */
+  function sessionWithToolRows() {
+    let current: ManagedSession = {
+      ...session,
+      messages: [
+        session.messages[0]!,
+        { id: 'tool:call_window', role: 'activity', content: 'Bash\n$ pnpm build', createdAt: '2026-07-22T00:00:00.500Z', activityStatus: 'completed' },
+        { id: 'tool:call_readme', role: 'activity', content: 'View\nREADME.md', createdAt: '2026-07-22T00:00:00.600Z', activityStatus: 'completed' },
+      ],
     }
-    const toolSession: ManagedSession = { ...session, messages: [session.messages[0]!, toolRow] }
-    vi.mocked(listSessions).mockResolvedValue([toolSession])
-    vi.mocked(getSession).mockResolvedValue(toolSession)
-    vi.mocked(getActivityDetail).mockResolvedValue({
-      toolCallId: 'call_window', toolName: 'bash', kind: 'tool', status: 'completed',
-      result: { text: 'Built in 4.2s', truncated: false, originalBytes: 13 },
-    })
+    vi.mocked(listSessions).mockResolvedValue([current, secondSession])
+    vi.mocked(getSession).mockImplementation(async (_computerId, id) => (id === secondSession.id ? secondSession : current))
+    vi.mocked(getActivityDetail).mockImplementation(async (_computerId, _sessionId, toolCallId) => (
+      toolCallId === 'call_window'
+        ? { toolCallId, toolName: 'bash', kind: 'tool', status: 'completed', result: { text: 'Built in 4.2s', truncated: false, originalBytes: 13 } }
+        : { toolCallId, toolName: 'view', kind: 'tool', status: 'completed', result: { text: '# Project notes', truncated: false, originalBytes: 15 } }
+    ))
+    return async function pushPastWindow() {
+      const newer = Array.from({ length: 260 }, (_, index): ChatMessage => ({
+        id: `newer-${index}`, role: 'assistant', content: `Step ${index}`, createdAt: '2026-07-22T00:00:02.000Z',
+      }))
+      current = { ...current, updatedAt: '2026-07-22T00:00:02.000Z', messages: [...current.messages, ...newer] }
+      act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: 'session.upserted', session: current }),
+      } as MessageEvent))
+      expect(await screen.findByText('Step 259')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Show \d+ earlier messages$/ })).toBeInTheDocument()
+    }
+  }
+
+  it('keeps a tool row the reader opened in place once newer messages push it past the rendered window, open or closed again', async () => {
+    const pushPastWindow = sessionWithToolRows()
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /^Completed: Bash/ }))
     expect(await screen.findByText('Built in 4.2s')).toBeInTheDocument()
 
-    const newer = Array.from({ length: 260 }, (_, index): ChatMessage => ({
-      id: `newer-${index}`, role: 'assistant', content: `Step ${index}`, createdAt: '2026-07-22T00:00:02.000Z',
-    }))
-    act(() => MockWebSocket.instances.at(-1)?.onmessage?.({
-      data: JSON.stringify({
-        type: 'session.upserted',
-        session: { ...toolSession, updatedAt: '2026-07-22T00:00:02.000Z', messages: [...toolSession.messages, ...newer] },
-      }),
-    } as MessageEvent))
-    expect(await screen.findByText('Step 259')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Show \d+ earlier messages$/ })).toBeInTheDocument()
+    await pushPastWindow()
     expect(screen.getByRole('button', { name: /^Completed: Bash/ })).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByText('Built in 4.2s')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Completed: View/ })).not.toBeInTheDocument()
+
+    // Closed there, it stays rather than vanishing past the cutoff, and is
+    // brought back into view.
+    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
+    scrollIntoView.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^Completed: Bash/ }))
+    const closed = screen.getByRole('button', { name: /^Completed: Bash/ })
+    expect(closed).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Built in 4.2s')).not.toBeInTheDocument()
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    expect(scrollIntoView.mock.contexts).toContain(closed.closest('article'))
+  })
+
+  it('lets a closed tool row it kept past the rendered window go once the reader moves to another session', async () => {
+    const pushPastWindow = sessionWithToolRows()
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Completed: Bash/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Completed: View/ }))
+    expect(await screen.findByText('# Project notes')).toBeInTheDocument()
+    await pushPastWindow()
+    fireEvent.click(screen.getByRole('button', { name: /^Completed: Bash/ }))
+    expect(screen.getByRole('button', { name: /^Completed: Bash/ })).toHaveAttribute('aria-expanded', 'false')
+
+    const openSession = (title: string) => fireEvent.click(
+      screen.getAllByText(title).find((element) => element.closest('.session-item'))!.closest('button')!,
+    )
+    openSession(secondSession.title)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent(secondSession.title))
+    openSession(session.title)
+    await waitFor(() => expect(document.querySelector('.conversation-header__title')).toHaveTextContent(session.title))
+    expect(await screen.findByText('Step 259')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Completed: Bash/ })).not.toBeInTheDocument()
+    // The row still open stays where it was.
+    expect(screen.getByRole('button', { name: /^Completed: View/ })).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('# Project notes')).toBeInTheDocument()
+  })
+
+  it('does not keep a tool row closed inside the rendered window once newer messages push it past', async () => {
+    const pushPastWindow = sessionWithToolRows()
+    render(<App />)
+    const toggle = await screen.findByRole('button', { name: /^Completed: Bash/ })
+    fireEvent.click(toggle)
+    expect(await screen.findByText('Built in 4.2s')).toBeInTheDocument()
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    await pushPastWindow()
+    expect(screen.queryByRole('button', { name: /^Completed: Bash/ })).not.toBeInTheDocument()
+  })
+
+  it('redraws only the tool row the reader opens and closes', async () => {
+    sessionWithToolRows()
+    render(<App />)
+    const bash = await screen.findByRole('button', { name: /^Completed: Bash/ })
+    const draws = (id: string) =>
+      vi.mocked(activityPresentation).mock.calls.filter(([message]) => message.id === id).length
+    const bashDraws = draws('tool:call_window')
+    const viewDraws = draws('tool:call_readme')
+
+    fireEvent.click(bash)
+    expect(await screen.findByText('Built in 4.2s')).toBeInTheDocument()
+    fireEvent.click(bash)
+    await waitFor(() => expect(screen.queryByText('Built in 4.2s')).not.toBeInTheDocument())
+    expect(draws('tool:call_window')).toBeGreaterThan(bashDraws)
+    expect(draws('tool:call_readme')).toBe(viewDraws)
   })
 
   it('renders transcript headings, statuses, results, and optional durations', async () => {

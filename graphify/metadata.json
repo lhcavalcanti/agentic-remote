@@ -636,9 +636,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 271,
+  "communities": 277,
   "community_algorithm": "louvain-seed-42",
-  "edges": 25711,
+  "edges": 25722,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -756,7 +756,7 @@
     "e2e/session-unread.pw.ts": "54a5776c28698324d268a43edc49517674c7e6425311114bb9d64836cff57312",
     "e2e/shell-fixtures.ts": "75d818141cbf8c849a212885fd945ff37ed70c54d2e3b7de15acce7dc08aabd8",
     "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
-    "e2e/ui-locks.pw.ts": "0296c0834232670fb460bf174490e61bbdee004af025ecb5e6c8a963f767b3c3",
+    "e2e/ui-locks.pw.ts": "f7d5ddd0d85b1a05ee50bd2c28ee0c13ef3e8ee43c7c1f5aae71755b80254064",
     "e2e/ui-locks.pw.ts-snapshots/desktop-app-settings-chromium-linux.png": "944bbe4a9bb0b61aabb81a9ccb34a052c3a2309795ecacede470b8ae3b74cc43",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-busy-queue-chromium-linux.png": "4fd1c5a1ff3ea45266a7f435c19a57b455473e4180b5dff921c17a2e415fbf6c",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-button-row-chromium-linux.png": "468a943d1083612bb952778cb2c8647a82351bd6de33c08d05efc03847b1d782",
@@ -764,6 +764,7 @@
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-delivery-unavailable-chromium-linux.png": "23cf4d7dcd68a0cce1706a30a3826b2861bada8afee497b876090c25ad08a320",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-family-claude-chromium-linux.png": "912461eb75c47c9ed301a97b49609f73864465f6e119cb6c4f5b9139f8fdc99b",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-family-openai-chromium-linux.png": "88e5f3a28a47f15219e9367b77b7c530fe51a82f4f242616d65e798363e95780",
+    "e2e/ui-locks.pw.ts-snapshots/desktop-composer-refresh-attachment-chromium-linux.png": "3aa6999f6d03af104746afb1af50d792c4803d0728f1789a273cb22cb15398eb",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-sent-messages-chromium-linux.png": "5e4826d669a06cfdf068c8c3ae23c18d47b50c33f01868b2e04886b8b9537dc8",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-session-panel-chromium-linux.png": "aa333383d1219ee0c082f9408bcd4fb66898c3259652c6bcc4612ce6eebfc5a2",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-session-setup-chromium-linux.png": "7b693fcf9e2677abe83fd46af2394a9cfe7e8136549db82a2229d8122b19da32",
@@ -882,7 +883,7 @@
     "e2e/ui-locks.pw.ts-snapshots/phone-settings-skills-chromium-linux.png": "3d9e525d1303f9e99a18bf38956ffd79d5a1611082970b5016faa7d66c1a5a58",
     "e2e/ui-locks.pw.ts-snapshots/scheduler-abandon-desktop-chromium-linux.png": "9740a90fa68278781625930871e8a9e8fefe580fdebbefbde8f110636fb5553c",
     "e2e/ui-locks.pw.ts-snapshots/scheduler-abandon-phone-chromium-linux.png": "479e8348764e1e80dc8226301e4f6f8e5c3037abafb0098ec0a2fa49a6532b48",
-    "e2e/ui-scenes.ts": "3213a2fb937ba4ce0d159f57d14b99da1f294ce5425671438ef4675a5bd38908",
+    "e2e/ui-scenes.ts": "bed1cff3aa6e04f9eb524ede918ff100501e64e814a3667e0c5259d1f71a09d5",
     "e2e/workspace-fixtures.test.ts": "edee8b965861af85a07b7888c10f6852ea508e166efda7259628962d77213904",
     "e2e/workspace-fixtures.ts": "84a8894f4e17d75b241c351a21d42ecc3219ea16f018edd6bdf04c91d6098a07",
     "fixtures/voice/README.md": "c85318f655ee28bee3957558d215a36526cb93f8f9826d3dc05fe4019e59345e",
@@ -948,7 +949,7 @@
     "server/client-presence.ts": "1d9de4615f07ab546dd105fb2af5ed77635fce6bb718d176754608ebf051d2aa",
     "server/closed-session-sweeper.test.ts": "4c58708ea957e64aca018a09be796bca43de55653bce04d9221d5964b16f709c",
     "server/closed-session-sweeper.ts": "c49d4e5b3cd277561542e9c2915df39ed719c069ba82ef4cc525278d6f1222d7",
-    "server/composer-layout.test.ts": "3afc3a8b9498f8ee480a1d1c609d1cc4d320ba973bfdbbf702f933bc25f121be",
+    "server/composer-layout.test.ts": "e08b75598c9bd6e5f3639dd3fb54252075b7837f3b836b2e5249873505e4427c",
     "server/computer-manager-metadata.test.ts": "cb5f212b40f7046006645ab5957e28c4d4a3a4f5c2b0d836184153394445687d",
     "server/computer-manager.ts": "6acf966d5a809751f09a20411fa3f7ecce41f32e4e94760dae7f0cc66a075f46",
     "server/computer-registry.test.ts": "05827b99365d9ca64b2ca155d30c9e8926237870f6c737d0bfeeb4d87df133bf",
@@ -1389,7 +1390,7 @@
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
     "src/hub-reachability.ts": "39d2789075d58fd20585eeb706bdeabefba6f507c2d28764ebeb4f5b7e99e3cd",
     "src/hub-sign-in.ts": "bb68abb53da257f7c544d3824934d97768e110009412ea3d1a91d9202580d976",
-    "src/index.css": "3cec34d187a618404e8bb9a130ce4b05fa87836315f29317e7fb304b056fe868",
+    "src/index.css": "8a865d1d54a28abbb575326d47d4c6fe06ff17853fbfdf079d686c2899d4f9a1",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -1516,7 +1517,7 @@
     "vite.config.ts": "a60a896cfb1d57a3837faf5c428fe1c90f874a3b0a4136b5a63d21737d54d139"
   },
   "mode": "local-ast-only",
-  "nodes": 8891,
+  "nodes": 8898,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1604,6 +1605,7 @@
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-delivery-unavailable-chromium-linux.png",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-family-claude-chromium-linux.png",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-family-openai-chromium-linux.png",
+    "e2e/ui-locks.pw.ts-snapshots/desktop-composer-refresh-attachment-chromium-linux.png",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-sent-messages-chromium-linux.png",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-session-panel-chromium-linux.png",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-session-setup-chromium-linux.png",
@@ -1757,18 +1759,19 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "848588df6bdec39cecfd635471cc6a1c5339640757f29a09eb9f25cbe761a375",
-    "communities.json": "7902c08f39e4be95a46bac12b33b9920294051b6c2e59e4ead0e7d371aa29c55",
-    "graph.html": "e770091f4971dedf08b8b53ac6a1863afa0568e8941958fd42f67f1286fd442c",
-    "graph.json": "1540efcf030c3483bd6960d7cc2c1b6b9481943cf34b0e8a35b1b72c96f4e908"
+    "GRAPH_REPORT.md": "03a301dc3999cf75d27d998ea04d1703fb7e7d858db5e5a1e65106c58cbee489",
+    "communities.json": "872f46e5d5a3819d18c050a88ac2319817f338e4b6edc12106d84109db3e67fa",
+    "graph.html": "8e6d002f02e42fce0bdb6a2d900812f61b9983d580857e7ff2392986ccad0950",
+    "graph.json": "f2bb4c3a3d0860759ba1d91750a67b0ea6d59f879299099a5873f4e621ccc97c"
   },
   "schema_version": 1,
-  "source_commit": "9bd04e9db9c372b640da1f279e9260d85df0118d",
-  "source_fingerprint": "5b503b2cdd11c59521de99d29d7dedd24701a2c5c513b3854b81b8c4839de559",
+  "source_commit": "fb0986911d89858c93f131be4b02907b114f4853",
+  "source_fingerprint": "76399a5a4bf7fce52d5a3b0014d30d6f11830791fcf85672bc76bd678df04230",
   "working_tree_changes": [
-    "server/agent-service.test.ts",
-    "server/agent-service.ts",
-    "server/terminal-session.test.ts",
-    "server/terminal-session.ts"
+    "e2e/ui-locks.pw.ts",
+    "e2e/ui-locks.pw.ts-snapshots/desktop-composer-refresh-attachment-chromium-linux.png",
+    "e2e/ui-scenes.ts",
+    "server/composer-layout.test.ts",
+    "src/index.css"
   ]
 }

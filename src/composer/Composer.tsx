@@ -35,13 +35,11 @@ export function Composer(props: ComposerProps) {
     showCommandMenu,
     selectedAttachments,
     recording,
-    recordingSeconds,
     composerDraftRecovered,
     statusline,
     phoneEnterCreatesNewline,
     composerRef,
     audioInputRef,
-    recordingDuration,
     compactTokens,
     onDiscardUnconfirmed,
     onSaveQueuedPromptEdit,
@@ -58,21 +56,23 @@ export function Composer(props: ComposerProps) {
   } = props
   // The line below the composer only explains a live state or mode; an idle
   // composer keeps no line. Send and Queue name their shortcuts in tooltips.
-  const stateLine = askingAside
-    ? (
-      <>
-        <span className="composer-hint__desktop">
-          {sideQuestionPending
-            ? 'Answering… you can type your follow-up · Esc back to your message'
-            : 'Enter asks · Shift+Enter newline · Esc back to your message'}
-        </span>
-        <span className="composer-hint__mobile">
-          {sideQuestionPending ? 'Answering… you can type your follow-up' : 'Tap Ask · Return adds a line'}
-        </span>
-      </>
-    )
-    : recording
-      ? `Recording ${recordingDuration(recordingSeconds)}…`
+  // Recording has none either, whatever else applies: its panel is the status
+  // and shows the timer, and it hides the buttons the other lines name.
+  const stateLine = recording
+    ? null
+    : askingAside
+      ? (
+        <>
+          <span className="composer-hint__desktop">
+            {sideQuestionPending
+              ? 'Answering… you can type your follow-up · Esc back to your message'
+              : 'Enter asks · Shift+Enter newline · Esc back to your message'}
+          </span>
+          <span className="composer-hint__mobile">
+            {sideQuestionPending ? 'Answering… you can type your follow-up' : 'Tap Ask · Return adds a line'}
+          </span>
+        </>
+      )
       : transcribing
         ? 'Transcribing audio…'
         : uploadingFile

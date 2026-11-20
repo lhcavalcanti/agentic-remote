@@ -62,9 +62,24 @@ describe('line below the composer', () => {
     expect(line(container)).toBeNull()
   })
 
+  // The recording panel is the status while recording, whatever else applies:
+  // it shows the timer, and the buttons the other lines name are behind it.
   it.each([
-    { state: 'recording', overrides: { recording: true, recordingSeconds: 7 },
-      desktop: 'Recording 0:07…', phone: 'Recording 0:07…' },
+    { during: '', overrides: {} },
+    { during: ' during a queued edit', overrides: { editingQueuedPromptId: 'first' } },
+    { during: ' during a queued edit with Send now',
+      overrides: { editingQueuedPromptId: 'first', supportsQueuedPromptDispatch: true } },
+    { during: ' during a retried upload', overrides: { uploadingFile: true } },
+    { during: ' during a side answer',
+      overrides: { askingAside: true, sideQuestionDraft: '', sideQuestionPending: true } },
+  ])('is not shown while recording$during; the recording panel keeps the timer', ({ overrides }) => {
+    const { container } = render(<Composer {...props({ ...overrides, recording: true, recordingSeconds: 7 })} />)
+    expect(line(container)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Stop & transcribe' }).closest('[role="status"]'))
+      .toHaveTextContent('Recording 0:07')
+  })
+
+  it.each([
     { state: 'transcribing', overrides: { transcribing: true },
       desktop: 'Transcribing audio…', phone: 'Transcribing audio…' },
     { state: 'uploading a file', overrides: { uploadingFile: true },

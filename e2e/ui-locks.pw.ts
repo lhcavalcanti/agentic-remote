@@ -804,7 +804,7 @@ test.describe('browser interaction contracts', () => {
   for (const viewport of [uiViewports[0], uiViewports[2]]) {
     test.describe(`line below the composer ${viewport.name}`, () => {
       test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
-      test('takes no space while idle and appears only while audio is busy', async ({ page, baseURL }) => {
+      test('takes no space while idle or recording and appears only while transcribing', async ({ page, baseURL }) => {
         await mockMicrophone(page)
         let release = () => {}
         const held = new Promise<void>((resolve) => { release = resolve })
@@ -821,7 +821,12 @@ test.describe('browser interaction contracts', () => {
         const idle = await height()
 
         await page.getByRole('button', { name: 'Start microphone recording', exact: true }).click()
-        await expect(line).toHaveText('Recording 0:00…')
+        // The recording panel is the status and carries the timer alone.
+        const recording = area.locator('.recording-panel')
+        await expect(recording).toHaveRole('status')
+        await expect(recording).toContainText(/Recording \d+:\d\d/)
+        await expect(line).toHaveCount(0)
+        await expect(area).toBeInViewport({ ratio: 1 })
         await page.getByRole('button', { name: 'Stop & transcribe', exact: true }).click()
         await expect(line).toHaveText('Transcribing audio…')
         // Nothing else changes while transcribing, so the idle composer is

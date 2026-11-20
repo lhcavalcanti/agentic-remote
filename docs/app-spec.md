@@ -1320,7 +1320,9 @@ Questions and permissions are the highest-priority UI state.
 - Paste receipt MUST recognize both current and legacy CLI collapsed-paste
   markers, including multiline input shorter than the character collapse limit,
   and long lines scrolled within the composer. A late confirmed paste MUST NOT
-  be reported as a failure solely because the first wait expired.
+  be reported as a failure solely because the first wait expired: a loaded
+  Copilot gets about 30 seconds to show the paste the same way twice before
+  Enter, and after that the send is uncertain, with nothing cleared or retyped.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
   Eligible immediate sends to an idle or errored tmux session MUST request
   guarded terminal-draft replacement in the original attempt and MUST NOT show
@@ -1334,7 +1336,10 @@ Questions and permissions are the highest-priority UI state.
   MUST keep the readiness an ordinary immediate send would have: an agent that
   is already working receives it as an immediate follow-up instead of a false
   "new terminal text" refusal. After text was cleared, the pane MUST still be
-  idle before the paste. Running or waiting sessions, uncertain delivery, queued sends,
+  idle before the paste; Copilot's wait for background shells counts as idle
+  only while its event log finds the turn over, no background agent, and a
+  shell running, rechecked before and after the clear and before Enter.
+  Running or waiting sessions, uncertain delivery, queued sends,
   SDK/Claude sessions, and app-local commands MUST never request replacement.
 - A first message to a terminal this service has not yet seen ready, such as
   after the hub restarts, MUST wait for a live composer. A Copilot started in

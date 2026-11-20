@@ -162,6 +162,7 @@ import {
   isTerminalSessionInUsePrompt,
   isTerminalVisiblyIdle,
   terminalMayBeWaitingForBackgroundShells,
+  terminalDraftMayBeBesideBackgroundShells,
   terminalCommandOutput,
   terminalFormReplyBudget,
   TmuxTerminalSessionController,
@@ -5777,6 +5778,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery, true)
     }
+    // A paste a loaded Copilot drew too late to be sent stays in its prompt,
+    // and replacing it means clearing it. When only shells outlive the turn,
+    // Copilot keeps its busy row beside that draft, cut to fit, and the row
+    // cannot tell that wait from work: the event log decides, as it does for
+    // the queue, and the terminal asks it again before and after the clear.
+    let besideBackgroundShells = false
+    if (steer && replaceTerminalDraft && terminalPane !== undefined &&
+        terminalDraftMayBeBesideBackgroundShells(terminalPane)) {
+      const log = await this.readBackgroundShellsEvidence(sessionId)
+      besideBackgroundShells = log.turnOver && log.shellsRunning
+    }
     // Discovery can hold the queue behind Reopen while this send reads the
     // pane and decides, or while the controller reads it again before typing.
     // A held session is not eligible to queue, so the send would otherwise be
@@ -5789,6 +5801,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? {
             allowDuringAgentExecution: true,
             ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+            ...(besideBackgroundShells
+              ? { backgroundShellsOnly: { eventLog: () => this.readBackgroundShellsEvidence(sessionId) } }
+              : {}),
           }
         : replaceTerminalDraft
           ? { replaceExistingInput: true }

@@ -73,6 +73,8 @@ export interface TerminalSendOptions {
    * send lock, before the paste and again before Enter, the footer must name
    * no other work and no background agents, and `eventLog` must find the turn
    * over with no background agent, and a shell running while a busy row shows.
+   * With replaceExistingInput, a draft may be cleared beside that wait, held to
+   * the same evidence before and after the clear.
    */
   backgroundShellsOnly?: { eventLog: () => Promise<BackgroundShellsEvidence> }
   /**
@@ -333,6 +335,12 @@ const FORM_VIEWPORT_BASE_TIMEOUT_MS = 15_000
 const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
 const REPLACEMENT_COMPOSER_TIMEOUT_MS = 30_000
+// A loaded Copilot can take many seconds to draw a paste in its prompt, and
+// Enter waits until it has: pressed sooner, it sends whatever the prompt held.
+// The hub gives a node 210 s to answer a session request.
+const PASTE_CONFIRMATION_TIMEOUT_MS = 30_000
+// Polling slows down, and a confirmation is logged as slow, after this long.
+const SLOW_PASTE_CONFIRMATION_MS = 5_000
 // Copilot holds its session until it has finished shutting down, a second or
 // two after it is hung up on, and a Copilot started on a session still held
 // asks whether to resume one "in use by another CLI or application".
@@ -424,6 +432,7 @@ export class TmuxTerminalSessionController
   }
   private readonly replacementComposerTimeoutMs =
     REPLACEMENT_COMPOSER_TIMEOUT_MS
+  private readonly pasteConfirmationTimeoutMs = PASTE_CONFIRMATION_TIMEOUT_MS
   private readonly startupTimeoutMs = TERMINAL_STARTUP_TIMEOUT_MS
   private readonly settledOwnerAgeMs = SETTLED_OWNER_AGE_MS
   /** When Stop last sent each session Ctrl+C. */
@@ -1809,6 +1818,7 @@ export class TmuxTerminalSessionController
     owner: TerminalOwner,
     pane: string,
     confirm?: () => void,
+    backgroundShellsOnly?: TerminalSendOptions['backgroundShellsOnly'],
   ): Promise<string> {
     const readable = composerText(pane)
     if (readable === undefined) {
@@ -1822,7 +1832,8 @@ export class TmuxTerminalSessionController
       parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane) ||
-      isTerminalAgentWorking(pane)
+      (isTerminalAgentWorking(pane) &&
+        !(await busyOnlyWithBackgroundShells(pane, backgroundShellsOnly)))
     ) {
       throw new TerminalDraftConflictError('changed-before-clear')
     }
@@ -1836,14 +1847,15 @@ export class TmuxTerminalSessionController
       throw new TerminalDraftConflictError('owner-changed-before-clear')
     }
     const currentPane = await capturePane(owner.target)
+    const besideShells = await busyOnlyWithBackgroundShells(currentPane, backgroundShellsOnly)
     if (
       composerText(currentPane) === undefined ||
-      !terminalInputReady(currentPane) ||
+      !terminalInputReady(currentPane, besideShells) ||
       isTerminalOverlay(currentPane) ||
       parseTerminalPermission(currentPane) ||
       parseTerminalUserInput(currentPane) ||
       parseTerminalFormPrompt(currentPane) ||
-      isTerminalAgentWorking(currentPane)
+      (!besideShells && isTerminalAgentWorking(currentPane))
     ) {
       throw new TerminalDraftConflictError('changed-before-clear')
     }
@@ -1874,8 +1886,11 @@ export class TmuxTerminalSessionController
       const text = composerText(clearedPane)
       if (
         text !== undefined &&
-        terminalInputReady(clearedPane) &&
-        !composerHoldsText(clearedPane)
+        !composerHoldsText(clearedPane) &&
+        terminalInputReady(
+          clearedPane,
+          await busyOnlyWithBackgroundShells(clearedPane, backgroundShellsOnly),
+        )
       ) {
         if (text === previousEmpty) {
           const finalOwner = await this.owner(sessionId, owner.target, true)
@@ -2160,6 +2175,10 @@ export class TmuxTerminalSessionController
           ? !(await backgroundShellsAllow(paneBeforePaste, options.backgroundShellsOnly))
           : idleOnly && isTerminalAgentWorking(paneBeforePaste)
       ) {
+        // A replacement refuses as it would have without the evidence.
+        if (options.replaceExistingInput) {
+          throw new TerminalDraftConflictError('changed-before-clear')
+        }
         throw Object.assign(
           new Error('The terminal started working before queued delivery; nothing was sent'),
           {
@@ -2209,11 +2228,13 @@ export class TmuxTerminalSessionController
             currentOwner,
             paneBeforePaste,
             options.confirm,
+            options.backgroundShellsOnly,
           )
         }
         if (options.replaceExistingInput) {
           // With nothing cleared, the send keeps the working tolerance the
-          // first readiness check granted; a cleared composer must be idle.
+          // first readiness check granted; a cleared composer must be idle,
+          // or wait only for background shells as the event log still has it.
           const toleratesWorking = allowWorking && !existingInput
           const ownerBeforePaste = await this.owner(
             sessionId,
@@ -2221,19 +2242,21 @@ export class TmuxTerminalSessionController
             true,
           )
           paneBeforePaste = await capturePane(currentOwner.target)
+          const besideShells = existingInput &&
+            await busyOnlyWithBackgroundShells(paneBeforePaste, options.backgroundShellsOnly)
           if (
             !ownerBeforePaste ||
             ownerBeforePaste.pid !== currentOwner.pid ||
             ownerBeforePaste.rootPid !== currentOwner.rootPid ||
             ownerBeforePaste.target !== currentOwner.target ||
             composerText(paneBeforePaste) === undefined ||
-            !terminalInputReady(paneBeforePaste, toleratesWorking) ||
+            !terminalInputReady(paneBeforePaste, toleratesWorking || besideShells) ||
             composerHoldsText(paneBeforePaste) ||
             isTerminalOverlay(paneBeforePaste) ||
             parseTerminalPermission(paneBeforePaste) ||
             parseTerminalUserInput(paneBeforePaste) ||
             parseTerminalFormPrompt(paneBeforePaste) ||
-            (!toleratesWorking && isTerminalAgentWorking(paneBeforePaste))
+            (!toleratesWorking && !besideShells && isTerminalAgentWorking(paneBeforePaste))
           ) {
             throw new TerminalDraftConflictError('new-text')
           }
@@ -2255,6 +2278,7 @@ export class TmuxTerminalSessionController
           ])
           pasteAcknowledged = true
           return await this.finishSend(
+            sessionId,
             owner.target,
             content,
             confirmation,
@@ -2294,6 +2318,7 @@ export class TmuxTerminalSessionController
   }
 
   private async finishSend(
+    sessionId: string,
     target: string,
     content: string,
     confirmation: string,
@@ -2302,25 +2327,24 @@ export class TmuxTerminalSessionController
     idleOnly = false,
     backgroundShellsOnly?: TerminalSendOptions['backgroundShellsOnly'],
   ): Promise<boolean> {
-      if (
-        !(await waitForComposerPaste(
-          target,
-          paneBeforePaste,
-          confirmation,
-          content,
-        )) &&
-        !(await waitForComposerPaste(
-          target,
-          paneBeforePaste,
-          confirmation,
-          content,
-          20,
-        ))
-      ) {
+      const paste = await waitForComposerPaste(
+        target,
+        paneBeforePaste,
+        confirmation,
+        content,
+        this.pasteConfirmationTimeoutMs,
+      )
+      // Only how long it took and whether the prompt could be read, never
+      // what it holds.
+      const readable = `composer readable: ${paste.composerReadable ? 'yes' : 'no'}`
+      if (!paste.confirmed) {
+        console.warn(
+          `Copilot did not show a paste in session ${sessionId} within ${paste.elapsedMs} ms (${readable}); Enter was not pressed`,
+        )
         // The prompt never showed the message, so pressing Enter would send
         // whatever it does hold and still be reported as delivered.
         //
-        // Both waits failed. Never clear the composer or repeat the paste:
+        // The deadline passed. Never clear the composer or repeat the paste:
         // Reading the composer and then clearing it cannot be made one act:
         // whatever is read, a person at the terminal can type between the
         // reading and the keystroke, and Ctrl+U takes the whole composer.
@@ -2341,6 +2365,11 @@ export class TmuxTerminalSessionController
           // Every failure after the buffer was accepted is uncertain in the
           // same way, and matching on the message recognised only this one.
           { statusCode: 409, uncertainDelivery: true },
+        )
+      }
+      if (paste.elapsedMs > SLOW_PASTE_CONFIRMATION_MS) {
+        console.warn(
+          `Copilot took ${paste.elapsedMs} ms to show a paste in session ${sessionId} (${readable})`,
         )
       }
       let paneTty = ''
@@ -3561,6 +3590,18 @@ export function terminalMayBeWaitingForBackgroundShells(pane: string): boolean {
 }
 
 /**
+ * The same, but with the prompt holding readable text, as a paste Copilot drew
+ * too late to be sent leaves it. Only the event log can say the wait is the
+ * shells', and so whether that draft may be cleared to replace it.
+ */
+export function terminalDraftMayBeBesideBackgroundShells(pane: string): boolean {
+  return idleButForBackgroundShells(pane) === 'shells' &&
+    terminalInputReady(pane, true) &&
+    composerText(pane) !== undefined &&
+    composerHoldsText(pane)
+}
+
+/**
  * Whether queued text may still go in beside background shells: the footer
  * names no other work and no background agents, and the event log finds the
  * turn over with no background agent and, while a busy row shows, a shell
@@ -3574,6 +3615,21 @@ async function backgroundShellsAllow(
   if (!reading) return false
   const log = await backgroundShellsOnly.eventLog()
   return log.turnOver && (reading === 'idle' || log.shellsRunning)
+}
+
+/**
+ * Whether the pane is busy only with Copilot's wait for background shells, as
+ * the event log in `backgroundShellsOnly` still has it, so that a replacement
+ * may take its prompt as idle. Without that evidence it never is, and the log
+ * is not read while the pane shows no work.
+ */
+async function busyOnlyWithBackgroundShells(
+  pane: string,
+  backgroundShellsOnly: TerminalSendOptions['backgroundShellsOnly'],
+): Promise<boolean> {
+  return backgroundShellsOnly !== undefined &&
+    isTerminalAgentWorking(pane) &&
+    await backgroundShellsAllow(pane, backgroundShellsOnly)
 }
 
 function isKnownTerminalFooterRow(
@@ -5371,30 +5427,41 @@ export function composerTookPaste(
     wanted.endsWith(plainAfter)
 }
 
+/**
+ * Waits until the composer shows the paste the same way in two captures in a
+ * row, or until `timeoutMs` has passed, and says how long that took and
+ * whether the last capture had a readable composer.
+ */
 async function waitForComposerPaste(
   target: string,
   paneBefore: string,
   expected: string,
   pasted: string,
-  attempts = 40,
-): Promise<boolean> {
+  timeoutMs: number,
+): Promise<{ confirmed: boolean; elapsedMs: number; composerReadable: boolean }> {
+  const started = Date.now()
   let previousMatch: string | undefined
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  for (;;) {
     const pane = await capturePane(target)
+    const drawn = composerText(pane)
     if (
       composerTookPaste(paneBefore, pane, expected, pasted)
     ) {
-      const rendered = composerText(pane) ?? pane
+      const rendered = drawn ?? pane
       if (rendered === previousMatch) {
-        return true
+        return { confirmed: true, elapsedMs: Date.now() - started, composerReadable: drawn !== undefined }
       }
       previousMatch = rendered
     } else {
       previousMatch = undefined
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    const elapsedMs = Date.now() - started
+    if (elapsedMs >= timeoutMs) {
+      return { confirmed: false, elapsedMs, composerReadable: drawn !== undefined }
+    }
+    const interval = elapsedMs < SLOW_PASTE_CONFIRMATION_MS ? 50 : 100
+    await new Promise((resolve) => setTimeout(resolve, Math.min(interval, timeoutMs - elapsedMs)))
   }
-  return false
 }
 
 /** Whether a tmux command failed because there is no server left to ask. */

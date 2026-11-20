@@ -107,6 +107,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Hub routes and origin policy | `server/hub-routes.ts` |
 | Node routes (`/node-api`) | `server/node-routes.ts` |
 | Hub to node routing | `server/computer-manager.ts`, `server/remote-node-client.ts` |
+| Gzip of large JSON responses (both roles) | `server/response-compression.ts` |
 | Workspace listing, reading, search | `server/workspace-browser.ts` |
 | Knowledge root metadata | `server/knowledge-store.ts` |
 | Session cwd containment | `server/session-directory.ts` |
@@ -229,6 +230,14 @@ Do not weaken these without an explicit product decision.
   per 750 ms, so busy sessions cost no more than the poll alone.
 - Process discovery places candidates in tmux from the parents in its single
   `ps` listing; do not reintroduce per-pane `/proc` ancestry walks.
+- `server/response-compression.ts` gzips JSON of at least 64 KiB on zlib's
+  thread pool for clients that accept it, on hub and node alike. Never
+  compress on the event loop; a route whose JSON carries file contents opts
+  out with `config: { compress: false }`.
+- A tmux session's `/commands` comes from its folder's catalog, read through
+  one single-flight temporary SDK session per folder. It is fresh for 60 s,
+  when a known tmux session skips process discovery, and is served for up to
+  10 minutes while one background read refreshes it.
 - Oracle's conversation rows are memoized and receive stable callbacks and
   Markdown components, so a keystroke or streamed word re-renders only changed
   rows. Do not pass inline callbacks or per-render objects to them.

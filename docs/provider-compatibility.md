@@ -76,6 +76,9 @@ history is not transferred between providers.
   query. Refreshing does not restart or reconfigure existing sessions.
 - Copilot supplies its native slash-command catalog. Claude exposes only the
   Agentic Remote web commands that have provider-neutral implementations.
+  A tmux session lists its folder's catalog, refreshed in the background once
+  it is a minute old, so a newly installed skill can take one more request to
+  appear there.
 - The session menu provides **Skills** and **MCP servers**. `/skill`, `/skills`,
   and `/mcp` open these read-only views; optional trailing text filters the list
   locally. They do not invoke a provider command, send a prompt, or change MCP

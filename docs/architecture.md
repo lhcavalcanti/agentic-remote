@@ -172,6 +172,30 @@ mode and suspension state. Event-time invalidation prevents a batched
 change-and-revert from reviving an old catalog. Registration IDs and resource
 observations are not written to stored session or pairing state.
 
+### Response compression
+
+Hub (`/api`) and node (`/node-api`) responses pass through one `onSend` hook:
+JSON of at least 64 KiB is gzipped when the request's `Accept-Encoding` admits
+gzip, and carries `Vary: Accept-Encoding` either way. zlib runs on the libuv
+thread pool at level 4, never on the event loop, so a long transcript crosses
+the tunnel at about a fifth of its size. Smaller JSON, streams, non-JSON types,
+`HEAD`, `204`/`304`, responses that already have a `Content-Encoding` or
+`Cache-Control: no-transform`, and WebSocket upgrades (`/api/events`,
+`/node-api/events`) are sent as they are. So are workspace and Knowledge file
+reads (route `config: { compress: false }`), whose JSON can carry base64 media.
+The hub reaches nodes with `fetch`, which asks for gzip and decodes it, so the
+node-to-hub hop is compressed too. Payloads and routes are unchanged.
+
+### Terminal command catalogs
+
+A tmux session's slash commands are its folder's catalog, which only a
+temporary SDK session can read. `AgentService` keeps one per folder: fresh for
+60 s; then served at once while one background read replaces it; after 10
+minutes a request waits for a new read. Reads are single-flight per folder, a
+failed refresh keeps the previous catalog, and shutdown waits for a running
+read so its temporary session is removed. A known tmux session whose folder
+catalog is fresh is answered without process discovery.
+
 ## Failure behavior
 
 - A failed node request marks that computer offline.

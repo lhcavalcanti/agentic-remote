@@ -445,6 +445,16 @@ export function createUIScenes(
   }))
 }
 
+/**
+ * Fails unless the page sees a mouse, as a desktop browser does, so a check of
+ * a mouse-only layout cannot pass without ever applying it. Chromium reports
+ * `(hover: hover)` and `(pointer: fine)` unless touch is emulated, which the
+ * Playwright project does by default: such a test sets `hasTouch: false`.
+ */
+export async function assertMousePointer(page: Page) {
+  expect(await page.evaluate(() => matchMedia('(hover: hover) and (pointer: fine)').matches)).toBe(true)
+}
+
 export async function assertNoHorizontalOverflow(page: Page) {
   const layout = await page.evaluate(() => {
     const width = document.documentElement.clientWidth

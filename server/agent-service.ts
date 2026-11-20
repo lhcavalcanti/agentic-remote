@@ -162,10 +162,12 @@ import {
   terminalInputReady,
   isTerminalSessionInUsePrompt,
   isTerminalVisiblyIdle,
+  terminalMayBeWaitingForBackgroundShells,
   terminalCommandOutput,
   terminalFormReplyBudget,
   TmuxTerminalSessionController,
   TerminalFormReplyError,
+  type BackgroundShellsEvidence,
   type TerminalFormStep,
   type TerminalSendOptions,
   type TerminalSessionController,
@@ -967,7 +969,7 @@ export class SessionEventProjection {
   // An empty-response notice is judged by the tasks as of the notice itself,
   // so the tasks are kept in step with the status: see `takeIn`.
   private readonly lifecycle = createStatusTracker(() =>
-    this.backgroundTasks.tasks().some(isLiveTask))
+    this.backgroundTasks.tasks(Infinity).some(isLiveTask))
   private readonly runtimeTracker = createRuntimeTracker()
   private cwd?: string
   private changedFolder = false
@@ -1029,8 +1031,8 @@ export class SessionEventProjection {
     }
   }
 
-  tasks(): BackgroundTask[] {
-    return this.backgroundTasks.tasks()
+  tasks(limit?: number): BackgroundTask[] {
+    return this.backgroundTasks.tasks(limit)
   }
 
   messages(): ChatMessage[] {
@@ -1831,6 +1833,7 @@ export function statusFromEvents(events: readonly SessionEvent[]): SessionStatus
   return tracker.status((index) =>
     backgroundTasksFromEvents(events.slice(0, index + 1), {
       assumeBackground: true,
+      limit: Infinity,
     }).some(isLiveTask))
 }
 
@@ -1960,6 +1963,24 @@ export function foregroundTurnOpen(events: SessionEvent[]): boolean {
     }
   }
   return false
+}
+
+/**
+ * What the event log says of the work a finished turn left behind: whether
+ * the turn is over with no background agent running, which would hold queued
+ * text, and whether a background shell is still running. Every task counts,
+ * not only the panel's newest: a woken agent keeps its first start, and
+ * shells started since can push it out of that list while it works.
+ */
+function backgroundShellsEvidence(
+  tasks: readonly BackgroundTask[],
+  status: SessionStatus,
+): BackgroundShellsEvidence {
+  const live = tasks.filter(isLiveTask)
+  return {
+    turnOver: status === 'idle' && !live.some((task) => task.type === 'agent'),
+    shellsRunning: live.some((task) => task.type === 'shell'),
+  }
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -4508,6 +4529,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         const running = backgroundTasksFromEvents(live, {
           assumeBackground: true,
+          limit: Infinity,
         }).filter(
           (task) => task.status === 'running' || task.status === 'queued',
         )
@@ -8198,7 +8220,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !latestLifecycle ||
       !isForegroundCompletionEvent(latestLifecycle) ||
       statusFromEvents(events) !== 'idle' ||
-      backgroundTasksFromEvents(events).some(
+      backgroundTasksFromEvents(events, { limit: Infinity }).some(
         (task) => task.status === 'running' || task.status === 'queued',
       )
     ) {
@@ -10847,7 +10869,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!hasLifecycleEvent) {
         const hasBackgroundTaskActivity =
           relevant.some(isBackgroundTaskEvent) ||
-          backgroundTasksFromEvents(relevant, { assumeBackground: true }).some(
+          backgroundTasksFromEvents(relevant, { assumeBackground: true, limit: Infinity }).some(
             (task) => task.executionMode === 'background',
           )
         if (
@@ -12141,7 +12163,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       const currentQueueState = this.terminalQueueStates.get(sessionId)
+      // A turn can end with shells it started still running. Copilot keeps
+      // its interrupt key on the row, but its empty prompt takes a message as
+      // it would a steer, and background shells do not hold queued text. The
+      // row is cut to fit, often to a few letters or its spinner, and cannot
+      // tell that wait from other work: the event log decides, finding the
+      // turn over, a shell running and no background agent, and the pane only
+      // has to agree. A prompt already waiting for the composer goes in too.
+      let besideBackgroundShells = false
+      if (!midTurnSteer && !next.command && stored.status === 'idle' &&
+          before !== undefined && !terminalInputReady(before)) {
+        const log = await this.readBackgroundShellsEvidence(sessionId)
+        besideBackgroundShells = log.turnOver && log.shellsRunning &&
+          terminalMayBeWaitingForBackgroundShells(before)
+      }
       const composerKnownUnavailable = before !== undefined &&
+        !besideBackgroundShells &&
         !terminalInputReady(before) &&
         (
           !before.trim() ||
@@ -12159,7 +12196,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (midTurnSteer
         ? !before || !terminalInputReady(before, true) || composerHoldsText(before)
-        : before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
+        : !besideBackgroundShells && before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
         this.retryTerminalQueueClaim(sessionId)
         return false
       }
@@ -12192,9 +12229,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const handedAt = Date.now()
         const sent = midTurnSteer
           ? await this.terminalController.send(sessionId, next.content, false, { allowDuringAgentExecution: true })
-          : this.terminalController.sendWhenIdle
-            ? await this.terminalController.sendWhenIdle(sessionId, next.content)
-            : await this.terminalController.send(sessionId, next.content, false)
+          : besideBackgroundShells
+            // Typed in as a steer is, but only while the pane and the event
+            // log still agree under the send lock, before the paste and again
+            // before Enter: a turn or background agent begun since is refused.
+            ? await this.terminalController.send(sessionId, next.content, false, {
+                allowDuringAgentExecution: true,
+                backgroundShellsOnly: { eventLog: () => this.readBackgroundShellsEvidence(sessionId) },
+              })
+            : this.terminalController.sendWhenIdle
+              ? await this.terminalController.sendWhenIdle(sessionId, next.content)
+              : await this.terminalController.send(sessionId, next.content, false)
         if (!sent) {
           throw new Error('External terminal is no longer available')
         }
@@ -12241,6 +12286,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       return await this.settleTerminalQueue(sessionId)
     })
+  }
+
+  /** What a session's event log says of the work its finished turn left. */
+  private async readBackgroundShellsEvidence(sessionId: string): Promise<BackgroundShellsEvidence> {
+    try {
+      const events = await this.sessionEventReader(sessionId)
+      if (this.externalSessionIds.has(sessionId)) {
+        const projection = this.eventProjection(sessionId, events)
+        return backgroundShellsEvidence(projection.tasks(Infinity), projection.status())
+      }
+      return backgroundShellsEvidence(
+        backgroundTasksFromEvents(events, { assumeBackground: true, limit: Infinity }),
+        statusFromEvents(events),
+      )
+    } catch {
+      return { turnOver: false, shellsRunning: false }
+    }
   }
 
   private hasStartupQueueLifecycle(sessionId: string, session: SessionDetail | undefined): boolean {

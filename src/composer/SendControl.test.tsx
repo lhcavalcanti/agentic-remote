@@ -80,6 +80,20 @@ describe('busy send choices', () => {
     fireEvent.keyDown(send, { key: 'F10', shiftKey: true })
     expect(screen.getByRole('menu')).toBeInTheDocument()
   })
+  // Narrow composers leave the arrow out, so Send alone has to announce the menu.
+  it('announces Send itself as the button for the menu it controls', () => {
+    show()
+    const send = screen.getByRole('button', { name: 'Send' })
+    expect(send).toHaveAttribute('aria-haspopup', 'menu')
+    expect(send).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(send)
+    const menu = screen.getByRole('menu', { name: 'Message delivery' })
+    expect(send).toHaveAttribute('aria-expanded', 'true')
+    expect(send).toHaveAttribute('aria-controls', menu.id)
+    fireEvent.keyDown(menu, { key: 'Escape' })
+    expect(send).toHaveFocus()
+    expect(send).toHaveAttribute('aria-expanded', 'false')
+  })
   it('restores Escape focus to the chevron that actually opened the menu', () => {
     show()
     const options = screen.getByRole('button', { name: 'Send options' })

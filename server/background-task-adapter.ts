@@ -74,6 +74,12 @@ export interface CopilotTasksApi {
 
 export interface BackgroundTaskEventOptions {
   assumeBackground?: boolean
+  /**
+   * How many tasks to return, live ones first and then the newest: the
+   * panel's MAX_BACKGROUND_TASKS unless given. A decision that would act
+   * beside a task it cannot see asks for every one with Infinity.
+   */
+  limit?: number
 }
 
 export const MAX_BACKGROUND_TASKS = 100
@@ -1108,9 +1114,10 @@ export interface BackgroundTaskProjector {
   apply(events: readonly SessionEvent[]): void
   /**
    * The tasks as of the events applied so far, as fresh copies a caller can
-   * keep or change without affecting the projector.
+   * keep or change without affecting the projector: at most `limit`, the
+   * projector's own unless given, live ones first and then the newest.
    */
-  tasks(): BackgroundTask[]
+  tasks(limit?: number): BackgroundTask[]
 }
 
 /** Projects a whole log at once. */
@@ -1423,7 +1430,8 @@ export function createBackgroundTaskProjector(
   // the same way.
   let lastTurnEndAt: string | undefined
   let sessionEndedAt: string | undefined
-  // What the last snapshot settled, until another event is taken in.
+  // Every task as the last snapshot settled and ordered them, until another
+  // event is taken in.
   let settledTasks: BackgroundTask[] | undefined
   const apply = (events: readonly SessionEvent[]): void => {
     if (events.length > 0) settledTasks = undefined
@@ -2299,14 +2307,13 @@ export function createBackgroundTaskProjector(
             ) ||
           right.startedAt.localeCompare(left.startedAt),
       )
-      .slice(0, MAX_BACKGROUND_TASKS)
   }
 
   return {
     apply,
-    tasks: () => {
+    tasks: (limit = options.limit ?? MAX_BACKGROUND_TASKS) => {
       settledTasks ??= settle()
-      return settledTasks.map(copyTask)
+      return settledTasks.slice(0, limit).map(copyTask)
     },
   }
 }

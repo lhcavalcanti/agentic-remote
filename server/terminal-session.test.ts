@@ -32,6 +32,7 @@ import {
   terminalCommandOutput,
   terminalFormShowsFields,
   terminalInputReady,
+  terminalMayBeWaitingForBackgroundShells,
   TmuxTerminalSessionController,
   waitForTerminalStartup,
 } from './terminal-session.js'
@@ -1234,6 +1235,42 @@ process.stdin.on('data', () => undefined)
       expect(isTerminalVisiblyIdle(busy)).toBe(false)
       expect(terminalInputReady(busy)).toBe(false)
       expect(terminalInputReady(busy, true)).toBe(true)
+    })
+
+    // A turn can end with shells it started still running. The row then keeps
+    // the interrupt key and says what Copilot waits for, cut to fit, down to
+    // nothing; the pane can only be consistent with that wait, and the event
+    // log has to say whether it is the one.
+    it.each([
+      ' ← open sidebar · Interactive · Manual Approval · ● Waiting for background shells ctrl+c interrupt GPT-5 mini · Low · (19%)',
+      // As Copilot drew them in 80-column panes.
+      ' ● Waiting for background s… · 136 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)',
+      ' ● Waiting for bac… · 1m 06s · 136 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)',
+      ' Autopilot · Allow All · ◉ Wai… ctrl+c    Claude Opus 5.5 · Max · 1M context (6…',
+      ' Autopilot · Allow All · ◉ ctrl+c    Claude Opus 5.5 · Max · 1M context (6…',
+    ])('reads a prompt that may be left to background shells: %s', (footer) => {
+      expect(terminalMayBeWaitingForBackgroundShells(pane(footer))).toBe(true)
+    })
+
+    it.each([
+      ' Autopilot · Allow All · ◉ Wor ctrl+c    Claude Opus 5.5 · Max · 1M context (6…',
+      ' ◉ Working · 83 B ctrl+c interrupt',
+      ' ◉ Running bash · 26s · 8 ctrl+c interrupt',
+      ' ◉ Waiting for background agents ctrl+c stop agents',
+      ' Autopilot · Allow All · ◎ Waiting for backgr ctrl+c stop agents  Claude Opus 5.5 · Max · (58%)',
+      ' ● Waiting for background a… · 273 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)',
+      ' Autopilot · Allow All · / commands      Claude Sonnet 5.5 · High · 936K conte…',
+    ])('does not read a row naming anything else as that wait: %s', (footer) => {
+      expect(terminalMayBeWaitingForBackgroundShells(pane(footer))).toBe(false)
+    })
+
+    it('reads that wait only below an empty live prompt', () => {
+      const typing = pane(
+        ' ● Waiting for ba… · 136 B ctrl+c interrupt · ctrl+q enqueue GPT-6.1 Sol · High · (9%)',
+      ).replace('\n❯\n', '\n❯ an unsent draft\n')
+      expect(terminalInputReady(typing, true)).toBe(true)
+      expect(terminalMayBeWaitingForBackgroundShells(typing)).toBe(false)
+      expect(terminalMayBeWaitingForBackgroundShells('Waiting for background shells')).toBe(false)
     })
 
     // With only background agents left the key offers to stop them, and a

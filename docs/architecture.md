@@ -139,6 +139,15 @@ event projection for agent and detached-shell lifecycle records. Both are
 forwarded as separate task events; the hub never copies task output into
 another session or into the conversation store.
 
+A tmux-backed session's event log is read incrementally: only appended bytes
+are parsed, and overlapping reads share one parse. The owning node keeps one
+projection of that log per session -- its background tasks, transcript rows
+and pending question -- which takes in only the events appended since the last
+read. Every read revalidates it (same first event, no fewer events, the last
+event taken in still in place) and rebuilds it from scratch otherwise. It holds
+no copy of the events, is shared by the transcript refresh and `/tasks`, and is
+dropped when the session is deleted, closed or cleared.
+
 The provider router keeps Copilot and Claude Agent state separate while
 presenting one `SessionService` contract. Existing sessions without an explicit
 provider are treated as Copilot sessions. Claude Agent uses the official

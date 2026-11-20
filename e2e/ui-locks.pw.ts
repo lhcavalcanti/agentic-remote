@@ -653,10 +653,8 @@ for (const viewport of [uiViewports[0].viewport, { width: 1000, height: 640 }]) 
           .toBeCloseTo(attached.text.top - attached.composer.top, 0)
         expect(recording.text.bottom - recording.text.top, 'message box height')
           .toBeCloseTo(attached.text.bottom - attached.text.top, 0)
-        // The line below the composer names the recording, under the box and in view.
-        const line = page.locator('.composer-area > .composer-hint')
-        await expect(line).toHaveText(/^Recording \d+:\d\d…$/)
-        expect((await line.boundingBox())!.y, 'recording line top').toBeGreaterThanOrEqual(recording.composer.bottom)
+        // The recording panel carries the timer; no line below the composer repeats it.
+        await expect(page.locator('.composer-area > .composer-hint')).toHaveCount(0)
         await expect(page.locator('.composer-area')).toBeInViewport({ ratio: 1 })
         await assertNoHorizontalOverflow(page)
       } finally {

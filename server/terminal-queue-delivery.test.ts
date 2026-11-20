@@ -168,3 +168,125 @@ draw('', ${timing === 'before paste'})
     }
   }, 15_000)
 })
+
+describe('Queued delivery beside background shells', () => {
+  // Copilot's prompt, free while it waits for shells its last turn started,
+  // and what can take its place: somebody's draft, a question (empty, or
+  // holding the pasted text as its freeform answer), or a full-screen view.
+  // The event log keeps saying the turn is over and a shell runs, as it does
+  // while it lags behind the pane.
+  const fakeCopilot = (receipt: string, screens: { start: string; pasted?: string; submitted?: string }) => `
+import { writeFileSync, renameSync } from 'node:fs'
+const receipt = ${JSON.stringify(receipt)}
+const screens = ${JSON.stringify(screens)}
+const state = { pastes: [], submits: 0 }
+const save = () => {
+  writeFileSync(receipt + '.tmp', JSON.stringify(state))
+  renameSync(receipt + '.tmp', receipt)
+}
+const composer = (text, footer) =>
+  ['\\u257b\\u2584\\u2584\\u2584\\u2584', '\\u2503 ' + text, '\\u2579\\u2580\\u2580\\u2580\\u2580', footer]
+const shells = ' \\u25cf Waiting for background shells ctrl+c interrupt'
+const typing = ' \\u25cf Waitin\\u2026 \\u00b7 136 B ctrl+c interrupt \\u00b7 ctrl+q enqueue'
+const question = (answer) => [
+  '\\u256d' + '\\u2500'.repeat(40) + '\\u256e',
+  ...['Question', 'Describe your deployment plan.', '', '\\u276f ' + answer, '', 'enter to submit \\u00b7 esc to cancel']
+    .map((row) => '\\u2502 ' + row.padEnd(39) + '\\u2502'),
+  '\\u2570' + '\\u2500'.repeat(40) + '\\u256f',
+]
+const draw = (name, text = '') => process.stdout.write('\\x1b[2J\\x1b[H' + {
+  shells: () => composer('', shells),
+  typing: () => composer(text, typing),
+  draft: () => composer('My own unsent draft', typing),
+  question: () => question('Type your answer...'),
+  answered: () => question(text),
+  overlay: () => [
+    ' Session history', '', ' \\u276f Earlier conversation', '   Another conversation', '',
+    ' \\u2191/\\u2193 to navigate \\u00b7 enter to select \\u00b7 esc to close',
+  ],
+}[name]().join('\\r\\n'))
+let input = ''
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.stdin.on('data', (data) => {
+  input += data.toString()
+  for (let end = input.indexOf('\\x1b[201~'); end >= 0; end = input.indexOf('\\x1b[201~')) {
+    const pasted = input.slice(input.indexOf('\\x1b[200~') + 6, end)
+    input = input.slice(end + 6)
+    state.pastes.push(pasted)
+    save()
+    draw(screens.pasted, pasted)
+  }
+  if (state.pastes.length && /[\\r\\x11]/.test(input)) {
+    state.submits += 1
+    input = ''
+    save()
+    if (screens.submitted) draw(screens.submitted)
+  }
+})
+draw(screens.start)
+`
+  const besideShells = {
+    allowDuringAgentExecution: true,
+    backgroundShellsOnly: { eventLog: async () => ({ turnOver: true, shellsRunning: true }) },
+  }
+  const quietRefusal = { statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.queue' }
+
+  async function startCopilot(screens: { start: string; pasted: string; submitted?: string }, drawn: string) {
+    const directory = await mkdtemp(path.join(tmpdir(), 'native-queue-shells-'))
+    directories.push(directory)
+    const id = randomUUID()
+    const executable = path.join(directory, 'copilot-queue-shells.mjs')
+    const receipt = path.join(directory, 'receipt.json')
+    const copilotHome = path.join(directory, 'copilot-home')
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    await writeFile(receipt, JSON.stringify({ pastes: [], submits: 0 }))
+    await writeFile(executable, fakeCopilot(receipt, screens))
+    const name = `queue-shells-${process.pid}`
+    await exec('tmux', ['new-session', '-d', '-s', name, process.execPath, executable, '--session-id', id])
+    const pid = Number((await exec('tmux', ['display-message', '-p', '-t', name, '#{pane_pid}'])).stdout.trim())
+    await waitForProcessCommand(pid, [executable])
+    const stateDirectory = path.join(copilotHome, 'session-state', id)
+    await mkdir(stateDirectory, { recursive: true })
+    await writeFile(path.join(stateDirectory, `inuse.${pid}.lock`), `${pid}\n`)
+    const controller = new TmuxTerminalSessionController()
+    await eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes(drawn)))
+    return {
+      send: (content: string) => controller.send(id, content, false, besideShells),
+      shows: (text: string) => eventually(() => controller.capture(id), (pane) => Boolean(pane?.includes(text))),
+      received: async () => JSON.parse(await readFile(receipt, 'utf8')),
+    }
+  }
+
+  // Nothing was typed, so the prompt waits at the head of the queue rather
+  // than holding it in error.
+  it.each([
+    ['a draft', 'draft', 'My own unsent draft'],
+    ['a question', 'question', 'Question'],
+    ['a full-screen view', 'overlay', 'Session history'],
+  ] as const)('refuses quietly when %s holds the prompt before the paste', async (_, start, drawn) => {
+    const copilot = await startCopilot({ start, pasted: 'typing' }, drawn)
+    await expect(copilot.send('Keep this queued work')).rejects.toMatchObject(quietRefusal)
+    expect(await copilot.received()).toEqual({ pastes: [], submits: 0 })
+  }, 15_000)
+
+  it('refuses quietly when a question follows a delivered prompt', async () => {
+    const copilot = await startCopilot({ start: 'shells', pasted: 'typing', submitted: 'question' }, 'shells')
+    await expect(copilot.send('First queued work')).resolves.toBe(true)
+    expect(await copilot.shows('Question')).toContain('Type your answer')
+    await expect(copilot.send('Keep this queued work')).rejects.toMatchObject(quietRefusal)
+    expect(await copilot.received()).toEqual({ pastes: ['First queued work'], submits: 1 })
+  }, 15_000)
+
+  // Enter would answer it with the queued text, and a freeform answer holding
+  // that text no longer reads as a question at all.
+  it('does not press Enter into a question opened after the paste', async () => {
+    const copilot = await startCopilot({ start: 'shells', pasted: 'answered' }, 'shells')
+    await expect(copilot.send('Keep this queued work')).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: true,
+    })
+    expect(await copilot.received()).toEqual({ pastes: ['Keep this queued work'], submits: 0 })
+    expect(await copilot.shows('Question')).toContain('\u276f Keep this queued work')
+  }, 15_000)
+})

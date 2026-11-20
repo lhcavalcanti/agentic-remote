@@ -70,11 +70,15 @@ export interface TerminalSendOptions {
    * Narrows allowDuringAgentExecution to Copilot waiting only for background
    * shells after its turn ended. Copilot cuts that row's status to fit, down
    * to nothing, so the row cannot tell the wait from other work. Under the
-   * send lock, before the paste and again before Enter, the footer must name
-   * no other work and no background agents, and `eventLog` must find the turn
+   * send lock, before the paste and again before Enter, a live prompt with
+   * nothing open over it must have the keyboard, the footer must name no
+   * other work and no background agents, and `eventLog` must find the turn
    * over with no background agent, and a shell running while a busy row shows.
-   * With replaceExistingInput, a draft may be cleared beside that wait, held to
-   * the same evidence before and after the clear.
+   * Whatever stands in the way before the paste, a draft, dialog or
+   * full-screen view included, is refused quietly: nothing was typed, so the
+   * queued prompt waits at the head of its queue. With replaceExistingInput, a
+   * draft is cleared instead, beside that wait only while the same evidence
+   * holds before and after the clear.
    */
   backgroundShellsOnly?: { eventLog: () => Promise<BackgroundShellsEvidence> }
   /**
@@ -325,6 +329,18 @@ function terminalSessionInUseError(pane: string): Error {
     ),
     { statusCode: 409, uncertainDelivery: false },
   )
+}
+
+/**
+ * Marks a refusal made before anything was typed as one a queued prompt waits
+ * out at the head of its queue, to be tried again once the prompt is free.
+ */
+function queuedDeliveryRefusal(error: Error): Error {
+  return Object.assign(error, {
+    statusCode: 409,
+    uncertainDelivery: false,
+    reasonCode: 'terminal-not-ready.queue',
+  })
 }
 
 const MAX_FORM_VIEWPORT_WIDTH = 256
@@ -1920,6 +1936,9 @@ export class TmuxTerminalSessionController
     options: TerminalSendOptions = {},
   ): Promise<boolean> {
     return this.serialize(sessionId, async () => {
+      // Beside background shells, anything in the way before the paste is
+      // refused quietly: nothing was typed, so the queued prompt waits.
+      const besideShells = options.backgroundShellsOnly !== undefined
       const readyOwner = this.inputReadySessions.get(sessionId)
       const automaticOwner = this.automaticStartupSessions.get(sessionId)
       const expectedTarget = readyOwner?.target ?? automaticOwner?.target
@@ -1954,13 +1973,14 @@ export class TmuxTerminalSessionController
           parseTerminalFormPrompt(pane)
         ) {
           if (isTerminalSessionInUseConflict(pane)) {
-            throw terminalSessionInUseError(pane)
+            const error = terminalSessionInUseError(pane)
+            throw besideShells ? queuedDeliveryRefusal(error) : error
           }
           throw Object.assign(
             new Error('The terminal is waiting for user input. Answer it before sending a message.'),
             {
               statusCode: 409,
-              ...(idleOnly && overlay
+              ...((idleOnly && overlay) || besideShells
                 ? {
                     uncertainDelivery: false,
                     reasonCode: 'terminal-not-ready.queue',
@@ -2005,7 +2025,7 @@ export class TmuxTerminalSessionController
         } catch (error) {
           const notReady =
             error instanceof Error && /did not become ready/i.test(error.message)
-          if (idleOnly && notReady) {
+          if ((idleOnly || besideShells) && notReady) {
             throw Object.assign(
               new Error(
                 'The terminal is not ready for this input. Wait for its composer, or queue the message while the agent is working.',
@@ -2041,14 +2061,15 @@ export class TmuxTerminalSessionController
         if (startup !== 'ready') {
           const pane = await capturePane(owner.target)
           if (isTerminalSessionInUseConflict(pane)) {
-            throw terminalSessionInUseError(pane)
+            const error = terminalSessionInUseError(pane)
+            throw besideShells ? queuedDeliveryRefusal(error) : error
           }
           const overlay = isTerminalOverlay(pane)
           throw Object.assign(
             new Error('The terminal is waiting for user input. Answer it before sending a message.'),
             {
               statusCode: 409,
-              ...(idleOnly && overlay
+              ...((idleOnly && overlay) || besideShells
                 ? {
                     uncertainDelivery: false,
                     reasonCode: 'terminal-not-ready.queue',
@@ -2146,13 +2167,16 @@ export class TmuxTerminalSessionController
         }
       }
       if (isTerminalSessionInUseConflict(paneBeforePaste)) {
-        throw terminalSessionInUseError(paneBeforePaste)
+        const error = terminalSessionInUseError(paneBeforePaste)
+        throw besideShells ? queuedDeliveryRefusal(error) : error
       }
       const existingInput =
         composerText(paneBeforePaste) !== undefined &&
         composerHoldsText(paneBeforePaste)
       if (existingInput && !options.replaceExistingInput) {
-        throw new TerminalDraftConflictError('unsent-text')
+        throw besideShells
+          ? queuedDeliveryRefusal(new Error(terminalDraftConflictMessages['unsent-text']))
+          : new TerminalDraftConflictError('unsent-text')
       }
       if (isTerminalOverlay(paneBeforePaste)) {
         throw Object.assign(
@@ -2161,7 +2185,7 @@ export class TmuxTerminalSessionController
           ),
           {
             statusCode: 409,
-            ...(idleOnly
+            ...(idleOnly || besideShells
               ? {
                   uncertainDelivery: false,
                   reasonCode: 'terminal-not-ready.queue',
@@ -2402,16 +2426,16 @@ export class TmuxTerminalSessionController
       try {
         if (idleOnly || backgroundShellsOnly) {
           const current = await capturePane(target)
-          // Beside background shells, Enter goes by the pane read after the
-          // event log, which work drawn during the read shows on.
+          // Enter goes to whatever has the keyboard. Beside background
+          // shells it goes only to a live prompt with nothing open over it,
+          // as read after the event log, which work drawn during the read
+          // shows on.
           const agreed = backgroundShellsOnly
             ? await paneAgreeingWithBackgroundShells(target, current, backgroundShellsOnly)
             : current
           if (
             agreed === undefined ||
-            isTerminalOverlay(current) ||
-            isTerminalOverlay(agreed) ||
-            (!backgroundShellsOnly && isTerminalAgentWorking(current))
+            (!backgroundShellsOnly && (isTerminalOverlay(current) || isTerminalAgentWorking(current)))
           ) {
             throw new Error('The terminal changed before queued submission')
           }
@@ -3612,18 +3636,26 @@ export function terminalDraftMayBeBesideBackgroundShells(pane: string): boolean 
 }
 
 /**
- * Whether queued text may still go in beside background shells: the footer
- * names no other work and no background agents, and the event log finds the
- * turn over with no background agent and, while a busy row shows, a shell
- * running.
+ * Whether queued text may still go in beside background shells: a live prompt
+ * with nothing open over it has the keyboard, the footer names no other work
+ * and no background agents, and the event log finds the turn over with no
+ * background agent and, while a busy row shows, a shell running. A question
+ * opened since would take the text as its answer, and once its freeform
+ * answer holds that text it no longer reads as a question, so the prompt
+ * itself has to be found.
  */
 async function backgroundShellsAllow(
   pane: string,
   backgroundShellsOnly: NonNullable<TerminalSendOptions['backgroundShellsOnly']>,
 ): Promise<boolean> {
-  const reading = idleButForBackgroundShells(pane)
+  const reading = shellsReading(pane)
   if (!reading) return false
   return shellsEvidenceAgrees(reading, await backgroundShellsOnly.eventLog())
+}
+
+/** The footer's reading, while a live prompt with nothing over it has the keyboard. */
+function shellsReading(pane: string): 'idle' | 'shells' | undefined {
+  return terminalInputReady(pane, true) ? idleButForBackgroundShells(pane) : undefined
 }
 
 function shellsEvidenceAgrees(
@@ -3635,9 +3667,10 @@ function shellsEvidenceAgrees(
 
 /**
  * As backgroundShellsAllow, then the pane read once more: Copilot can draw a
- * turn or an agent while the log is read and before the log has it, so what
- * a send does next goes by a pane drawn after the read. That pane, while it
- * still agrees with the log; otherwise undefined.
+ * turn, an agent or a dialog while the log is read and before the log has it,
+ * so what a send does next goes by a pane drawn after the read. That pane,
+ * while its prompt is still live and free and it agrees with the log;
+ * otherwise undefined.
  */
 async function paneAgreeingWithBackgroundShells(
   target: string,
@@ -3645,12 +3678,12 @@ async function paneAgreeingWithBackgroundShells(
   backgroundShellsOnly: NonNullable<TerminalSendOptions['backgroundShellsOnly']>,
   timeout?: number,
 ): Promise<string | undefined> {
-  const reading = idleButForBackgroundShells(pane)
+  const reading = shellsReading(pane)
   if (!reading) return undefined
   const log = await backgroundShellsOnly.eventLog()
   if (!shellsEvidenceAgrees(reading, log)) return undefined
   const after = await capturePane(target, timeout)
-  return shellsEvidenceAgrees(idleButForBackgroundShells(after), log) ? after : undefined
+  return shellsEvidenceAgrees(shellsReading(after), log) ? after : undefined
 }
 
 /**

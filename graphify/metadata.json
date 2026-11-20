@@ -636,9 +636,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 277,
+  "communities": 260,
   "community_algorithm": "louvain-seed-42",
-  "edges": 25722,
+  "edges": 25734,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -1199,10 +1199,10 @@
     "server/terminal-form-deadline.test.ts": "4abe7cd75cba5123c99150dad748baeb8b8ed29e3a3f5ecff9eea094799695a9",
     "server/terminal-form-viewport.test.ts": "9b4eb5a254bd80be867595e6407ecd189a6c52ae27977fcee448e08216f25cdc",
     "server/terminal-process-roots.test.ts": "4dcb5e7333623e53d543a590b06e88712837ba887caa1bf7f04246697a56ce15",
-    "server/terminal-queue-delivery.test.ts": "babbb990359e06dcfa997d9cb71cff4661a9db751ea27cba7482a26a694db17e",
+    "server/terminal-queue-delivery.test.ts": "06014e06ae290a7609d8b19688bba5d844eb6c7268338ffb4ad9ef018c46a1f8",
     "server/terminal-send-uncertainty.test.ts": "f679f2b7749fecd01a459b8bfad9c6ae1adf2f19998f3ce7ba39e52531d67512",
-    "server/terminal-session.test.ts": "e606e5ab0b03e7774c047dc64328bd64cce80f922260d3a125eca477c0d10d6a",
-    "server/terminal-session.ts": "c714cd95b071461ce55d8d79b54981acec998acb25199a80c01b9e235032be2d",
+    "server/terminal-session.test.ts": "0e284d06f090c2abd67b09e044b650a31beaacd22b81713b26a9a11346a2bf8b",
+    "server/terminal-session.ts": "034e3d26948b553c1b6789326f324a34b20a9795e72a778458e8f0343e372276",
     "server/terminal-startup-deadline.test.ts": "236dceeab1df381f0e182b7a091622f9d0a8503612cbddd751953bad6d29e118",
     "server/terminal-startup-queue.test.ts": "be15c41392f70dd2d8976f72441d972c885c7bc796e77e94ea186cc4ba22e93c",
     "server/terminal-test-fixtures.ts": "9b32cf80c6f916442694e182376f033ad5ad46c94dc4c44fe34f6c67eab574a3",
@@ -1517,7 +1517,7 @@
     "vite.config.ts": "a60a896cfb1d57a3837faf5c428fe1c90f874a3b0a4136b5a63d21737d54d139"
   },
   "mode": "local-ast-only",
-  "nodes": 8898,
+  "nodes": 8901,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1759,19 +1759,17 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "03a301dc3999cf75d27d998ea04d1703fb7e7d858db5e5a1e65106c58cbee489",
-    "communities.json": "872f46e5d5a3819d18c050a88ac2319817f338e4b6edc12106d84109db3e67fa",
-    "graph.html": "8e6d002f02e42fce0bdb6a2d900812f61b9983d580857e7ff2392986ccad0950",
-    "graph.json": "f2bb4c3a3d0860759ba1d91750a67b0ea6d59f879299099a5873f4e621ccc97c"
+    "GRAPH_REPORT.md": "28ad610d3d9a0452bf9644ceacde9f4e5f786c371d44d544ec894bbdd5b58fb3",
+    "communities.json": "571107d440c4ea702b35a2a80c240628f89bce6c0a3117d45889288a4f0c2d86",
+    "graph.html": "c6194d46d05c0f87569e4ea7a8dc52c1b5dad24c0fd9f32a465c2c309216d44e",
+    "graph.json": "bcd90013e647ccb827b9ff1888d47e4833ce41d532d52ddb287f61af46f4daeb"
   },
   "schema_version": 1,
-  "source_commit": "fb0986911d89858c93f131be4b02907b114f4853",
-  "source_fingerprint": "76399a5a4bf7fce52d5a3b0014d30d6f11830791fcf85672bc76bd678df04230",
+  "source_commit": "56c04e437c59a284febe51a581cb761c061df96d",
+  "source_fingerprint": "91c3318e5c6fbd7f1c6ff065a44b3aa682ce6745c57d5e34c33925cffb80e81f",
   "working_tree_changes": [
-    "e2e/ui-locks.pw.ts",
-    "e2e/ui-locks.pw.ts-snapshots/desktop-composer-refresh-attachment-chromium-linux.png",
-    "e2e/ui-scenes.ts",
-    "server/composer-layout.test.ts",
-    "src/index.css"
+    "server/terminal-queue-delivery.test.ts",
+    "server/terminal-session.test.ts",
+    "server/terminal-session.ts"
   ]
 }

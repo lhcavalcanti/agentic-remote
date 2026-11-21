@@ -12206,7 +12206,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return false
       }
       if (startup && (!before?.trim() || composerHoldsText(before))) {
-        if (this.retryTerminalQueueClaim(sessionId, !before?.trim(), TERMINAL_COMPOSER_RETRY_MAX_MS)) {
+        if (this.retryTerminalQueueClaim(sessionId, !before?.trim(), true)) {
           this.showTerminalComposerWait(sessionId, stored, next.id, before ?? '')
         }
         return false
@@ -12412,10 +12412,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       : undefined
   }
 
+  /**
+   * Schedules the next look at a queue head. A wait for Copilot's prompt
+   * (`composer`) backs off to 5 s at most, on a timer of its own, so its
+   * looks never stretch to the watcher's next pass.
+   */
   private retryTerminalQueueClaim(
     sessionId: string,
     failed = false,
-    maxDelay = TERMINAL_QUEUE_RETRY_MAX_MS,
+    composer = false,
   ): boolean {
     const session = this.store.get(sessionId)
     if (!session?.queuedPrompts?.length || this.stopped || this.deletingSessions.has(sessionId) ||
@@ -12426,6 +12431,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.startupTerminalQueues.delete(sessionId)
       return false
     }
+    const maxDelay = composer ? TERMINAL_COMPOSER_RETRY_MAX_MS : TERMINAL_QUEUE_RETRY_MAX_MS
     const readyDelay = this.terminalSteerRetryDelay(sessionId, session)
     const delay = readyDelay ?? (
       failed
@@ -12440,7 +12446,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const previous = this.terminalQueueRetryTimers.get(sessionId)
     if (previous) clearTimeout(previous)
     this.terminalQueueRetryTimers.delete(sessionId)
-    if (readyDelay === undefined) return true
+    if (readyDelay === undefined && !composer) return true
     let timer: NodeJS.Timeout
     const wake = () => {
       if (this.terminalQueueRetryTimers.get(sessionId) !== timer) return
@@ -12484,7 +12490,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return this.holdTerminalQueueForReopen(sessionId, session, promptId)
     }
     const startup = this.startupTerminalQueues.has(sessionId)
-    if (!this.retryTerminalQueueClaim(sessionId, true, TERMINAL_COMPOSER_RETRY_MAX_MS)) {
+    if (!this.retryTerminalQueueClaim(sessionId, true, true)) {
       const current = this.store.get(sessionId)
       if (!this.stopped && !this.deletingSessions.has(sessionId) &&
           current?.queuedPrompts?.[0]?.id === promptId &&
@@ -12589,12 +12595,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   /**
    * Copilot is at work, which ends the wait by itself: takes back what the
    * reader was told to do, and a blank pane seen next starts a new grace
-   * period. Reopen stays until the session is reopened.
+   * period. Reopen stays only while the session is interrupted or archived.
    */
   private quietTerminalQueueWait(sessionId: string, session: SessionDetail): void {
     this.terminalQueueUnreadable.delete(sessionId)
     const previous = this.terminalQueueStates.get(sessionId)
-    if (!previous || previous.message === QUEUE_REOPEN_MESSAGE) return
+    if (!previous || (previous.message === QUEUE_REOPEN_MESSAGE &&
+        (session.interruption || session.archivedAt))) return
     this.terminalQueueStates.delete(sessionId)
     this.publish(session)
   }

@@ -11630,6 +11630,40 @@ describe('AgentService deletion', () => {
         message: 'Reopen the session to resume queued delivery.',
       })
     })
+
+    it('takes Reopen back once the session is back, though Copilot is working', async () => {
+      const { service, sessionId, log, endTurn, wait, shown } = await queuedForPrompt(busy)
+      await endTurn()
+      await service.store.update(sessionId, (session) => {
+        session.interruption = { detectedAt: new Date().toISOString(), previousStatus: 'idle' }
+      })
+      await wait(800)
+      expect(shown()?.message).toBe('Reopen the session to resume queued delivery.')
+
+      // Discovery finds the owner again while it works on a turn, and wakes the queue.
+      await service.store.update(sessionId, (session) => { session.interruption = undefined })
+      log('assistant.turn_start')
+      await service.refreshTranscripts()
+      await service['drainTerminalQueue'](sessionId)
+
+      expect(service.getSession(sessionId)?.status).toBe('running')
+      expect(shown()).toBeUndefined()
+    })
+
+    it('looks again as soon as its retry is due, not at the watcher\'s next pass', async () => {
+      const { service, terminal, current, sessionId, endTurn } = await queuedForPrompt(busy)
+      // Leaves the watcher's passes behind: only the retry itself may look.
+      vi.useRealTimers()
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      await endTurn()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+
+      current.pane = ready
+      await vi.advanceTimersByTimeAsync(750)
+      await Promise.all([...service['terminalQueueWakeups'].values()])
+
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([[sessionId, prompt]])
+    })
   })
 
   // A paste Copilot drew too late to be sent stays in its prompt, and sending

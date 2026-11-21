@@ -2497,6 +2497,11 @@ button {
   background: var(--panel-soft);
 }
 
+/* A description beside the label must not shrink the icon out of line. */
+.session-action > svg {
+  flex-shrink: 0;
+}
+
 .session-action--danger {
   color: var(--danger);
 }

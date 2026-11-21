@@ -1,6 +1,7 @@
 import type { DirectoryScope } from './directory-browser.js'
 import { EventEmitter } from 'node:events'
 import type {
+  ActivityDetail,
   AgentMode,
   AgentProvider,
   AgentProviderCapability,
@@ -38,6 +39,7 @@ import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 import { ClosedSessionSweeper } from './closed-session-sweeper.js'
 import { launchIdentitySchema } from '../shared/launch-identity.js'
 import { updateComputerForLaunchIdentity } from './launch-identity.js'
+import { activityDetailsUnavailable } from './activity-details.js'
 
 interface ProviderSessionServiceEvents {
   event: [event: ServerEvent]
@@ -452,6 +454,18 @@ export class ProviderSessionService
       ))
     }
     return service.askSession(sessionId, question, earlier)
+  }
+
+  async readActivityDetail(sessionId: string, toolCallId: string): Promise<ActivityDetail> {
+    const service = this.serviceFor(sessionId)
+    // Named by the service that owns it: a copy of the session would carry
+    // its whole transcript, on every open of a tool row.
+    const provider: AgentProvider = service === this.claude ? 'claude' : 'copilot'
+    if (!service.readActivityDetail || !service.providers().some((capability) =>
+      capability.id === provider && capability.supportsActivityDetails === true)) {
+      throw activityDetailsUnavailable()
+    }
+    return service.readActivityDetail(sessionId, toolCallId)
   }
 
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot> {

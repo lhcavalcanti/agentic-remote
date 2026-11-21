@@ -3117,6 +3117,228 @@ button {
   white-space: nowrap;
 }
 
+/* A row for a call the session logged opens in place onto the whole call. */
+.activity-message--toggle {
+  border: 0;
+  text-align: start;
+  cursor: pointer;
+  grid-template-columns: 10px minmax(0, 1fr) auto 12px;
+}
+
+.activity-message--toggle:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: -2px;
+}
+
+.activity-message--toggle[aria-expanded='true'] {
+  background: var(--panel-raised);
+}
+
+.activity-message__chevron {
+  align-self: center;
+  color: var(--muted);
+}
+
+.activity-message--toggle[aria-expanded='true'] .activity-message__chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .activity-message__chevron {
+    transition: transform 150ms ease;
+  }
+}
+
+/* An open row is being read, so it is not dimmed with the rest of history. */
+.message--activity-expanded {
+  opacity: 1;
+}
+
+.activity-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 10px 11px;
+  padding: 4px 0 2px 12px;
+  border-left: 1px solid var(--border);
+}
+
+.activity-details__meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 0;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.activity-details__tool {
+  color: var(--text);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.activity-details__status--completed {
+  color: var(--success);
+}
+
+.activity-details__status--failed {
+  color: var(--danger);
+}
+
+.activity-details__status--running {
+  color: var(--muted-strong);
+}
+
+.activity-details__block {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--panel);
+}
+
+.activity-details__block--error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.activity-details__block figcaption {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 0 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.activity-details__block--error .activity-details__label {
+  color: var(--danger);
+}
+
+.activity-details__actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.activity-details__copy,
+.activity-details__retry {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.activity-details__retry {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.activity-details__copy:hover,
+.activity-details__retry:hover {
+  border-color: var(--border);
+  background: var(--panel-soft);
+}
+
+.activity-details__copy:focus-visible,
+.activity-details__retry:focus-visible,
+.activity-details__text:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: -2px;
+}
+
+.activity-details__copy-error {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+/* Its own scroll, wrapped so a phone never scrolls sideways. */
+.activity-details__text {
+  max-height: min(22rem, 55vh);
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.activity-details__block--command .activity-details__text::before {
+  content: '$ ';
+  color: var(--muted);
+}
+
+.activity-details__truncated,
+.activity-details__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.activity-details__truncated {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.activity-details__note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.activity-details__note--running {
+  color: var(--muted-strong);
+}
+
+.activity-details__note--error {
+  color: var(--danger);
+}
+
+/* Tool rows are the most numerous in a transcript, so a touch row stays
+   compact: the whole full-width row is the target, at least 28px tall. The
+   open panel's buttons get the full 44px. */
+@media (pointer: coarse) {
+  .activity-message--toggle {
+    min-height: 28px;
+    align-items: center;
+  }
+
+  .activity-details__block figcaption {
+    min-height: 44px;
+  }
+
+  .activity-details__copy,
+  .activity-details__retry {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 @keyframes tool-activity-change {
   from {
     opacity: 0;

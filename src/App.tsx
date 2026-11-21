@@ -165,6 +165,8 @@ import {
   useSessionKnowledgeRoot,
 } from './use-session-knowledge-root'
 import { SessionActions } from './SessionActions'
+import { ActivityRow } from './ActivityRow'
+import { activityKindFromMessage, activityPresentation } from './activity-presentation'
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
 import { SubagentCount } from './SubagentCount'
@@ -224,8 +226,6 @@ import {
 } from '../shared/side-question'
 import type {
   AgentProvider,
-  ActivityKind,
-  ActivityStatus,
   BackgroundTaskSnapshot,
   ChatMessage,
   ComputerSummary,
@@ -1709,251 +1709,6 @@ function ChangeDirectoryDialog({
   )
 }
 
-function activityKindFromMessage(message: ChatMessage): ActivityKind {
-  if (message.activityKind) {
-    return message.activityKind
-  }
-  const title = message.content.split('\n', 1)[0] || ''
-  if (/^Skill \(/.test(title)) {
-    return 'skill'
-  }
-  if (/^Agent \(/.test(title)) {
-    return 'agent'
-  }
-  return 'tool'
-}
-
-function activityStatusFromMessage(message: ChatMessage): ActivityStatus {
-  return message.activityStatus || 'running'
-}
-
-function compactActivityText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
-}
-
-function activityPresentation(message: ChatMessage): {
-  title: string
-  kind: ActivityKind
-  name: string
-  origin?: string
-  summary?: string
-  arguments?: string
-} {
-  const [title = '', ...detailLines] = message.content.split('\n')
-  const detail = compactActivityText(detailLines.join('\n'))
-  const kind = activityKindFromMessage(message)
-  if (kind === 'skill') {
-    const match = title.match(/^Skill \((.+)\)$/)
-    return {
-      title,
-      kind,
-      name: match ? `skill(${match[1]})` : 'skill',
-      arguments: detail || undefined,
-    }
-  }
-  if (kind === 'agent') {
-    const match = title.match(/^Agent \(([^)]+)\)(?: · (.*))?$/)
-    return {
-      title,
-      kind,
-      name: match ? `agent(${match[1]})` : 'agent',
-      summary: match?.[2],
-      arguments: detail || undefined,
-    }
-  }
-  if (title.startsWith('MCP ·')) {
-    const parts = title.split(' · ')
-    const hasServer = parts.length > 2
-    const server = hasServer ? parts[1] || '' : ''
-    const operation = hasServer ? parts[2] || 'tool' : parts[1] || 'tool'
-    return {
-      title,
-      kind,
-      name: operation,
-      origin: server ? `(MCP: ${server})` : '(MCP)',
-      summary: parts.slice(3).join(' · ') || undefined,
-      arguments: detail || undefined,
-    }
-  }
-  const [name = 'tool', ...summaryParts] = title.split(' · ')
-  return {
-    title,
-    kind,
-    name,
-    summary: summaryParts.join(' · ') || undefined,
-    arguments: detail || undefined,
-  }
-}
-
-function formatActivityDuration(durationMs?: number): string {
-  if (
-    durationMs === undefined ||
-    !Number.isFinite(durationMs) ||
-    durationMs < 0
-  ) {
-    return '—'
-  }
-  const seconds = durationMs / 1_000
-  if (seconds < 1) {
-    return `${Math.round(durationMs)}ms`
-  }
-  if (seconds < 10) {
-    return `${seconds.toFixed(1)}s`
-  }
-  if (seconds < 60) {
-    return `${Math.round(seconds)}s`
-  }
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = Math.round(seconds % 60)
-  return `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s`
-}
-
-function activityStatusGlyph(status: ActivityStatus): string {
-  switch (status) {
-    case 'completed':
-      return '●'
-    case 'failed':
-      return '×'
-    case 'pending':
-      return '·'
-    case 'running':
-      return '○'
-  }
-}
-
-function activityStatusLabel(status: ActivityStatus): string {
-  switch (status) {
-    case 'completed':
-      return 'Completed'
-    case 'failed':
-      return 'Failed'
-    case 'pending':
-      return 'Pending'
-    case 'running':
-      return 'Running'
-  }
-}
-
-function ActivityMessage({ message }: { message: ChatMessage }) {
-  const presentation = activityPresentation(message)
-  const status = activityStatusFromMessage(message)
-  const isMcp = message.content.startsWith('MCP ·')
-  const isAgent = presentation.kind === 'agent'
-  const isHeading =
-    presentation.kind === 'skill' || presentation.kind === 'agent'
-  const result =
-    message.activityResult ||
-    (status === 'failed'
-      ? 'Error: tool failed; inspect the session log'
-      : isAgent && status !== 'completed'
-        ? 'still working'
-        : undefined)
-  const legacyTitle = presentation.title
-  const duration = formatActivityDuration(message.activityDurationMs)
-  const accessibleDetails = [
-    `${activityStatusLabel(status)}: ${legacyTitle}`,
-    result,
-    message.activityDurationMs === undefined ? undefined : `${duration} duration`,
-  ]
-    .filter(Boolean)
-    .join('; ')
-  return (
-    <div
-      aria-label={accessibleDetails}
-      className={`activity-message activity-message--${status}${
-        isMcp ? ' activity-message--mcp' : ''
-      }${isAgent ? ' activity-message--agent' : ''}${
-        isHeading ? ' activity-message--heading' : ''
-      }`}
-      aria-level={isHeading ? 3 : undefined}
-      role={isHeading ? 'heading' : undefined}
-      title={legacyTitle}
-    >
-      <span
-        aria-hidden="true"
-        className="activity-message__glyph"
-      >
-        {activityStatusGlyph(status)}
-      </span>
-      <span className="activity-message__body">
-        <strong className="activity-message__name">{presentation.name}</strong>
-        {presentation.origin ? (
-          <span className="activity-message__origin">
-            {' '}
-            {presentation.origin}
-          </span>
-        ) : null}
-        {presentation.summary ? (
-          <>
-            <span className="activity-message__separator"> · </span>
-            <span className="activity-message__summary">
-              {compactActivityText(presentation.summary)}
-            </span>
-          </>
-        ) : null}
-        {presentation.arguments ? (
-          <>
-            <span className="activity-message__separator"> · </span>
-            <span className="activity-message__arguments">
-              {presentation.arguments}
-            </span>
-          </>
-        ) : null}
-        {result ? (
-          <>
-            <span className="activity-message__separator"> · </span>
-            <span
-              className="activity-message__result"
-              title={result}
-            >
-              {compactActivityText(result)}
-            </span>
-          </>
-        ) : null}
-      </span>
-      <span
-        aria-label={
-          message.activityDurationMs === undefined
-            ? 'No duration recorded'
-            : `${duration} duration`
-        }
-        className="activity-message__duration"
-      >
-        {duration}
-      </span>
-      {legacyTitle !== presentation.name ? (
-        <span
-          aria-hidden="true"
-          className="activity-message__legacy-title"
-        >
-          {legacyTitle}
-        </span>
-      ) : null}
-    </div>
-  )
-}
-
-function ActivityArticle({
-  message,
-  currentToolId,
-}: {
-  message: ChatMessage
-  currentToolId?: string
-}) {
-  return (
-    <article
-      className={`message message--activity ${
-        message.id === currentToolId
-          ? 'tool-activity-slot'
-          : 'tool-activity-history'
-      }`}
-      key={message.id}
-    >
-      <ActivityMessage message={message} />
-    </article>
-  )
-}
-
 /**
  * One transcript row. Each parses its own Markdown, so a memo keeps a new
  * message from re-parsing every earlier one: the content is immutable once
@@ -2050,12 +1805,46 @@ function PendingEchoMessage({ content }: { content: string }) {
  */
 const RENDERED_HISTORY = 250
 
+/**
+ * The tool rows the reader has opened in a session: true while open, false
+ * once closed again where the window had moved past it, which keeps it where
+ * the reader left it instead of vanishing before it is brought back into view.
+ */
+type ActivityRowStates = Readonly<Record<string, boolean>>
+
+/** The rows without the closed ones kept in place, in one session or all. */
+function releaseClosedActivityRows(
+  sessions: Record<string, ActivityRowStates>,
+  only?: string,
+): Record<string, ActivityRowStates> {
+  let released = sessions
+  for (const [key, rows] of Object.entries(sessions)) {
+    if (
+      (only !== undefined && key !== only) ||
+      Object.values(rows).every((open) => open)
+    ) {
+      continue
+    }
+    if (released === sessions) {
+      released = { ...sessions }
+    }
+    released[key] = Object.fromEntries(
+      Object.entries(rows).filter(([, open]) => open),
+    )
+  }
+  return released
+}
+
 const ConversationMessages = memo(function ConversationMessages({
   messages: allMessages,
   pendingEchoes,
   currentToolId,
   showAll,
   onShowAll,
+  computerId,
+  sessionId,
+  activityRows,
+  onToggleActivity,
 }: {
   messages: ChatMessage[]
   pendingEchoes: PendingEcho[]
@@ -2067,6 +1856,13 @@ const ConversationMessages = memo(function ConversationMessages({
   // reader had opened would close under them.
   showAll: boolean
   onShowAll: () => void
+  computerId: string
+  sessionId: string
+  // The tool rows the reader has opened, held by the conversation for the
+  // same reason as `showAll`.
+  activityRows?: ActivityRowStates
+  // Whether the row came along past the cut, so a closed one can be kept.
+  onToggleActivity: (messageId: string, pastWindow: boolean) => void
 }) {
   const cut = showAll
     ? 0
@@ -2075,8 +1871,11 @@ const ConversationMessages = memo(function ConversationMessages({
   // Some rows from before the cut have to come with it. An activity that is
   // still running is one: the separate activity indicator is suppressed while
   // one exists, so dropping the row leaves nothing on screen saying anything
-  // is happening. The parent of a visible child is another, or the child is
-  // lifted out of the group it belongs to and read as work of its own.
+  // is happening. One the reader has opened is another, or it vanishes from
+  // under them, and so is one they closed again there, or it vanishes before
+  // it can be brought back into view. The parent of a visible child is a
+  // third, or the child is lifted out of the group it belongs to and read as
+  // work of its own.
   const carried: ChatMessage[] = []
   if (cut > 0) {
     const wanted = new Set<string>()
@@ -2090,7 +1889,11 @@ const ConversationMessages = memo(function ConversationMessages({
       if (message.role !== 'activity') {
         continue
       }
-      if (message.activityStatus === 'running' || wanted.has(message.id)) {
+      if (
+        message.activityStatus === 'running' ||
+        (activityRows !== undefined && Object.hasOwn(activityRows, message.id)) ||
+        wanted.has(message.id)
+      ) {
         carried.unshift(message)
         // Groups nest, so the parent's own parent is needed as well.
         if (message.activityGroupId) {
@@ -2099,6 +1902,20 @@ const ConversationMessages = memo(function ConversationMessages({
       }
     }
   }
+  // The rows that came along as last drawn, read when one is toggled. One
+  // toggle for every row keeps an unchanged row from drawing again.
+  const carriedRef = useRef(carried)
+  useLayoutEffect(() => {
+    carriedRef.current = carried
+  })
+  const toggleActivity = useCallback(
+    (messageId: string) =>
+      onToggleActivity(
+        messageId,
+        carriedRef.current.some((message) => message.id === messageId),
+      ),
+    [onToggleActivity],
+  )
   const hidden = cut - carried.length
   const messages = carried.length ? [...carried, ...tail] : tail
   const activityMessages = new Map(
@@ -2139,16 +1956,21 @@ const ConversationMessages = memo(function ConversationMessages({
       groupedActivityIds.add(message.id)
     }
   }
+  const activityRow = (message: ChatMessage, key?: string): ReactNode => (
+    <ActivityRow
+      computerId={computerId}
+      current={message.id === currentToolId}
+      expanded={activityRows?.[message.id] === true}
+      key={key}
+      message={message}
+      onToggle={toggleActivity}
+      sessionId={sessionId}
+    />
+  )
   const renderActivity = (message: ChatMessage): ReactNode => {
     const children = activityChildren.get(message.id) || []
     if (children.length === 0) {
-      return (
-        <ActivityArticle
-          currentToolId={currentToolId}
-          key={message.id}
-          message={message}
-        />
-      )
+      return activityRow(message, message.id)
     }
     const kind = activityKindFromMessage(message)
     const groupLabel =
@@ -2161,10 +1983,7 @@ const ConversationMessages = memo(function ConversationMessages({
         className="activity-group"
         key={message.id}
       >
-        <ActivityArticle
-          currentToolId={currentToolId}
-          message={message}
-        />
+        {activityRow(message)}
         <div className="activity-group__children">
           {children.map((child) => renderActivity(child))}
         </div>
@@ -4064,6 +3883,18 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [expandedTranscripts, setExpandedTranscripts] = useState<
     Record<string, boolean>
   >({})
+  // Which tool rows the reader has opened, by session.
+  const [activityRows, setActivityRows] = useState<
+    Record<string, ActivityRowStates>
+  >({})
+  // Another session opens at its end, so moving to one lets go of every
+  // closed row kept in place. Done while rendering, before anything is drawn
+  // with them.
+  const [activityRowsSession, setActivityRowsSession] = useState(selectedKey)
+  if (activityRowsSession !== selectedKey) {
+    setActivityRowsSession(selectedKey)
+    setActivityRows((current) => releaseClosedActivityRows(current))
+  }
   // Stable per session. A fresh closure on every render defeats the memo the
   // transcript relies on, so every keystroke in the composer would rebuild
   // every row and walk the hidden history again.
@@ -4072,7 +3903,33 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return
     }
     setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
+    // Everything is inside the window now, so nothing needs keeping in place.
+    setActivityRows((current) =>
+      releaseClosedActivityRows(current, selectedKey),
+    )
   }, [selectedKey])
+  // Opening a row records it open. Closing it forgets it, unless the window
+  // has moved past it: then it stays, closed, where the reader is, rather
+  // than vanishing before it can be brought back into view.
+  const toggleSelectedActivity = useCallback(
+    (messageId: string, pastWindow: boolean) => {
+      if (!selectedKey) {
+        return
+      }
+      setActivityRows((current) => {
+        const rows: Record<string, boolean> = { ...current[selectedKey] }
+        if (rows[messageId] !== true) {
+          rows[messageId] = true
+        } else if (pastWindow) {
+          rows[messageId] = false
+        } else {
+          delete rows[messageId]
+        }
+        return { ...current, [selectedKey]: rows }
+      })
+    },
+    [selectedKey],
+  )
   // The socket is bound once, so it reaches the restore through a ref.
   const restoreFailedPromptRef = useRef<
     (key: string, content: string, failedAt?: string) => void
@@ -14194,8 +14051,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           ) : (
             <PauseFollowingContext.Provider value={pauseFollowing}>
               <ConversationMessages
+                activityRows={activityRows[sessionKey(selected)]}
+                computerId={selected.computerId}
                 currentToolId={currentTool?.id}
                 onShowAll={expandSelectedTranscript}
+                onToggleActivity={toggleSelectedActivity}
+                sessionId={selected.id}
                 showAll={expandedTranscripts[sessionKey(selected)] === true}
                 // Identity is the computer and the session together: two
                 // computers can hand out the same provider session id, and

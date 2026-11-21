@@ -1,5 +1,6 @@
 import type { DirectoryScope } from './directory-browser.js'
 import type {
+  ActivityDetail,
   AgentMode,
   AgentProvider,
   AgentProviderCapability,
@@ -130,6 +131,8 @@ export interface SessionService {
     question: string,
     earlier?: readonly SideQuestionExchange[],
   ): Promise<string>
+  /** A tool call's complete arguments and output, from the session's event log. */
+  readActivityDetail?(sessionId: string, toolCallId: string): Promise<ActivityDetail>
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>
   cancelBackgroundTask(
     sessionId: string,

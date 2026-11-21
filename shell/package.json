@@ -1,7 +1,7 @@
 {
   "name": "agentic-remote-shell",
   "private": true,
-  "version": "1.59.3",
+  "version": "1.59.5",
   "type": "module",
   "description": "Native shell for supervising Agentic Remote sessions",
   "scripts": {

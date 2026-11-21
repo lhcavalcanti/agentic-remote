@@ -82,6 +82,7 @@ import {
 import { queuedSdkPrompt } from './queued-sdk-prompt.js'
 import {
   backgroundTasksFromEvents,
+  createBackgroundTaskProjector,
   isBackgroundTaskInfo,
   isBackgroundTaskProgress,
   MAX_BACKGROUND_TASKS,
@@ -162,6 +163,7 @@ import {
   isTerminalSessionInUsePrompt,
   isTerminalVisiblyIdle,
   terminalMayBeWaitingForBackgroundShells,
+  terminalDraftMayBeBesideBackgroundShells,
   terminalCommandOutput,
   terminalFormReplyBudget,
   TmuxTerminalSessionController,
@@ -472,6 +474,35 @@ const TERMINAL_STEER_RETRY_MS = 250
 // it, and after ten minutes a request waits for a new read.
 const COMMAND_CATALOG_FRESH_MS = 60_000
 const COMMAND_CATALOG_MAX_AGE_MS = 10 * 60_000
+// A failed terminal queue claim backs off up to this long.
+const TERMINAL_QUEUE_RETRY_MAX_MS = 60_000
+// A head waiting for Copilot's prompt looks again at least this often, so it
+// goes in soon after the prompt is back, however long the wait was.
+const TERMINAL_COMPOSER_RETRY_MAX_MS = 5_000
+// Longer than Copilot takes to redraw its prompt or to start: a pane empty or
+// unreadable for this long is something the reader has to look at.
+const TERMINAL_COMPOSER_UNREADABLE_GRACE_MS = 30_000
+
+const QUEUE_REOPEN_MESSAGE = 'Reopen the session to resume queued delivery.'
+const TERMINAL_QUEUE_OVERLAY_MESSAGE =
+  'Close the full-screen view in the terminal to deliver queued messages.'
+const TERMINAL_QUEUE_UNREADABLE_MESSAGE =
+  'Copilot\'s prompt has not appeared in the terminal. Check the terminal to deliver queued messages.'
+
+function sessionInUseQueueMessage(pane: string): string {
+  return isTerminalSessionInUsePrompt(pane)
+    ? 'Copilot says this session is already in use. Choose Resume anyway in the permission card to deliver queued messages.'
+    : 'Copilot says this session is already in use by another client or application. Close it there to deliver queued messages.'
+}
+
+/**
+ * Whether a pane holding Copilot's prompt back shows nothing known to: no
+ * full-screen view, no work and no wait for background shells or agents.
+ */
+function terminalComposerUnreadable(pane: string): boolean {
+  return !isTerminalOverlay(pane) && !isTerminalAgentWorking(pane) &&
+    !/waiting for background (?:shells|agents)/i.test(pane)
+}
 
 const sessionInUseMessage =
   'Copilot says this session is already in use. Choose Resume anyway or Go back in the permission card.'
@@ -602,8 +633,8 @@ function isActivityGroupKind(kind: ActivityKind | undefined): boolean {
 function activityGroupIdFor(
   parentToolCallId: string | undefined,
   agentId: string | undefined,
-  toolStartsByCallId: Map<string, ActivityToolStart>,
-  subagentParentsByAgentId: Map<string, string>,
+  toolStartsByCallId: Pick<ReadonlyMap<string, ActivityToolStart>, 'get'>,
+  subagentParentsByAgentId: Pick<ReadonlyMap<string, string>, 'get'>,
 ): string | undefined {
   const candidateParents = [
     parentToolCallId,
@@ -629,8 +660,41 @@ function activityGroupIdFor(
   return undefined
 }
 
+/** A transcript projection that takes in its log a few events at a time. */
+export interface TranscriptBuilder {
+  /** Takes in events that follow every event applied so far. */
+  apply(events: readonly SessionEvent[]): void
+  /**
+   * The transcript as of the events applied so far. Its rows are frozen, and
+   * one that has not changed since the previous call is that call's row again,
+   * so a snapshot of a long history copies only what changed.
+   */
+  messages(): ChatMessage[]
+}
+
 /** Provider-owned events, shared by tmux/discovery and SDK history hydration. */
-export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
+export function messagesFromHistory(events: readonly SessionEvent[]): ChatMessage[] {
+  const builder = createTranscriptBuilder()
+  builder.apply(events)
+  return builder.messages()
+}
+
+/** A row as handed out: a frozen copy the builder never changes afterwards. */
+function publishedMessage(message: ChatMessage): ChatMessage {
+  const copy = { ...message }
+  // The only nested value the builder writes.
+  if (message.taskCompletion) {
+    copy.taskCompletion = Object.freeze({ ...message.taskCompletion })
+  }
+  return Object.freeze(copy)
+}
+
+/**
+ * `messagesFromHistory` as state that persists between calls, so a growing log
+ * costs only its new events. Applying a log in any number of pieces gives the
+ * same transcript as applying it whole.
+ */
+export function createTranscriptBuilder(): TranscriptBuilder {
   const messages: ChatMessage[] = []
   const taskCompletionSummaries = new Map<string, string>()
   const pendingTaskCompletions = new Map<
@@ -649,33 +713,47 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
     ActivityToolStart
   >()
   const subagentParentsByAgentId = new Map<string, string>()
-  for (const event of events) {
-    if (event.type === 'tool.execution_start') {
-      toolStartsByCallId.set(event.data.toolCallId, {
-        kind: activityKind(event.data),
-        parentToolCallId: stringValue(
-          recordValue(event.data).parentToolCallId,
-        ),
-        toolCallId: event.data.toolCallId,
-      })
-    } else if (event.type === 'subagent.started' && event.agentId) {
-      subagentParentsByAgentId.set(event.agentId, event.data.toolCallId)
-    }
+  // A row's group is read from what each call and agent was started as, and a
+  // start logged after the row can change it. The starts every grouping
+  // consulted are remembered, so the rows are regrouped only when a later
+  // start changes one of those.
+  const groupedRows: Array<{
+    message: ChatMessage
+    parentToolCallId?: string
+    agentId?: string
+  }> = []
+  const consultedCalls = new Set<string>()
+  const consultedAgents = new Set<string>()
+  let regroup = false
+  const consultedStarts = {
+    get: (toolCallId: string) => {
+      consultedCalls.add(toolCallId)
+      return toolStartsByCallId.get(toolCallId)
+    },
   }
-  const activityGroupId = (event: SessionEvent): string | undefined => {
-    return activityGroupIdFor(
-      stringValue(recordValue(event.data).parentToolCallId),
-      event.agentId,
-      toolStartsByCallId,
-      subagentParentsByAgentId,
-    )
+  const consultedParents = {
+    get: (agentId: string) => {
+      consultedAgents.add(agentId)
+      return subagentParentsByAgentId.get(agentId)
+    },
   }
+  const activityGroupId = (
+    parentToolCallId: string | undefined,
+    agentId: string | undefined,
+  ): string | undefined =>
+    activityGroupIdFor(parentToolCallId, agentId, consultedStarts, consultedParents)
   // Every running activity, and the first message for each ID, so neither
   // finishing activities nor completing a tool rescans the whole transcript.
   // Long histories otherwise cost time quadratic in their length.
   const runningActivities = new Set<ChatMessage>()
   const messagesById = new Map<string, ChatMessage>()
+  // What the last snapshot handed out, where each row sits, and the rows
+  // changed since.
+  let published: ChatMessage[] = []
+  const positions = new Map<ChatMessage, number>()
+  const changed = new Set<ChatMessage>()
   const append = (message: ChatMessage) => {
+    positions.set(message, messages.length)
     messages.push(message)
     if (!messagesById.has(message.id)) messagesById.set(message.id, message)
     if (message.role === 'activity' && message.activityStatus === 'running') {
@@ -687,6 +765,7 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
   ) => {
     for (const message of runningActivities) {
       message.activityStatus = activityStatus
+      changed.add(message)
     }
     runningActivities.clear()
   }
@@ -709,151 +788,323 @@ export function messagesFromHistory(events: SessionEvent[]): ChatMessage[] {
       toolCallId,
       completedAt,
     }
+    changed.add(message)
   }
-  for (const event of events) {
-    if (event.type === 'user.message') {
-      if (stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
+  const apply = (events: readonly SessionEvent[]): void => {
+    for (const event of events) {
+      if (event.type === 'tool.execution_start') {
+        const start: ActivityToolStart = {
+          kind: activityKind(event.data),
+          parentToolCallId: stringValue(
+            recordValue(event.data).parentToolCallId,
+          ),
+          toolCallId: event.data.toolCallId,
+        }
+        const previous = toolStartsByCallId.get(start.toolCallId)
+        regroup ||= consultedCalls.has(start.toolCallId) && (
+          previous?.kind !== start.kind ||
+          previous.parentToolCallId !== start.parentToolCallId
+        )
+        toolStartsByCallId.set(start.toolCallId, start)
+      } else if (event.type === 'subagent.started' && event.agentId) {
+        regroup ||= consultedAgents.has(event.agentId) &&
+          subagentParentsByAgentId.get(event.agentId) !== event.data.toolCallId
+        subagentParentsByAgentId.set(event.agentId, event.data.toolCallId)
+      }
+    }
+    for (const event of events) {
+      if (event.type === 'user.message') {
+        if (stringValue(recordValue(event.data).source)?.startsWith('agent-')) {
+          continue
+        }
+        pendingTaskCompletions.clear()
+        const content = visibleUserContent(event.data.content)
+        if (content) {
+          finishRunningActivities()
+          append({
+            id: event.id,
+            role: 'user',
+            content,
+            createdAt: event.timestamp,
+            deliveryConfirmed: true,
+          })
+        }
         continue
       }
-      pendingTaskCompletions.clear()
-      const content = visibleUserContent(event.data.content)
-      if (content) {
-        finishRunningActivities()
-        append({
-          id: event.id,
-          role: 'user',
-          content,
-          createdAt: event.timestamp,
-          deliveryConfirmed: true,
-        })
-      }
-      continue
-    }
-    if (event.type === 'assistant.message' && !eventAgentId(event)) {
-      const content = event.data.content.trim()
-      if (content) {
-        finishRunningActivities()
-        append({
-          id: event.data.messageId || event.id,
-          role: 'assistant',
-          content,
-          createdAt: event.timestamp,
-        })
-      }
-      continue
-    }
-    if (event.type === 'tool.execution_start') {
-      const toolCallId = event.data.toolCallId
-      const toolName = event.data.toolName
-        .toLowerCase()
-        .replaceAll('-', '_')
-      if (toolName === 'task_complete' && !eventAgentId(event)) {
-        const summary = stringValue(
-          recordValue(event.data.arguments).summary,
-        )?.trim()
-        taskCompletionSummaries.set(toolCallId, summary || '')
-      }
-      append({
-        id: `tool:${toolCallId}`,
-        role: 'activity',
-        content: toolActivityContent(event.data),
-        createdAt: event.timestamp,
-        activityStatus: 'running',
-        activityKind: activityKind(event.data),
-        activityGroupId: activityGroupId(event),
-      })
-      continue
-    }
-    if (event.type === 'tool.execution_complete') {
-      const toolCallId = event.data.toolCallId
-      const message = messagesById.get(`tool:${toolCallId}`)
-      if (message) {
-        runningActivities.delete(message)
-        message.activityStatus = event.data.success ? 'completed' : 'failed'
-        const resultContent = activityResult(event.data, event.data.success)
-        const duration = activityDuration(message.createdAt, event.timestamp)
-        if (resultContent) {
-          message.activityResult = resultContent
-        }
-        if (duration !== undefined) {
-          message.activityDurationMs = duration
-        }
-        if (event.data.success && taskCompletionSummaries.has(toolCallId)) {
-          const fallbackSummary =
-            taskCompletionSummaries.get(toolCallId) || undefined
-          if (fallbackSummary) {
-            finishRunningActivities()
-          }
-          pendingTaskCompletions.set(event.id, {
-            activityContent: message.content,
-            completedAt: event.timestamp,
-            fallbackSummary,
-            message,
-            startedAt: message.createdAt,
-            toolCallId,
+      if (event.type === 'assistant.message' && !eventAgentId(event)) {
+        const content = event.data.content.trim()
+        if (content) {
+          finishRunningActivities()
+          append({
+            id: event.data.messageId || event.id,
+            role: 'assistant',
+            content,
+            createdAt: event.timestamp,
           })
-          if (fallbackSummary) {
-            renderTaskCompletion(
-              message,
-              toolCallId,
+        }
+        continue
+      }
+      if (event.type === 'tool.execution_start') {
+        const toolCallId = event.data.toolCallId
+        const toolName = event.data.toolName
+          .toLowerCase()
+          .replaceAll('-', '_')
+        if (toolName === 'task_complete' && !eventAgentId(event)) {
+          const summary = stringValue(
+            recordValue(event.data.arguments).summary,
+          )?.trim()
+          taskCompletionSummaries.set(toolCallId, summary || '')
+        }
+        const parentToolCallId = stringValue(
+          recordValue(event.data).parentToolCallId,
+        )
+        const message: ChatMessage = {
+          id: `tool:${toolCallId}`,
+          role: 'activity',
+          content: toolActivityContent(event.data),
+          createdAt: event.timestamp,
+          activityStatus: 'running',
+          activityKind: activityKind(event.data),
+          activityGroupId: activityGroupId(parentToolCallId, event.agentId),
+        }
+        append(message)
+        groupedRows.push({ message, parentToolCallId, agentId: event.agentId })
+        continue
+      }
+      if (event.type === 'tool.execution_complete') {
+        const toolCallId = event.data.toolCallId
+        const message = messagesById.get(`tool:${toolCallId}`)
+        if (message) {
+          runningActivities.delete(message)
+          changed.add(message)
+          message.activityStatus = event.data.success ? 'completed' : 'failed'
+          const resultContent = activityResult(event.data, event.data.success)
+          const duration = activityDuration(message.createdAt, event.timestamp)
+          if (resultContent) {
+            message.activityResult = resultContent
+          }
+          if (duration !== undefined) {
+            message.activityDurationMs = duration
+          }
+          if (event.data.success && taskCompletionSummaries.has(toolCallId)) {
+            const fallbackSummary =
+              taskCompletionSummaries.get(toolCallId) || undefined
+            if (fallbackSummary) {
+              finishRunningActivities()
+            }
+            pendingTaskCompletions.set(event.id, {
+              activityContent: message.content,
+              completedAt: event.timestamp,
               fallbackSummary,
-              event.timestamp,
-            )
+              message,
+              startedAt: message.createdAt,
+              toolCallId,
+            })
+            if (fallbackSummary) {
+              renderTaskCompletion(
+                message,
+                toolCallId,
+                fallbackSummary,
+                event.timestamp,
+              )
+            }
           }
         }
       }
-    }
-    if (event.type === 'session.task_complete' && !eventAgentId(event)) {
-      const completionEventId =
-        event.parentId && pendingTaskCompletions.has(event.parentId)
-          ? event.parentId
-        : pendingTaskCompletions.size === 1
-          ? pendingTaskCompletions.keys().next().value
+      if (event.type === 'session.task_complete' && !eventAgentId(event)) {
+        const completionEventId =
+          event.parentId && pendingTaskCompletions.has(event.parentId)
+            ? event.parentId
+          : pendingTaskCompletions.size === 1
+            ? pendingTaskCompletions.keys().next().value
+            : undefined
+        const completion = completionEventId
+          ? pendingTaskCompletions.get(completionEventId)
           : undefined
-      const completion = completionEventId
-        ? pendingTaskCompletions.get(completionEventId)
-        : undefined
-      const summary =
-        event.data.summary?.trim() || completion?.fallbackSummary
-      if (completion && summary && taskCompletionAccepted(event)) {
-        renderTaskCompletion(
-          completion.message,
-          completion.toolCallId,
-          summary,
-          completion.completedAt,
-          !completion.fallbackSummary,
-        )
-      } else if (completion?.fallbackSummary) {
-        completion.message.role = 'activity'
-        completion.message.content = completion.activityContent
-        completion.message.createdAt = completion.startedAt
-        completion.message.activityStatus = 'completed'
-        delete completion.message.taskCompletion
+        const summary =
+          event.data.summary?.trim() || completion?.fallbackSummary
+        if (completion && summary && taskCompletionAccepted(event)) {
+          renderTaskCompletion(
+            completion.message,
+            completion.toolCallId,
+            summary,
+            completion.completedAt,
+            !completion.fallbackSummary,
+          )
+        } else if (completion?.fallbackSummary) {
+          completion.message.role = 'activity'
+          completion.message.content = completion.activityContent
+          completion.message.createdAt = completion.startedAt
+          completion.message.activityStatus = 'completed'
+          delete completion.message.taskCompletion
+          changed.add(completion.message)
+        }
+        if (completionEventId) {
+          pendingTaskCompletions.delete(completionEventId)
+        }
       }
-      if (completionEventId) {
-        pendingTaskCompletions.delete(completionEventId)
+      if (
+        event.type === 'assistant.turn_end' ||
+        event.type === 'session.idle' ||
+        event.type === 'abort' ||
+        event.type === 'session.error' ||
+        event.type === 'session.shutdown'
+      ) {
+        if (!eventAgentId(event)) {
+          pendingTaskCompletions.clear()
+        }
+        finishRunningActivities(
+          event.type === 'abort' ||
+            event.type === 'session.error' ||
+            event.type === 'session.shutdown'
+            ? 'failed'
+            : 'completed',
+        )
       }
     }
-    if (
-      event.type === 'assistant.turn_end' ||
-      event.type === 'session.idle' ||
-      event.type === 'abort' ||
-      event.type === 'session.error' ||
-      event.type === 'session.shutdown'
-    ) {
-      if (!eventAgentId(event)) {
-        pendingTaskCompletions.clear()
+    if (regroup) {
+      regroup = false
+      for (const row of groupedRows) {
+        const groupId = activityGroupId(row.parentToolCallId, row.agentId)
+        if (row.message.activityGroupId !== groupId) {
+          row.message.activityGroupId = groupId
+          changed.add(row.message)
+        }
       }
-      finishRunningActivities(
-        event.type === 'abort' ||
-          event.type === 'session.error' ||
-          event.type === 'session.shutdown'
-          ? 'failed'
-          : 'completed',
-      )
     }
   }
-  return messages
+  const snapshot = (): ChatMessage[] => {
+    const next = published.slice()
+    for (const message of changed) {
+      const position = positions.get(message)
+      if (position !== undefined && position < published.length) {
+        next[position] = publishedMessage(message)
+      }
+    }
+    for (let position = published.length; position < messages.length; position += 1) {
+      next.push(publishedMessage(messages[position]))
+    }
+    changed.clear()
+    published = next
+    return next.slice()
+  }
+  return { apply, messages: snapshot }
+}
+
+// Projections kept for this many tmux sessions at once, as for parsed logs.
+const MAX_EVENT_PROJECTIONS = 16
+
+/**
+ * What a tmux session's event log projects to, kept between reads so a growing
+ * log costs only its new events. It holds no copy of the events themselves.
+ */
+export class SessionEventProjection {
+  private firstId?: string
+  private lastId?: string
+  private count = 0
+  private readonly backgroundTasks = createBackgroundTaskProjector({ assumeBackground: true })
+  private readonly transcript = createTranscriptBuilder()
+  private readonly question = createPendingUserInputTracker()
+  // An empty-response notice is judged by the tasks as of the notice itself,
+  // so the tasks are kept in step with the status: see `takeIn`.
+  private readonly lifecycle = createStatusTracker(() =>
+    this.backgroundTasks.tasks(Infinity).some(isLiveTask))
+  private readonly runtimeTracker = createRuntimeTracker()
+  private cwd?: string
+  private changedFolder = false
+  private latestCompletion?: number
+
+  /**
+   * Whether `events` continue the log taken in so far: the same first event,
+   * no fewer events, and the last one taken in still in its place. A log
+   * rewritten, shrunk or replaced does not, and is projected afresh.
+   */
+  continues(events: readonly SessionEvent[]): boolean {
+    if (this.count === 0) return true
+    return Boolean(this.firstId && this.lastId) &&
+      this.count <= events.length &&
+      events[0]?.id === this.firstId &&
+      events[this.count - 1]?.id === this.lastId
+  }
+
+  /** Takes in the events that follow those already taken in. */
+  takeIn(events: readonly SessionEvent[]): void {
+    if (events.length <= this.count) return
+    // Split after each empty-response notice, so the status reads the tasks
+    // as of the notice rather than as of the end of what was appended.
+    let start = this.count
+    for (let index = start; index < events.length; index += 1) {
+      if (!isEmptyResponseNotice(events[index])) continue
+      this.apply(events.slice(start, index + 1))
+      start = index + 1
+    }
+    if (start < events.length) this.apply(events.slice(start))
+    if (this.count === 0) this.firstId = events[0]?.id
+    this.count = events.length
+    this.lastId = events[events.length - 1]?.id
+  }
+
+  private apply(events: readonly SessionEvent[]): void {
+    this.backgroundTasks.apply(events)
+    this.transcript.apply(events)
+    this.question.apply(events)
+    this.lifecycle.apply(events)
+    this.runtimeTracker.apply(events)
+    for (const event of events) {
+      if (eventAgentId(event)) continue
+      if (event.type === 'session.start' || event.type === 'session.resume') {
+        this.cwd = stringValue(recordValue(recordValue(event.data).context).cwd) || this.cwd
+      } else if (event.type === 'session.context_changed') {
+        this.cwd = stringValue(recordValue(event.data).cwd) || this.cwd
+        this.changedFolder = true
+      }
+      if (isForegroundCompletionEvent(event)) {
+        const time = Date.parse(event.timestamp)
+        if (
+          !Number.isNaN(time) &&
+          (this.latestCompletion === undefined || time > this.latestCompletion)
+        ) {
+          this.latestCompletion = time
+        }
+      }
+    }
+  }
+
+  tasks(limit?: number): BackgroundTask[] {
+    return this.backgroundTasks.tasks(limit)
+  }
+
+  messages(): ChatMessage[] {
+    return this.transcript.messages()
+  }
+
+  pendingUserInput(): PendingUserInput | undefined {
+    return this.question.pending()
+  }
+
+  status(): SessionStatus {
+    return this.lifecycle.status()
+  }
+
+  /** As `runtimeInfoFromEvents`, for the events taken in so far. */
+  runtime(): RuntimeProjection {
+    return this.runtimeTracker.runtime()
+  }
+
+  /** As `workingDirectoryFromEvents`. */
+  workingDirectory(fallback: string | undefined): string | undefined {
+    return this.cwd || fallback
+  }
+
+  /** As `contextChangedInEvents`. */
+  contextChanged(): boolean {
+    return this.changedFolder
+  }
+
+  /** As `foregroundCompletedSince`. */
+  foregroundCompletedSince(time: number): boolean {
+    return this.latestCompletion !== undefined && this.latestCompletion >= time
+  }
 }
 
 function stringArray(value: unknown): string[] {
@@ -1132,9 +1383,23 @@ function validateUserInputForm(
   }
 }
 
+/** `pendingUserInputFromEvents` that takes in its log a few events at a time. */
+export interface PendingUserInputTracker {
+  /** Takes in events that follow every event applied so far. */
+  apply(events: readonly SessionEvent[]): void
+  /** The question still waiting as of the events applied so far, as a copy. */
+  pending(): PendingUserInput | undefined
+}
+
 export function pendingUserInputFromEvents(
-  events: SessionEvent[],
+  events: readonly SessionEvent[],
 ): PendingUserInput | undefined {
+  const tracker = createPendingUserInputTracker()
+  tracker.apply(events)
+  return tracker.pending()
+}
+
+export function createPendingUserInputTracker(): PendingUserInputTracker {
   const pendingInputFromTool = (
     toolCallIdValue: unknown,
     toolNameValue: unknown,
@@ -1193,57 +1458,63 @@ export function pendingUserInputFromEvents(
         input: PendingUserInput
       }
     | undefined
-  for (const event of events) {
-    if (eventAgentId(event)) {
-      continue
-    }
-    if (event.type === 'user.message') {
-      pending = undefined
-      continue
-    }
-    if (event.type === 'assistant.message') {
-      const toolRequests = recordValue(event.data).toolRequests
-      if (Array.isArray(toolRequests)) {
-        for (const requestValue of toolRequests) {
-          const request = recordValue(requestValue)
+  return {
+    apply(events) {
+      for (const event of events) {
+        if (eventAgentId(event)) {
+          continue
+        }
+        if (event.type === 'user.message') {
+          pending = undefined
+          continue
+        }
+        if (event.type === 'assistant.message') {
+          const toolRequests = recordValue(event.data).toolRequests
+          if (Array.isArray(toolRequests)) {
+            for (const requestValue of toolRequests) {
+              const request = recordValue(requestValue)
+              const next = pendingInputFromTool(
+                request.toolCallId,
+                request.name || request.toolName,
+                request.arguments,
+              )
+              if (next) {
+                pending = next
+              }
+            }
+          }
+          continue
+        }
+        if (event.type === 'tool.execution_start') {
+          const data = recordValue(event.data)
           const next = pendingInputFromTool(
-            request.toolCallId,
-            request.name || request.toolName,
-            request.arguments,
+            data.toolCallId,
+            data.toolName,
+            data.arguments,
           )
           if (next) {
             pending = next
           }
+          continue
+        }
+        if (
+          event.type === 'tool.execution_complete' &&
+          pending?.toolCallId === stringValue(recordValue(event.data).toolCallId)
+        ) {
+          pending = undefined
+        } else if (
+          event.type === 'abort' ||
+          event.type === 'session.error' ||
+          event.type === 'session.shutdown'
+        ) {
+          pending = undefined
         }
       }
-      continue
-    }
-    if (event.type === 'tool.execution_start') {
-      const data = recordValue(event.data)
-      const next = pendingInputFromTool(
-        data.toolCallId,
-        data.toolName,
-        data.arguments,
-      )
-      if (next) {
-        pending = next
-      }
-      continue
-    }
-    if (
-      event.type === 'tool.execution_complete' &&
-      pending?.toolCallId === stringValue(recordValue(event.data).toolCallId)
-    ) {
-      pending = undefined
-    } else if (
-      event.type === 'abort' ||
-      event.type === 'session.error' ||
-      event.type === 'session.shutdown'
-    ) {
-      pending = undefined
-    }
+    },
+    pending() {
+      return pending && structuredClone(pending.input)
+    },
   }
-  return pending?.input
 }
 
 /**
@@ -1579,89 +1850,136 @@ function isEmptyResponseNotice(event: SessionEvent): boolean {
   return data.errorType === 'query' && data.message === EMPTY_RESPONSE_NOTICE
 }
 
-export function statusFromEvents(events: SessionEvent[]): SessionStatus {
+function isLiveTask(task: BackgroundTask): boolean {
+  return task.status === 'running' || task.status === 'queued'
+}
+
+/** `statusFromEvents` that takes in its log a few events at a time. */
+export interface StatusTracker {
+  /** Takes in events that follow every event applied so far. */
+  apply(events: readonly SessionEvent[]): void
+  /**
+   * The status as of the events applied so far. `tasksLiveAt` answers whether
+   * background tasks were running as of an event, for a tracker that could
+   * not ask as it took that event in.
+   */
+  status(tasksLiveAt?: (index: number) => boolean): SessionStatus
+}
+
+export function statusFromEvents(events: readonly SessionEvent[]): SessionStatus {
+  const tracker = createStatusTracker()
+  tracker.apply(events)
+  return tracker.status((index) =>
+    backgroundTasksFromEvents(events.slice(0, index + 1), {
+      assumeBackground: true,
+      limit: Infinity,
+    }).some(isLiveTask))
+}
+
+/**
+ * `tasksLive`, when given, answers whether background tasks are running as of
+ * the event being taken in. A projection that keeps its tasks in step with the
+ * tracker passes it, so an empty-response notice is judged as it is taken in.
+ */
+export function createStatusTracker(tasksLive?: () => boolean): StatusTracker {
   let status: SessionStatus = 'idle'
   // Work a turn handed to background agents outlives the turn itself, so the
   // agents still running are tracked separately from it.
   const workingAgents = new Set<string>()
   // Set while the latest foreground event is Copilot's empty-response notice:
-  // where it is, and whether background agents were working when it came.
-  let emptyResponse: { index: number; agentsWorking: boolean } | undefined
-  for (const [index, event] of events.entries()) {
-    if (event.type === 'session.start' || event.type === 'session.resume') {
-      workingAgents.clear()
-      status = 'idle'
-      emptyResponse = undefined
-      continue
-    }
-    if (!isForegroundLifecycleEvent(event)) {
-      const agentId = eventAgentId(event)
-      if (agentId) {
-        if (event.type === 'subagent.started') {
-          workingAgents.add(agentId)
-        } else if (
-          event.type === 'subagent.completed' ||
-          event.type === 'subagent.failed'
-        ) {
-          // Failing ends an agent just as completing does. Tracking only the
-          // completions would leave a failed agent working for good, and the
-          // session running with it.
-          workingAgents.delete(agentId)
+  // where it is, whether background agents were working when it came, and
+  // whether background tasks were, if that was asked then.
+  let emptyResponse:
+    | { index: number; agentsWorking: boolean; tasksLive?: boolean }
+    | undefined
+  let applied = 0
+  return {
+    apply(events) {
+      for (const event of events) {
+        const index = applied
+        applied += 1
+        if (event.type === 'session.start' || event.type === 'session.resume') {
+          workingAgents.clear()
+          status = 'idle'
+          emptyResponse = undefined
+          continue
+        }
+        if (!isForegroundLifecycleEvent(event)) {
+          const agentId = eventAgentId(event)
+          if (agentId) {
+            if (event.type === 'subagent.started') {
+              workingAgents.add(agentId)
+            } else if (
+              event.type === 'subagent.completed' ||
+              event.type === 'subagent.failed'
+            ) {
+              // Failing ends an agent just as completing does. Tracking only the
+              // completions would leave a failed agent working for good, and the
+              // session running with it.
+              workingAgents.delete(agentId)
+            }
+          }
+          continue
+        }
+        emptyResponse = isEmptyResponseNotice(event)
+          ? {
+              index,
+              agentsWorking: workingAgents.size > 0,
+              ...(workingAgents.size === 0 && tasksLive
+                ? { tasksLive: tasksLive() }
+                : {}),
+            }
+          : undefined
+        switch (event.type) {
+          case 'assistant.turn_start':
+            status = 'running'
+            break
+          case 'permission.requested':
+            status = 'waiting'
+            break
+          case 'permission.completed':
+            status = 'running'
+            break
+          case 'session.error':
+            status = 'error'
+            break
+          case 'assistant.turn_end':
+          case 'session.idle':
+            status = 'idle'
+            break
+          case 'abort':
+          case 'session.shutdown':
+            // Nothing outlives the session ending, so agents it was waiting on
+            // are not still working.
+            workingAgents.clear()
+            status = 'idle'
+            break
         }
       }
-      continue
-    }
-    emptyResponse = isEmptyResponseNotice(event)
-      ? { index, agentsWorking: workingAgents.size > 0 }
-      : undefined
-    switch (event.type) {
-      case 'assistant.turn_start':
-        status = 'running'
-        break
-      case 'permission.requested':
-        status = 'waiting'
-        break
-      case 'permission.completed':
-        status = 'running'
-        break
-      case 'session.error':
-        status = 'error'
-        break
-      case 'assistant.turn_end':
-      case 'session.idle':
-        status = 'idle'
-        break
-      case 'abort':
-      case 'session.shutdown':
-        // Nothing outlives the session ending, so agents it was waiting on
-        // are not still working.
-        workingAgents.clear()
-        status = 'idle'
-        break
-    }
+    },
+    status(tasksLiveAt) {
+      let current = status
+      if (
+        current === 'error' &&
+        emptyResponse &&
+        (emptyResponse.agentsWorking ||
+          (emptyResponse.tasksLive ?? tasksLiveAt?.(emptyResponse.index) ?? false))
+      ) {
+        // A steer typed over a foreground command makes Copilot move the command
+        // to the background and tell the model to wait for it, so the turn that
+        // reads the steer often returns nothing. The work it waits on finishing
+        // starts the turn that answers, so this is the session waiting on its
+        // background work, as when the turn says so in words. Decided as of the
+        // notice: judged afresh, it would flash back to an error in the moment
+        // between that work finishing and the next turn starting.
+        current = 'idle'
+      }
+      // A turn that handed its work to background agents and then ended has not
+      // finished it. Reporting the session as idle offers it for the next prompt
+      // and calls the work done while it is still going on.
+      return current === 'idle' && workingAgents.size > 0 ? 'running' : current
+    },
   }
-  if (
-    status === 'error' &&
-    emptyResponse &&
-    (emptyResponse.agentsWorking ||
-      backgroundTasksFromEvents(events.slice(0, emptyResponse.index + 1), {
-        assumeBackground: true,
-        limit: Infinity,
-      }).some((task) => task.status === 'running' || task.status === 'queued'))
-  ) {
-    // A steer typed over a foreground command makes Copilot move the command
-    // to the background and tell the model to wait for it, so the turn that
-    // reads the steer often returns nothing. The work it waits on finishing
-    // starts the turn that answers, so this is the session waiting on its
-    // background work, as when the turn says so in words. Decided as of the
-    // notice: judged afresh, it would flash back to an error in the moment
-    // between that work finishing and the next turn starting.
-    status = 'idle'
-  }
-  // A turn that handed its work to background agents and then ended has not
-  // finished it. Reporting the session as idle offers it for the next prompt
-  // and calls the work done while it is still going on.
-  return status === 'idle' && workingAgents.size > 0 ? 'running' : status
 }
 
 /**
@@ -1693,11 +2011,13 @@ export function foregroundTurnOpen(events: SessionEvent[]): boolean {
  * not only the panel's newest: a woken agent keeps its first start, and
  * shells started since can push it out of that list while it works.
  */
-function backgroundShellsEvidence(events: SessionEvent[]): BackgroundShellsEvidence {
-  const live = backgroundTasksFromEvents(events, { assumeBackground: true, limit: Infinity })
-    .filter((task) => task.status === 'running' || task.status === 'queued')
+function backgroundShellsEvidence(
+  tasks: readonly BackgroundTask[],
+  status: SessionStatus,
+): BackgroundShellsEvidence {
+  const live = tasks.filter(isLiveTask)
   return {
-    turnOver: statusFromEvents(events) === 'idle' && !live.some((task) => task.type === 'agent'),
+    turnOver: status === 'idle' && !live.some((task) => task.type === 'agent'),
     shellsRunning: live.some((task) => task.type === 'shell'),
   }
 }
@@ -1754,8 +2074,9 @@ function eventContextLength(event: SessionEvent): number {
   return 0
 }
 
-function workingDirectoryFromEvents(
-  events: SessionEvent[],
+/** The session's own working folder, as the log last named it. */
+export function workingDirectoryFromEvents(
+  events: readonly SessionEvent[],
   fallback?: string,
 ): string | undefined {
   let cwd = fallback
@@ -1773,123 +2094,228 @@ function workingDirectoryFromEvents(
   return cwd
 }
 
-function estimatedContextTokens(events: SessionEvent[]): number | undefined {
-  let baselineIndex = -1
-  let baselineTokens = 0
-  const completedIndex = events.findLastIndex(
+/** Whether the session itself, not one of its agents, changed folder. */
+export function contextChangedInEvents(events: readonly SessionEvent[]): boolean {
+  return events.some(
     (event) =>
-      event.type === 'session.compaction_complete' &&
-      recordValue(event.data).success === true,
+      event.type === 'session.context_changed' &&
+      !eventAgentId(event),
   )
-  if (completedIndex >= 0) {
-    const complete = recordValue(events[completedIndex].data)
-    const start = events
-      .slice(0, completedIndex)
-      .findLast((event) => event.type === 'session.compaction_start')
-    const startData = recordValue(start?.data)
-    baselineTokens =
-      (numberValue(startData.systemTokens) || 0) +
-      (numberValue(startData.toolDefinitionsTokens) || 0) +
-      Math.ceil(contextTextLength(complete.summaryContent) / 4)
-    baselineIndex = completedIndex
-  } else {
-    const startIndex = events.findLastIndex(
-      (event) => event.type === 'session.compaction_start',
-    )
-    if (startIndex >= 0) {
-      const startData = recordValue(events[startIndex].data)
-      baselineTokens =
-        (numberValue(startData.systemTokens) || 0) +
-        (numberValue(startData.conversationTokens) || 0) +
-        (numberValue(startData.toolDefinitionsTokens) || 0)
-      baselineIndex = startIndex
-    }
+}
+
+/** Whether the foreground finished a turn at or after `time`. */
+export function foregroundCompletedSince(
+  events: readonly SessionEvent[],
+  time: number,
+): boolean {
+  return events.some(
+    (event) =>
+      Date.parse(event.timestamp) >= time &&
+      isForegroundCompletionEvent(event),
+  )
+}
+
+/**
+ * The context the log adds up to: the last successful compaction's summary,
+ * or else the last compaction started, and everything said since, kept up as
+ * the log goes by.
+ */
+function createContextEstimate() {
+  let total = 0
+  let sinceStart = 0
+  let sinceCompleted = 0
+  let lastStart: Record<string, unknown> | undefined
+  let completedTokens: number | undefined
+  return {
+    add(event: SessionEvent): void {
+      const length = eventContextLength(event)
+      total += length
+      sinceStart += length
+      sinceCompleted += length
+      if (event.type === 'session.compaction_start') {
+        lastStart = recordValue(event.data)
+        sinceStart = 0
+      } else if (
+        event.type === 'session.compaction_complete' &&
+        recordValue(event.data).success === true
+      ) {
+        // Counted from the compaction started before it.
+        const startData = recordValue(lastStart)
+        completedTokens =
+          (numberValue(startData.systemTokens) || 0) +
+          (numberValue(startData.toolDefinitionsTokens) || 0) +
+          Math.ceil(contextTextLength(recordValue(event.data).summaryContent) / 4)
+        sinceCompleted = 0
+      }
+    },
+    estimate(): number | undefined {
+      let baselineTokens = 0
+      let addedCharacters = total
+      if (completedTokens !== undefined) {
+        baselineTokens = completedTokens
+        addedCharacters = sinceCompleted
+      } else if (lastStart) {
+        baselineTokens =
+          (numberValue(lastStart.systemTokens) || 0) +
+          (numberValue(lastStart.conversationTokens) || 0) +
+          (numberValue(lastStart.toolDefinitionsTokens) || 0)
+        addedCharacters = sinceStart
+      }
+      const estimate = baselineTokens + Math.ceil(addedCharacters / 4)
+      return estimate > 0 ? estimate : undefined
+    },
   }
-  const addedCharacters = events
-    .slice(baselineIndex + 1)
-    .reduce((total, event) => total + eventContextLength(event), 0)
-  const estimate = baselineTokens + Math.ceil(addedCharacters / 4)
-  return estimate > 0 ? estimate : undefined
+}
+
+/** The runtime a log gives, over what was stored before it. */
+export type RuntimeProjection = (
+  previous: SessionRuntimeInfo | undefined,
+  modelLimits?: ReadonlyMap<string, ModelPromptLimits>,
+  estimateContext?: boolean,
+) => SessionRuntimeInfo | undefined
+
+/** `runtimeInfoFromEvents` that takes in its log a few events at a time. */
+export interface RuntimeTracker {
+  /** Takes in events that follow every event applied so far. */
+  apply(events: readonly SessionEvent[]): void
+  /**
+   * The runtime as of the events applied so far, unaffected by any applied
+   * later: a caller that waits before using it still gets what it read.
+   */
+  runtime(): RuntimeProjection
 }
 
 export function runtimeInfoFromEvents(
-  events: SessionEvent[],
+  events: readonly SessionEvent[],
   previous: SessionRuntimeInfo | undefined,
   modelLimits: ReadonlyMap<string, ModelPromptLimits> = new Map(),
   estimateContext = true,
 ): SessionRuntimeInfo | undefined {
-  const runtime: SessionRuntimeInfo = { ...previous }
-  let exactContext = false
-  for (const event of events) {
-    if (eventAgentId(event)) {
-      continue
-    }
-    const data = recordValue(event.data)
-    if (event.type === 'session.start') {
-      runtime.model = stringValue(data.selectedModel) || runtime.model
-      runtime.reasoningEffort =
-        stringValue(data.reasoningEffort) || runtime.reasoningEffort
-      runtime.contextTier =
-        stringValue(data.contextTier) || runtime.contextTier
-    } else if (event.type === 'session.resume') {
-      runtime.model = stringValue(data.selectedModel) || runtime.model
-      runtime.reasoningEffort =
-        stringValue(data.reasoningEffort) || runtime.reasoningEffort
-      runtime.contextTier =
-        stringValue(data.contextTier) || runtime.contextTier
-    } else if (event.type === 'session.model_change') {
-      runtime.model = stringValue(data.newModel) || runtime.model
-      runtime.reasoningEffort =
-        stringValue(data.reasoningEffort) || runtime.reasoningEffort
-      runtime.contextTier =
-        stringValue(data.contextTier) || runtime.contextTier
-    } else if (event.type === 'session.mode_changed') {
-      runtime.mode = stringValue(data.newMode) || runtime.mode
-    } else if (
-      event.type === 'session.permissions_changed' &&
-      typeof data.allowAllPermissions === 'boolean'
-    ) {
-      runtime.allowAllPermissions = data.allowAllPermissions
-    } else if (
-      event.type === 'assistant.message' ||
-      event.type === 'tool.execution_start'
-    ) {
-      runtime.model = stringValue(data.model) || runtime.model
-    } else if (event.type === 'session.usage_info') {
-      runtime.contextTokens =
-        numberValue(data.currentTokens) || runtime.contextTokens
-      runtime.contextTokenLimit =
-        numberValue(data.tokenLimit) || runtime.contextTokenLimit
-      runtime.contextEstimated = false
-      exactContext = true
-    }
-  }
-  const limits = runtime.model ? modelLimits.get(runtime.model) : undefined
-  if (
-    !exactContext &&
-    limits &&
-    previous?.contextEstimated !== false
-  ) {
-    runtime.contextTokenLimit =
-      runtime.contextTier === 'long_context'
-        ? limits.long || limits.maximum
-        : limits.default || limits.maximum
-  }
+  const tracker = createRuntimeTracker()
+  tracker.apply(events)
+  return tracker.runtime()(previous, modelLimits, estimateContext)
+}
 
-  if (
-    !exactContext &&
-    estimateContext &&
-    previous?.contextEstimated !== false
-  ) {
-    const estimate = estimatedContextTokens(events)
-    if (estimate !== undefined) {
-      runtime.contextTokens = estimate
-      runtime.contextEstimated = true
-    }
+export function createRuntimeTracker(): RuntimeTracker {
+  // Which fields the log set, and the last value it gave each. An event that
+  // gives nothing keeps what came before it, the stored runtime included.
+  const set = {
+    model: false,
+    reasoningEffort: false,
+    contextTier: false,
+    mode: false,
+    allowAllPermissions: false,
   }
-  return Object.values(runtime).some((value) => value !== undefined)
-    ? runtime
-    : undefined
+  const last: Pick<
+    SessionRuntimeInfo,
+    | 'model'
+    | 'reasoningEffort'
+    | 'contextTier'
+    | 'mode'
+    | 'allowAllPermissions'
+    | 'contextTokens'
+    | 'contextTokenLimit'
+  > = {}
+  let exactContext = false
+  const context = createContextEstimate()
+  return {
+    apply(events) {
+      for (const event of events) {
+        context.add(event)
+        if (eventAgentId(event)) {
+          continue
+        }
+        const data = recordValue(event.data)
+        if (
+          event.type === 'session.start' ||
+          event.type === 'session.resume' ||
+          event.type === 'session.model_change'
+        ) {
+          last.model =
+            stringValue(
+              event.type === 'session.model_change' ? data.newModel : data.selectedModel,
+            ) || last.model
+          last.reasoningEffort =
+            stringValue(data.reasoningEffort) || last.reasoningEffort
+          last.contextTier = stringValue(data.contextTier) || last.contextTier
+          set.model = true
+          set.reasoningEffort = true
+          set.contextTier = true
+        } else if (event.type === 'session.mode_changed') {
+          last.mode = stringValue(data.newMode) || last.mode
+          set.mode = true
+        } else if (
+          event.type === 'session.permissions_changed' &&
+          typeof data.allowAllPermissions === 'boolean'
+        ) {
+          last.allowAllPermissions = data.allowAllPermissions
+          set.allowAllPermissions = true
+        } else if (
+          event.type === 'assistant.message' ||
+          event.type === 'tool.execution_start'
+        ) {
+          last.model = stringValue(data.model) || last.model
+          set.model = true
+        } else if (event.type === 'session.usage_info') {
+          last.contextTokens =
+            numberValue(data.currentTokens) || last.contextTokens
+          last.contextTokenLimit =
+            numberValue(data.tokenLimit) || last.contextTokenLimit
+          exactContext = true
+        }
+      }
+    },
+    runtime() {
+      const logged = { ...last }
+      const fields = { ...set }
+      const exact = exactContext
+      const estimated = context.estimate()
+      return (previous, modelLimits = new Map(), estimateContext = true) => {
+        const runtime: SessionRuntimeInfo = { ...previous }
+        if (fields.model) runtime.model = logged.model || runtime.model
+        if (fields.reasoningEffort) {
+          runtime.reasoningEffort = logged.reasoningEffort || runtime.reasoningEffort
+        }
+        if (fields.contextTier) {
+          runtime.contextTier = logged.contextTier || runtime.contextTier
+        }
+        if (fields.mode) runtime.mode = logged.mode || runtime.mode
+        if (fields.allowAllPermissions) {
+          runtime.allowAllPermissions = logged.allowAllPermissions
+        }
+        if (exact) {
+          runtime.contextTokens = logged.contextTokens || runtime.contextTokens
+          runtime.contextTokenLimit =
+            logged.contextTokenLimit || runtime.contextTokenLimit
+          runtime.contextEstimated = false
+        }
+        const limits = runtime.model ? modelLimits.get(runtime.model) : undefined
+        if (
+          !exact &&
+          limits &&
+          previous?.contextEstimated !== false
+        ) {
+          runtime.contextTokenLimit =
+            runtime.contextTier === 'long_context'
+              ? limits.long || limits.maximum
+              : limits.default || limits.maximum
+        }
+
+        if (
+          !exact &&
+          estimateContext &&
+          previous?.contextEstimated !== false &&
+          estimated !== undefined
+        ) {
+          runtime.contextTokens = estimated
+          runtime.contextEstimated = true
+        }
+        return Object.values(runtime).some((value) => value !== undefined)
+          ? runtime
+          : undefined
+      }
+    },
+  }
 }
 
 function runtimeInfoMatches(
@@ -2090,7 +2516,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private readonly pendingTerminalQueueSettlements = new Map<string, PendingTerminalQueueSettlement>()
   private readonly pendingTerminalQueueClaims = new Map<string, { retryAt: number; retryDelay: number }>()
   private readonly terminalQueueRetryTimers = new Map<string, NodeJS.Timeout>()
+  /** What the reader is shown of a waiting terminal queue head. */
   private readonly terminalQueueStates = new Map<string, QueueState>()
+  /**
+   * The head each terminal queue is known to be waiting with, whether or not
+   * the reader is told: a wait for Copilot's prompt usually ends by itself.
+   */
+  private readonly terminalQueueWaits = new Map<string, string>()
+  /** When a waiting head's pane was first found empty or unreadable. */
+  private readonly terminalQueueUnreadable = new Map<string, { promptId: string; since: number }>()
+  private terminalComposerUnreadableGraceMs = TERMINAL_COMPOSER_UNREADABLE_GRACE_MS
   /** Set when the service is shutting down, so retries stop with it. */
   private stopped = false
   private startupRecoveryPending = false
@@ -2321,6 +2756,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   private discoveryGeneration = 0
   private readonly eventLogFingerprints = new Map<string, string>()
   private readonly eventLogVersions = new Map<string, string>()
+  // Each tmux session's event log as projected so far, least recently used
+  // first. Shared by the transcript refresh and the background task list.
+  private readonly eventProjections = new Map<string, SessionEventProjection>()
   private readonly workspaceVersions = new Map<string, string>()
   private readonly liveTranscriptWatermarks = new Map<string, string>()
   private readonly liveTaskCompletions = new Map<string, LiveTaskCompletion>()
@@ -2511,7 +2949,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * never discovered as a session after a restart.
    */
   private async discardSideQuestionFork(client: CopilotClientLike, forkId: string): Promise<void> {
-    forgetSessionEvents(forkId)
+    this.forgetEventLog(forkId)
     try {
       await withSideQuestionTimeout(client.deleteSession(forkId), this.sideQuestionCleanupMs)
     } catch (error) {
@@ -3067,6 +3505,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const timer of this.terminalQueueRetryTimers.values()) clearTimeout(timer)
     this.terminalQueueRetryTimers.clear()
     this.terminalQueueStates.clear()
+    this.terminalQueueWaits.clear()
+    this.terminalQueueUnreadable.clear()
     for (const session of this.store.list()) {
       this.backgroundTaskTracker.remove(session.id)
     }
@@ -3323,6 +3763,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   getSession(id: string): SessionDetail | undefined {
     const session = this.store.get(id)
     return session ? this.publicSession(session) : undefined
+  }
+
+  hasSession(id: string): boolean {
+    return this.store.has(id)
   }
 
   async openSession(id: string): Promise<SessionDetail> {
@@ -4031,7 +4475,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       suspended = true
       this.startupTerminalQueues.delete(id)
       this.clearTerminalQueueRetry(id)
-      this.terminalQueueStates.delete(id)
+      this.forgetTerminalQueueWait(id)
       this.terminalDrainRequested.delete(id)
       return result
     } finally {
@@ -4683,7 +5127,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const replacementId = randomUUID()
     this.deletedSessionIds.add(id)
     this.deletedSessionIds.add(replacementId)
-    forgetSessionEvents(id)
+    this.forgetEventLog(id)
     this.discoveryGeneration += 1
     this.pendingSessionMetadata.set(replacementId, [])
     let fresh: CopilotSessionLike | undefined
@@ -5792,6 +6236,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       return this.enqueueTerminalPrompt(sessionId, content, false, answers, delivery, true)
     }
+    // A paste a loaded Copilot drew too late to be sent stays in its prompt,
+    // and replacing it means clearing it. When only shells outlive the turn,
+    // Copilot keeps its busy row beside that draft, cut to fit, and the row
+    // cannot tell that wait from work: the event log decides, as it does for
+    // the queue, and the terminal asks it again around the clear.
+    const besideBackgroundShells = steer && replaceTerminalDraft &&
+      (await this.draftBesideBackgroundShells(sessionId, terminalPane))
     // Discovery can hold the queue behind Reopen while this send reads the
     // pane and decides, or while the controller reads it again before typing.
     // A held session is not eligible to queue, so the send would otherwise be
@@ -5804,6 +6255,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? {
             allowDuringAgentExecution: true,
             ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+            ...(besideBackgroundShells
+              ? { backgroundShellsOnly: { eventLog: () => this.readBackgroundShellsEvidence(sessionId) } }
+              : {}),
           }
         : replaceTerminalDraft
           ? { replaceExistingInput: true }
@@ -6385,7 +6839,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     session: SessionDetail,
   ): void {
     this.clearTerminalQueueRetry(sessionId)
-    if (!session.queueState) this.terminalQueueStates.delete(sessionId)
+    if (!session.queueState) this.forgetTerminalQueueWait(sessionId)
     const next = session.queuedPrompts?.[0]
     if (!next || session.suspended) return
     const terminalBacked =
@@ -7489,10 +7943,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         current.queuedDispatch?.attemptId !== queuedDelivery.attemptId
       ) throw queueConflict('The session is no longer idle and available for this command.')
     }
+    // As for a message: a command drawn too late is left in the prompt too.
+    const besideBackgroundShells = !catalog.session &&
+      commandInfo?.allowDuringAgentExecution === true && replaceTerminalDraft &&
+      (await this.draftBesideBackgroundShells(
+        sessionId,
+        before ?? (await this.terminalController.capture?.(sessionId)),
+      ))
     const sendOptions: TerminalSendOptions | undefined = commandInfo?.allowDuringAgentExecution
       ? {
           allowDuringAgentExecution: true,
           ...(replaceTerminalDraft ? { replaceExistingInput: true } : {}),
+          ...(besideBackgroundShells
+            ? { backgroundShellsOnly: { eventLog: () => this.readBackgroundShellsEvidence(sessionId) } }
+            : {}),
         }
       : replaceTerminalDraft
         ? { replaceExistingInput: true }
@@ -7888,21 +8352,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async listBackgroundTasks(
     sessionId: string,
   ): Promise<BackgroundTaskSnapshot> {
-    const stored = this.store.get(sessionId)
-    if (!stored) {
+    // Asked for every session as the app loads, so the session is read where
+    // it is kept rather than copied with its whole transcript.
+    const suspended = this.store.inspect(sessionId, (session) => Boolean(session.suspended))
+    if (suspended === undefined) {
       throw new Error('Session not found')
     }
     if (this.externalSessionIds.has(sessionId)) {
       // Projected from an event log rather than owned over RPC, so there is no
       // channel to cancel through and loading one would attach an SDK owner to
       // a session the live CLI already owns.
-      const projected = backgroundTasksFromEvents(
-        await this.sessionEventReader(sessionId),
-        { assumeBackground: true },
+      const events = await this.sessionEventReader(sessionId)
+      return this.replaceBackgroundTasks(
+        sessionId,
+        this.eventProjection(sessionId, events).tasks(),
+        true,
       )
-      return this.replaceBackgroundTasks(sessionId, projected, true)
     }
-    if (stored.suspended) {
+    if (suspended) {
       // Attaching to find out would start the runtime that suspending just
       // put down, and the panel asks for every session as the app loads.
       return this.backgroundTaskTracker.get(sessionId)
@@ -8029,7 +8496,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.liveTerminalAdmissions.delete(sessionId)
       this.eventLogVersions.delete(sessionId)
       this.eventLogFingerprints.delete(sessionId)
-      forgetSessionEvents(sessionId)
+      this.forgetEventLog(sessionId)
       this.emit('event', { type: 'session.removed', sessionId, closed: true })
       return closed
     } finally {
@@ -8112,7 +8579,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.queueOperations.delete(sessionId)
     this.pendingTerminalQueueSettlements.delete(sessionId)
     this.clearTerminalQueueRetry(sessionId)
-    this.terminalQueueStates.delete(sessionId)
+    this.forgetTerminalQueueWait(sessionId)
     this.startupTerminalQueues.delete(sessionId)
     this.workspaceVersions.delete(sessionId)
     this.transcriptTakeInCosts.delete(sessionId)
@@ -8134,7 +8601,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     this.deletingSessions.add(sessionId)
     this.deletedSessionIds.add(sessionId)
-    forgetSessionEvents(sessionId)
+    this.forgetEventLog(sessionId)
     let completed = false
     try {
       const {
@@ -10041,7 +10508,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.stopped ||
       this.activePrompts.has(sessionId) ||
       this.deletedSessionIds.has(sessionId) ||
-      !this.store.get(sessionId)
+      !this.store.has(sessionId)
     ) {
       return
     }
@@ -10065,7 +10532,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.takeInTranscript(sessionId, observed, version, takeIn)
     } finally {
       // Not for a session deleted while it was being read.
-      if (this.store.get(sessionId)) {
+      if (this.store.has(sessionId)) {
         this.transcriptTakeInCosts.set(
           sessionId,
           (takeIn.endedAt ?? performance.now()) - takeIn.startedAt,
@@ -10088,13 +10555,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.awaitedTranscriptEchoes.delete(sessionId)
     }
     if (!this.store.isCurrentTranscript(sessionId, observed)) return
-    const terminalTasks = this.externalSessionIds.has(sessionId)
-      ? backgroundTasksFromEvents(events, { assumeBackground: true })
-      : []
-    if (this.externalSessionIds.has(sessionId)) {
+    // A terminal session's log is projected a few events at a time.
+    const projection = this.externalSessionIds.has(sessionId)
+      ? this.eventProjection(sessionId, events)
+      : undefined
+    if (projection) {
       this.replaceBackgroundTasks(
         sessionId,
-        terminalTasks,
+        projection.tasks(),
         true,
       )
     }
@@ -10103,8 +10571,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.recoverHiddenUserInput(sessionId, events)
       return
     }
-    const historyMessages = messagesFromHistory(events)
-    const eventUserInput = pendingUserInputFromEvents(events)
+    const historyMessages = projection ? projection.messages() : messagesFromHistory(events)
+    const eventUserInput = projection
+      ? projection.pendingUserInput()
+      : pendingUserInputFromEvents(events)
     const external = this.externalSessionIds.has(sessionId)
     const watermark = this.liveTranscriptWatermarks.get(sessionId)
     const lastEventTimestamp = events.at(-1)?.timestamp
@@ -10117,16 +10587,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.recoverHiddenUserInput(sessionId, events)
       return
     }
-    let status = statusFromEvents(events)
+    let status = projection ? projection.status() : statusFromEvents(events)
     let foregroundTurnActive = foregroundTurnOpen(events)
+    // Taken from this read now: the shared projection can take in later
+    // events while this refresh waits below.
+    const runtimeFromLog = projection?.runtime()
+    const loggedCwd = projection?.workingDirectory(undefined)
+    const contextCwd = projection
+      ? projection.contextChanged()
+      : contextChangedInEvents(events)
     const queueDispatchAt = this.store.queueDispatchAt(sessionId)
     if (queueDispatchAt) {
       const dispatchTime = Date.parse(queueDispatchAt)
-      const completion = events.some(
-        (event) =>
-          Date.parse(event.timestamp) >= dispatchTime &&
-          isForegroundCompletionEvent(event),
-      )
+      const completion = projection
+        ? projection.foregroundCompletedSince(dispatchTime)
+        : foregroundCompletedSince(events, dispatchTime)
       if (completion) {
         await this.store.clearQueueDispatch(sessionId, queueDispatchAt)
       } else {
@@ -10142,18 +10617,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           message.activityStatus === 'running',
       )
       ?.content.split('\n', 1)[0]
-    const contextCwd = events.some(
-      (event) =>
-        event.type === 'session.context_changed' &&
-        !eventAgentId(event),
-    )
     if (
       this.activePrompts.has(sessionId) ||
       this.deletedSessionIds.has(sessionId) ||
-      !this.store.get(sessionId)
+      !this.store.has(sessionId)
     ) {
       return
     }
+    const wasIdle = this.store.inspect(sessionId, (session) => session.status === 'idle') ?? false
     const updated = await this.store.replaceTranscript(
       sessionId,
       (session) => [
@@ -10162,8 +10633,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
       status,
       activity,
-      (session) => runtimeInfoFromEvents(events, session.runtime, this.modelPromptLimits),
-      (session) => workingDirectoryFromEvents(events, session.cwd),
+      (session) => runtimeFromLog
+        ? runtimeFromLog(session.runtime, this.modelPromptLimits)
+        : runtimeInfoFromEvents(events, session.runtime, this.modelPromptLimits),
+      (session) => projection
+        ? loggedCwd || session.cwd
+        : workingDirectoryFromEvents(events, session.cwd),
       contextCwd,
       (session) => {
         const storedUserInput =
@@ -10203,6 +10678,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       latestCompletionAt &&
       Date.parse(latestCompletionAt) >= Date.parse(firstQueuedAt)
     ) {
+      // The turn holding the queue just ended: its head goes in now, not
+      // when its wait for Copilot's prompt was next due to look.
+      if (!wasIdle) this.clearTerminalQueueRetry(sessionId)
       await this.drainTerminalQueue(sessionId)
     }
   }
@@ -10246,8 +10724,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!this.terminalController.updateNotice) {
       return
     }
-    const stored = this.store.get(sessionId)
-    if (!stored || this.deletedSessionIds.has(sessionId)) {
+    if (!this.store.has(sessionId) || this.deletedSessionIds.has(sessionId)) {
       return
     }
     const now = Date.now()
@@ -10286,14 +10763,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     events?: SessionEvent[],
   ): Promise<void> {
-    const stored = this.store.get(sessionId)
     if (
-      !stored ||
-      stored.pendingUserInput ||
-      stored.pendingPermission ||
       this.activePrompts.has(sessionId) ||
       this.deletedSessionIds.has(sessionId) ||
-      !this.hasUnansweredUserInputRow(stored)
+      !this.store.inspect(sessionId, (session) =>
+        !session.pendingUserInput &&
+        !session.pendingPermission &&
+        this.hasUnansweredUserInputRow(session))
     ) {
       return
     }
@@ -10303,9 +10779,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (answered && answered.expiresAt <= now) {
       this.answeredPersistedInputs.delete(sessionId)
     }
-    const pending = pendingUserInputFromEvents(
-      events || (await this.sessionEventReader(sessionId)),
-    )
+    const log = events || (await this.sessionEventReader(sessionId))
+    const pending = this.externalSessionIds.has(sessionId)
+      ? this.eventProjection(sessionId, log).pendingUserInput()
+      : pendingUserInputFromEvents(log)
     if (
       !pending ||
       this.answeredPersistedInputs.get(sessionId)?.requestId ===
@@ -10335,7 +10812,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
    * Reads the newest running tool row only: an ask-user request that reached
    * the transcript but not the session keeps this cheap for every other poll.
    */
-  private hasUnansweredUserInputRow(stored: SessionDetail): boolean {
+  private hasUnansweredUserInputRow(stored: Pick<SessionDetail, 'messages'>): boolean {
     for (let index = stored.messages.length - 1; index >= 0; index -= 1) {
       const message = stored.messages[index]
       if (
@@ -10396,15 +10873,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       return
     }
-    const stored = this.store.get(sessionId)
+    // Polled for every terminal session, so only which requests are pending
+    // is read, not a copy of the session and its whole transcript.
+    const stored = this.store.inspect(sessionId, (session) => ({
+      waiting: Boolean(session.pendingUserInput || session.pendingPermission),
+      permissionId: session.pendingPermission?.requestId,
+      userInputId: session.pendingUserInput?.requestId,
+    }))
     if (!stored || this.deletedSessionIds.has(sessionId)) {
       return
     }
     const now = Date.now()
     const lastCheck = this.terminalUserInputChecks.get(sessionId) || 0
     if (
-      !stored.pendingUserInput &&
-      !stored.pendingPermission &&
+      !stored.waiting &&
       now - lastCheck < 2_000
     ) {
       return
@@ -10419,7 +10901,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } else if (answered?.requestId === permission.requestId) {
         return
       }
-      if (stored.pendingPermission?.requestId === permission.requestId) {
+      if (stored.permissionId === permission.requestId) {
         return
       }
       const updated = await this.store.update(sessionId, (session) => {
@@ -10432,7 +10914,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return
     }
     if (
-      stored.pendingPermission?.requestId.startsWith('terminal-permission:')
+      stored.permissionId?.startsWith('terminal-permission:')
     ) {
       const continuation = await this.terminalContinuationState(
         sessionId,
@@ -10453,7 +10935,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } else if (answered?.requestId === pending.requestId) {
         return
       }
-      if (stored.pendingUserInput?.requestId === pending.requestId) {
+      if (stored.userInputId === pending.requestId) {
         return
       }
       const updated = await this.store.update(sessionId, (session) => {
@@ -10464,7 +10946,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.publish(updated)
       return
     }
-    if (stored.pendingUserInput?.requestId.startsWith('terminal:')) {
+    if (stored.userInputId?.startsWith('terminal:')) {
       const continuation = await this.terminalContinuationState(
         sessionId,
         this.answeredTerminalInputs.get(sessionId)?.repliedAt,
@@ -10663,6 +11145,34 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }),
     )
     return install(normalized, true)
+  }
+
+  /**
+   * A tmux session's projection as of `events`, taking in only what was
+   * appended since the last read.
+   */
+  private eventProjection(
+    sessionId: string,
+    events: readonly SessionEvent[],
+  ): SessionEventProjection {
+    const cached = this.eventProjections.get(sessionId)
+    this.eventProjections.delete(sessionId)
+    const projection = cached?.continues(events) ? cached : new SessionEventProjection()
+    projection.takeIn(events)
+    // Not kept for a session on its way out, which nothing would forget again.
+    if (this.deletedSessionIds.has(sessionId)) return projection
+    this.eventProjections.set(sessionId, projection)
+    for (const oldest of this.eventProjections.keys()) {
+      if (this.eventProjections.size <= MAX_EVENT_PROJECTIONS) break
+      this.eventProjections.delete(oldest)
+    }
+    return projection
+  }
+
+  /** Drops what is cached about a session's event log: its events and projection. */
+  private forgetEventLog(sessionId: string): void {
+    forgetSessionEvents(sessionId)
+    this.eventProjections.delete(sessionId)
   }
 
   private replaceBackgroundTasks(
@@ -11668,21 +12178,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // Retained work waits, untouched and unpolled, for Reopen to drain it.
         this.clearTerminalQueueRetry(sessionId)
         this.startupTerminalQueues.delete(sessionId)
-        const previous = this.terminalQueueStates.get(sessionId)
-        if (next) {
-          this.terminalQueueStates.set(sessionId, {
-            state: 'waiting',
-            promptId: next.id,
-            message: 'Reopen the session to resume queued delivery.',
-            updatedAt: new Date().toISOString(),
-          })
-          if (previous?.state !== 'waiting' || previous.promptId !== next.id ||
-              previous.message !== 'Reopen the session to resume queued delivery.') {
-            this.publish(stored)
-          }
-        } else {
-          this.terminalQueueStates.delete(sessionId)
-        }
+        if (next) this.holdTerminalQueueForReopen(sessionId, stored, next.id)
+        else this.forgetTerminalQueueWait(sessionId)
         return false
       }
       const terminalDispatch = this.store.terminalQueueDispatch(sessionId)
@@ -11695,17 +12192,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (startup && !this.hasStartupQueueLifecycle(sessionId, stored)) {
         this.startupTerminalQueues.delete(sessionId)
         this.clearTerminalQueueRetry(sessionId)
-        const previous = this.terminalQueueStates.get(sessionId)
-        this.terminalQueueStates.set(sessionId, {
-          state: 'waiting',
-          promptId: next.id,
-          message: 'Reopen the session to resume queued delivery.',
-          updatedAt: new Date().toISOString(),
-        })
-        if (previous?.state !== 'waiting' || previous.promptId !== next.id ||
-            previous.message !== 'Reopen the session to resume queued delivery.') {
-          this.publish(stored)
-        }
+        this.holdTerminalQueueForReopen(sessionId, stored, next.id)
         return false
       }
       if (stored.failedPrompt ||
@@ -11740,6 +12227,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         !stored.pendingPermission && !stored.pendingUserInput
       if (stored.status !== 'idle' && !midTurnSteer) {
         this.retryTerminalQueueClaim(sessionId)
+        // Copilot is working by its log, which ends this wait by itself.
+        this.quietTerminalQueueWait(sessionId, stored)
         return false
       }
       if (!isCurrent()) {
@@ -11752,14 +12241,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const before = await this.terminalController.capture?.(sessionId)
       if (before && isTerminalSessionInUseConflict(before)) {
-        this.retryTerminalQueueClaim(sessionId)
+        if (this.retryTerminalQueueClaim(sessionId)) {
+          this.terminalQueueUnreadable.delete(sessionId)
+          this.showTerminalQueueNotice(sessionId, stored, next.id, sessionInUseQueueMessage(before))
+        }
         return false
       }
       if (startup && (!before?.trim() || composerHoldsText(before))) {
-        this.retryTerminalQueueClaim(sessionId, !before?.trim())
+        if (this.retryTerminalQueueClaim(sessionId, !before?.trim(), true)) {
+          this.showTerminalComposerWait(sessionId, stored, next.id, before ?? '')
+        }
         return false
       }
-      const currentQueueState = this.terminalQueueStates.get(sessionId)
+      const knownWait = this.terminalQueueWaits.get(sessionId)
       // A turn can end with shells it started still running. Copilot keeps
       // its interrupt key on the row, but its empty prompt takes a message as
       // it would a steer, and background shells do not hold queued text. The
@@ -11767,12 +12261,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // tell that wait from other work: the event log decides, finding the
       // turn over, a shell running and no background agent, and the pane only
       // has to agree. A prompt already waiting for the composer goes in too.
+      // The pane, which costs less to read than the log, is asked first.
       let besideBackgroundShells = false
       if (!midTurnSteer && !next.command && stored.status === 'idle' &&
-          before !== undefined && !terminalInputReady(before)) {
+          before !== undefined && !terminalInputReady(before) &&
+          terminalMayBeWaitingForBackgroundShells(before)) {
         const log = await this.readBackgroundShellsEvidence(sessionId)
-        besideBackgroundShells = log.turnOver && log.shellsRunning &&
-          terminalMayBeWaitingForBackgroundShells(before)
+        besideBackgroundShells = log.turnOver && log.shellsRunning
       }
       const composerKnownUnavailable = before !== undefined &&
         !besideBackgroundShells &&
@@ -11782,10 +12277,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           isTerminalOverlay(before) ||
           isTerminalAgentWorking(before) ||
           /waiting for background shells/i.test(before) ||
-          (currentQueueState?.state === 'waiting' && currentQueueState.promptId === next.id)
+          knownWait === next.id
         )
       if (!midTurnSteer && composerKnownUnavailable) {
-        this.waitForTerminalQueueComposer(sessionId, stored, next.id)
+        this.waitForTerminalQueueComposer(sessionId, stored, next.id, before)
         return false
       }
       if (next.command && !before?.trim()) {
@@ -11795,6 +12290,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? !before || !terminalInputReady(before, true) || composerHoldsText(before)
         : !besideBackgroundShells && before && (isTerminalOverlay(before) || isTerminalAgentWorking(before))) {
         this.retryTerminalQueueClaim(sessionId)
+        // A steer waits on the turn running by the log, which ends by itself.
+        if (midTurnSteer) this.quietTerminalQueueWait(sessionId, stored)
         return false
       }
       let claimed: Awaited<ReturnType<SessionStore['claimTerminalQueuedPrompt']>>
@@ -11809,7 +12306,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const { session, dispatch } = claimed
       this.admissions.markCommitted(sessionId)
       this.clearTerminalQueueRetry(sessionId)
-      this.terminalQueueStates.delete(sessionId)
+      this.forgetTerminalQueueWait(sessionId)
       if (this.stopped || this.deletingSessions.has(sessionId)) return false
       this.publish(session)
 
@@ -11888,10 +12385,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   /** What a session's event log says of the work its finished turn left. */
   private async readBackgroundShellsEvidence(sessionId: string): Promise<BackgroundShellsEvidence> {
     try {
-      return backgroundShellsEvidence(await this.sessionEventReader(sessionId))
+      const events = await this.sessionEventReader(sessionId)
+      if (this.externalSessionIds.has(sessionId)) {
+        const projection = this.eventProjection(sessionId, events)
+        return backgroundShellsEvidence(projection.tasks(Infinity), projection.status())
+      }
+      return backgroundShellsEvidence(
+        backgroundTasksFromEvents(events, { assumeBackground: true, limit: Infinity }),
+        statusFromEvents(events),
+      )
     } catch {
       return { turnOver: false, shellsRunning: false }
     }
+  }
+
+  /**
+   * Whether the pane holds a draft beside what may be Copilot's wait for
+   * background shells, and the event log agrees that only shells are left.
+   */
+  private async draftBesideBackgroundShells(sessionId: string, pane: string | undefined): Promise<boolean> {
+    if (pane === undefined || !terminalDraftMayBeBesideBackgroundShells(pane)) return false
+    const log = await this.readBackgroundShellsEvidence(sessionId)
+    return log.turnOver && log.shellsRunning
   }
 
   private hasStartupQueueLifecycle(sessionId: string, session: SessionDetail | undefined): boolean {
@@ -11939,31 +12454,41 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       : undefined
   }
 
-  private retryTerminalQueueClaim(sessionId: string, failed = false): boolean {
+  /**
+   * Schedules the next look at a queue head. A wait for Copilot's prompt
+   * (`composer`) backs off to 5 s at most, on a timer of its own, so its
+   * looks never stretch to the watcher's next pass.
+   */
+  private retryTerminalQueueClaim(
+    sessionId: string,
+    failed = false,
+    composer = false,
+  ): boolean {
     const session = this.store.get(sessionId)
     if (!session?.queuedPrompts?.length || this.stopped || this.deletingSessions.has(sessionId) ||
         (this.startupTerminalQueues.has(sessionId) && !this.hasStartupQueueLifecycle(sessionId, session)) ||
         (session.failedPrompt && !this.awaitingAcceptedStartupRecovery(sessionId, session))) {
       this.clearTerminalQueueRetry(sessionId)
-      this.terminalQueueStates.delete(sessionId)
+      this.forgetTerminalQueueWait(sessionId)
       this.startupTerminalQueues.delete(sessionId)
       return false
     }
+    const maxDelay = composer ? TERMINAL_COMPOSER_RETRY_MAX_MS : TERMINAL_QUEUE_RETRY_MAX_MS
     const readyDelay = this.terminalSteerRetryDelay(sessionId, session)
     const delay = readyDelay ?? (
       failed
-        ? this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750
+        ? Math.min(this.pendingTerminalQueueClaims.get(sessionId)?.retryDelay || 750, maxDelay)
         : 750
     )
     const retryAt = Date.now() + delay
     this.pendingTerminalQueueClaims.set(sessionId, {
       retryAt,
-      retryDelay: failed ? Math.min(delay * 2, 60_000) : 750,
+      retryDelay: failed ? Math.min(delay * 2, maxDelay) : 750,
     })
     const previous = this.terminalQueueRetryTimers.get(sessionId)
     if (previous) clearTimeout(previous)
     this.terminalQueueRetryTimers.delete(sessionId)
-    if (readyDelay === undefined) return true
+    if (readyDelay === undefined && !composer) return true
     let timer: NodeJS.Timeout
     const wake = () => {
       if (this.terminalQueueRetryTimers.get(sessionId) !== timer) return
@@ -11988,61 +12513,146 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return true
   }
 
+  /**
+   * Holds the head until Copilot's prompt is back, looking again within
+   * seconds, and tells the reader only what they can do about the wait.
+   * Without a pane, as after input the terminal refused, nothing is shown
+   * until the next look. Returns whether the session was published.
+   */
   private waitForTerminalQueueComposer(
     sessionId: string,
     session: SessionDetail,
     promptId: string,
-  ): void {
+    pane?: string,
+  ): boolean {
     const previous = this.terminalQueueStates.get(sessionId)
     if (session.interruption || session.archivedAt) {
       this.clearTerminalQueueRetry(sessionId)
       this.startupTerminalQueues.delete(sessionId)
-      this.terminalQueueStates.set(sessionId, {
-        state: 'waiting',
-        promptId,
-        message: 'Reopen the session to resume queued delivery.',
-        updatedAt: new Date().toISOString(),
-      })
-      if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
-          previous.message !== 'Reopen the session to resume queued delivery.') {
-        this.publish(session)
-      }
-      return
+      return this.holdTerminalQueueForReopen(sessionId, session, promptId)
     }
     const startup = this.startupTerminalQueues.has(sessionId)
-    if (!this.retryTerminalQueueClaim(sessionId, true)) {
+    if (!this.retryTerminalQueueClaim(sessionId, true, true)) {
       const current = this.store.get(sessionId)
       if (!this.stopped && !this.deletingSessions.has(sessionId) &&
           current?.queuedPrompts?.[0]?.id === promptId &&
           (current.interruption || current.archivedAt ||
             (startup && !this.hasStartupQueueLifecycle(sessionId, current)))) {
-        this.terminalQueueStates.set(sessionId, {
-          state: 'waiting',
-          promptId,
-          message: 'Reopen the session to resume queued delivery.',
-          updatedAt: new Date().toISOString(),
-        })
-        if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
-            previous.message !== 'Reopen the session to resume queued delivery.') {
-          this.publish(current)
-        }
-        return
+        return this.holdTerminalQueueForReopen(sessionId, current, promptId, previous)
       }
       if (previous) this.publish(session)
-      return
+      return Boolean(previous)
     }
-    const retry = this.pendingTerminalQueueClaims.get(sessionId)
+    this.terminalQueueWaits.set(sessionId, promptId)
+    return pane === undefined
+      ? this.showTerminalQueueNotice(sessionId, session, promptId, undefined)
+      : this.showTerminalComposerWait(sessionId, session, promptId, pane)
+  }
+
+  /**
+   * Tells the reader, from the pane holding Copilot's prompt back, what they
+   * can do: close a full-screen view, or look at a pane that has stayed
+   * empty or unreadable past the grace period. Copilot working, waiting on
+   * background shells or agents, or redrawing ends by itself and is not
+   * shown. Returns whether the session was published.
+   */
+  private showTerminalComposerWait(
+    sessionId: string,
+    session: SessionDetail,
+    promptId: string,
+    pane: string,
+  ): boolean {
+    const now = Date.now()
+    let unreadableSince: number | undefined
+    if (!terminalInputReady(pane) && terminalComposerUnreadable(pane)) {
+      const seen = this.terminalQueueUnreadable.get(sessionId)
+      unreadableSince = seen?.promptId === promptId ? seen.since : now
+      this.terminalQueueUnreadable.set(sessionId, { promptId, since: unreadableSince })
+    } else {
+      this.terminalQueueUnreadable.delete(sessionId)
+    }
+    return this.showTerminalQueueNotice(
+      sessionId,
+      session,
+      promptId,
+      isTerminalOverlay(pane)
+        ? TERMINAL_QUEUE_OVERLAY_MESSAGE
+        : unreadableSince !== undefined && now - unreadableSince >= this.terminalComposerUnreadableGraceMs
+          ? TERMINAL_QUEUE_UNREADABLE_MESSAGE
+          : undefined,
+    )
+  }
+
+  /** Holds a terminal queue head behind Reopen, telling the reader once. */
+  private holdTerminalQueueForReopen(
+    sessionId: string,
+    session: SessionDetail,
+    promptId: string,
+    previous = this.terminalQueueStates.get(sessionId),
+  ): boolean {
+    this.terminalQueueWaits.set(sessionId, promptId)
+    this.terminalQueueUnreadable.delete(sessionId)
     this.terminalQueueStates.set(sessionId, {
       state: 'waiting',
       promptId,
-      message: 'Waiting for the terminal composer. Delivery will retry automatically.',
+      message: QUEUE_REOPEN_MESSAGE,
       updatedAt: new Date().toISOString(),
-      ...(retry ? { retryAt: new Date(retry.retryAt).toISOString() } : {}),
     })
-    if (previous?.state !== 'waiting' || previous.promptId !== promptId ||
-        previous.message !== 'Waiting for the terminal composer. Delivery will retry automatically.') {
-      this.publish(session)
+    if (previous?.state === 'waiting' && previous.promptId === promptId &&
+        previous.message === QUEUE_REOPEN_MESSAGE) {
+      return false
     }
+    this.publish(session)
+    return true
+  }
+
+  /**
+   * Shows the reader what they can do to let a waiting head go out, or, with
+   * no message, nothing at all. Returns whether the session was published.
+   */
+  private showTerminalQueueNotice(
+    sessionId: string,
+    session: SessionDetail,
+    promptId: string,
+    message: string | undefined,
+  ): boolean {
+    const previous = this.terminalQueueStates.get(sessionId)
+    if (!message) {
+      if (!previous) return false
+      this.terminalQueueStates.delete(sessionId)
+    } else if (previous?.state === 'waiting' && previous.promptId === promptId && previous.message === message) {
+      return false
+    } else {
+      this.terminalQueueStates.set(sessionId, {
+        state: 'waiting',
+        promptId,
+        message,
+        updatedAt: new Date().toISOString(),
+      })
+    }
+    this.publish(session)
+    return true
+  }
+
+  /**
+   * Copilot is at work, which ends the wait by itself: takes back what the
+   * reader was told to do, and a blank pane seen next starts a new grace
+   * period. Reopen stays only while the session is interrupted or archived.
+   */
+  private quietTerminalQueueWait(sessionId: string, session: SessionDetail): void {
+    this.terminalQueueUnreadable.delete(sessionId)
+    const previous = this.terminalQueueStates.get(sessionId)
+    if (!previous || (previous.message === QUEUE_REOPEN_MESSAGE &&
+        (session.interruption || session.archivedAt))) return
+    this.terminalQueueStates.delete(sessionId)
+    this.publish(session)
+  }
+
+  /** Forgets that a terminal queue head waits, and what was shown of it. */
+  private forgetTerminalQueueWait(sessionId: string): void {
+    this.terminalQueueStates.delete(sessionId)
+    this.terminalQueueWaits.delete(sessionId)
+    this.terminalQueueUnreadable.delete(sessionId)
   }
 
   private settleTerminalRecoveryForActivation(sessionId: string): void {
@@ -12054,7 +12664,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.terminalRecoveryStates.set(sessionId, 'settled')
     this.startupTerminalQueues.delete(sessionId)
     this.clearTerminalQueueRetry(sessionId)
-    this.terminalQueueStates.delete(sessionId)
+    this.forgetTerminalQueueWait(sessionId)
   }
 
   private async reconcileReopenedTerminalStatus(
@@ -12200,15 +12810,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (this.stopped) return false
     if (pending.outcome.kind === 'failed' && pending.quiet) {
-      this.waitForTerminalQueueComposer(
-        sessionId,
-        settled,
-        settled.queuedPrompts?.[0]?.id || '',
-      )
+      // The head is back in the queue whether or not the wait is shown.
+      if (!this.waitForTerminalQueueComposer(sessionId, settled, settled.queuedPrompts?.[0]?.id || '')) {
+        this.publish(settled)
+      }
       return false
     }
     if (pending.outcome.kind === 'failed' && pending.outcome.uncertain) {
-      this.terminalQueueStates.delete(sessionId)
+      this.forgetTerminalQueueWait(sessionId)
       this.publish(settled)
       this.emit('event', {
         type: 'error',
@@ -12220,7 +12829,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return false
     }
     if (pending.outcome.kind === 'failed') {
-      this.terminalQueueStates.delete(sessionId)
+      this.forgetTerminalQueueWait(sessionId)
       this.publish(settled)
       this.emit('event', {
         type: 'error',
@@ -12231,7 +12840,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       })
       return false
     }
-    this.terminalQueueStates.delete(sessionId)
+    this.forgetTerminalQueueWait(sessionId)
     this.publish(settled)
     // A steer now at the head is polled for while the turn runs: the one this
     // delivery started, or the one a delivered steer joined.
@@ -12511,7 +13120,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         ? {
           state: 'waiting',
           promptId: queued.id,
-          message: 'Reopen the session to resume queued delivery.',
+          message: QUEUE_REOPEN_MESSAGE,
           updatedAt: session.interruption?.detectedAt ?? session.archivedAt ?? session.updatedAt,
         }
         : undefined
@@ -12561,7 +13170,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     // removed only for a session retired as a probe would have been.
     for (const leftover of (await this.terminalController.endLeftoverProbes?.()) ?? []) {
       if (!this.store.isRetiredSession(leftover)) continue
-      forgetSessionEvents(leftover)
+      this.forgetEventLog(leftover)
       await removeCopilotSessionFiles(leftover)
     }
     const id = randomUUID()
@@ -12572,7 +13181,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       await this.terminalController.probeStartup(id, cwd, signal)
     } finally {
-      forgetSessionEvents(id)
+      this.forgetEventLog(id)
       await removeCopilotSessionFiles(id)
     }
   }

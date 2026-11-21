@@ -1690,10 +1690,34 @@ button {
 .sidebar-settings {
   display: flex;
   flex: 0 0 auto;
+  flex-wrap: wrap;
   min-height: 0;
   gap: 6px;
   padding: 6px 12px max(6px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
+  container: sidebar-settings / inline-size;
+}
+
+/* Buttons keep their hit targets; at the narrowest sidebar the row wraps
+   rather than squeezing them. */
+.sidebar-settings > :not(.sidebar-settings__button) {
+  flex-shrink: 0;
+}
+
+/* With feature icons beside it, App settings keeps only its icon, named by its
+   tooltip, once the row is too narrow for its name as well. */
+@container sidebar-settings (max-width: 359px) {
+  .sidebar-settings:has(> .shell-rail--inline) .sidebar-settings__button {
+    flex: 0 0 auto;
+  }
+
+  .sidebar-settings:has(> .shell-rail--inline) .sidebar-settings__button > span {
+    display: none;
+  }
+
+  .sidebar-settings:has(> .shell-rail--inline) > .shell-rail--inline {
+    margin-right: auto;
+  }
 }
 
 .sidebar-settings__button {
@@ -1725,8 +1749,11 @@ button {
 }
 
 .sidebar-settings__button strong {
+  overflow: hidden;
   font-size: 12px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-settings__button small {

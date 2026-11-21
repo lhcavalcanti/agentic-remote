@@ -497,6 +497,10 @@ export class ClaudeAgentService
     return session ? this.queuedDispatches.view(session) : undefined
   }
 
+  hasSession(id: string): boolean {
+    return this.store.has(id)
+  }
+
   async openSession(id: string): Promise<SessionDetail> {
     return this.queuedDispatches.view(this.requireSession(id))
   }

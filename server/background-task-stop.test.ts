@@ -1,7 +1,14 @@
 import type { SessionEvent } from '@github/copilot-sdk'
 import { describe, expect, it } from 'vitest'
-import { backgroundTasksFromEvents, MAX_BACKGROUND_TASKS, type CopilotTaskInfo } from './background-task-adapter.js'
+import {
+  backgroundTasksFromEvents as projectBackgroundTasks,
+  MAX_BACKGROUND_TASKS,
+  type CopilotTaskInfo,
+} from './background-task-adapter.js'
 import { backgroundTaskSnapshot } from './background-task-tracker.js'
+// Each projection is also taken in a few events at a time and must match the
+// full scan at every prefix.
+import { checkedBackgroundTasks as backgroundTasksFromEvents } from './projection-test-helpers.js'
 
 type ToolStart = Extract<SessionEvent, { type: 'tool.execution_start' }>
 type ToolComplete = Extract<SessionEvent, { type: 'tool.execution_complete' }>
@@ -1010,7 +1017,9 @@ describe('background shell stop reconciliation', () => {
     }
     let result: ReturnType<typeof snapshot>
     try {
-      result = snapshot(events)
+      // Projected once, as it ships: the incremental check around `snapshot`
+      // projects every prefix again and would be counted too.
+      result = backgroundTaskSnapshot(projectBackgroundTasks(events, { assumeBackground: true }), true)
     } finally {
       WeakMap.prototype.get = originalGet
     }

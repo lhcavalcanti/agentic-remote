@@ -14057,6 +14057,7 @@ describe('App', () => {
         name: 'View background tasks for Project chat',
       }))
       const dialog = await screen.findByRole('dialog', { name: 'Background tasks · Project chat' })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Running subagent: Inspect the prompt' }))
       const summary = within(dialog).getByText('Prompt', { selector: 'summary' })
       const close = within(dialog).getByRole('button', { name: 'Close' })
       summary.focus()

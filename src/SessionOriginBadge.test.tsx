@@ -4,13 +4,12 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { defaultHubFeatureFlags, effectivePreviewFeatures } from '../shared/feature-flags'
-import type { BackgroundTask, BackgroundTaskSnapshot, SessionProvenance } from '../shared/contracts'
+import type { SessionProvenance } from '../shared/contracts'
 import { OracleIcon } from './oracle-icon'
 import { PreviewFeaturesContext } from './preview-features'
 import { readScheduleLink } from './notifications/schedule-link'
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
-import { SubagentCount } from './SubagentCount'
 
 afterEach(() => { cleanup(); vi.clearAllMocks() })
 function preview(children: ReactNode, schedulerView = false, scheduler = false) {
@@ -69,32 +68,5 @@ describe('schedule run provenance links', () => {
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
     result.rerender(preview(<SessionOriginRunLink provenance={{ ...provenance, scheduleRunId: undefined }} />, true, true))
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
-  })
-})
-
-describe('runtime-reported subagent count', () => {
-  const task = (id: string, type: 'agent' | 'shell', status: BackgroundTask['status'], executionMode: 'sync' | 'background'): BackgroundTask => ({
-    id, type, status, executionMode, description: id, startedAt: '2026-11-14T20:00:00Z', canCancel: false,
-  })
-  const snapshot: BackgroundTaskSnapshot = {
-    supported: true, runningCount: 42, tasks: [
-      task('sync', 'agent', 'running', 'sync'), task('background', 'agent', 'running', 'background'),
-      task('shell', 'shell', 'running', 'background'), task('queued', 'agent', 'queued', 'background'),
-      task('done', 'agent', 'completed', 'sync'),
-    ],
-  }
-  it('counts reported running agents, including sync agents, rather than total background work', () => {
-    const onOpen = vi.fn()
-    render(<SubagentCount snapshot={snapshot} onOpen={onOpen} />)
-    fireEvent.click(screen.getByRole('button', { name: '2 subagents running' }))
-    expect(onOpen).toHaveBeenCalledOnce()
-  })
-  it.each([
-    undefined,
-    { ...snapshot, supported: false },
-    { ...snapshot, tasks: [] },
-  ])('does not invent a count when unsupported or unreported', (value) => {
-    render(<SubagentCount snapshot={value} onOpen={vi.fn()} />)
-    expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 })

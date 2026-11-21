@@ -77,7 +77,9 @@ Sources:
   transferring provider ownership. Terminal sessions use the persisted
   `/tasks` event projection for agent and detached-shell history and
   explicitly disable per-task cancellation because the terminal controller
-  does not own the detached process.
+  does not own the detached process. Their running tasks offer Ask to stop
+  instead, which drafts a stop request for the agent in the session's message
+  box without sending it.
 - Claude Agent sessions remain SDK-only and do not advertise Copilot background
   tasks.
 

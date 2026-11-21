@@ -10,6 +10,10 @@ export function orderTasksForReading(
     return Number.isNaN(parsed) ? undefined : parsed
   }
   return [...tasks].sort((left, right) => {
+    // Subagents are what a reader comes to manage, so they all come first.
+    if ((left.type === 'agent') !== (right.type === 'agent')) {
+      return left.type === 'agent' ? -1 : 1
+    }
     if (live(left) !== live(right)) {
       return live(left) ? -1 : 1
     }

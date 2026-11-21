@@ -1,4 +1,5 @@
 import { expect, type BrowserContextOptions, type Page } from '@playwright/test'
+import type { BackgroundTask, BackgroundTaskSnapshot } from '../shared/contracts'
 import { oracleHostStatusFixture } from './oracle-host-status-fixture'
 import { fixtureNotifications, fixtureScheduleProposals, fixtureScheduleRuns, fixtureSchedules } from './shell-fixtures'
 import {
@@ -48,6 +49,11 @@ export const uiSceneNames = [
   'session-origin-tasks-short',
   'session-origin-run',
   'session-subagents',
+  'background-tasks',
+  'background-tasks-light',
+  'background-tasks-sheet',
+  'background-tasks-sheet-light',
+  'background-tasks-expanded',
   'session-list',
   'session-actions',
   'session-actions-busy',
@@ -90,6 +96,59 @@ async function openSessions(page: Page) {
   await expect(page.getByRole('navigation', { name: 'Sessions', exact: true })).toBeVisible()
 }
 
+const fixtureAgo = (seconds: number) => new Date(Date.parse(FIXTURE_NOW) - seconds * 1_000).toISOString()
+
+/**
+ * Eight running tasks, two of them subagents (one synchronous), and two that
+ * have finished. Without `stoppable` nothing has a stop handle, as in a tmux
+ * session; with it everything but a detached shell does, as in an SDK one.
+ */
+export function backgroundTasksFixture(stoppable: boolean): BackgroundTaskSnapshot {
+  const shell = (id: string, command: string, secondsAgo: number, change: Partial<BackgroundTask> = {}): BackgroundTask => ({
+    id, type: 'shell', description: command, command, status: 'running', executionMode: 'background',
+    attachmentMode: 'attached', startedAt: fixtureAgo(secondsAgo), canCancel: stoppable, ...change,
+  })
+  const steps = [
+    'Read the recovery checklist', 'Opened the field guide', 'Compared the restore order',
+    'Checked the backup notes', 'Found two stale links', 'Drafted the corrections', 'Re-read the handbook index',
+  ]
+  return {
+    supported: true,
+    // The runtime counts background work only; the synchronous subagent makes eight.
+    runningCount: 7,
+    tasks: [
+      {
+        id: 'agent-recovery-review', type: 'agent', description: 'Review the recovery paths', agentType: 'code-review',
+        prompt: 'Review the recovery paths in the field guide and list anything stale.',
+        status: 'running', executionMode: 'background', startedAt: fixtureAgo(250), activeTimeMs: 212_000,
+        canCancel: stoppable,
+        progress: {
+          type: 'agent', latestIntent: 'Comparing the restore order with the checklist',
+          recentActivity: steps.map((message, index) => ({ message, timestamp: fixtureAgo(230 - index * 30) })),
+        },
+      },
+      {
+        id: 'agent-guide-links', type: 'agent', description: 'Check the guide links', agentType: 'explore',
+        prompt: 'Check every link in the field guide.', status: 'running', executionMode: 'sync',
+        startedAt: fixtureAgo(65), canCancel: stoppable,
+      },
+      shell('shell-1', 'pnpm dev --host 127.0.0.1', 7_530),
+      shell('shell-2', 'pnpm test --watch', 1_210),
+      shell('shell-3', 'tail -f logs/sync.log', 905, { attachmentMode: 'detached', canCancel: false }),
+      shell('shell-4', 'pnpm docs:preview', 610),
+      shell('shell-5', 'rsync --dry-run field-notes backup', 125),
+      shell('shell-6', 'pnpm lint --watch', 48),
+      shell('shell-7', 'pnpm build', 400, {
+        status: 'completed', completedAt: fixtureAgo(310), canCancel: false,
+        progress: { type: 'shell', recentOutput: 'Built the field guide in 88s' },
+      }),
+      shell('shell-8', 'pnpm check', 900, {
+        status: 'failed', completedAt: fixtureAgo(700), canCancel: false, error: 'The command exited with status 1',
+      }),
+    ],
+  }
+}
+
 /** The same fixed-clock, fail-closed scenes drive both locks and PR captures. */
 export function createUIScenes(
   baseUrl = 'http://127.0.0.1:4395',
@@ -125,6 +184,11 @@ export function createUIScenes(
         state.sessions[3].provenance = { origin: 'discovered' }
         if (originTasks) state.sessions[0].title = name === 'session-origin-tasks-short'
           ? 'Daily review' : 'Review the complete field guide and the scheduled recovery checklist'
+      }
+      const backgroundTasks = name.startsWith('background-tasks')
+      const tasksSheet = backgroundTasks && name !== 'background-tasks' && name !== 'background-tasks-light'
+      if (name === 'background-tasks-expanded') {
+        state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.executionMode = 'sdk'
       }
       if (name === 'composer-family-claude' || name === 'composer-family-openai') {
         const family = name === 'composer-family-claude' ? 'claude' : 'gpt'
@@ -222,7 +286,7 @@ export function createUIScenes(
       const fixture = await setupWorkspaceFixture(page, {
         baseUrl: origin,
         knowledgeMode: 'hidden',
-        appearance: 'graphite',
+        appearance: name.endsWith('-light') ? 'light' : 'graphite',
         state,
         notifications: name === 'notification-panel' ? fixtureNotifications : undefined,
         activityDetails: toolRows ? fixtureActivityDetails : undefined,
@@ -237,7 +301,9 @@ export function createUIScenes(
             runs: fixtureScheduleRuns, proposals: name === 'notification-panel' ? [] : fixtureScheduleProposals,
           }
           : origins ? { schedules: structuredClone(provenanceSchedules), runs: structuredClone(provenanceRuns) } : undefined,
-        taskSnapshots: name === 'session-subagents' || originTasks ? {
+        taskSnapshots: backgroundTasks ? {
+          [`fixture-studio:${SELECTED_SESSION_ID}`]: backgroundTasksFixture(name === 'background-tasks-expanded'),
+        } : name === 'session-subagents' || originTasks ? {
           [`fixture-studio:${SELECTED_SESSION_ID}`]: {
             supported: true, runningCount: 1, tasks: [
               { id: 'fixture-sync-agent', type: 'agent', description: 'Review recovery paths', status: 'running', executionMode: 'sync', startedAt: FIXTURE_NOW, canCancel: false },
@@ -308,7 +374,21 @@ export function createUIScenes(
         await expect(page.getByRole('dialog', { name: 'Scheduler', exact: true })
           .getByRole('region', { name: 'Run history for Morning field guide review' })).toContainText('Reviewed the field guide links.')
       } else if (name === 'session-subagents') {
-        await expect(page.getByRole('button', { name: '2 subagents running', exact: true })).toBeVisible()
+        await expect(page.getByRole('button', { name: '2 background tasks running, 2 subagents', exact: true })).toBeVisible()
+      } else if (backgroundTasks) {
+        // Found by its tooltip, which the status item had before it was condensed too.
+        const status = page.getByTestId('web-statusline').getByTitle('View background tasks', { exact: true })
+        await expect(status).toBeVisible()
+        await expect(status).not.toHaveText(/^0 /)
+        if (tasksSheet) {
+          await status.click()
+          const sheet = page.getByRole('dialog', { name: /^Background tasks · / })
+          await expect(sheet).toContainText('Review the recovery paths')
+          if (name === 'background-tasks-expanded') {
+            await sheet.getByRole('button', { name: 'Running subagent: Review the recovery paths', exact: true }).click()
+            await expect(sheet.getByRole('button', { name: 'Show all (7)', exact: true })).toBeVisible()
+          }
+        }
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
       } else if (name === 'session-actions' || name === 'session-actions-busy') {

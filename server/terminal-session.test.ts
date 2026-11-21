@@ -4860,6 +4860,436 @@ Permission request (1 remaining)
   })
 })
 
+describe('a slow Copilot and the draft it leaves behind', () => {
+  const message = 'Deliver this once the prompt shows it'
+  const leftover = 'An earlier message drawn too late to be sent'
+  const backgroundAgentsWait = ' ● Waiting for background a… · 273 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)'
+  const box = (width: number, rows: string[]) => [
+    `╭${'─'.repeat(width)}╮`,
+    ...rows.map((row) => `│ ${row.padEnd(width - 1)}│`),
+    `╰${'─'.repeat(width)}╯`,
+  ].join('\n')
+  // What Copilot can draw in place of its prompt or footer: an agent at work,
+  // or something that takes the keyboard. `shows` is how to tell it is drawn.
+  const takeovers = {
+    'an agent at work': { screen: '', shows: 'Waiting for background a' },
+    'a question': {
+      screen: box(48, [
+        'Question', '─'.repeat(44), 'Which environment do you prefer?', '', '❯ 1. Production', '  2. Staging',
+        '  3. Other (type your answer)', '', '↑/↓ to select · enter to confirm · esc cancel',
+      ]),
+      shows: 'Which environment',
+    },
+    // Its freeform answer holding the paste, it no longer reads as a question.
+    'a question answered with the paste': {
+      screen: box(40, ['Question', 'Describe your deployment plan.', '', `❯ ${message}`, '', 'enter to submit · esc to cancel']),
+      shows: 'Describe your deployment plan',
+    },
+    'a permission request': {
+      screen: ['Permission request (1 remaining)', '', box(60, [
+        'Check DNS and credential presence', '─'.repeat(58), 'Do you want to run this command?', '', '❯ 1. Yes',
+        '  2. No, and tell Copilot what to do differently', '', '↑/↓ to navigate · enter to select · esc to cancel',
+      ])].join('\n'),
+      shows: 'Permission request',
+    },
+    'a form': {
+      screen: [' Copilot needs information.', ' Choose a target.', ' Target:', ' ↑/↓ select · enter accept · esc cancel'].join('\n'),
+      shows: 'Copilot needs information',
+    },
+    'a full-screen view': {
+      screen: ['Select a session', '- session one', '↑/↓ to navigate · enter to select · esc to cancel'].join('\n'),
+      shows: 'Select a session',
+    },
+  }
+
+  // A fake Copilot that can be slow to draw a paste, as a heavily loaded one
+  // is: `pasteDrawnAfterMs` delays it, and `null` never draws it. Below its
+  // prompt it draws `footer`, or `draftFooter` while the prompt holds text,
+  // until `startWork()` has it draw one of the `takeovers` instead.
+  // It records every paste, clear and submit it receives.
+  async function slowCopilot({
+    draft = '',
+    footer = ' / commands',
+    draftFooter = footer,
+    pasteDrawnAfterMs = 0,
+  }: {
+    draft?: string
+    footer?: string
+    draftFooter?: string
+    pasteDrawnAfterMs?: number | null
+  } = {}) {
+    const directory = await mkdtemp(path.join(tmpdir(), 'terminal-slow-copilot-'))
+    directories.push(directory)
+    const executable = path.join(directory, 'copilot-slow.mjs')
+    const output = path.join(directory, 'received.json')
+    const takeover = path.join(directory, 'takeover.txt')
+    const sessionId = randomUUID()
+    await writeFile(executable, `
+${fixtureReceiptWriter(output)}
+import { readFileSync } from 'node:fs'
+const makeComposer = ${readyComposer.toString()}
+const footers = ${JSON.stringify({ empty: footer, typing: draftFooter })}
+const delay = ${JSON.stringify(pasteDrawnAfterMs)}
+const received = { pastes: [], clears: 0, submits: [] }
+let draft = ${JSON.stringify(draft)}
+let drawn = draft
+let screen = ''
+const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + (screen || makeComposer(drawn, false)
+  .replace(' / commands', drawn ? footers.typing : footers.empty))
+  .replaceAll('\\n', '\\r\\n'))
+let input = ''
+process.stdin.setRawMode(true)
+process.stdout.write('\\x1b[?2004h')
+process.on('SIGUSR1', () => {
+  screen = readFileSync(${JSON.stringify(takeover)}, 'utf8')
+  if (!screen) footers.empty = footers.typing = ${JSON.stringify(backgroundAgentsWait)}
+  draw()
+})
+process.stdin.on('data', (data) => {
+  input += data.toString()
+  while (input) {
+    if (input.startsWith('\\x1b[200~')) {
+      const end = input.indexOf('\\x1b[201~')
+      if (end < 0) break
+      const text = input.slice(6, end).replace(/\\r\\n?/g, '\\n')
+      input = input.slice(end + 6)
+      received.pastes.push(text)
+      draft += text
+      const shown = draft
+      if (delay !== null) setTimeout(() => { if (draft === shown) { drawn = shown; draw() } }, delay)
+      continue
+    }
+    if (input[0] === '\\x15') {
+      received.clears += 1
+      draft = ''
+      drawn = ''
+      draw()
+    } else if (input[0] === '\\r') {
+      received.submits.push(draft)
+      draft = ''
+      drawn = ''
+      draw()
+    }
+    input = input.slice(1)
+  }
+  writeReceipt(received)
+})
+writeReceipt(received)
+draw()
+`)
+    const tmuxSession = `agentic-slow-${sessionId.slice(0, 8)}`
+    tmuxSessions.push(tmuxSession)
+    await execFileAsync('tmux', [
+      'new-session', '-d', '-s', tmuxSession, '-x', '100', '-y', '30',
+      process.execPath, executable, '--session-id', sessionId,
+    ])
+    const panePid = (await execFileAsync('tmux', [
+      'display-message', '-p', '-t', tmuxSession, '#{pane_pid}',
+    ])).stdout.trim()
+    await waitForProcessCommand(Number(panePid), [executable])
+    const copilotHome = path.join(directory, 'copilot-home')
+    const sessionDirectory = path.join(copilotHome, 'session-state', sessionId)
+    await mkdir(sessionDirectory, { recursive: true })
+    await writeFile(path.join(sessionDirectory, `inuse.${panePid}.lock`), `${panePid}\n`)
+    vi.stubEnv('COPILOT_HOME', copilotHome)
+    const controller = new TmuxTerminalSessionController()
+    // A Copilot that has been running a while, as the one that was slow had.
+    Reflect.set(controller, 'settledOwnerAgeMs', 0)
+    await eventually(() => controller.capture(sessionId), (pane) => Boolean(pane?.includes('╹')))
+    const received = async () => JSON.parse(await readFile(output, 'utf8')) as {
+      pastes: string[]; clears: number; submits: string[]
+    }
+    // Read straight from tmux, so that nothing of the controller's runs.
+    const startWork = async ({ screen, shows }: { screen: string; shows: string } = takeovers['an agent at work']) => {
+      await writeFile(takeover, screen)
+      process.kill(Number(panePid), 'SIGUSR1')
+      await eventually(
+        async () => (await execFileAsync('tmux', ['capture-pane', '-p', '-t', tmuxSession])).stdout,
+        (pane) => pane.includes(shows),
+      )
+    }
+    return { controller, sessionId, received, startWork }
+  }
+
+  // What the send logged about this session's paste: never its content.
+  function pasteWarnings(warn: { mock: { calls: unknown[][] } }, sessionId: string) {
+    const warnings = warn.mock.calls.map((call) => call.map(String).join(' '))
+      .filter((line) => line.includes(sessionId))
+    for (const line of warnings) {
+      expect(line).not.toContain(message)
+      expect(line).not.toContain(leftover)
+    }
+    return warnings.map((line) => ({
+      line,
+      elapsedMs: Number(/(\d+) ms/u.exec(line)?.[1]),
+    }))
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('presses Enter once for a paste the prompt shows only after five seconds', async () => {
+    const { controller, sessionId, received } = await slowCopilot({ pasteDrawnAfterMs: 6_500 })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await expect(controller.send(sessionId, message, false)).resolves.toBe(true)
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [message], clears: 0, submits: [message] })
+    const warnings = pasteWarnings(warn, sessionId)
+    expect(warnings).toEqual([{
+      line: expect.stringContaining('composer readable: yes'),
+      elapsedMs: expect.any(Number),
+    }])
+    expect(warnings[0].elapsedMs).toBeGreaterThanOrEqual(6_000)
+    expect(warnings[0].elapsedMs).toBeLessThan(30_000)
+  }, 30_000)
+
+  it('reports a paste the prompt never shows as uncertain at the deadline, without Enter or a clear', async () => {
+    const { controller, sessionId, received } = await slowCopilot({ pasteDrawnAfterMs: null })
+    Reflect.set(controller, 'pasteConfirmationTimeoutMs', 1_000)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await expect(controller.send(sessionId, message, false)).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: true,
+      message: 'The terminal did not receive the message, and the text may still be in the prompt. Check the terminal before sending it again.',
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [message], clears: 0, submits: [] })
+    const warnings = pasteWarnings(warn, sessionId)
+    expect(warnings).toEqual([{
+      line: expect.stringContaining('composer readable: yes'),
+      elapsedMs: expect.any(Number),
+    }])
+    expect(warnings[0].elapsedMs).toBeGreaterThanOrEqual(1_000)
+    expect(warnings[0].elapsedMs).toBeLessThan(2_500)
+  }, 20_000)
+
+  // Sending again has to clear what a late paste left in the prompt. Once a
+  // turn ends with shells it started still running, Copilot keeps its busy
+  // row, cut to fit, and only the event log can say that is all it waits for.
+  const shellsWaits = [
+    [' ● Waiting for background s… · 132 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)', undefined],
+    [' Autopilot · Allow All · ● Wai ctrl+c    Claude Opus 5.5 · Max · 1M context (4…', undefined],
+    // Cut further, beside the queue key it offers while the prompt holds text.
+    [
+      ' ● Waiting for background s… · 136 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)',
+      ' ● Waitin… · 136 B ctrl+c interrupt · ctrl+q enqueue GPT-6.1 Sol · High · (9%)',
+    ],
+  ] as const
+  const shellsOnly = { turnOver: true, shellsRunning: true }
+  const replacingBesideShells = (eventLog: () => Promise<{ turnOver: boolean; shellsRunning: boolean }>) => ({
+    allowDuringAgentExecution: true,
+    replaceExistingInput: true,
+    backgroundShellsOnly: { eventLog },
+  })
+
+  it.each(shellsWaits)('clears a leftover draft beside a wait for background shells and sends once: %s', async (footer, draftFooter) => {
+    const { controller, sessionId, received } = await slowCopilot({ draft: leftover, footer, draftFooter })
+    const eventLog = vi.fn(async () => shellsOnly)
+
+    await expect(controller.send(sessionId, message, false, replacingBesideShells(eventLog)))
+      .resolves.toBe(true)
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [message], clears: 1, submits: [message] })
+    expect(eventLog).toHaveBeenCalled()
+  }, 20_000)
+
+  it.each([
+    ['a turn or background agent the log has running', shellsWaits[0][0], { turnOver: false, shellsRunning: true }],
+    ['no shell the log has running', shellsWaits[0][0], { turnOver: true, shellsRunning: false }],
+    ['a background agent on the busy row', backgroundAgentsWait, shellsOnly],
+  ])('keeps a leftover draft beside %s, clearing and typing nothing', async (_case, footer, logged) => {
+    const { controller, sessionId, received } = await slowCopilot({ draft: leftover, footer })
+
+    await expect(controller.send(sessionId, message, false, replacingBesideShells(async () => logged)))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: false,
+        terminalDraftConflict: true,
+        reasonCode: 'terminal-draft-conflict.changed-before-clear',
+      })
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [], clears: 0, submits: [] })
+    expect(await controller.capture(sessionId)).toContain(leftover)
+  }, 20_000)
+
+  it('pastes nothing once the log opens a turn after the draft was cleared', async () => {
+    const { controller, sessionId, received } = await slowCopilot({ draft: leftover, footer: shellsWaits[0][0] })
+    // The turn opens once the clear is confirmed, before the paste.
+    let turnOpened = false
+    const owner = controller['owner'].bind(controller)
+    controller['owner'] = async (...args: Parameters<typeof owner>) => {
+      if ((await received()).clears) turnOpened = true
+      return owner(...args)
+    }
+
+    await expect(controller.send(
+      sessionId,
+      message,
+      false,
+      replacingBesideShells(async () => ({ turnOver: !turnOpened, shellsRunning: true })),
+    )).rejects.toMatchObject({
+      statusCode: 409,
+      uncertainDelivery: false,
+      terminalDraftConflict: true,
+      reasonCode: 'terminal-draft-conflict.new-text',
+    })
+
+    expect(turnOpened).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [], clears: 1, submits: [] })
+  }, 20_000)
+
+  // Copilot can draw an agent at work, or a question, permission, form or
+  // view that takes the keyboard, while the event log is being read and
+  // before the log has it. Whatever the send does next must go by a pane
+  // drawn after that read: Enter above all, which answers whatever has the
+  // keyboard.
+  const refusedBefore = {
+    'the clear': { reasonCode: 'terminal-draft-conflict.changed-before-clear', received: { pastes: [], clears: 0, submits: [] } },
+    'the paste': { reasonCode: 'terminal-draft-conflict.new-text', received: { pastes: [], clears: 1, submits: [] } },
+    Enter: { reasonCode: undefined, received: { pastes: [message], clears: 1, submits: [] } },
+  } as const
+
+  it('draws takeovers the server recognizes', () => {
+    expect(parseTerminalUserInput(takeovers['a question'].screen)).toBeTruthy()
+    expect(parseTerminalPermission(takeovers['a permission request'].screen)).toBeTruthy()
+    expect(parseTerminalFormPrompt(takeovers['a form'].screen)).toBe(true)
+    expect(isTerminalOverlay(takeovers['a full-screen view'].screen)).toBe(true)
+    for (const { screen } of Object.values(takeovers).filter(({ screen }) => screen)) {
+      expect(terminalInputReady(screen, true)).toBe(false)
+    }
+  })
+
+  it.each([
+    ['the clear', 'an agent at work'],
+    ['the clear', 'a question'],
+    ['the paste', 'an agent at work'],
+    ['the paste', 'a question'],
+    ...Object.keys(takeovers).map((takeover) => ['Enter', takeover]),
+  ] as Array<[keyof typeof refusedBefore, keyof typeof takeovers]>)(
+    'does nothing before %s over %s drawn while the log is read',
+    async (step, takeover) => {
+      const { controller, sessionId, received, startWork } = await slowCopilot({
+        draft: leftover, footer: shellsWaits[0][0],
+      })
+      // The read of the log that is the last before the step: the first,
+      // which the clear makes once it has checked the owner; the next once the
+      // clear is confirmed; or the next once the paste is in.
+      let armed = false
+      let started = false
+      const owner = controller['owner'].bind(controller)
+      controller['owner'] = async (...args: Parameters<typeof owner>) => {
+        if (step === 'the paste' && (await received()).clears) armed = true
+        return owner(...args)
+      }
+      const eventLog = async () => {
+        const { clears, pastes } = await received()
+        if (step === 'the clear' ? !clears : step === 'Enter' && pastes.length) armed = true
+        if (armed && !started) {
+          started = true
+          await startWork(takeovers[takeover])
+        }
+        // Not yet in the log.
+        return shellsOnly
+      }
+      const { reasonCode, received: expected } = refusedBefore[step]
+
+      await expect(controller.send(sessionId, message, false, replacingBesideShells(eventLog)))
+        .rejects.toMatchObject({
+          statusCode: 409,
+          uncertainDelivery: step === 'Enter',
+          ...(reasonCode ? { reasonCode } : {}),
+        })
+
+      expect(started).toBe(true)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      expect(await received()).toEqual(expected)
+    },
+    20_000,
+  )
+
+  // A Copilot started again in the same pane while a send waits, here under
+  // the same pane root, is not the one that was checked: nothing goes to it.
+  // `changesAt` arms the change as the race test above arms its takeover;
+  // from then on the owner found has a new process id.
+  function ownerChangesWhile(
+    controller: TmuxTerminalSessionController,
+    changesAt: () => Promise<boolean>,
+  ) {
+    let changed = false
+    const owner = controller['owner'].bind(controller)
+    controller['owner'] = async (...args: Parameters<typeof owner>) => {
+      const found = await owner(...args)
+      if (!changed && (await changesAt())) changed = true
+      return changed && found ? { ...found, pid: found.pid + 100_000 } : found
+    }
+    return { change: () => { changed = true }, changed: () => changed }
+  }
+
+  it.each([
+    ['the clear', 'terminal-draft-conflict.owner-changed-before-clear', { pastes: [], clears: 0, submits: [] }],
+    ['the paste', 'terminal-draft-conflict.new-text', { pastes: [], clears: 1, submits: [] }],
+    ['Enter', undefined, { pastes: [message], clears: 1, submits: [] }],
+  ] as const)('sends nothing before %s to an owner that started while the log was read', async (step, reasonCode, expected) => {
+    const { controller, sessionId, received } = await slowCopilot({ draft: leftover, footer: shellsWaits[0][0] })
+    let armed = false
+    const owner = ownerChangesWhile(controller, async () => {
+      if (step === 'the paste' && (await received()).clears) armed = true
+      return false
+    })
+    const eventLog = async () => {
+      const { clears, pastes } = await received()
+      if (step === 'the clear' ? !clears : step === 'Enter' && pastes.length) armed = true
+      if (armed) owner.change()
+      return shellsOnly
+    }
+
+    await expect(controller.send(sessionId, message, false, replacingBesideShells(eventLog)))
+      .rejects.toMatchObject({
+        statusCode: 409,
+        uncertainDelivery: step === 'Enter',
+        ...(reasonCode ? { reasonCode } : {}),
+      })
+
+    expect(owner.changed()).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual(expected)
+  }, 20_000)
+
+  it('pastes nothing queued for an owner that started while the log was read', async () => {
+    const { controller, sessionId, received } = await slowCopilot({ footer: shellsWaits[0][0] })
+    const owner = ownerChangesWhile(controller, async () => false)
+
+    await expect(controller.send(sessionId, message, false, {
+      allowDuringAgentExecution: true,
+      backgroundShellsOnly: { eventLog: async () => { owner.change(); return shellsOnly } },
+    })).rejects.toMatchObject({ statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.queue' })
+
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [], clears: 0, submits: [] })
+  }, 20_000)
+
+  // The wait for a slow Copilot to show the paste can be long.
+  it('presses Enter only for the owner the paste was typed into', async () => {
+    const { controller, sessionId, received } = await slowCopilot({ pasteDrawnAfterMs: 300 })
+    const owner = ownerChangesWhile(controller, async () => (await received()).pastes.length > 0)
+
+    await expect(controller.send(sessionId, message, false))
+      .rejects.toMatchObject({ statusCode: 409, uncertainDelivery: true })
+
+    expect(owner.changed()).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(await received()).toEqual({ pastes: [message], clears: 0, submits: [] })
+  }, 20_000)
+})
+
 describe('paneShowsText', () => {
   it('recognises a long line the pane wrapped inside a word', () => {
     const message =

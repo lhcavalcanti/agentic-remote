@@ -107,6 +107,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Hub routes and origin policy | `server/hub-routes.ts` |
 | Node routes (`/node-api`) | `server/node-routes.ts` |
 | Hub to node routing | `server/computer-manager.ts`, `server/remote-node-client.ts` |
+| Gzip of large JSON responses (both roles) | `server/response-compression.ts` |
 | Workspace listing, reading, search | `server/workspace-browser.ts` |
 | Knowledge root metadata | `server/knowledge-store.ts` |
 | Session cwd containment | `server/session-directory.ts` |
@@ -220,6 +221,20 @@ Do not weaken these without an explicit product decision.
 - `readSessionEvents` parses only appended bytes and caches the parsed prefix
   per session, invalidating on shrink, in-place rewrite, inode change, or a
   changed head sample. Preserve that invalidation set when editing it.
+  Overlapping reads of one log wait for each other, so they share one parse.
+- A tmux session's log is projected incrementally: `AgentService` keeps one
+  `SessionEventProjection` per session (background tasks, transcript rows,
+  pending question, status, runtime, folder) that takes in only appended
+  events. Each read revalidates it by first event id, count, and the id at
+  count-1, and anything else rebuilds it; `/tasks` and the transcript refresh
+  share it, and it is forgotten with the session. Settle whatever depends on
+  the end of the log in the snapshot step, never in projector state, and never
+  hand out what a projector keeps: tasks are fresh copies, and transcript rows
+  are frozen and reused only while unchanged. Route new fixtures through the
+  `checked*` test helpers, which feed them in several chunkings and compare
+  every prefix.
+- `SessionStore.get` copies the whole transcript; `/tasks`, the poll, and
+  provider routing use `has` or `inspect` instead.
 - `SessionStore.persist` writes compact JSON and coalesces writes queued behind
   an in-flight write; the snapshot is taken when the write starts, so every
   caller's mutation is still durable when its promise resolves.
@@ -229,6 +244,14 @@ Do not weaken these without an explicit product decision.
   per 750 ms, so busy sessions cost no more than the poll alone.
 - Process discovery places candidates in tmux from the parents in its single
   `ps` listing; do not reintroduce per-pane `/proc` ancestry walks.
+- `server/response-compression.ts` gzips JSON of at least 64 KiB on zlib's
+  thread pool for clients that accept it, on hub and node alike. Never
+  compress on the event loop; a route whose JSON carries file contents opts
+  out with `config: { compress: false }`.
+- A tmux session's `/commands` comes from its folder's catalog, read through
+  one single-flight temporary SDK session per folder. It is fresh for 60 s,
+  when a known tmux session skips process discovery, and is served for up to
+  10 minutes while one background read refreshes it.
 - Oracle's conversation rows are memoized and receive stable callbacks and
   Markdown components, so a keystroke or streamed word re-renders only changed
   rows. Do not pass inline callbacks or per-render objects to them.
@@ -501,9 +524,10 @@ scope discovery to fixture-owned processes, and investigate failures rather
 than repeatedly rerunning the promotion gate until it passes.
 `createIsolatedTmuxRoot()` (tmux 3.4+) starts a fixture-owned server that stays
 up with no sessions, so teardown retires that exact process instead of proving
-absence host-wide, which any tmux in another mount namespace leaves
-indeterminate. A detached watchdog, armed before the server starts and told its
-identity over a pipe, retires the namespace, panes included, when its creating
+absence host-wide, which any other tmux the scan cannot rule out (one starting
+up, or in a mount namespace it may not inspect) leaves indeterminate. A
+detached watchdog, armed before the server starts and told its identity over a
+pipe, retires the namespace, panes included, when its creating
 process ends without teardown (a throwing or timed-out `afterEach` skips the
 rest of that test's hooks; a killed run skips all of them). It verifies the
 server as teardown does; on any doubt it kills nothing and keeps the root, with

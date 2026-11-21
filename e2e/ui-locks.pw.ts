@@ -950,6 +950,10 @@ test.describe('browser interaction contracts', () => {
           const navigation = page.getByRole('navigation', { name: 'App navigation', exact: true })
           const entry = navigation.getByRole('button', { name: new RegExp(`^${label}(?:,|$)`) })
           await expect(entry).toBeVisible()
+          // An icon beside App settings, named by its tooltip.
+          await expect(page.locator('.sidebar-settings').getByRole('navigation', { name: 'App navigation', exact: true })).toBeVisible()
+          await expect(entry).toHaveAttribute('title', label)
+          await expect(entry).not.toContainText(label)
           await expect(page.getByRole('button', { name: 'App settings', exact: true })).toHaveCount(1)
           await entry.click()
           await expect(dialog).toBeVisible()
@@ -960,6 +964,32 @@ test.describe('browser interaction contracts', () => {
       }
     })
   }
+
+  test('keeps every settings-row button whole at the narrowest sidebar', async ({ page, baseURL }) => {
+    const handle = await open(page, baseURL, 'conversation')
+    await page.route('**/api/features', (route) => route.fulfill({
+      json: { hubFlags: { notificationCenter: true, hostMonitor: true, scheduler: true } },
+    }))
+    await page.evaluate(async (revision) => {
+      await fetch('/api/settings', { method: 'PATCH', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ changes: { previewFeatures: {
+          value: { notificationPanel: true, hostMonitorView: true, schedulerView: true }, baseRevision: revision,
+        } } }) })
+    }, handle.state.settings.revision)
+    await page.reload()
+    const row = page.locator('.sidebar-settings')
+    await expect(row.getByRole('button', { name: 'Scheduler', exact: true })).toBeVisible()
+    // Shrink the sidebar to its minimum from the keyboard; it clamps at 220px.
+    const resizer = page.locator('.sidebar-resizer')
+    await resizer.focus()
+    for (let step = 0; step < 4; step += 1) await page.keyboard.press('Shift+ArrowLeft')
+    await expect.poll(async () => (await page.locator('.sidebar').boundingBox())!.width).toBeLessThanOrEqual(221)
+    for (const name of ['App settings', 'Host monitor', 'Notifications', 'Scheduler', 'Manage computers']) {
+      const box = (await row.getByRole('button', { name, exact: true }).boundingBox())!
+      expect(box.width, `${name} width`).toBeGreaterThanOrEqual(40)
+    }
+    expect(await row.evaluate((element) => element.scrollWidth - element.clientWidth), 'row overflow').toBeLessThanOrEqual(0)
+  })
 
   test('rail omits Oracle when the manager is unavailable', async ({ page, baseURL }) => {
     await open(page, baseURL, 'desktop-rail')

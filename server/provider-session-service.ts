@@ -45,6 +45,16 @@ interface ProviderSessionServiceEvents {
   event: [event: ServerEvent]
 }
 
+/**
+ * Whether a provider owns a session. A copy of the session carries its whole
+ * transcript, so it is asked without one wherever the provider can.
+ */
+function owns(service: SessionService, sessionId: string): boolean {
+  return service.hasSession
+    ? service.hasSession(sessionId)
+    : Boolean(service.getSession(sessionId))
+}
+
 export class ProviderSessionService
   extends EventEmitter<ProviderSessionServiceEvents>
   implements SessionService
@@ -567,10 +577,10 @@ export class ProviderSessionService
   }
 
   private serviceFor(sessionId: string): SessionService {
-    if (this.copilot.getSession(sessionId)) {
+    if (owns(this.copilot, sessionId)) {
       return this.copilot
     }
-    if (this.claude.getSession(sessionId)) {
+    if (owns(this.claude, sessionId)) {
       return this.claude
     }
     throw new Error('Session not found')

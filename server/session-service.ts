@@ -43,6 +43,8 @@ export interface SessionService {
   /** Sessions closed through the app that can still be reopened. */
   listClosedSessions?(): SessionDetail[]
   getSession(id: string): SessionDetail | undefined
+  /** Whether this provider owns a session, answered without copying it. */
+  hasSession?(id: string): boolean
   openSession(id: string): Promise<SessionDetail>
   activateSession(id: string): Promise<SessionDetail>
   configureRetention?(id: string, input: SessionRetentionPatch): Promise<SessionDetail>

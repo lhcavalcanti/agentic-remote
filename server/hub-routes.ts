@@ -662,6 +662,7 @@ export async function registerHubRoutes(
 
   app.get<{ Params: { rootId: string }; Querystring: { path?: string } }>(
     '/api/knowledge/roots/:rootId/file',
+    { config: { compress: false } },
     async (request, reply) => {
       const root = knowledge.getRoot(request.params.rootId)
       if (!root) {
@@ -745,6 +746,7 @@ export async function registerHubRoutes(
     Querystring: { path: string }
   }>(
     '/api/computers/:computerId/sessions/:sessionId/workspace/file',
+    { config: { compress: false } },
     async (request) => {
       const query = workspaceFileQuerySchema.parse(request.query)
       return manager.readWorkspaceFile(

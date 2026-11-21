@@ -622,6 +622,7 @@ export async function registerNodeRoutes(
 
       node.get<{ Querystring: { root?: string; path?: string } }>(
         '/knowledge/file',
+        { config: { compress: false } },
         async (request) => {
           const query = knowledgeFileQuerySchema.parse(request.query)
           const file = await service.readKnowledgeFile(
@@ -670,7 +671,7 @@ export async function registerNodeRoutes(
       node.get<{
         Params: { sessionId: string }
         Querystring: { path: string }
-      }>('/sessions/:sessionId/workspace/file', async (request) => {
+      }>('/sessions/:sessionId/workspace/file', { config: { compress: false } }, async (request) => {
         const query = workspaceFileQuerySchema.parse(request.query)
         return service.readWorkspaceFile(request.params.sessionId, query.path)
       })

@@ -1022,6 +1022,23 @@ export class SessionStore {
     return session ? cloneSession(session) : undefined
   }
 
+  /** Whether `get` would find the session, without copying its history. */
+  has(id: string): boolean {
+    return this.inspect(id, () => true) ?? false
+  }
+
+  /**
+   * Reads a session without copying it, which `get` does with its whole
+   * history. `read` must neither keep nor change what it is given.
+   */
+  inspect<T>(id: string, read: (session: Readonly<StoredSession>) => T): T | undefined {
+    if (!Object.hasOwn(this.state.sessions, id) || this.isRetiredSession(id)) {
+      return undefined
+    }
+    const session = this.state.sessions[id]
+    return session ? read(session) : undefined
+  }
+
   isRetiredSession(id: string): boolean {
     return this.retiredIds(this.state).has(id)
   }
@@ -1237,7 +1254,7 @@ export class SessionStore {
       session.updatedAt =
         nextMessages.at(-1)?.createdAt || session.updatedAt
       return true
-    })
+    }, true)
   }
 
   observeTranscript(sessionId: string, isCurrent?: () => boolean): TranscriptObservation {
@@ -1266,6 +1283,7 @@ export class SessionStore {
     sessionId: string,
     observation: TranscriptObservation,
     mutation: (session: StoredSession) => boolean,
+    replacesMessages = false,
   ): Promise<SessionDetail | undefined> {
     return this.change((state) => {
       const existing = state.sessions[sessionId]
@@ -1273,7 +1291,11 @@ export class SessionStore {
           existing.transcriptEpoch !== observation.epoch || observation.isCurrent?.() === false) {
         return () => undefined
       }
-      const session = structuredClone(existing)
+      // A mutation that replaces the transcript only reads the old one, whose
+      // committed rows are never changed in place, so it is not copied.
+      const session = replacesMessages
+        ? { ...structuredClone({ ...existing, messages: [] }), messages: existing.messages }
+        : structuredClone(existing)
       if (!mutation(session)) return () => undefined
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
       state.sessions[sessionId] = session

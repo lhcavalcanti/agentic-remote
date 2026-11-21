@@ -11334,6 +11334,127 @@ describe('AgentService deletion', () => {
     })
   })
 
+  // A paste Copilot drew too late to be sent stays in its prompt, and sending
+  // again asks to replace it. When only shells outlive the turn, Copilot keeps
+  // its busy row beside that draft; the terminal may clear it while the event
+  // log, which the send hands it, still says only shells are left.
+  describe('a Send replacing a draft left beside background shells', () => {
+    const rule = '─'.repeat(80)
+    const pane = (footer: string, draft = '') => [
+      '● STARTED', '', rule, draft ? `❯ ${draft}` : '❯', rule, footer,
+    ].join('\n')
+    const shellsWait = ' ● Waiting for background s… · 132 B ctrl+c interrupt GPT-6.1 Sol · High · (9%)'
+    const leftover = 'An earlier message drawn too late to be sent'
+    const prompt = 'Send this in its place'
+    const replacing = {
+      allowDuringAgentExecution: true,
+      replaceExistingInput: true,
+      confirm: expect.any(Function),
+    }
+
+    // A session whose turn started `sleep 300` in the background, unless
+    // `shell` is false, and ended unless `turnOver` is false; `agent` starts
+    // a background agent in it too. `send` replaces the draft with `prompt`.
+    async function sendBesideShells(
+      initialPane: string,
+      { shell = true, turnOver = true, agent = false }: { shell?: boolean; turnOver?: boolean; agent?: boolean } = {},
+      send = (service: AgentService, sessionId: string): Promise<unknown> =>
+        service.sendMessage(sessionId, prompt, false, undefined, true),
+    ) {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      const sessionId = client.session.sessionId
+      client.nextSessionList = Promise.resolve([{
+        sessionId, startTime: new Date(), modifiedTime: new Date(),
+        summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+      }])
+      const at = (offset: number) => new Date(Date.now() - 60_000 + offset).toISOString()
+      const events = JSON.parse(JSON.stringify([
+        { type: 'assistant.turn_start', id: 'turn', parentId: null, timestamp: at(0), data: {} },
+        ...(shell
+          ? [{
+              type: 'tool.execution_start', id: 'sleep-start', parentId: 'turn', timestamp: at(1_000),
+              data: {
+                toolCallId: 'sleep-call', toolName: 'bash',
+                arguments: { command: 'sleep 300', description: 'Sleep in the background', mode: 'async' },
+              },
+            }]
+          : []),
+        ...(agent
+          ? [{ type: 'subagent.started', id: 'agent', parentId: 'turn', agentId: 'background-agent', timestamp: at(2_000), data: {} }]
+          : []),
+        ...(turnOver
+          ? [
+              { type: 'assistant.turn_end', id: 'turn-end', parentId: 'turn', timestamp: at(3_000), data: {} },
+              { type: 'session.idle', id: 'idle', parentId: 'turn-end', timestamp: at(4_000), data: {} },
+            ]
+          : []),
+      ])) as SessionEvent[]
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        capture: vi.fn(async () => initialPane),
+        cancel: vi.fn(async () => true),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        client,
+        async () => [{
+          id: sessionId, cwd: directory, title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        }],
+        async () => undefined,
+        async () => events,
+        async () => 'events-v1',
+        terminal,
+      )
+      await service.start()
+      await send(service, sessionId)
+      return { terminal, sessionId }
+    }
+
+    it('hands the terminal the event log to clear the draft by', async () => {
+      const { terminal, sessionId } = await sendBesideShells(pane(shellsWait, leftover))
+
+      expect(terminal.send.mock.calls).toEqual([[sessionId, prompt, false, {
+        ...replacing,
+        backgroundShellsOnly: { eventLog: expect.any(Function) },
+      }]])
+      const options = (terminal.send.mock.calls[0] as unknown[])[3] as {
+        backgroundShellsOnly: { eventLog: () => Promise<{ turnOver: boolean; shellsRunning: boolean }> }
+      }
+      expect(await options.backgroundShellsOnly.eventLog()).toEqual({ turnOver: true, shellsRunning: true })
+    })
+
+    it.each([
+      ['a turn still open', pane(shellsWait, leftover), { turnOver: false }],
+      ['a background agent', pane(shellsWait, leftover), { agent: true }],
+      ['no shell running', pane(shellsWait, leftover), { shell: false }],
+      ['a row naming other work', pane(' ◉ Working · 83 B ctrl+c interrupt', leftover), {}],
+      // Nothing to clear: the message goes in as any other steer does.
+      ['an empty prompt', pane(shellsWait), {}],
+    ])('sends as it always has, with no evidence to clear by, beside %s', async (_case, initialPane, setup) => {
+      const { terminal, sessionId } = await sendBesideShells(initialPane, setup)
+
+      expect(terminal.send.mock.calls).toEqual([[sessionId, prompt, false, replacing]])
+    })
+
+    // A command a loaded Copilot drew too late is left behind the same way.
+    it.each([
+      ['in place of its leftover draft', '/usage', { backgroundShellsOnly: { eventLog: expect.any(Function) } }],
+      ['as it always has to an empty prompt', '', {}],
+    ])('hands a command the event log %s', async (_case, draft, evidence) => {
+      const { terminal, sessionId } = await sendBesideShells(
+        pane(shellsWait, draft),
+        {},
+        (service, sessionId) => service.executeCommand(sessionId, '/usage', false, undefined, true),
+      )
+
+      expect(terminal.send.mock.calls).toEqual([[sessionId, '/usage', false, { ...replacing, ...evidence }]])
+    })
+  })
+
   it('does not assign an uncertain head failure to the untouched FIFO tail', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

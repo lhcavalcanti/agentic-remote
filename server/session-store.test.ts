@@ -1762,6 +1762,39 @@ describe('SessionStore', () => {
     })
   })
 
+  it('replaces a transcript without copying the one it replaces', async () => {
+    // A tmux session's transcript is replaced on every change to its log, and
+    // copying the old one only to discard it cost as much as it was long.
+    const { store } = await createStore()
+    await store.create({
+      id: 'session-1',
+      cwd: '/tmp/project',
+      title: 'Project',
+      updatedAt: '2026-07-22T00:00:00.000Z',
+      status: 'idle',
+      messages: [
+        { id: 'old', role: 'assistant', content: 'Old reply', createdAt: '2026-07-22T00:00:01.000Z' },
+        { id: 'note', role: 'notice', content: 'Kept notice', createdAt: '2026-07-22T00:00:02.000Z' },
+      ],
+    })
+    const clones = vi.spyOn(globalThis, 'structuredClone')
+
+    const updated = await store.replaceTranscript(
+      'session-1',
+      (session) => [
+        { id: 'new', role: 'assistant', content: 'New reply', createdAt: '2026-07-22T00:00:03.000Z' },
+        ...session.messages.filter((message) => message.role === 'notice'),
+      ],
+      'idle',
+    )
+
+    expect(updated?.messages.map((message) => message.content)).toEqual(['New reply', 'Kept notice'])
+    expect(store.get('session-1')?.messages.map((message) => message.content))
+      .toEqual(['New reply', 'Kept notice'])
+    const copied = clones.mock.calls.map(([value]) => JSON.stringify(value ?? null))
+    expect(copied.filter((value) => value.includes('Old reply'))).toEqual([])
+  })
+
   it('preserves a terminal dispatch that starts during transcript replacement', async () => {
     const { store } = await createStore()
     await store.create({

@@ -220,6 +220,20 @@ Do not weaken these without an explicit product decision.
 - `readSessionEvents` parses only appended bytes and caches the parsed prefix
   per session, invalidating on shrink, in-place rewrite, inode change, or a
   changed head sample. Preserve that invalidation set when editing it.
+  Overlapping reads of one log wait for each other, so they share one parse.
+- A tmux session's log is projected incrementally: `AgentService` keeps one
+  `SessionEventProjection` per session (background tasks, transcript rows,
+  pending question, status, runtime, folder) that takes in only appended
+  events. Each read revalidates it by first event id, count, and the id at
+  count-1, and anything else rebuilds it; `/tasks` and the transcript refresh
+  share it, and it is forgotten with the session. Settle whatever depends on
+  the end of the log in the snapshot step, never in projector state, and never
+  hand out what a projector keeps: tasks are fresh copies, and transcript rows
+  are frozen and reused only while unchanged. Route new fixtures through the
+  `checked*` test helpers, which feed them in several chunkings and compare
+  every prefix.
+- `SessionStore.get` copies the whole transcript; `/tasks`, the poll, and
+  provider routing use `has` or `inspect` instead.
 - `SessionStore.persist` writes compact JSON and coalesces writes queued behind
   an in-flight write; the snapshot is taken when the write starts, so every
   caller's mutation is still durable when its promise resolves.
@@ -501,9 +515,10 @@ scope discovery to fixture-owned processes, and investigate failures rather
 than repeatedly rerunning the promotion gate until it passes.
 `createIsolatedTmuxRoot()` (tmux 3.4+) starts a fixture-owned server that stays
 up with no sessions, so teardown retires that exact process instead of proving
-absence host-wide, which any tmux in another mount namespace leaves
-indeterminate. A detached watchdog, armed before the server starts and told its
-identity over a pipe, retires the namespace, panes included, when its creating
+absence host-wide, which any other tmux the scan cannot rule out (one starting
+up, or in a mount namespace it may not inspect) leaves indeterminate. A
+detached watchdog, armed before the server starts and told its identity over a
+pipe, retires the namespace, panes included, when its creating
 process ends without teardown (a throwing or timed-out `afterEach` skips the
 rest of that test's hooks; a killed run skips all of them). It verifies the
 server as teardown does; on any doubt it kills nothing and keeps the root, with

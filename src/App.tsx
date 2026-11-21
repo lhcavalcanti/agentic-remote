@@ -13462,7 +13462,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         tabIndex={0}
       />
       <aside className={`sidebar ${sidebarOpen ? 'sidebar--open' : ''}`}>
-        {desktopLayout ? shellNavigation : null}
+        {desktopRail && desktopLayout ? shellNavigation : null}
         <div className="mobile-knowledge-heading" hidden={sidebarView !== 'knowledge'}>
           <button
             aria-label="Back to sessions"
@@ -13809,6 +13809,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               setSettingsSection(undefined)
               setSettingsOpen(true)
             }}
+            title="App settings"
             type="button"
           >
             <Settings size={18} />
@@ -13817,6 +13818,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               <small>Notifications, updates, and display</small>
             </span>
           </button>}
+          {/* Without the rail, feature views open from icons beside App settings. */}
+          {!desktopRail ? shellNavigation : null}
           {/* On a phone the session list covers the conversation and its
               Oracle bubble, so Oracle is offered here too; CSS shows this
               copy only there. */}
@@ -13841,7 +13844,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             <MonitorCog aria-hidden="true" size={18} />
           </button>
         </div>
-        {!desktopLayout ? shellNavigation : null}
+        {desktopRail && !desktopLayout ? shellNavigation : null}
       </aside>
 
       {sidebarOpen ? (

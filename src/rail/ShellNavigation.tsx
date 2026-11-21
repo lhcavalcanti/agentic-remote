@@ -25,7 +25,10 @@ export function ShellNavigation({ displayName, onNewSession, onSettings, onOracl
   ]
   const entries = railEntries(features)
   if (!entries.length) return null
-  return <nav className="shell-rail" aria-label="App navigation" inert={offscreen} aria-hidden={offscreen || undefined}>
+  // Without the rail, the entries sit as icons beside App settings in the
+  // sidebar's settings row rather than in a footer of their own.
+  return <nav className={`shell-rail${effective.desktopRail ? '' : ' shell-rail--inline'}`} aria-label="App navigation"
+    inert={offscreen} aria-hidden={offscreen || undefined}>
     {effective.desktopRail && <div className="shell-rail__top">
       {oracleAvailable && <button type="button" aria-label="Open Oracle" title="Open Oracle" className="icon-button" onClick={onOracle}><OracleIcon aria-hidden="true" size={24} strokeWidth={1.8} /></button>}
       <button aria-label="New session" title="New session" onClick={onNewSession} className="icon-button"><Plus size={22} /></button>
@@ -34,12 +37,15 @@ export function ShellNavigation({ displayName, onNewSession, onSettings, onOracl
       {effective.desktopRail && <div className="shell-rail__identity" title={name}>
         <span className="shell-avatar" aria-hidden="true">{initials(name)}</span><span>{name}</span>
       </div>}
-      {entries.map(({ id, label, icon: Icon, railEntry, open }) =>
-        <button key={id} type="button" className="shell-rail__entry" aria-label={railEntry?.badge ? `${label}, ${railEntry.badge} unread` : label}
-          title={label} onClick={open}>
-          <Icon aria-hidden="true" size={20} /><span className="shell-rail__label">{label}</span>
-          {!!railEntry?.badge && <span className="shell-badge" aria-label={`${railEntry.badge} unread`}>{railEntry.badge > 99 ? '99+' : railEntry.badge}</span>}
-        </button>)}
+      {/* Icons only, named on hover and to assistive technology. */}
+      <div className="shell-rail__entries">
+        {entries.map(({ id, label, icon: Icon, railEntry, open }) =>
+          <button key={id} type="button" className="shell-rail__entry" aria-label={railEntry?.badge ? `${label}, ${railEntry.badge} unread` : label}
+            title={label} onClick={open}>
+            <Icon aria-hidden="true" size={20} />
+            {!!railEntry?.badge && <span className="shell-badge" aria-hidden="true">{railEntry.badge > 99 ? '99+' : railEntry.badge}</span>}
+          </button>)}
+      </div>
     </div>
   </nav>
 }

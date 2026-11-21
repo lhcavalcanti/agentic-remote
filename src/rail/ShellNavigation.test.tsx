@@ -117,6 +117,24 @@ it('keeps Scheduler reachable when it is the only enabled preview', () => {
   expect(screen.queryByRole('button', { name: 'Host monitor' })).toBeNull()
 })
 
+it('shows feature entries as icons named on hover', () => {
+  const preferences = { notificationPanel: true, hostMonitorView: true, schedulerView: true }
+  const hubFlags = { notificationCenter: true, hostMonitor: true, scheduler: true }
+  render(<PreviewFeaturesContext value={{
+    preferences, hubFlags, effective: effectivePreviewFeatures(preferences, hubFlags), set: vi.fn(),
+  }}><ShellNavigation displayName="Alex Morgan" unreadCount={3} onNewSession={vi.fn()} onSettings={vi.fn()} onOracle={vi.fn()} onOpen={vi.fn()} /></PreviewFeaturesContext>)
+  for (const [name, label, text] of [
+    ['Host monitor', 'Host monitor', ''],
+    ['Notifications, 3 unread', 'Notifications', '3'],
+    ['Scheduler', 'Scheduler', ''],
+  ]) {
+    const entry = screen.getByRole('button', { name })
+    expect(entry.getAttribute('title')).toBe(label)
+    // Only the icon, and an unread count, is drawn; the name is the tooltip.
+    expect(entry.textContent).toBe(text)
+  }
+})
+
 it('saves a trimmed display-name edit and refuses invalid names', () => {
   vi.mocked(request).mockResolvedValue({ defaultDisplayName: 'Alex Morgan' })
   const onChange = vi.fn()

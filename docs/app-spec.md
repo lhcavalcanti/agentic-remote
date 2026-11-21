@@ -314,9 +314,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   in the task colour that opens the tasks sheet without changing the status
   line's height, and its name says it in words, such as "4 background tasks
   running, 1 subagent".
-- The tasks sheet MUST open with the same counts and give each task one row:
-  status icon, title, Subagent or Shell, and how long it has run. Running work
-  comes before finished work, and subagents before shells within each. A row
+- The tasks sheet MUST open with the same words and give each task one row:
+  status icon, title, Subagent or Shell, and how long it has run. Subagents
+  come first, then shells, each with running work before finished work. A row
   opens in place onto its command or prompt, output, and recent activity,
   which shows the last 5 entries until Show all is chosen. Rows are at least
   40px tall on a phone.

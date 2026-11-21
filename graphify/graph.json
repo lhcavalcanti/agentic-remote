@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "837fb844730c33ca6fc62fa7e2a7c394c2497fba",
+  "built_at_commit": "5d702209cede042a7d091c9bb172642120ab1ec4",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -263932,7 +263932,7 @@
       "source": "src_features_background_tasks_backgroundtasksdialog",
       "source_file": "src/features/background-tasks/BackgroundTasksDialog.tsx",
       "source_location": "L27",
-      "target": "src_features_background_tasks_task_summary_backgroundtaskcounts",
+      "target": "src_features_background_tasks_task_summary_backgroundtaskcountlabel",
       "weight": 1.0
     },
     {
@@ -263944,7 +263944,7 @@
       "source": "src_features_background_tasks_backgroundtasksdialog",
       "source_file": "src/features/background-tasks/BackgroundTasksDialog.tsx",
       "source_location": "L27",
-      "target": "src_features_background_tasks_task_summary_backgroundtaskcounttext",
+      "target": "src_features_background_tasks_task_summary_backgroundtaskcounts",
       "weight": 1.0
     },
     {
@@ -264088,7 +264088,7 @@
       "source": "src_features_background_tasks_backgroundtasksdialog_backgroundtasksdialog",
       "source_file": "src/features/background-tasks/BackgroundTasksDialog.tsx",
       "source_location": "L498",
-      "target": "src_features_background_tasks_task_summary_backgroundtaskcounts",
+      "target": "src_features_background_tasks_task_summary_backgroundtaskcountlabel",
       "weight": 1.0
     },
     {
@@ -264100,7 +264100,7 @@
       "source": "src_features_background_tasks_backgroundtasksdialog_backgroundtasksdialog",
       "source_file": "src/features/background-tasks/BackgroundTasksDialog.tsx",
       "source_location": "L498",
-      "target": "src_features_background_tasks_task_summary_backgroundtaskcounttext",
+      "target": "src_features_background_tasks_task_summary_backgroundtaskcounts",
       "weight": 1.0
     },
     {

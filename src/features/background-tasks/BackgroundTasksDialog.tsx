@@ -24,7 +24,7 @@ import type {
 } from '../../../shared/contracts'
 import { DialogFrame } from '../../components/DialogFrame'
 import { orderTasksForReading } from './task-order'
-import { backgroundTaskCountText, backgroundTaskCounts } from './task-summary'
+import { backgroundTaskCountLabel, backgroundTaskCounts } from './task-summary'
 
 const messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
@@ -495,8 +495,7 @@ export function BackgroundTasksDialog({
     >
       <div className="background-tasks-dialog__toolbar">
         <p role="status">
-          <strong>{backgroundTaskCountText(backgroundTaskCounts(snapshot))}</strong>{' '}
-          running
+          {backgroundTaskCountLabel(backgroundTaskCounts(snapshot))}
         </p>
         <button
           aria-label="Refresh background tasks"

@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `6f86f5d7430b5a32a441591fb02599a2b25369a3b9b93aeeb2b8a8f7b28a1547`
+Snapshot: `ce5799613c4d436ea22a3a216ab82e2b6b67281940e27564bfc5144096904000`
 
-Source checkout: `837fb844730c33ca6fc62fa7e2a7c394c2497fba`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `5d702209cede042a7d091c9bb172642120ab1ec4`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -12,7 +12,7 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 
 
 ## Corpus Check
-- 641 files · ~1,154,274 words
+- 641 files · ~1,154,280 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary

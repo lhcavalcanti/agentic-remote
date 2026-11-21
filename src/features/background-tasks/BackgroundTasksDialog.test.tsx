@@ -101,7 +101,7 @@ describe('background task ordering', () => {
     expect(ordered).toEqual(['no-end', 'ended-earlier'])
   })
 
-  it('puts subagents before shells, among running work and among finished work', () => {
+  it('puts every subagent before the shells, running before finished within each', () => {
     const ordered = orderTasksForReading([
       task('shell-done', { status: 'completed', startedAt: ago(120), completedAt: ago(30) }),
       task('agent-done', { type: 'agent', status: 'completed', startedAt: ago(400), completedAt: ago(380) }),
@@ -109,7 +109,7 @@ describe('background task ordering', () => {
       task('agent-running', { type: 'agent', startedAt: ago(60) }),
     ]).map((entry) => entry.id)
 
-    expect(ordered).toEqual(['agent-running', 'shell-running', 'agent-done', 'shell-done'])
+    expect(ordered).toEqual(['agent-running', 'agent-done', 'shell-running', 'shell-done'])
   })
 })
 
@@ -208,7 +208,7 @@ describe('background tasks sheet', () => {
 
   const rowToggle = (name: string) => screen.getByRole('button', { name })
 
-  it("summarizes running work in the status item's words", () => {
+  it("summarizes running work in the words the status item is named by", () => {
     renderSheet({
       supported: true,
       runningCount: 3,
@@ -221,10 +221,10 @@ describe('background tasks sheet', () => {
       ],
     })
 
-    expect(screen.getByRole('status')).toHaveTextContent(/^4 tasks · 2 subagents running$/)
+    expect(screen.getByRole('status')).toHaveTextContent(/^4 background tasks running, 2 subagents$/)
   })
 
-  it('lists one row per task, subagents first and running work before finished', () => {
+  it('lists one row per task, subagents first and running before finished within each', () => {
     renderSheet({
       supported: true,
       runningCount: 2,
@@ -244,9 +244,9 @@ describe('background tasks sheet', () => {
     const expected = [
       ['Running subagent: Review recovery paths', 'Subagent', 'Running for 4m 10s'],
       ['Running subagent: Check the guide links', 'Subagent', 'Running for 1m 5s'],
+      ['Completed subagent: Lint the docs', 'Subagent', 'Ran for 20s'],
       ['Running shell: pnpm dev', 'Shell', 'Running for 2h 5m'],
       ['Queued shell: pnpm test --watch', 'Shell', 'Queued for 2m 5s'],
-      ['Completed subagent: Lint the docs', 'Subagent', 'Ran for 20s'],
       ['Failed shell: pnpm build', 'Shell', 'Ran for 1m 30s'],
     ]
     expect(rows).toHaveLength(expected.length)

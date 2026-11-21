@@ -4482,13 +4482,11 @@ button {
   font-size: 11px;
 }
 
+/* The same words the status item is named by. */
 .background-tasks-dialog__toolbar p {
   margin: 0;
-}
-
-.background-tasks-dialog__toolbar strong {
   color: var(--task);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 650;
 }
 
@@ -4821,7 +4819,7 @@ button {
   color: var(--muted-strong);
 }
 
-@media (pointer: coarse) {
+@media (max-width: 960px), (pointer: coarse) {
   .background-task__action,
   .background-task__more {
     min-height: 40px;

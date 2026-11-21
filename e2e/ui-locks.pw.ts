@@ -277,11 +277,11 @@ for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' ||
       } finally { fixture.assertHealthy() }
     })
 
-    test('lists compact rows, subagents first, with one note when nothing can be stopped', async ({ page, baseURL }) => {
+    test('lists compact rows, subagents first, under the same words, with one note when nothing can be stopped', async ({ page, baseURL }) => {
       const fixture = await sceneSetup(baseURL, 'background-tasks-sheet')(page)
       try {
         const sheet = page.getByRole('dialog', { name: /^Background tasks · / })
-        await expect(sheet.getByRole('status')).toHaveText('8 tasks · 2 subagents running')
+        await expect(sheet.getByRole('status')).toHaveText(statusName)
         const rows = sheet.getByRole('button', { expanded: false })
         await expect(rows).toHaveCount(10)
         await expect(rows.nth(0)).toHaveAccessibleName('Running subagent: Review the recovery paths')

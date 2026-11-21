@@ -10,12 +10,12 @@ export function orderTasksForReading(
     return Number.isNaN(parsed) ? undefined : parsed
   }
   return [...tasks].sort((left, right) => {
-    if (live(left) !== live(right)) {
-      return live(left) ? -1 : 1
-    }
-    // Subagents are what a reader comes to manage, so they lead each group.
+    // Subagents are what a reader comes to manage, so they all come first.
     if ((left.type === 'agent') !== (right.type === 'agent')) {
       return left.type === 'agent' ? -1 : 1
+    }
+    if (live(left) !== live(right)) {
+      return live(left) ? -1 : 1
     }
     if (live(left)) {
       const started = (at(left.startedAt) ?? 0) - (at(right.startedAt) ?? 0)

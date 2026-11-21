@@ -7,7 +7,7 @@ import { gunzipSync } from 'node:zlib'
 import Fastify, { type FastifyInstance } from 'fastify'
 import WebSocket from 'ws'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { SessionDetail, WorkspaceFile } from '../shared/contracts.js'
+import type { ActivityDetail, SessionDetail, WorkspaceFile } from '../shared/contracts.js'
 import { buildApp } from './app.js'
 import { registerResponseCompression } from './response-compression.js'
 import type { SessionService } from './session-service.js'
@@ -141,6 +141,12 @@ const transcript = Array.from({ length: 600 }, (_, index) => ({
   content: `Synthetic message ${index}. ${'The quick brown fox jumps over the lazy dog. '.repeat(6)}`,
   createdAt: timestamp,
 }))
+const largeCallOutput = 'ok - synthetic check passed\n'.repeat(5_000)
+const largeCall: ActivityDetail = {
+  toolCallId: 'call_large', toolName: 'bash', kind: 'tool', status: 'completed',
+  arguments: { format: 'command', text: 'pnpm test', truncated: false, originalBytes: 9 },
+  result: { text: largeCallOutput, truncated: false, originalBytes: largeCallOutput.length },
+}
 const largeFile: WorkspaceFile = {
   name: 'notes.md', path: 'notes.md', kind: 'markdown', mimeType: 'text/markdown; charset=utf-8',
   size: 128 * KIB, content: `# Notes\n${'Plain synthetic prose for a large document. '.repeat(3_000)}`,
@@ -151,7 +157,9 @@ class LargeSessionService extends EventEmitter {
     id: 'large', cwd: '/srv/large', title: 'Large', provider: 'copilot',
     status: 'idle', isOpen: true, updatedAt: timestamp, messages: transcript,
   }
-  providers = () => [{ id: 'copilot' as const, name: 'GitHub Copilot', available: true, terminalBacked: false }]
+  providers = () => [{
+    id: 'copilot' as const, name: 'GitHub Copilot', available: true, terminalBacked: false, supportsActivityDetails: true,
+  }]
   start = async () => {}
   stop = async () => {}
   getSession = (id: string) => id === this.session.id ? structuredClone(this.session) : undefined
@@ -163,6 +171,7 @@ class LargeSessionService extends EventEmitter {
     return session
   }
   listBackgroundTasks = async () => ({ tasks: [], runningCount: 0, supported: false })
+  readActivityDetail = async () => structuredClone(largeCall)
   readWorkspaceFile = async () => structuredClone(largeFile)
   readKnowledgeFile = async () => structuredClone(largeFile)
   validateKnowledgeRoot = async (inputPath: string) => inputPath
@@ -277,6 +286,32 @@ describe('response compression on hub and node routes', () => {
     })
     expect(requested).toEqual([expect.stringMatching(/\bgzip\b/)])
     expect(received).toEqual(['gzip'])
+  })
+
+  it('gzips a large tool call once on the hub, read locally or from a node, and keeps it uncached', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', '')
+    const node = await runtime('node')
+    const nodeUrl = await node.app.listen({ host: '127.0.0.1', port: 0 })
+    const hub = await runtime('hub')
+    const registered = await hub.app.inject({
+      method: 'POST', url: '/api/computers',
+      payload: { baseUrl: nodeUrl, token: node.identity.token, name: 'Worker' },
+    })
+    expect(registered.statusCode).toBe(201)
+
+    for (const computerId of [hub.identity.info.id, registered.json().computer.id as string]) {
+      const response = await hub.app.inject({
+        url: `/api/computers/${computerId}/sessions/large/activities/call_large`,
+        headers: { 'accept-encoding': 'gzip' },
+      })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['content-encoding']).toBe('gzip')
+      expect(response.headers['cache-control']).toBe('no-store')
+      expect(response.headers.vary).toBe('Accept-Encoding')
+      // A single gunzip gives the call back: it was not encoded twice.
+      expect(JSON.parse(gunzipText(response.rawPayload))).toEqual(largeCall)
+    }
   })
 
   it('leaves node event sockets to WebSocket framing', async () => {

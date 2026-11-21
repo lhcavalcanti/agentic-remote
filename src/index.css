@@ -4449,10 +4449,11 @@ button {
   cursor: pointer;
 }
 
-/* A finger gets the line's whole height, not only the pill's. */
+/* A finger gets the line's whole height, not only the pill's. It stops at the
+   line's padding edge: past it the line would scroll by those few pixels. */
 .web-statusline__tasks::before {
   position: absolute;
-  inset: -5px -3px;
+  inset: -2px -3px;
   content: "";
 }
 

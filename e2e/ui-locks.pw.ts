@@ -257,18 +257,21 @@ for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' ||
           const box = pill.getBoundingClientRect()
           const style = getComputedStyle(pill)
           const lineBox = element.getBoundingClientRect()
-          const above = document.elementFromPoint(box.left + box.width / 2, box.top - 2)
+          const above = document.elementFromPoint(box.left + box.width / 2, box.top - 1)
           return {
             rowHeight: box.height + Number.parseFloat(style.marginTop) + Number.parseFloat(style.marginBottom),
             plainHeight: plain.getBoundingClientRect().height,
             inside: box.top >= lineBox.top && box.bottom <= lineBox.bottom,
+            scrolls: element.scrollHeight > element.clientHeight,
             reachesAbove: above === pill,
           }
         })
         // The pill takes no more of its row than plain text does, stays inside
-        // the line, and still answers a touch just above its outline.
+        // the line without making it scroll, and still answers a touch just
+        // above its outline.
         expect(fit.rowHeight).toBeLessThanOrEqual(fit.plainHeight + 0.5)
         expect(fit.inside).toBe(true)
+        expect(fit.scrolls).toBe(false)
         expect(fit.reachesAbove).toBe(true)
         await assertNoHorizontalOverflow(page)
       } finally { fixture.assertHealthy() }

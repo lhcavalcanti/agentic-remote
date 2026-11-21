@@ -762,7 +762,7 @@
     "e2e/session-unread.pw.ts": "54a5776c28698324d268a43edc49517674c7e6425311114bb9d64836cff57312",
     "e2e/shell-fixtures.ts": "75d818141cbf8c849a212885fd945ff37ed70c54d2e3b7de15acce7dc08aabd8",
     "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
-    "e2e/ui-locks.pw.ts": "db4b02f7efc8ccc54a24807c5ae8f1d1bafba6bdfeaf31fd784214da2c14e846",
+    "e2e/ui-locks.pw.ts": "f2531e597015a5cb7691bce4f83b4bf725a3938b7a4534c22920dd36859a0e4d",
     "e2e/ui-locks.pw.ts-snapshots/desktop-app-settings-chromium-linux.png": "a545f54c3f34e5fc86e80fae573d3a3d33a9fe7610d4db7f4c0113e21a3729d1",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-busy-queue-chromium-linux.png": "7ffcba9d9f32ca16320889d65c81cb82ba4d4aa863b374c10ee18a38198018ae",
     "e2e/ui-locks.pw.ts-snapshots/desktop-composer-button-row-chromium-linux.png": "14261c83b26194f6416046163a9df6c52bee6f8e1ac7bb0b18cce659e6d37d71",
@@ -1402,7 +1402,7 @@
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
     "src/hub-reachability.ts": "39d2789075d58fd20585eeb706bdeabefba6f507c2d28764ebeb4f5b7e99e3cd",
     "src/hub-sign-in.ts": "bb68abb53da257f7c544d3824934d97768e110009412ea3d1a91d9202580d976",
-    "src/index.css": "027defda26caa0565317a7dd99c6d3a6988db80b15dd905a61f04f866c0b4e2c",
+    "src/index.css": "e10575a7cd78f240c7b3a94a85d15015f5e2d67d4a6bb7782a29ef79cb7b753d",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -1771,35 +1771,16 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "07fb0094c6f777f04093ef129a9356bebc1a4d5c846f2663235033991900c54d",
+    "GRAPH_REPORT.md": "1e3b8d6fa49caa9b0494ad70dc3930ec5ee934789fbab7d13f57e454011fb1a6",
     "communities.json": "ed2247ba71dbbe8ebbc2da2e9f68470fb43cffda748c7e8a5f067e688b9425c2",
-    "graph.html": "59fd9e6a5c6373c3038fdc60d44c66fb77fe383d3e3d4a66ab71e44482554c1a",
-    "graph.json": "9e8c8ee87bdaa0498db38cae5c451fec482914b4d1ba5f760216f58f5dfd225d"
+    "graph.html": "91dd5bfa8cb42474ae9af41b3b40fd824d43916789e8d70c25aa7f3cce8afd45",
+    "graph.json": "f9e2fb84b8f838b4c645706c8c47dedd58554bb0e827f4e098c2db8263325774"
   },
   "schema_version": 1,
-  "source_commit": "cf055e6b85f72afc3c736fcea3dfffe45e648e56",
-  "source_fingerprint": "735fbb9303f2f2e6eea2667151c2b3107e7e326ad660f00f3d591f557b5539d0",
+  "source_commit": "d96ffef7839c10b5b5e583e664f72e8fecd1fb72",
+  "source_fingerprint": "e75ac923ed2a72946e750df9923e7d9baecba3b0f5b45702aa5368b0c268a3e5",
   "working_tree_changes": [
-    "docs/app-spec.md",
-    "docs/background-tasks.md",
-    "docs/design/session-provenance.md",
-    "e2e/oracle-dock.pw.ts",
     "e2e/ui-locks.pw.ts",
-    "e2e/ui-scenes.ts",
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json",
-    "src/App.test.tsx",
-    "src/App.tsx",
-    "src/SessionOriginBadge.test.tsx",
-    "src/features/background-tasks/BackgroundTasksDialog.test.tsx",
-    "src/features/background-tasks/BackgroundTasksDialog.tsx",
-    "src/features/background-tasks/BackgroundTasksStatus.tsx",
-    "src/features/background-tasks/task-order.ts",
-    "src/features/background-tasks/task-summary.ts",
-    "src/index.css",
-    "vite.config.ts"
+    "src/index.css"
   ]
 }

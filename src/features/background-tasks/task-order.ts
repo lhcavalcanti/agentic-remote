@@ -13,6 +13,10 @@ export function orderTasksForReading(
     if (live(left) !== live(right)) {
       return live(left) ? -1 : 1
     }
+    // Subagents are what a reader comes to manage, so they lead each group.
+    if ((left.type === 'agent') !== (right.type === 'agent')) {
+      return left.type === 'agent' ? -1 : 1
+    }
     if (live(left)) {
       const started = (at(left.startedAt) ?? 0) - (at(right.startedAt) ?? 0)
       return started !== 0 ? started : left.id.localeCompare(right.id)

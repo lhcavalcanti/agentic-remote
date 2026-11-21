@@ -18375,6 +18375,7 @@ describe('App', () => {
           type: 'agent',
           description: 'Review the implementation',
           status: 'running',
+          executionMode: 'background',
           startedAt: '2026-08-31T18:00:00.000Z',
           canCancel: true,
         },
@@ -18411,11 +18412,11 @@ describe('App', () => {
     await waitFor(() =>
       expect(listBackgroundTasks).toHaveBeenCalledTimes(2),
     )
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '1 background task running',
-      ),
-    )
+    expect(
+      await screen.findByRole('button', {
+        name: '1 background task running, 1 subagent',
+      }),
+    ).toBeInTheDocument()
   })
 
   it('does not let a delayed detail response overwrite a newer event', async () => {
@@ -19695,8 +19696,8 @@ describe('App', () => {
     render(<App />)
     fireEvent.change(await screen.findByLabelText('Message'), { target: { value: 'Guide or queue this review' } })
     if (provider === 'copilot') {
-      await waitFor(() => expect(screen.getByRole('button', { name: 'View background tasks' }))
-        .toHaveTextContent('1 background task running'))
+      expect(await screen.findByRole('button', { name: '1 background task running, 1 subagent' }))
+        .toHaveTextContent('1 task · 1 subagent')
     }
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     expect(sendMessage).not.toHaveBeenCalled()
@@ -19763,7 +19764,7 @@ describe('App', () => {
     expect(screen.queryByRole('menu', { name: 'Message delivery' })).not.toBeInTheDocument()
   })
 
-  it('shows projected origin in the header and runtime subagents beside background work only in the preview', async () => {
+  it('shows projected origin in the header and counts a synchronous subagent among the running tasks', async () => {
     vi.mocked(listComputers).mockResolvedValue([{
       ...computer, providers: computer.providers!.map((capability) => ({ ...capability, supportsBackgroundTasks: true })),
     }])
@@ -19780,8 +19781,10 @@ describe('App', () => {
     await screen.findByLabelText('Message')
     const header = document.querySelector('.conversation-header') as HTMLElement
     expect(within(header).getByRole('img', { name: 'Started by Oracle' })).toBeInTheDocument()
-    expect(await screen.findByRole('button', { name: '1 subagent running' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'View background tasks' })).toHaveTextContent('0 background tasks running')
+    const status = await screen.findByRole('button', { name: '1 background task running, 1 subagent' })
+    expect(status).toHaveTextContent('1 task · 1 subagent')
+    expect(status).toHaveAccessibleDescription('View background tasks')
+    expect(within(screen.getByTestId('web-statusline')).getAllByRole('button')).toEqual([status])
   })
 
   it.each([undefined, true])('offers delivery choices for a rapid second Send before polling (steering=%s)', async (supportsSteering) => {
@@ -20197,7 +20200,7 @@ describe('App', () => {
 
     expect(screen.queryByTestId('web-statusline')).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: 'View background tasks' }),
+      screen.queryByRole('button', { name: /^\d+ background tasks? running/ }),
     ).not.toBeInTheDocument()
 
     fireEvent.keyDown(window, { code: 'KeyT', altKey: true })
@@ -20320,6 +20323,7 @@ describe('App', () => {
       type: 'agent' as const,
       description: 'Review the implementation',
       status: 'running' as const,
+      executionMode: 'background' as const,
       startedAt: '2026-08-31T18:00:00.000Z',
       agentType: 'code-review',
       prompt: 'Review the implementation',
@@ -20354,22 +20358,23 @@ describe('App', () => {
     })
     render(<App />)
 
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '1 background task running',
-      ),
-    )
+    const status = await screen.findByRole('button', {
+      name: '1 background task running, 1 subagent',
+    })
     expect(document.querySelector('.session-item')).toHaveClass(
       'session-item--background-running',
     )
-    fireEvent.click(
-      screen.getByRole('button', { name: 'View background tasks' }),
-    )
+    fireEvent.click(status)
     expect(
       await screen.findByRole('dialog', {
         name: 'Background tasks · Project chat',
       }),
     ).toHaveTextContent('Review the implementation')
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Running subagent: Review the implementation',
+      }),
+    )
     expect(screen.getByText('Inspecting changed files')).toBeInTheDocument()
 
     const confirm = vi
@@ -20377,8 +20382,10 @@ describe('App', () => {
       .mockReturnValueOnce(false)
       .mockReturnValue(true)
     expect(
-      screen.getByRole('region', { name: 'Manage Review the implementation' }),
-    ).toHaveTextContent('Requests a clean stop from the owning runtime.')
+      screen.getByRole('button', {
+        name: 'Stop task: Review the implementation',
+      }),
+    ).toHaveAccessibleDescription('Requests a clean stop from the owning runtime.')
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Stop task: Review the implementation',
@@ -20400,11 +20407,9 @@ describe('App', () => {
         'task-1',
       ),
     )
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '0 background tasks running',
-      ),
-    )
+    expect(
+      await screen.findByRole('button', { name: '0 background tasks running' }),
+    ).toHaveTextContent('0 tasks')
     expect(document.querySelector('.session-item')).not.toHaveClass(
       'session-item--background-running',
     )
@@ -20436,27 +20441,77 @@ describe('App', () => {
     })
 
     render(<App />)
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '1 background task running',
-      ),
-    )
     fireEvent.click(
-      screen.getByRole('button', { name: 'View background tasks' }),
+      await screen.findByRole('button', { name: '1 background task running' }),
     )
 
-    const management = await screen.findByRole('region', {
-      name: 'Manage Long-running server',
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Background tasks · Project chat',
     })
-    expect(management).toHaveTextContent('Stop unavailable.')
-    expect(management).toHaveTextContent(
+    const note = within(dialog).getByRole('note')
+    expect(note).toHaveTextContent('Stop unavailable.')
+    expect(note).toHaveTextContent(
       'This detached task has no live stop handle.',
     )
     expect(
-      within(management).queryByRole('button', {
+      within(dialog).queryByRole('button', {
         name: 'Stop task: Long-running server',
       }),
     ).not.toBeInTheDocument()
+    expect(
+      within(dialog).getByRole('button', {
+        name: 'Ask to stop: Long-running server',
+      }),
+    ).toBeInTheDocument()
+  })
+
+  it('asks the agent to stop a task the runtime cannot stop, keeping the draft and sending nothing', async () => {
+    const tmuxSession = { ...session, executionMode: 'tmux' as const }
+    vi.mocked(listSessions).mockResolvedValue([tmuxSession])
+    vi.mocked(getSession).mockResolvedValue(tmuxSession)
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [
+        {
+          id: 'agent-7',
+          type: 'agent',
+          description: 'Review the implementation',
+          status: 'running',
+          executionMode: 'background',
+          startedAt: '2026-08-31T18:00:00.000Z',
+          canCancel: false,
+        },
+      ],
+      runningCount: 1,
+      supported: true,
+    })
+
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Message'), {
+      target: { value: 'Keep my draft' },
+    })
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: '1 background task running, 1 subagent',
+      }),
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Background tasks · Project chat',
+    })
+    fireEvent.click(
+      within(dialog).getByRole('button', {
+        name: 'Ask to stop: Review the implementation',
+      }),
+    )
+
+    expect(dialog).not.toBeInTheDocument()
+    const composer = screen.getByLabelText('Message')
+    expect(composer).toHaveValue(
+      'Keep my draft\n\nStop the background task `agent-7` (Review the implementation) and tell me when it has stopped.',
+    )
+    await waitFor(() => expect(composer).toHaveFocus())
+    expect(sendMessage).not.toHaveBeenCalled()
+    expect(cancelBackgroundTask).not.toHaveBeenCalled()
   })
 
   it('keeps a pending stop owned by its session and locks other stop actions', async () => {
@@ -20465,6 +20520,7 @@ describe('App', () => {
       type: 'agent' as const,
       description,
       status: 'running' as const,
+      executionMode: 'background' as const,
       startedAt: '2026-08-31T18:00:00.000Z',
       canCancel: true,
     })
@@ -20495,13 +20551,10 @@ describe('App', () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     render(<App />)
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '1 background task running',
-      ),
-    )
     fireEvent.click(
-      screen.getByRole('button', { name: 'View background tasks' }),
+      await screen.findByRole('button', {
+        name: '1 background task running, 1 subagent',
+      }),
     )
     fireEvent.click(
       await screen.findByRole('button', {
@@ -20568,13 +20621,11 @@ describe('App', () => {
     })
     render(<App />)
 
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '0 background tasks running',
-      ),
+    fireEvent.click(
+      await screen.findByRole('button', { name: '0 background tasks running' }),
     )
     fireEvent.click(
-      screen.getByRole('button', { name: 'View background tasks' }),
+      await screen.findByRole('button', { name: 'Failed shell: Run checks' }),
     )
     expect(await screen.findByText('The command exited with status 1')).toBeInTheDocument()
 
@@ -20595,11 +20646,9 @@ describe('App', () => {
         supported: true,
       }),
     } as MessageEvent)
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '1 background task running',
-      ),
-    )
+    expect(
+      await screen.findByRole('button', { name: '1 background task running' }),
+    ).toHaveTextContent('1 task')
     expect(document.querySelector('.session-item')).toHaveClass(
       'session-item--background-running',
     )
@@ -20631,11 +20680,11 @@ describe('App', () => {
 
     render(<App />)
 
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '1 background task running',
-      ),
-    )
+    expect(
+      await screen.findByRole('button', {
+        name: '1 background task running, 1 subagent',
+      }),
+    ).toBeInTheDocument()
     expect(
       document.querySelector('.session-item .status-dot'),
     ).toHaveClass('status-dot--running')
@@ -20691,11 +20740,11 @@ describe('App', () => {
 
     render(<App />)
 
-    await waitFor(() =>
-      expect(screen.getByTestId('web-statusline')).toHaveTextContent(
-        '1 background task running',
-      ),
-    )
+    expect(
+      await screen.findByRole('button', {
+        name: '1 background task running, 1 subagent',
+      }),
+    ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: 'Queue message' }),
     ).not.toBeInTheDocument()

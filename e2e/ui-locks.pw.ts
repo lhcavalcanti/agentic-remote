@@ -200,10 +200,11 @@ for (const viewport of uiViewports) {
         await assertNoHorizontalOverflow(page)
       } finally { fixture.assertHealthy() }
     })
-    test('uses the reported subagent subset and opens the existing task panel', async ({ page, baseURL }) => {
+    test('counts reported subagents among the tasks and opens the task sheet', async ({ page, baseURL }) => {
       const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'session-subagents')!.setup(page)
       try {
-        const chip = page.getByRole('button', { name: '2 subagents running', exact: true })
+        const chip = page.getByRole('button', { name: '2 background tasks running, 2 subagents', exact: true })
+        await expect(chip).toHaveText('2 tasks · 2 subagents')
         await chip.click()
         await expect(page.getByRole('dialog', { name: /^Background tasks ·/ })).toContainText('Review recovery paths')
         expect(fixture.requests.some((request) => request.method === 'POST' && request.path.endsWith('/messages'))).toBe(false)
@@ -234,6 +235,110 @@ for (const viewport of uiViewports) {
 
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
+
+for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' || entry.name === 'phone')) {
+  test.describe(`background tasks ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    const sceneSetup = (baseURL: string | undefined, name: UISceneName) =>
+      createUIScenes(baseURL).find((scene) => scene.name === name)!.setup
+    const statusName = '8 background tasks running, 2 subagents'
+
+    test('condenses background work into one status item that keeps the line its height', async ({ page, baseURL }) => {
+      const fixture = await sceneSetup(baseURL, 'background-tasks')(page)
+      try {
+        const line = page.getByTestId('web-statusline')
+        const status = line.getByRole('button', { name: statusName, exact: true })
+        await expect(status).toHaveText('8 tasks · 2 subagents')
+        await expect(status).toHaveAttribute('title', 'View background tasks')
+        await expect(line.getByRole('button')).toHaveCount(1)
+        const fit = await line.evaluate((element) => {
+          const pill = element.querySelector<HTMLElement>('.web-statusline__tasks')!
+          const plain = element.querySelector<HTMLElement>('.web-statusline__provider')!
+          const box = pill.getBoundingClientRect()
+          const style = getComputedStyle(pill)
+          const lineBox = element.getBoundingClientRect()
+          const above = document.elementFromPoint(box.left + box.width / 2, box.top - 2)
+          return {
+            rowHeight: box.height + Number.parseFloat(style.marginTop) + Number.parseFloat(style.marginBottom),
+            plainHeight: plain.getBoundingClientRect().height,
+            inside: box.top >= lineBox.top && box.bottom <= lineBox.bottom,
+            reachesAbove: above === pill,
+          }
+        })
+        // The pill takes no more of its row than plain text does, stays inside
+        // the line, and still answers a touch just above its outline.
+        expect(fit.rowHeight).toBeLessThanOrEqual(fit.plainHeight + 0.5)
+        expect(fit.inside).toBe(true)
+        expect(fit.reachesAbove).toBe(true)
+        await assertNoHorizontalOverflow(page)
+      } finally { fixture.assertHealthy() }
+    })
+
+    test('lists compact rows, subagents first, with one note when nothing can be stopped', async ({ page, baseURL }) => {
+      const fixture = await sceneSetup(baseURL, 'background-tasks-sheet')(page)
+      try {
+        const sheet = page.getByRole('dialog', { name: /^Background tasks · / })
+        await expect(sheet.getByRole('status')).toHaveText('8 tasks · 2 subagents running')
+        const rows = sheet.getByRole('button', { expanded: false })
+        await expect(rows).toHaveCount(10)
+        await expect(rows.nth(0)).toHaveAccessibleName('Running subagent: Review the recovery paths')
+        await expect(rows.nth(1)).toHaveAccessibleName('Running subagent: Check the guide links')
+        await expect(rows.nth(8)).toHaveAccessibleName('Completed shell: pnpm build')
+        await expect(sheet.getByRole('note')).toHaveCount(1)
+        await expect(sheet.getByRole('button', { name: /^Ask to stop: / })).toHaveCount(8)
+        await expect(sheet.getByRole('button', { name: /^Stop task: / })).toHaveCount(0)
+        if (viewport.name === 'phone') {
+          const targets = [...await rows.all(), ...await sheet.getByRole('button', { name: /^Ask to stop: / }).all()]
+          for (const target of targets) {
+            expect((await target.boundingBox())!.height).toBeGreaterThanOrEqual(40)
+          }
+        }
+        await assertNoHorizontalOverflow(page)
+      } finally { fixture.assertHealthy() }
+    })
+
+    test('opens a row in place by keyboard and returns to the status item on Escape', async ({ page, baseURL }) => {
+      const fixture = await sceneSetup(baseURL, 'background-tasks-expanded')(page)
+      try {
+        const sheet = page.getByRole('dialog', { name: /^Background tasks · / })
+        const row = sheet.getByRole('button', { name: 'Running subagent: Review the recovery paths', exact: true })
+        await expect(row).toHaveAttribute('aria-expanded', 'true')
+        await expect(sheet.getByRole('button', { name: 'Stop task: Review the recovery paths', exact: true })).toBeVisible()
+        await expect(sheet.getByRole('button', { name: 'Ask to stop: tail -f logs/sync.log', exact: true })).toBeVisible()
+        const activity = sheet.getByRole('list', { name: 'Recent activity' })
+        await expect(activity.getByRole('listitem')).toHaveCount(5)
+        await sheet.getByRole('button', { name: 'Show all (7)', exact: true }).click()
+        await expect(activity.getByRole('listitem')).toHaveCount(7)
+        await row.focus()
+        await page.keyboard.press('Enter')
+        await expect(row).toHaveAttribute('aria-expanded', 'false')
+        await expect(activity).toHaveCount(0)
+        await page.keyboard.press('Space')
+        await expect(row).toHaveAttribute('aria-expanded', 'true')
+        await page.keyboard.press('Escape')
+        await expect(sheet).toBeHidden()
+        await expect(page.getByRole('button', { name: statusName, exact: true })).toBeFocused()
+      } finally { fixture.assertHealthy() }
+    })
+
+    test('asks the agent to stop a task through the draft without sending it', async ({ page, baseURL }) => {
+      const fixture = await sceneSetup(baseURL, 'background-tasks')(page)
+      try {
+        await message(page).fill('Check the backups first.')
+        await page.getByRole('button', { name: statusName, exact: true }).click()
+        const sheet = page.getByRole('dialog', { name: /^Background tasks · / })
+        await sheet.getByRole('button', { name: 'Ask to stop: pnpm dev --host 127.0.0.1', exact: true }).click()
+        await expect(sheet).toBeHidden()
+        await expect(message(page)).toHaveValue(
+          'Check the backups first.\n\nStop the background task `shell-1` (pnpm dev --host 127.0.0.1) and tell me when it has stopped.',
+        )
+        await expect(message(page)).toBeFocused()
+        expect(fixture.requests.filter((request) => request.method === 'POST' &&
+          (request.path.endsWith('/messages') || request.path.endsWith('/cancel')))).toEqual([])
+      } finally { fixture.assertHealthy() }
+    })
+  })
+}
 
 /** A fake microphone whose recording the fixture transcribes as "Transcribed fixture note". */
 async function mockMicrophone(page: Page) {

@@ -145,6 +145,7 @@ const slowTests = [
   'src/SessionResources.test.tsx',
   'src/SessionRetentionSettings.test.tsx',
   'src/api.test.ts',
+  'src/features/background-tasks/BackgroundTasksDialog.test.tsx',
   'src/features/prompts/PromptCards.test.tsx',
   'src/markdown-document/pipeline.test.tsx',
   'src/markdown-document/renderer.test.ts',

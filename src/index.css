@@ -2400,18 +2400,6 @@ button {
   padding-right: 0;
 }
 
-.subagent-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-@media (max-width: 600px) {
-  .subagent-count {
-    min-height: 40px;
-  }
-}
-
 .knowledge-toggle,
 .side-question-toggle,
 .oracle-toggle {
@@ -4442,25 +4430,45 @@ button {
   }
 }
 
-/* The running count is the way into the panel, so it behaves as a control
-   while still reading as part of the status line. */
+/* The status line's one item for background work, and its way into the
+   tasks sheet. A pill in the task colour reads as a control; it is drawn into
+   the line's own padding, so the line keeps its font and height. */
 .web-statusline__tasks {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin: -3px 0;
+  padding: 2px 8px;
+  color: var(--task);
+  border: 1px solid color-mix(in srgb, var(--task) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--task) 7%, transparent);
   font: inherit;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+/* A finger gets the line's whole height, not only the pill's. */
+.web-statusline__tasks::before {
+  position: absolute;
+  inset: -5px -3px;
+  content: "";
+}
+
+.web-statusline__tasks--running {
+  border-color: color-mix(in srgb, var(--task) 60%, transparent);
+  background: color-mix(in srgb, var(--task) 15%, transparent);
 }
 
 .web-statusline__tasks:hover,
 .web-statusline__tasks:focus-visible {
-  color: var(--text);
-  text-decoration: underline;
+  background: color-mix(in srgb, var(--task) 24%, transparent);
 }
 
-.web-statusline__tasks--running {
-  color: var(--accent-foreground);
+.web-statusline__tasks:focus-visible {
+  outline: 2px solid var(--task);
+  outline-offset: 0;
 }
 
 .background-tasks-dialog__toolbar {
@@ -4468,7 +4476,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: -8px 0 14px;
+  margin: -8px 0 12px;
   color: var(--muted);
   font-size: 11px;
 }
@@ -4478,8 +4486,9 @@ button {
 }
 
 .background-tasks-dialog__toolbar strong {
-  color: #6ea8fe;
+  color: var(--task);
   font-size: 14px;
+  font-weight: 650;
 }
 
 .background-tasks-dialog__empty {
@@ -4489,80 +4498,93 @@ button {
   text-align: center;
 }
 
+/* Said once for the sheet, rather than on every task it applies to. */
+.background-tasks-dialog__note {
+  flex: 0 0 auto;
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  color: var(--muted-strong);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-raised);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.background-tasks-dialog__note strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+/* One row per task in a single list, so eight tasks fit on a phone screen
+   and each opens in place onto what it is doing. */
 .background-task-list {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  gap: 10px;
-  /* Room for the scrollbar, so it does not sit on top of the cards. */
-  padding-right: 4px;
+  margin: 0;
+  padding: 0;
   overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-raised);
+  list-style: none;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 
 .background-task {
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
-  border-radius: 11px;
-  background: var(--panel-raised);
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
 }
 
-.background-task--running,
-.background-task--queued {
-  border-left-color: #6ea8fe;
+.background-task:first-child {
+  border-top: 0;
 }
 
-.background-task--completed {
-  border-left-color: var(--success);
+.background-task--expanded {
+  background: color-mix(in srgb, var(--task) 4%, transparent);
 }
 
-.background-task--failed {
-  border-left-color: var(--danger);
-}
-
-.background-task--cancelled {
-  border-left-color: #777c72;
-}
-
-.background-task__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.background-task__title {
-  display: flex;
+/* Actions keep a column of their own, so the kind and time line up down the
+   list whether or not a row has something to stop. */
+.background-task__row {
+  display: grid;
   min-width: 0;
-  align-items: flex-start;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+  align-items: center;
+  column-gap: 6px;
+  padding-right: 8px;
 }
 
-.background-task__title > span:last-child {
-  display: flex;
+.background-task__toggle {
+  display: grid;
   min-width: 0;
-  flex-direction: column;
-  gap: 3px;
+  min-height: 42px;
+  grid-template-columns: 16px minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 6px 7px 12px;
+  color: var(--text);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.background-task__title strong {
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  font-weight: 650;
+.background-task__toggle:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
-.background-task__title small {
-  color: var(--muted);
-  font-size: 10px;
+.background-task__toggle:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
 }
 
 .background-task__status-icon {
   display: grid;
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: #6ea8fe;
+  color: var(--task);
   place-items: center;
 }
 
@@ -4578,32 +4600,95 @@ button {
   color: var(--muted);
 }
 
-.background-task__status {
-  flex: 0 0 auto;
-  color: #6ea8fe;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.background-task__title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.background-task--completed .background-task__status {
-  color: var(--success);
-}
-
-.background-task--failed .background-task__status {
-  color: var(--danger);
-}
-
-.background-task--cancelled .background-task__status {
+.background-task__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* Fixed widths line the kind and time up down the list too. */
+.background-task__kind {
+  min-width: 62px;
+  padding: 1px 7px;
+  color: var(--muted-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  text-align: center;
+}
+
+.background-task--agent .background-task__kind {
+  color: var(--task);
+  border-color: color-mix(in srgb, var(--task) 45%, transparent);
+}
+
+.background-task__elapsed {
+  min-width: 46px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.background-task__chevron {
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.background-task--expanded .background-task__chevron {
+  transform: rotate(90deg);
+}
+
+.background-task__action {
+  min-height: 30px;
+  justify-self: end;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.background-task__stop {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.background-task__ask {
+  color: var(--task);
+  border-color: color-mix(in srgb, var(--task) 40%, transparent);
+  background: color-mix(in srgb, var(--task) 8%, transparent);
+}
+
+/* Lines up under the title, past the status icon. */
+.background-task__panel {
+  padding: 2px 14px 14px 38px;
+  color: var(--muted-strong);
+  font-size: 11px;
+}
+
+.background-task__source {
+  margin: 0;
+  color: var(--muted-strong);
 }
 
 .background-task__metadata {
   display: flex;
   flex-wrap: wrap;
   gap: 7px 14px;
-  margin: 10px 0 0 22px;
+  margin: 10px 0 0;
 }
 
 .background-task__metadata div {
@@ -4625,7 +4710,7 @@ button {
 }
 
 .background-task__intent {
-  margin: 11px 0 0 22px;
+  margin: 11px 0 0;
   color: var(--muted-strong);
   font-size: 11px;
   line-height: 1.4;
@@ -4634,8 +4719,8 @@ button {
 .background-task__progress,
 .background-task__output,
 .background-task__error,
-.background-task__details {
-  margin: 11px 0 0 22px;
+.background-task__prompt {
+  margin: 11px 0 0;
   font-size: 10px;
 }
 
@@ -4650,12 +4735,10 @@ button {
 
 .background-task__progress ul {
   display: flex;
-  max-height: 150px;
   flex-direction: column;
   gap: 4px;
   margin: 6px 0 0;
   padding: 0;
-  overflow-y: auto;
   list-style: none;
 }
 
@@ -4670,9 +4753,29 @@ button {
   color: var(--muted);
 }
 
+.background-task__more {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  margin-top: 2px;
+  padding: 0;
+  color: var(--task);
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.background-task__more:hover,
+.background-task__more:focus-visible {
+  text-decoration: underline;
+}
+
+.background-task__command,
 .background-task__output pre,
 .background-task__error pre,
-.background-task__details pre {
+.background-task__prompt pre {
   max-height: 180px;
   margin: 6px 0 0;
   padding: 8px;
@@ -4688,79 +4791,86 @@ button {
   overflow-wrap: anywhere;
 }
 
+.background-task__command {
+  margin: 0;
+}
+
 .background-task__error {
   color: var(--danger);
 }
 
 .background-task__error pre {
-  color: #f3ada1;
-  border-color: rgba(239, 129, 111, 0.3);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
-.background-task__details summary {
+.background-task__prompt summary {
   color: var(--muted);
   cursor: pointer;
 }
 
-.background-task__management {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0 0 22px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.background-task__management > strong {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.background-task__management > p {
-  min-width: 0;
-  margin: 0;
+.background-task__stop-unavailable {
+  margin: 11px 0 0;
   color: var(--muted);
   font-size: 10px;
   line-height: 1.35;
-}
-
-.background-task__stop {
-  display: inline-flex;
-  min-height: 30px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  padding: 0 10px;
-  color: #f3ada1;
-  border-color: rgba(239, 129, 111, 0.35);
-  background: rgba(239, 129, 111, 0.08);
-  font-size: 10px;
-}
-
-.background-task__stop-unavailable {
-  margin-left: auto;
-  text-align: right;
 }
 
 .background-task__stop-unavailable strong {
   color: var(--muted-strong);
 }
 
+@media (pointer: coarse) {
+  .background-task__action,
+  .background-task__more {
+    min-height: 40px;
+  }
+}
+
+/* On a phone the kind and time move under the title, which keeps the width
+   for what the task is, and every control is at least 40px tall. */
 @media (max-width: 560px) {
-  .background-task__management {
-    align-items: stretch;
-    flex-direction: column;
+  .background-task__row {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .background-task__stop,
-  .background-task__stop-unavailable {
-    align-self: stretch;
-    margin-left: 0;
+  .background-task__toggle {
+    min-height: 48px;
+    grid-template-areas:
+      "icon title chevron"
+      "icon meta chevron";
+    grid-template-columns: 16px minmax(0, 1fr) 14px;
+    row-gap: 3px;
+  }
+
+  .background-task__status-icon {
+    grid-area: icon;
+  }
+
+  .background-task__title {
+    grid-area: title;
+  }
+
+  .background-task__meta {
+    grid-area: meta;
+  }
+
+  .background-task__chevron {
+    grid-area: chevron;
+  }
+
+  .background-task__elapsed {
+    min-width: 0;
     text-align: left;
+  }
+
+  .background-task__action,
+  .background-task__more {
+    min-height: 40px;
+  }
+
+  .background-task__panel {
+    padding-left: 12px;
   }
 }
 
@@ -4818,10 +4928,6 @@ button {
 
 .web-statusline__provider {
   color: var(--accent-foreground);
-}
-
-.web-statusline__tasks {
-  color: #6ea8fe;
 }
 
 .icon-button--task-running {

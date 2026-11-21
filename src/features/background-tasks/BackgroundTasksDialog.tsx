@@ -1,17 +1,30 @@
 import {
+  Ban,
   CheckCircle2,
+  ChevronRight,
   List,
   LoaderCircle,
+  MessageSquareText,
   RefreshCw,
   Square,
   XCircle,
 } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import type {
   BackgroundTask,
+  BackgroundTaskProgressLine,
   BackgroundTaskSnapshot,
 } from '../../../shared/contracts'
 import { DialogFrame } from '../../components/DialogFrame'
 import { orderTasksForReading } from './task-order'
+import { backgroundTaskCountText, backgroundTaskCounts } from './task-summary'
 
 const messageTimeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
@@ -25,6 +38,9 @@ const messageDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
 })
+
+/** Recent activity opens on its latest entries; the rest is one choice away. */
+const RECENT_ACTIVITY_SHOWN = 5
 
 function taskStatusLabel(status: BackgroundTask['status']): string {
   return status === 'queued'
@@ -44,7 +60,10 @@ function taskDurationLabel(milliseconds: number): string {
     return `${seconds}s`
   }
   const minutes = Math.floor(seconds / 60)
-  return `${minutes}m ${seconds % 60}s`
+  if (minutes < 60) {
+    return `${minutes}m ${seconds % 60}s`
+  }
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
 function taskIsActive(task: BackgroundTask): boolean {
@@ -58,46 +77,119 @@ function stopUnavailableReason(task: BackgroundTask): string {
   return 'The owning runtime did not expose a live stop handle for this task.'
 }
 
-function BackgroundTaskCard({
+/** Why none of the active tasks can be stopped, said once for all of them. */
+function stopUnavailableNote(active: BackgroundTask[]): string {
+  if (active.length === 1) {
+    return stopUnavailableReason(active[0])
+  }
+  return active.every((task) => task.attachmentMode === 'detached')
+    ? 'These detached tasks have no live stop handle. End them from the provider or terminal that started them.'
+    : 'The owning runtime did not expose a live stop handle for these tasks.'
+}
+
+function timeOf(value: string | undefined): number | undefined {
+  const parsed = value ? Date.parse(value) : Number.NaN
+  return Number.isNaN(parsed) ? undefined : parsed
+}
+
+/** How long a task has run: until now while it is active, otherwise until it ended. */
+function taskElapsedMs(task: BackgroundTask, now: number): number | undefined {
+  const started = timeOf(task.startedAt)
+  const ended = taskIsActive(task) ? now : timeOf(task.completedAt)
+  return started !== undefined && ended !== undefined
+    ? Math.max(0, ended - started)
+    : task.activeTimeMs
+}
+
+function elapsedPrefix(status: BackgroundTask['status']): string {
+  return status === 'running'
+    ? 'Running for'
+    : status === 'queued'
+      ? 'Queued for'
+      : 'Ran for'
+}
+
+function TaskStatusIcon({ status }: { status: BackgroundTask['status'] }) {
+  return status === 'failed' ? (
+    <XCircle size={14} />
+  ) : status === 'completed' ? (
+    <CheckCircle2 size={14} />
+  ) : status === 'running' ? (
+    <LoaderCircle className="activity-message__spinner" size={14} />
+  ) : status === 'cancelled' ? (
+    <Ban size={14} />
+  ) : (
+    <List size={14} />
+  )
+}
+
+/** The time, moving once a second while anything listed is still running. */
+function useNow(ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!ticking) {
+      return
+    }
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [ticking])
+  return now
+}
+
+function RecentActivity({ lines }: { lines: BackgroundTaskProgressLine[] }) {
+  const [showAll, setShowAll] = useState(false)
+  const headingId = useId()
+  const first = showAll ? 0 : Math.max(0, lines.length - RECENT_ACTIVITY_SHOWN)
+  return (
+    <div className="background-task__progress">
+      <strong id={headingId}>Recent activity</strong>
+      <ul aria-labelledby={headingId}>
+        {lines.slice(first).map((line, index) => (
+          <li key={`${line.timestamp}-${first + index}`}>
+            <time dateTime={line.timestamp}>
+              {messageTimeFormatter.format(new Date(line.timestamp))}
+            </time>
+            <span>{line.message}</span>
+          </li>
+        ))}
+      </ul>
+      {lines.length > RECENT_ACTIVITY_SHOWN ? (
+        <button
+          aria-expanded={showAll}
+          className="background-task__more"
+          onClick={() => setShowAll((value) => !value)}
+          type="button"
+        >
+          {showAll
+            ? `Show last ${RECENT_ACTIVITY_SHOWN}`
+            : `Show all (${lines.length})`}
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function BackgroundTaskDetails({
+  id,
   task,
-  cancelling,
-  stopDisabled,
-  onCancel,
+  stopReason,
 }: {
+  id: string
   task: BackgroundTask
-  cancelling: boolean
-  stopDisabled: boolean
-  onCancel: () => void
+  stopReason?: string
 }) {
-  const statusIcon =
-    task.status === 'failed' ? (
-      <XCircle size={14} />
-    ) : task.status === 'completed' ? (
-      <CheckCircle2 size={14} />
-    ) : task.status === 'running' ? (
-      <LoaderCircle className="activity-message__spinner" size={14} />
-    ) : (
-      <List size={14} />
-    )
   const progress = task.progress
   return (
-    <article className={`background-task background-task--${task.status}`}>
-      <header className="background-task__header">
-        <div className="background-task__title">
-          <span className="background-task__status-icon">{statusIcon}</span>
-          <span>
-            <strong>{task.description}</strong>
-            <small>
-              {task.type === 'agent'
-                ? task.agentType || 'Background agent'
-                : task.command || 'Background shell'}
-            </small>
-          </span>
-        </div>
-        <span className="background-task__status">
-          {taskStatusLabel(task.status)}
-        </span>
-      </header>
+    <div className="background-task__panel" id={id}>
+      {task.type === 'agent' ? (
+        <p className="background-task__source">
+          {task.agentType || 'Background agent'}
+        </p>
+      ) : task.command ? (
+        <pre className="background-task__command">
+          <code>{task.command}</code>
+        </pre>
+      ) : null}
       <dl className="background-task__metadata">
         <div>
           <dt>Started</dt>
@@ -131,7 +223,7 @@ function BackgroundTaskCard({
         ) : null}
       </dl>
       {task.prompt ? (
-        <details className="background-task__details">
+        <details className="background-task__prompt">
           <summary>Prompt</summary>
           <pre>{task.prompt}</pre>
         </details>
@@ -140,19 +232,7 @@ function BackgroundTaskCard({
         <p className="background-task__intent">{progress.latestIntent}</p>
       ) : null}
       {progress?.recentActivity?.length ? (
-        <div className="background-task__progress">
-          <strong>Recent activity</strong>
-          <ul>
-            {progress.recentActivity.map((line, index) => (
-              <li key={`${line.timestamp}-${index}`}>
-                <time dateTime={line.timestamp}>
-                  {messageTimeFormatter.format(new Date(line.timestamp))}
-                </time>
-                <span>{line.message}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <RecentActivity lines={progress.recentActivity} />
       ) : null}
       {progress?.recentOutput ? (
         <div className="background-task__output">
@@ -172,52 +252,214 @@ function BackgroundTaskCard({
           <pre>{task.error}</pre>
         </div>
       ) : null}
-      {taskIsActive(task) ? (
-        <section
-          aria-label={`Manage ${task.description}`}
-          className="background-task__management"
-        >
-          <strong>Manage task</strong>
-          {task.canCancel ? (
-            <>
-              <p>Requests a clean stop from the owning runtime.</p>
-              <button
-                aria-label={
-                  cancelling
-                    ? `Stopping task: ${task.description}`
-                    : `Stop task: ${task.description}`
-                }
-                className="secondary-button background-task__stop"
-                disabled={stopDisabled}
-                onClick={onCancel}
-                type="button"
-              >
-                {cancelling ? (
-                  <LoaderCircle
-                    aria-hidden="true"
-                    className="activity-message__spinner"
-                    size={13}
-                  />
-                ) : (
-                  <Square aria-hidden="true" size={12} />
-                )}
-                {cancelling ? 'Stopping task…' : 'Stop task'}
-              </button>
-            </>
-          ) : (
-            <p className="background-task__stop-unavailable">
-              <strong>Stop unavailable.</strong>{' '}
-              {stopUnavailableReason(task)}
-            </p>
-          )}
-        </section>
+      {stopReason ? (
+        <p className="background-task__stop-unavailable">
+          <strong>Stop unavailable.</strong> {stopReason}
+        </p>
       ) : null}
-    </article>
+    </div>
+  )
+}
+
+function BackgroundTaskRow({
+  task,
+  now,
+  expanded,
+  cancelling,
+  stopDisabled,
+  stopReason,
+  onToggle,
+  onCancel,
+  onAskToStop,
+}: {
+  task: BackgroundTask
+  now: number
+  expanded: boolean
+  cancelling: boolean
+  stopDisabled: boolean
+  /** Why this task cannot be stopped, when the sheet does not already say so. */
+  stopReason?: string
+  onToggle: (taskId: string) => void
+  onCancel: (taskId: string) => void
+  onAskToStop: (task: BackgroundTask) => void
+}) {
+  const panelId = useId()
+  const elapsedId = useId()
+  const row = useRef<HTMLLIElement>(null)
+  const collapsedByReader = useRef(false)
+
+  useLayoutEffect(() => {
+    if (expanded || !collapsedByReader.current) {
+      return
+    }
+    collapsedByReader.current = false
+    // Closing pulls the rows below up, which can leave this one above the
+    // view; bring it back to where the reader is.
+    row.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [expanded])
+
+  const kind = task.type === 'agent' ? 'Subagent' : 'Shell'
+  const status = taskStatusLabel(task.status)
+  const elapsed = taskElapsedMs(task, now)
+  const active = taskIsActive(task)
+  return (
+    <li
+      className={`background-task background-task--${task.status} background-task--${task.type}${
+        expanded ? ' background-task--expanded' : ''
+      }`}
+      ref={row}
+    >
+      <div className="background-task__row">
+        <button
+          aria-controls={expanded ? panelId : undefined}
+          aria-describedby={elapsed === undefined ? undefined : elapsedId}
+          aria-expanded={expanded}
+          aria-label={`${status} ${kind.toLowerCase()}: ${task.description}`}
+          className="background-task__toggle"
+          onClick={() => {
+            if (expanded) {
+              collapsedByReader.current = true
+            }
+            onToggle(task.id)
+          }}
+          type="button"
+        >
+          <span
+            aria-hidden="true"
+            className="background-task__status-icon"
+            title={status}
+          >
+            <TaskStatusIcon status={task.status} />
+          </span>
+          <span className="background-task__title" title={task.description}>
+            {task.description}
+          </span>
+          <span className="background-task__meta">
+            <span className="background-task__kind">{kind}</span>
+            {elapsed === undefined ? null : (
+              <span className="background-task__elapsed" id={elapsedId}>
+                <span className="visually-hidden">
+                  {elapsedPrefix(task.status)}
+                </span>{' '}
+                {taskDurationLabel(elapsed)}
+              </span>
+            )}
+          </span>
+          <ChevronRight
+            aria-hidden="true"
+            className="background-task__chevron"
+            size={14}
+          />
+        </button>
+        {active && task.canCancel ? (
+          <button
+            aria-label={
+              cancelling
+                ? `Stopping task: ${task.description}`
+                : `Stop task: ${task.description}`
+            }
+            className="secondary-button background-task__action background-task__stop"
+            disabled={stopDisabled}
+            onClick={() => onCancel(task.id)}
+            title="Requests a clean stop from the owning runtime."
+            type="button"
+          >
+            {cancelling ? (
+              <LoaderCircle
+                aria-hidden="true"
+                className="activity-message__spinner"
+                size={13}
+              />
+            ) : (
+              <Square aria-hidden="true" size={12} />
+            )}
+            {cancelling ? 'Stopping task…' : 'Stop task'}
+          </button>
+        ) : active ? (
+          <button
+            aria-label={`Ask to stop: ${task.description}`}
+            className="secondary-button background-task__action background-task__ask"
+            onClick={() => onAskToStop(task)}
+            title="Puts a stop request for the agent in the message box, without sending it."
+            type="button"
+          >
+            <MessageSquareText aria-hidden="true" size={12} />
+            Ask to stop
+          </button>
+        ) : null}
+      </div>
+      {expanded ? (
+        <BackgroundTaskDetails id={panelId} stopReason={stopReason} task={task} />
+      ) : null}
+    </li>
+  )
+}
+
+function BackgroundTaskList({
+  tasks,
+  cancellingTaskId,
+  stopActionsDisabled,
+  onCancel,
+  onAskToStop,
+}: {
+  tasks: BackgroundTask[]
+  cancellingTaskId?: string
+  stopActionsDisabled: boolean
+  onCancel: (taskId: string) => void
+  onAskToStop: (task: BackgroundTask) => void
+}) {
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
+  const toggle = useCallback((taskId: string) => {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (!next.delete(taskId)) {
+        next.add(taskId)
+      }
+      return next
+    })
+  }, [])
+  const ordered = orderTasksForReading(tasks)
+  const active = ordered.filter(taskIsActive)
+  const now = useNow(active.length > 0)
+  const stopNote =
+    active.length > 0 && active.every((task) => !task.canCancel)
+      ? stopUnavailableNote(active)
+      : undefined
+  return (
+    <>
+      {stopNote ? (
+        <p className="background-tasks-dialog__note" role="note">
+          <strong>Stop unavailable.</strong> {stopNote} Ask to stop drafts a
+          request to the agent instead.
+        </p>
+      ) : null}
+      <ul aria-label="Background task list" className="background-task-list">
+        {ordered.map((task) => (
+          <BackgroundTaskRow
+            cancelling={cancellingTaskId === task.id}
+            expanded={expanded.has(task.id)}
+            key={task.id}
+            now={now}
+            onAskToStop={onAskToStop}
+            onCancel={onCancel}
+            onToggle={toggle}
+            stopDisabled={stopActionsDisabled}
+            stopReason={
+              !stopNote && taskIsActive(task) && !task.canCancel
+                ? stopUnavailableReason(task)
+                : undefined
+            }
+            task={task}
+          />
+        ))}
+      </ul>
+    </>
   )
 }
 
 export function BackgroundTasksDialog({
   open,
+  ownerKey,
   sessionTitle,
   snapshot,
   loading,
@@ -226,8 +468,11 @@ export function BackgroundTasksDialog({
   onClose,
   onRefresh,
   onCancel,
+  onAskToStop,
 }: {
   open: boolean
+  /** The session the tasks belong to; which rows are open is kept per session. */
+  ownerKey: string
   sessionTitle: string
   snapshot: BackgroundTaskSnapshot
   loading: boolean
@@ -236,6 +481,7 @@ export function BackgroundTasksDialog({
   onClose: () => void
   onRefresh: () => void
   onCancel: (taskId: string) => void
+  onAskToStop: (task: BackgroundTask) => void
 }) {
   if (!open) {
     return null
@@ -248,11 +494,9 @@ export function BackgroundTasksDialog({
       title={`Background tasks · ${sessionTitle}`}
     >
       <div className="background-tasks-dialog__toolbar">
-        <p>
-          <strong>{snapshot.runningCount}</strong>{' '}
-          {snapshot.runningCount === 1
-            ? 'background task is running'
-            : 'background tasks are running'}
+        <p role="status">
+          <strong>{backgroundTaskCountText(backgroundTaskCounts(snapshot))}</strong>{' '}
+          running
         </p>
         <button
           aria-label="Refresh background tasks"
@@ -276,17 +520,14 @@ export function BackgroundTasksDialog({
           No background tasks are currently tracked.
         </p>
       ) : (
-        <div aria-label="Background task list" className="background-task-list">
-          {orderTasksForReading(snapshot.tasks).map((task) => (
-            <BackgroundTaskCard
-              cancelling={cancellingTaskId === task.id}
-              key={task.id}
-              onCancel={() => onCancel(task.id)}
-              stopDisabled={stopActionsDisabled}
-              task={task}
-            />
-          ))}
-        </div>
+        <BackgroundTaskList
+          cancellingTaskId={cancellingTaskId}
+          key={ownerKey}
+          onAskToStop={onAskToStop}
+          onCancel={onCancel}
+          stopActionsDisabled={stopActionsDisabled}
+          tasks={snapshot.tasks}
+        />
       )}
     </DialogFrame>
   )

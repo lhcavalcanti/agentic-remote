@@ -307,6 +307,19 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   runtime advertises task support. The UI MUST show queued, running,
   completed, failed, and cancelled task states, including task progress and
   timestamps where available.
+- The status line MUST show background work as one item, "N tasks", followed
+  by "· M subagents" while subagents run, singular for one. N is the
+  runtime's count of running background work plus any synchronous subagent it
+  leaves out, so the subagents are always among the tasks. The item is a pill
+  in the task colour that opens the tasks sheet without changing the status
+  line's height, and its name says it in words, such as "4 background tasks
+  running, 1 subagent".
+- The tasks sheet MUST open with the same counts and give each task one row:
+  status icon, title, Subagent or Shell, and how long it has run. Running work
+  comes before finished work, and subagents before shells within each. A row
+  opens in place onto its command or prompt, output, and recent activity,
+  which shows the last 5 entries until Show all is chosen. Rows are at least
+  40px tall on a phone.
 - While at least one background task is running, the session's Tasks status
   action MUST carry the blue task cue: a blue dot and label, unfilled until
   hovered or focused. Background work MUST NOT give the row its own edge, tint,
@@ -334,11 +347,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Background task reads and cancellation MUST remain scoped to the owning
   computer and session. Task state MUST resynchronize after a reconnect
   instead of relying on a transient event count.
-- Every queued or running task MUST expose a visible management area. When the
-  owning runtime provides a live cancellation handle, the panel MUST offer a
-  confirmed Stop task action. When it does not, the panel MUST explain why
-  stopping is unavailable rather than hiding the management state or guessing
-  at an operating-system process.
+- Every queued or running task MUST offer an action on its row. When the
+  owning runtime provides a live cancellation handle, it is a confirmed Stop
+  task. When it does not, it is Ask to stop, which adds a request naming the
+  task's id and title to the session's draft, after anything already written,
+  and never sends it. The sheet MUST say why stopping is unavailable, once for
+  the whole sheet when no task can be stopped and otherwise in that task's
+  opened row, rather than hiding the state or guessing at an operating-system
+  process.
 - A terminal session's tasks are projected from Copilot's event log, which
   offers no cancellation handle, so they MUST NOT offer Stop. A projected task
   MUST stop counting as running once the log shows its work is over:

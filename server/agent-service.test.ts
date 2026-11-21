@@ -13,7 +13,7 @@ import type {
   SessionEvent,
   SessionMetadata,
 } from '@github/copilot-sdk'
-import type { ServerEvent, UserInputForm } from '../shared/contracts.js'
+import type { ServerEvent, SessionDetail, UserInputForm } from '../shared/contracts.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentService,
@@ -36,7 +36,7 @@ import {
   type CopilotTaskProgress,
 } from './background-task-adapter.js'
 import { SessionStore } from './session-store.js'
-import { parseTerminalPermission, TerminalFormReplyError, TmuxTerminalSessionController, type TerminalCancelOptions } from './terminal-session.js'
+import { parseTerminalPermission, TerminalFormReplyError, terminalInputReady, TmuxTerminalSessionController, type TerminalCancelOptions } from './terminal-session.js'
 
 class DeferredSession implements CopilotSessionLike {
   readonly sessionId: string
@@ -10969,11 +10969,8 @@ describe('AgentService deletion', () => {
         'first queued prompt',
         'second queued prompt',
       ])
-      expect(first.queueState).toMatchObject({
-        state: 'waiting',
-        promptId: first.queuedPrompts?.[0]?.id,
-      })
-      expect(first.queueState?.message).toMatch(/retry automatically/i)
+      // Copilot waiting on its shells frees the prompt by itself.
+      expect(first.queueState).toBeUndefined()
       expect(errors).toEqual([])
       expect(claim).not.toHaveBeenCalled()
 
@@ -10997,12 +10994,12 @@ describe('AgentService deletion', () => {
       expect(claim).toHaveBeenCalledOnce()
       expect(service.getSession(sessionId)).toMatchObject({
         status: 'idle',
-        queueState: { state: 'waiting' },
         queuedPrompts: [
           { content: 'first queued prompt' },
           { content: 'second queued prompt' },
         ],
       })
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
 
       await vi.advanceTimersByTimeAsync(1_600)
       await Promise.all([service.refreshTranscripts(), service.refreshTranscripts()])
@@ -11187,11 +11184,12 @@ describe('AgentService deletion', () => {
     })
 
     it('types in a prompt already waiting for the composer once only the shells are left', async () => {
-      const { service, terminal, current, sessionId, endTurn, retry } = await queuedBehindTurn(
+      const { service, terminal, current, sessionId, queueStates, endTurn, retry } = await queuedBehindTurn(
         pane(noPrompt), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
       )
       await endTurn()
-      expect(service.getSession(sessionId)?.queueState).toMatchObject({ state: 'waiting' })
+      expect(service.getSession(sessionId)?.queuedPrompts).toMatchObject([{ content: prompt }])
+      expect(queueStates).not.toContain('waiting')
 
       current.pane = pane(shellsWaits[1])
       await retry()
@@ -11238,7 +11236,7 @@ describe('AgentService deletion', () => {
       ],
       ['no prompt drawn', {}, noPrompt, prompt],
     ])('keeps waiting, with nothing typed, for %s', async (_case, setup, initialPane, head) => {
-      const { service, terminal, sessionId, endTurn } = await queuedBehindTurn(
+      const { service, terminal, sessionId, queueStates, endTurn } = await queuedBehindTurn(
         initialPane,
         (service, sessionId) => head.startsWith('/')
           ? service.executeCommand(sessionId, head, true)
@@ -11252,9 +11250,11 @@ describe('AgentService deletion', () => {
       expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
       expect(service.getSession(sessionId)).toMatchObject({
         status: 'idle',
-        queueState: { state: 'waiting' },
         queuedPrompts: [{ content: head }],
       })
+      // Copilot is busy, so the wait ends by itself and is not shown.
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+      expect(queueStates).not.toContain('waiting')
     })
 
     // The hub takes the log in on its own schedule, so the drain reads it
@@ -11263,7 +11263,7 @@ describe('AgentService deletion', () => {
       ['a turn begun since', 'assistant.turn_start', {}],
       ['a background agent started since', 'subagent.started', { agentId: 'background-agent' }],
     ])('keeps waiting, with nothing typed, for %s', async (_case, type, extra) => {
-      const { service, terminal, current, sessionId, log, endTurn, retry } = await queuedBehindTurn(
+      const { service, terminal, current, sessionId, queueStates, log, endTurn, retry } = await queuedBehindTurn(
         pane(noPrompt), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
       )
       await endTurn()
@@ -11276,16 +11276,17 @@ describe('AgentService deletion', () => {
       expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
       expect(service.getSession(sessionId)).toMatchObject({
         status: 'idle',
-        queueState: { state: 'waiting' },
         queuedPrompts: [{ content: prompt }],
       })
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+      expect(queueStates).not.toContain('waiting')
     })
 
     // A message wakes an idle agent without restarting it, so a turn can
     // leave more shells than the panel lists, all newer than an agent that is
     // working again. The rows cut to a spinner cannot say which is waited on.
     it('keeps waiting, with nothing typed, beside a woken agent older than a hundred shells', async () => {
-      const { service, terminal, sessionId, log, endTurn } = await queuedBehindTurn(
+      const { service, terminal, sessionId, queueStates, log, endTurn } = await queuedBehindTurn(
         pane(shellsWaits[3]), (service, sessionId) => service.sendMessage(sessionId, prompt, true),
       )
       const at = (offset: number) => new Date(Date.now() - 58_000 + offset).toISOString()
@@ -11313,9 +11314,10 @@ describe('AgentService deletion', () => {
       expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
       expect(service.getSession(sessionId)).toMatchObject({
         status: 'idle',
-        queueState: { state: 'waiting' },
         queuedPrompts: [{ content: prompt }],
       })
+      expect(service.getSession(sessionId)?.queueState).toBeUndefined()
+      expect(queueStates).not.toContain('waiting')
     })
 
     it('leaves a prompt queued while the turn is still open', async () => {
@@ -11331,6 +11333,336 @@ describe('AgentService deletion', () => {
         status: 'running',
         queuedPrompts: [{ content: prompt }],
       })
+    })
+  })
+
+  // Copilot's prompt is often out of reach for a while after its turn: it is
+  // still working, waiting on background shells or agents, or redrawing. The
+  // queue region already says the prompt is queued, and the wait ends by
+  // itself, so it is neither shown nor counted as needing the reader. A wait
+  // they can end is shown, saying how.
+  describe('a terminal queue waiting for Copilot\'s prompt', () => {
+    const composer = '\u257b\u2584\u2584\n\u2503\n\u2579\u2580\u2580'
+    const ready = `${composer}\n / commands`
+    const busy = `${composer}\n Working · esc interrupt`
+    const overlay = 'Select a session\n- session one\n↑/↓ to navigate · enter to select · esc to cancel'
+    const prompt = 'Queued while Copilot was busy'
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // Queues `prompt` while a turn runs, then shows `paneAfterTurn` once the
+    // turn ends.
+    async function queuedForPrompt(paneAfterTurn: string) {
+      const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+      directories.push(directory)
+      const client = new FakeCopilotClient()
+      const sessionId = client.session.sessionId
+      client.nextSessionList = Promise.resolve([{
+        sessionId, startTime: new Date(), modifiedTime: new Date(),
+        summary: 'External session', isRemote: false, context: { workingDirectory: directory },
+      }])
+      let version = 'events-v1'
+      let events = JSON.parse(JSON.stringify([{
+        type: 'assistant.turn_start', id: 'turn', parentId: null,
+        timestamp: new Date(Date.now() - 60_000).toISOString(), data: {},
+      }])) as SessionEvent[]
+      const current = { pane: busy }
+      const terminal = {
+        has: vi.fn(async () => true),
+        send: vi.fn(async () => true),
+        // As the terminal does, nothing is typed until its prompt is free.
+        sendWhenIdle: vi.fn(async () => {
+          if (!terminalInputReady(current.pane)) {
+            throw Object.assign(new Error('The terminal is not ready for this input.'), {
+              statusCode: 409, uncertainDelivery: false, reasonCode: 'terminal-not-ready.queue',
+            })
+          }
+          return true
+        }),
+        capture: vi.fn(async () => current.pane),
+        cancel: vi.fn(async () => true),
+      }
+      const service = new AgentService(
+        new SessionStore(path.join(directory, 'state')),
+        client,
+        async () => [{
+          id: sessionId, cwd: directory, title: 'Active Copilot session',
+          updatedAt: new Date().toISOString(),
+        }],
+        async () => undefined,
+        async () => events,
+        async () => version,
+        terminal,
+        async () => undefined,
+        async () => undefined,
+      )
+      const published: Array<SessionDetail['queueState']> = []
+      service.on('event', (event: ServerEvent) => {
+        if (event.type === 'session.upserted' && event.session.id === sessionId) {
+          published.push(event.session.queueState)
+        }
+      })
+      await service.start()
+      await service.store.updateStatus(sessionId, 'running')
+      await service.sendMessage(sessionId, prompt, true)
+      current.pane = paneAfterTurn
+      const log = (type: string) => {
+        events = JSON.parse(JSON.stringify([...events, {
+          type, id: `${type}-${events.length}`, parentId: events.at(-1)?.id ?? null,
+          timestamp: new Date(Date.now() + 1_000).toISOString(), data: {},
+        }])) as SessionEvent[]
+        version = `events-v${events.length}`
+      }
+      const endTurn = async () => {
+        log('assistant.turn_end')
+        log('session.idle')
+        await service.refreshTranscripts()
+      }
+      // Lets `ms` pass, and takes in what changed as the watcher would.
+      const wait = async (ms: number) => {
+        await vi.advanceTimersByTimeAsync(ms)
+        await service.refreshTranscripts()
+      }
+      const shown = () => service.getSession(sessionId)?.queueState
+      return { service, terminal, current, sessionId, published, log, endTurn, wait, shown }
+    }
+
+    it.each([
+      ['its busy row, still drawn after the log says idle', busy],
+      ['background agents', `${composer}\n Waiting for background agents · esc interrupt`],
+      ['background shells', 'Waiting for background shells'],
+      ['a redraw that has not drawn the prompt yet', ''],
+    ])('waits for %s without a notice or a call for attention', async (_case, initialPane) => {
+      const { service, terminal, current, sessionId, published, endTurn, wait, shown } =
+        await queuedForPrompt(initialPane)
+
+      await endTurn()
+      await wait(800)
+      await wait(1_600)
+
+      expect(terminal.send).not.toHaveBeenCalled()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      // Nothing that marks the session as needing the reader.
+      expect(service.getSession(sessionId)).toMatchObject({
+        status: 'idle',
+        queuedPrompts: [{ content: prompt }],
+      })
+      expect(service.getSession(sessionId)?.pendingPermission).toBeUndefined()
+      expect(service.getSession(sessionId)?.pendingUserInput).toBeUndefined()
+      expect(shown()).toBeUndefined()
+      expect(published.filter(Boolean)).toEqual([])
+
+      current.pane = ready
+      await wait(3_200)
+
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([[sessionId, prompt]])
+      expect(service.getSession(sessionId)?.queuedPrompts).toEqual([])
+      expect(published.filter(Boolean)).toEqual([])
+    })
+
+    it('tells the reader to close a full-screen view, then delivers once it is closed', async () => {
+      const { service, terminal, current, sessionId, endTurn, wait, shown } = await queuedForPrompt(overlay)
+
+      await endTurn()
+
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(shown()).toEqual({
+        state: 'waiting',
+        promptId: service.getSession(sessionId)?.queuedPrompts?.[0]?.id,
+        message: 'Close the full-screen view in the terminal to deliver queued messages.',
+        updatedAt: expect.any(String),
+      })
+
+      current.pane = ready
+      await wait(800)
+
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([[sessionId, prompt]])
+      expect(shown()).toBeUndefined()
+    })
+
+    it.each([
+      [
+        'its prompt',
+        [
+          'Session in use',
+          'This session appears to be in use by another CLI or application.',
+          '❯ 1. Resume anyway',
+          '  2. Go back (Esc)',
+          '↑/↓ to navigate · enter to select · esc to cancel',
+        ].join('\n'),
+        'Copilot says this session is already in use. Choose Resume anyway in the permission card to deliver queued messages.',
+      ],
+      [
+        'its warning under the prompt',
+        `${composer}\n This session may already be in use by another CLI or application.`,
+        'Copilot says this session is already in use by another client or application. Close it there to deliver queued messages.',
+      ],
+    ])('tells the reader how to free a session Copilot finds in use: %s', async (_case, inUse, message) => {
+      const { terminal, current, sessionId, endTurn, wait, shown } = await queuedForPrompt(inUse)
+
+      await endTurn()
+
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+      expect(shown()).toMatchObject({ state: 'waiting', message })
+
+      current.pane = ready
+      await wait(800)
+
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([[sessionId, prompt]])
+      expect(shown()).toBeUndefined()
+    })
+
+    it.each([
+      ['empty', ''],
+      ['unreadable', 'Native pane is still loading'],
+    ])('tells the reader only once the pane has stayed %s past the grace period', async (_case, pane) => {
+      const { terminal, published, endTurn, wait, shown } = await queuedForPrompt(pane)
+
+      await endTurn()
+      for (let waited = 0; waited < 25_000; waited += 5_000) await wait(5_000)
+
+      expect(shown()).toBeUndefined()
+      expect(published.filter(Boolean)).toEqual([])
+
+      for (let waited = 0; waited < 15_000; waited += 5_000) await wait(5_000)
+
+      expect(shown()).toMatchObject({
+        state: 'waiting',
+        message: 'Copilot\'s prompt has not appeared in the terminal. Check the terminal to deliver queued messages.',
+      })
+      expect(terminal.send).not.toHaveBeenCalled()
+    })
+
+    // The pane going blank again after Copilot worked, or after it found the
+    // session in use, is a new wait: the earlier blank pane counts for nothing.
+    it.each(['Copilot works', 'Copilot finds the session in use'] as const)(
+      'waits out the grace period afresh once %s in between',
+      async (between) => {
+        const { service, current, log, endTurn, wait, shown } = await queuedForPrompt('')
+        await endTurn()
+        for (let waited = 0; waited < 25_000; waited += 5_000) await wait(5_000)
+        expect(shown()).toBeUndefined()
+
+        if (between === 'Copilot works') {
+          current.pane = busy
+          log('assistant.turn_start')
+          // Taken in before the next look, which then finds the turn by the log.
+          await service.refreshTranscripts()
+          await wait(5_000)
+          current.pane = ''
+          await endTurn()
+        } else {
+          current.pane = `${composer}\n This session may already be in use by another CLI or application.`
+          await wait(5_000)
+          expect(shown()?.message).toMatch(/already in use/)
+          current.pane = ''
+          await wait(5_000)
+        }
+
+        expect(shown()).toBeUndefined()
+        for (let waited = 0; waited < 25_000; waited += 5_000) await wait(5_000)
+        expect(shown()).toBeUndefined()
+        for (let waited = 0; waited < 15_000; waited += 5_000) await wait(5_000)
+        expect(shown()?.message).toMatch(/has not appeared in the terminal/)
+      },
+    )
+
+    it('withdraws the notice once Copilot is working again', async () => {
+      const { service, current, log, endTurn, wait, shown } = await queuedForPrompt(overlay)
+      await endTurn()
+      expect(shown()?.message).toMatch(/full-screen view/)
+
+      // The reader closed the view and started a turn in the terminal.
+      current.pane = busy
+      log('assistant.turn_start')
+      await service.refreshTranscripts()
+      await wait(800)
+
+      expect(shown()).toBeUndefined()
+    })
+
+    it('looks at the prompt again within 5 seconds however long it has waited', async () => {
+      const { terminal, current, sessionId, endTurn, wait } = await queuedForPrompt(busy)
+
+      await endTurn()
+      for (let waited = 0; waited < 180_000; waited += 5_000) await wait(5_000)
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+
+      current.pane = ready
+      await wait(5_000)
+
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([[sessionId, prompt]])
+    })
+
+    it('delivers as soon as the log says a later turn has ended', async () => {
+      const { service, terminal, current, sessionId, log, endTurn, wait } = await queuedForPrompt(busy)
+      await endTurn()
+      await wait(800)
+      await wait(1_600)
+      log('assistant.turn_start')
+      await service.refreshTranscripts()
+      expect(service.getSession(sessionId)?.status).toBe('running')
+
+      current.pane = ready
+      await endTurn()
+
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([[sessionId, prompt]])
+    })
+
+    it('still asks for Reopen once the session is interrupted', async () => {
+      const { service, sessionId, endTurn, wait, shown } = await queuedForPrompt(busy)
+      await endTurn()
+      expect(shown()).toBeUndefined()
+
+      await service.store.update(sessionId, (session) => {
+        session.interruption = { detectedAt: new Date().toISOString(), previousStatus: 'idle' }
+      })
+      await wait(800)
+
+      expect(shown()).toMatchObject({
+        state: 'waiting',
+        message: 'Reopen the session to resume queued delivery.',
+      })
+    })
+
+    it('takes Reopen back once the session is back, though Copilot is working', async () => {
+      const { service, sessionId, log, endTurn, wait, shown } = await queuedForPrompt(busy)
+      await endTurn()
+      await service.store.update(sessionId, (session) => {
+        session.interruption = { detectedAt: new Date().toISOString(), previousStatus: 'idle' }
+      })
+      await wait(800)
+      expect(shown()?.message).toBe('Reopen the session to resume queued delivery.')
+
+      // Discovery finds the owner again while it works on a turn, and wakes the queue.
+      await service.store.update(sessionId, (session) => { session.interruption = undefined })
+      log('assistant.turn_start')
+      await service.refreshTranscripts()
+      await service['drainTerminalQueue'](sessionId)
+
+      expect(service.getSession(sessionId)?.status).toBe('running')
+      expect(shown()).toBeUndefined()
+    })
+
+    it('looks again as soon as its retry is due, not at the watcher\'s next pass', async () => {
+      const { service, terminal, current, sessionId, endTurn } = await queuedForPrompt(busy)
+      // Leaves the watcher's passes behind: only the retry itself may look.
+      vi.useRealTimers()
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+      await endTurn()
+      expect(terminal.sendWhenIdle).not.toHaveBeenCalled()
+
+      current.pane = ready
+      await vi.advanceTimersByTimeAsync(750)
+      await Promise.all([...service['terminalQueueWakeups'].values()])
+
+      expect(terminal.sendWhenIdle.mock.calls).toEqual([[sessionId, prompt]])
     })
   })
 

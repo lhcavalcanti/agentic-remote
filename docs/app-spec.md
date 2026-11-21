@@ -1637,6 +1637,16 @@ relabel the queue, and archived or interrupted queues say **Retained until
 reopened**. The region's accessible name, description, and per-prompt steer
 marker MUST match that same current state.
 
+A tmux queue head waiting only for Copilot's prompt to come back, while Copilot
+works, waits on background shells or agents, or redraws after its turn, MUST
+NOT show a status line or count as needing the user, since the queue region
+already says the prompt is queued. Such a wait MUST look at the prompt again at
+least every 5 seconds, and at once when the event log shows the session going
+idle. A wait the person can resolve MUST be shown with what to do: close a
+full-screen view in the terminal, answer Copilot's session-in-use prompt or
+close the other client, check a terminal whose pane has stayed empty or
+unreadable for about 30 seconds, or reopen an interrupted or archived session.
+
 An app-queued terminal prompt MUST be durably removed from automatic retry
 before delivery begins. A failed completion write MUST NOT resend the prompt;
 the service MUST retain the delivery outcome and retry only persistence. After

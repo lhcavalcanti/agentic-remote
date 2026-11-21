@@ -5,6 +5,7 @@ import type {
   SessionExecutionMode,
   SessionInterruptionCause,
 } from '../shared/contracts'
+import { hasActiveBackgroundTasks } from '../shared/background-tasks'
 
 export function sessionKey(
   session: Pick<ManagedSession, 'computerId' | 'id'>,
@@ -70,6 +71,47 @@ export function retainedSessionNotice(
     ? message.trim().replace(/\.+$/, '')
     : ''
   return `Session interrupted: ${interruptionReasons[cause]}${detail ? ` (${detail})` : ''}. ${retained}`
+}
+
+/**
+ * Whether Pause or Resume can be used for a session, and the title saying what
+ * it does or why it cannot. The session's row and the open session's menu both
+ * offer it, so they answer alike.
+ */
+export function suspendAvailability(
+  session: ManagedSession,
+  backgroundTasks: BackgroundTaskSnapshot | undefined,
+  { computerName, online, suspending }: {
+    computerName: string
+    online: boolean
+    /** Only this session's own suspend or resume in flight; another's is no reason. */
+    suspending: boolean
+  },
+): { available: boolean; title: string } {
+  // The owning computer refuses on any of these, so offering the button only
+  // led to an error. Queued work counts although runningCount leaves it out.
+  const retained = Boolean(session.interruption || session.archivedAt)
+  const busy = session.status !== 'idle' ||
+    Boolean(session.pendingUserInput || session.pendingPermission)
+  const ownsTasks = (backgroundTasks?.runningCount || 0) > 0 ||
+    hasActiveBackgroundTasks(backgroundTasks)
+  return {
+    available: online && !suspending &&
+      (Boolean(session.suspended) || !(retained || busy || ownsTasks)),
+    title: !online
+      ? `Reconnect ${computerName} to manage this session`
+      : suspending
+        ? 'Wait for this suspend or resume to finish'
+        : session.suspended
+          ? 'Start this session up again'
+          : retained
+            ? 'Reopen this session before suspending it'
+            : busy
+              ? 'Wait for the session to finish before suspending it'
+              : ownsTasks
+                ? 'Wait for its background tasks to finish before suspending it'
+                : 'Keep this session but stop what is running for it',
+  }
 }
 
 type SessionState =

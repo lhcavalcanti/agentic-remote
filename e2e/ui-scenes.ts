@@ -55,6 +55,8 @@ export const uiSceneNames = [
   'background-tasks-sheet-light',
   'background-tasks-expanded',
   'session-list',
+  'session-actions',
+  'session-actions-busy',
   'app-settings',
   'preview-features',
   'settings-navigation',
@@ -276,6 +278,11 @@ export function createUIScenes(
         ]
         session.queuedCount = session.queuedPrompts.length
       }
+      if (name === 'session-actions-busy') {
+        const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+        session.status = 'running'
+        session.activity = 'Checking the workspace plan'
+      }
       const fixture = await setupWorkspaceFixture(page, {
         baseUrl: origin,
         knowledgeMode: 'hidden',
@@ -384,6 +391,20 @@ export function createUIScenes(
         }
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
+      } else if (name === 'session-actions' || name === 'session-actions-busy') {
+        await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+        const actions = page.getByRole('group', { name: 'Session actions', exact: true })
+        await expect(actions.getByRole('button', { name: 'Restart session', exact: true })).toBeVisible()
+        // Pause joins the menu only where the session list is a drawer.
+        const pause = actions.getByRole('button', { name: 'Pause session', exact: true })
+        if (page.viewportSize()!.width > 960) {
+          await expect(pause).toHaveCount(0)
+        } else if (name === 'session-actions-busy') {
+          await expect(pause).toBeDisabled()
+          await expect(pause).toHaveAccessibleDescription('Wait for the session to finish before suspending it')
+        } else {
+          await expect(pause).toBeEnabled()
+        }
       } else if (name === 'settings-skills' || name === 'settings-skill-confirmation' || name === 'settings-invalid-skill') {
         await openSessions(page)
         await page.getByRole('button', { name: 'App settings', exact: true }).click()

@@ -1115,6 +1115,34 @@ test.describe('browser interaction contracts', () => {
     await expect(page.locator('#oracle-panel')).toHaveCount(0)
   })
 
+  test('offers Pause in an open Session actions menu only while the session list is a drawer', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'session-actions')
+    const pause = page.getByRole('group', { name: 'Session actions', exact: true })
+      .getByRole('button', { name: 'Pause session', exact: true })
+    await expect(pause).toHaveCount(0)
+    await page.setViewportSize({ width: 960, height: 900 })
+    await expect(pause).toBeEnabled()
+    await expect(pause).toHaveAttribute('title', 'Keep this session but stop what is running for it')
+    await page.setViewportSize({ width: 961, height: 900 })
+    await expect(pause).toHaveCount(0)
+  })
+
+  test('keeps every Session actions icon at its size beside entries with a description', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'session-actions')
+    await page.setViewportSize({ width: 960, height: 900 })
+    const actions = page.getByRole('group', { name: 'Session actions', exact: true })
+    await expect(actions.getByRole('button', { name: 'Pause session', exact: true })).toBeVisible()
+    // A long description must not shrink its icon and pull the label out of line.
+    const squeezed = await actions.locator('.session-action > svg').evaluateAll((icons) => icons
+      .map((icon) => ({
+        entry: icon.parentElement?.getAttribute('aria-label'),
+        width: icon.getBoundingClientRect().width,
+        size: Number(icon.getAttribute('width')),
+      }))
+      .filter(({ width, size }) => Math.abs(width - size) > 0.5))
+    expect(squeezed).toEqual([])
+  })
+
   test('rail opens Oracle and offers only implemented views', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'oracle-panel')
     await page.getByRole('button', { name: 'Close Oracle', exact: true }).click()

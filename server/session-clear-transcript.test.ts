@@ -458,7 +458,7 @@ describe('Transcript and Clear admission serialization', () => {
     const { service, store, terminal, client, sdk, directory, persisted } = await fixture()
     await service.start()
     service['externalSessionIds'].add(id)
-    service['externalCommandCache'].set(directory, { commands: [], expiresAt: Date.now() + 60_000 })
+    service['externalCommandCache'].set(directory, { commands: [], readAt: Date.now() })
     await store.setBackend(id, 'terminal')
     terminal.has.mockResolvedValue(true)
     const before = await persisted()

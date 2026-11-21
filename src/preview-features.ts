@@ -8,14 +8,15 @@ import {
 } from '../shared/feature-flags'
 
 export interface PreviewFeatureState {
-  hubFlags: HubFeatureFlags
+  /** What the hub last reported; undefined until it answers, while previews fail closed. */
+  hubFlags: HubFeatureFlags | undefined
   preferences: PreviewFeatures | undefined
   effective: Record<PreviewFeature, boolean>
   set: (name: PreviewFeature, enabled: boolean) => void
 }
 
 export const PreviewFeaturesContext = createContext<PreviewFeatureState>({
-  hubFlags: defaultHubFeatureFlags,
+  hubFlags: undefined,
   preferences: undefined,
   effective: effectivePreviewFeatures(undefined, defaultHubFeatureFlags),
   set: () => undefined,

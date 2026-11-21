@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import {
+  defaultHubFeatureFlags,
   hubFlagCatalogue,
   isPreviewAvailable,
   previewFeatureCatalogue,
@@ -20,8 +21,11 @@ export function PreviewFeaturesSettings() {
       <div className="notification-scope-options">
         {previewFeatureNames.map((name) => {
           const feature = previewFeatureCatalogue[name]
-          const available = isPreviewAvailable(name, hubFlags)
-          const variable = !available && 'requires' in feature ? hubFlagCatalogue[feature.requires].env : undefined
+          const available = isPreviewAvailable(name, hubFlags ?? defaultHubFeatureFlags)
+          // Only a hub that answered says a flag is off; an old or unreachable one just fails closed.
+          const variable = hubFlags && !available && 'requires' in feature
+            ? hubFlagCatalogue[feature.requires].env
+            : undefined
           return (
             <label className="notification-scope-option" key={name}>
               <input
@@ -36,10 +40,15 @@ export function PreviewFeaturesSettings() {
                 <strong>{feature.label}</strong>
                 <small id={`${id}-${name}`}>
                   {feature.description}
-                  {variable ? (
+                  {!available ? (
                     <>
-                      {' '}<br />Turned off on this hub. To turn it on, set <code>{variable}=on</code> in
-                      the hub&apos;s environment file and restart the hub.
+                      {' '}<br />
+                      {variable ? (
+                        <>
+                          Turned off on this hub. To turn it on, set <code>{variable}=on</code> in
+                          the hub&apos;s environment file and restart the hub.
+                        </>
+                      ) : 'Turned off on this hub'}
                     </>
                   ) : null}
                 </small>

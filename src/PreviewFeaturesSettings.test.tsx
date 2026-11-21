@@ -129,6 +129,34 @@ describe('Preview features settings', () => {
     expect(server.snapshot().values.previewFeatures).toEqual({ notificationPanel: true })
   })
 
+  it('names the hub variable and restart that turn on each unavailable preview', async () => {
+    settings(await hub().client())
+    await waitFor(() => expect(fetchHubFeatureFlags).toHaveBeenCalledTimes(1))
+    const notifications = screen.getByRole('checkbox', { name: 'Notification panel' })
+    const hostMonitor = screen.getByRole('checkbox', { name: 'Host monitor' })
+    const scheduler = screen.getByRole('checkbox', { name: 'Scheduler' })
+    expect(notifications).toHaveAccessibleDescription('Browse and manage notifications from this hub. '
+      + 'Turned off on this hub. To turn it on, set AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER=on '
+      + "in the hub's environment file and restart the hub.")
+    expect(hostMonitor).toHaveAccessibleDescription('View live resource usage for your computers. '
+      + 'Turned off on this hub. To turn it on, set AGENTIC_REMOTE_FEATURE_HOST_MONITOR=on '
+      + "in the hub's environment file and restart the hub.")
+    expect(scheduler).toHaveAccessibleDescription('Create schedules and review their session runs. '
+      + 'Turned off on this hub. To turn it on, set AGENTIC_REMOTE_FEATURE_SCHEDULER=on '
+      + "in the hub's environment file and restart the hub.")
+    expect(screen.getByRole('checkbox', { name: 'Desktop rail' }))
+      .toHaveAccessibleDescription('Try compact navigation alongside the session list.')
+
+    vi.mocked(fetchHubFeatureFlags).mockResolvedValueOnce({
+      notificationCenter: true, hostMonitor: false, scheduler: true,
+    })
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    await waitFor(() => expect(notifications).toBeEnabled())
+    expect(notifications).toHaveAccessibleDescription('Browse and manage notifications from this hub.')
+    expect(scheduler).toHaveAccessibleDescription('Create schedules and review their session runs.')
+    expect(hostMonitor).toHaveAccessibleDescription(/set AGENTIC_REMOTE_FEATURE_HOST_MONITOR=on in/)
+  })
+
   it('honors hub availability and refreshed authority independently of stored preferences', async () => {
     vi.mocked(fetchHubFeatureFlags).mockResolvedValueOnce({
       notificationCenter: true, hostMonitor: false, scheduler: false,

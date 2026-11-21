@@ -5344,6 +5344,14 @@ button {
   line-height: 1.4;
 }
 
+/* A hub variable is one long token: inline-code size keeps it on one line on
+   most phones, and a narrower screen may break it anywhere. */
+.notification-scope-option code {
+  color: var(--muted-strong);
+  font-size: 0.88em;
+  overflow-wrap: anywhere;
+}
+
 /* Sections that belong together share one cell of a settings group. */
 .app-settings-stack {
   display: grid;

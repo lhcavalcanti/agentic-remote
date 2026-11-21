@@ -14074,8 +14074,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               {/* Beside the docked list, its row already offers this. */}
               {sessionListIsDrawer && selectedSuspend ? (
                 <button
+                  aria-describedby="suspend-session-description"
                   aria-label={selected.suspended ? 'Resume session' : 'Pause session'}
-                  className="session-action"
+                  className="session-action session-action--explained"
                   disabled={!selectedSuspend.available}
                   onClick={() => void toggleSelectedSessionSuspended()}
                   title={selectedSuspend.title}
@@ -14084,7 +14085,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                   {selected.suspended
                     ? <Play aria-hidden="true" size={17} />
                     : <Pause aria-hidden="true" size={17} />}
-                  <span>{selected.suspended ? 'Resume session' : 'Pause session'}</span>
+                  <span>
+                    <span className="session-action__label">
+                      {selected.suspended ? 'Resume session' : 'Pause session'}
+                    </span>
+                    {/* Written out: a touch screen never shows the title. */}
+                    <small id="suspend-session-description">{selectedSuspend.title}</small>
+                  </span>
                 </button>
               ) : null}
               <button

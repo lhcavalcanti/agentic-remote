@@ -2519,6 +2519,17 @@ button {
   cursor: not-allowed;
 }
 
+/* An entry that writes out why it is unavailable dims only its icon and
+   label; dimmed with them, the reason fell to about 2:1 contrast. */
+.session-action--explained:disabled {
+  opacity: 1;
+}
+
+.session-action--explained:disabled > svg,
+.session-action--explained:disabled .session-action__label {
+  opacity: 0.45;
+}
+
 .session-action:focus-visible,
 .session-filter:focus-visible,
 .knowledge-reader button:focus-visible,

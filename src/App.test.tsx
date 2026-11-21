@@ -12972,6 +12972,15 @@ describe('App', () => {
       screen.getByRole('group', { name: 'Session actions' }),
     ).queryByRole('button', { name })
 
+    /** Touch screens show no `title`, so the entry says what it does, or why not, under its label. */
+    function expectShownReason(entry: HTMLElement, reason: string) {
+      const shown = within(entry).getByText(reason)
+      expect(shown).toBeVisible()
+      expect(shown.id).not.toBe('')
+      expect(entry).toHaveAttribute('aria-describedby', shown.id)
+      expect(entry).toHaveAccessibleDescription(reason)
+    }
+
     it('pauses the open session from its menu while the list is a drawer, sharing the row\'s pending state', async () => {
       windowWidth(390)
       let finishSuspend: (value: ManagedSession) => void = () => {}
@@ -12986,6 +12995,7 @@ describe('App', () => {
       const pause = sessionAction('Pause session')
       expect(pause).toBeEnabled()
       expect(pause).toHaveAttribute('title', 'Keep this session but stop what is running for it')
+      expectShownReason(pause, 'Keep this session but stop what is running for it')
       const entries = within(screen.getByRole('group', { name: 'Session actions' }))
         .getAllByRole('button')
       expect(entries[entries.indexOf(pause) + 1]).toHaveAccessibleName('Restart session')
@@ -12998,6 +13008,7 @@ describe('App', () => {
       const waiting = sessionAction('Pause session')
       expect(waiting).toBeDisabled()
       expect(waiting).toHaveAttribute('title', 'Wait for this suspend or resume to finish')
+      expectShownReason(waiting, 'Wait for this suspend or resume to finish')
       expect(screen.getByRole('button', { name: 'Suspend Project chat' })).toBeDisabled()
 
       await act(async () => {
@@ -13020,6 +13031,7 @@ describe('App', () => {
       expect(menuEntry('Pause session')).toBeNull()
       expect(resume).toBeEnabled()
       expect(resume).toHaveAttribute('title', 'Start this session up again')
+      expectShownReason(resume, 'Start this session up again')
       fireEvent.click(resume)
 
       expect(resumeSession).toHaveBeenCalledOnce()
@@ -13101,6 +13113,7 @@ describe('App', () => {
       const pause = sessionAction('Pause session')
       expect(pause).toBeDisabled()
       expect(pause).toHaveAttribute('title', reason)
+      expectShownReason(pause, reason)
       fireEvent.click(pause)
       expect(suspendSession).not.toHaveBeenCalled()
     })

@@ -171,7 +171,6 @@ import { ActivityRow } from './ActivityRow'
 import { activityKindFromMessage, activityPresentation } from './activity-presentation'
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
-import { SubagentCount } from './SubagentCount'
 import { SessionRetentionSettings } from './SessionRetentionSettings'
 import { SessionResources } from './SessionResources'
 import {
@@ -229,6 +228,7 @@ import {
 } from '../shared/side-question'
 import type {
   AgentProvider,
+  BackgroundTask,
   BackgroundTaskSnapshot,
   ChatMessage,
   ComputerSummary,
@@ -410,6 +410,8 @@ import { PauseFollowingContext } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
 import { SessionPatchReceiver } from './session-patches'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
+import { BackgroundTasksStatus } from './features/background-tasks/BackgroundTasksStatus'
+import { backgroundTaskStopRequest } from './features/background-tasks/task-summary'
 import {
   PermissionCard,
   StaleInteractionRecoveryCard,
@@ -5306,8 +5308,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const selectedBackgroundTasks = selected
     ? taskSnapshot(backgroundTaskSnapshots, selected)
     : undefined
-  const selectedRunningBackgroundTasks =
-    selectedBackgroundTasks?.runningCount || 0
   const selectedHasRunningBackgroundAgent =
     hasRunningBackgroundAgent(selectedBackgroundTasks)
   const selectedHasActiveBackgroundTasks =
@@ -10445,6 +10445,21 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     void loadBackgroundTasks(session, true)
   }
 
+  /**
+   * Puts a request that the agent stop a task into the session's draft, for
+   * the user to send. It is for tasks the app has no handle to stop itself,
+   * so it adds to whatever is already being written rather than replacing it.
+   */
+  function askToStopBackgroundTask(task: BackgroundTask) {
+    if (!selected) {
+      return
+    }
+    const targetKey = sessionKey(selected)
+    appendComposerForKey(targetKey, backgroundTaskStopRequest(task))
+    setBackgroundTasksOpen(false)
+    window.requestAnimationFrame(() => focusComposer(targetKey))
+  }
+
   async function cancelSelectedBackgroundTask(taskId: string) {
     if (!selected || cancellingBackgroundTask) {
       return
@@ -14231,23 +14246,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               <span>{selected.queuedCount || 0} queued</span>
             ) : null}
             {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
-              <button
-                aria-label="View background tasks"
-                className={`web-statusline__tasks ${
-                  selectedRunningBackgroundTasks > 0
-                    ? 'web-statusline__tasks--running'
-                    : ''
-                }`}
-                onClick={openBackgroundTasks}
-                title="View background tasks"
-                type="button"
-              >
-                {selectedRunningBackgroundTasks} background task
-                {selectedRunningBackgroundTasks === 1 ? '' : 's'} running
-              </button>
-            ) : null}
-            {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
-              <SubagentCount snapshot={selectedBackgroundTasks} onOpen={openBackgroundTasks} />
+              <BackgroundTasksStatus
+                onOpen={openBackgroundTasks}
+                snapshot={selectedBackgroundTasks}
+              />
             ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
@@ -14704,10 +14706,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               : undefined
           }
           loading={loadingBackgroundTasks}
+          onAskToStop={askToStopBackgroundTask}
           onCancel={(taskId) => void cancelSelectedBackgroundTask(taskId)}
           onClose={() => setBackgroundTasksOpen(false)}
           onRefresh={() => void loadBackgroundTasks(selected, true)}
           open={backgroundTasksOpen}
+          ownerKey={sessionKey(selected)}
           sessionTitle={selected.title}
           snapshot={
             selectedBackgroundTasks || {

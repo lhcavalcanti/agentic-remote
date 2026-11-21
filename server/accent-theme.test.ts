@@ -8,14 +8,9 @@ describe('accent themes', () => {
       'utf8',
     )
 
-    expect(css).toMatch(
-      /\.background-task--completed\s*\{[^}]*var\(--success\)/s,
-    )
+    // A task row shows its state by its icon alone.
     expect(css).toMatch(
       /\.background-task--completed \.background-task__status-icon\s*\{[^}]*var\(--success\)/s,
-    )
-    expect(css).toMatch(
-      /\.background-task--completed \.background-task__status\s*\{[^}]*var\(--success\)/s,
     )
     expect(css).toMatch(
       /\.activity-message--completed \.activity-message__glyph\s*\{[^}]*var\(--success\)/s,

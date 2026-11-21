@@ -142,7 +142,7 @@ for (const viewport of [
       ).toBe(true)
       const lineBox = await statusline.boundingBox()
       const tasksBox = await statusline
-        .getByRole('button', { name: 'View background tasks' })
+        .getByTitle('View background tasks', { exact: true })
         .boundingBox()
       expect(tasksBox!.x + tasksBox!.width).toBeLessThanOrEqual(lineBox!.x + lineBox!.width)
     } finally {

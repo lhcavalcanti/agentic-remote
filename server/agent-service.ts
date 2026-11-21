@@ -650,6 +650,13 @@ function activityDetailArguments(value: unknown): ActivityDetailArguments | unde
 }
 
 /**
+ * Events that end every call still running, as failed: the transcript fails
+ * its rows at them, so a call one cut short is failed here too rather than
+ * running for ever.
+ */
+const CALL_ENDING_FAILURES = new Set<string>(['abort', 'session.error', 'session.shutdown'])
+
+/**
  * A tool call's complete detail from its session's events: the whole
  * arguments, output and error, where a transcript row keeps only a preview.
  */
@@ -659,15 +666,17 @@ export function activityDetailFromEvents(
 ): ActivityDetail | undefined {
   let start: SessionEvent | undefined
   let completion: SessionEvent | undefined
+  let cutShort = false
   for (const event of events) {
     if (start && completion) break
     if (
-      (event.type !== 'tool.execution_start' &&
-        event.type !== 'tool.execution_complete') ||
-      recordValue(event.data).toolCallId !== toolCallId
+      event.type !== 'tool.execution_start' &&
+      event.type !== 'tool.execution_complete'
     ) {
+      cutShort ||= start !== undefined && CALL_ENDING_FAILURES.has(event.type)
       continue
     }
+    if (recordValue(event.data).toolCallId !== toolCallId) continue
     if (event.type === 'tool.execution_start') start ??= event
     else completion ??= event
   }
@@ -699,7 +708,7 @@ export function activityDetailFromEvents(
     kind: activityKind(tool),
     status: completion
       ? finished.success === true ? 'completed' : 'failed'
-      : 'running',
+      : cutShort ? 'failed' : 'running',
     ...(startedAt ? { startedAt } : {}),
     ...(completedAt ? { completedAt } : {}),
     ...(durationMs === undefined ? {} : { durationMs }),

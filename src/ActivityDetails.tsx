@@ -43,9 +43,11 @@ export function ActivityDetailsPanel({
   const finished = status === 'completed' || status === 'failed'
   const [attempt, setAttempt] = useState(0)
   const [state, setState] = useState<PanelState>({})
-  // Read on opening, on request, and once more when a call that was running
-  // while open finishes; a finished call is kept and never read again.
-  const read = `${attempt}:${finished}`
+  // Read on opening, on request, and once more whenever the row's status
+  // changes while open, as when a running call finishes or one an abort cut
+  // short logs its completion after all. A call whose completion is logged
+  // is kept and never read again.
+  const read = `${attempt}:${status}`
 
   useEffect(() => {
     if (keptActivityDetail(computerId, sessionId, toolCallId)) return

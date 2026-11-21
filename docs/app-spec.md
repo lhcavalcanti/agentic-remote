@@ -1191,9 +1191,11 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - The call MUST be read only when its row opens, from the owning computer's
   Copilot event log through
   `GET /api/computers/:computerId/sessions/:sessionId/activities/:toolCallId`,
-  never by the transcript poll. A finished call MUST be kept in a bounded
-  cache rather than read again. A running call shows its arguments and
-  **Running…** and MUST be read once more if it finishes while open.
+  never by the transcript poll. A call whose completion is logged MUST be kept
+  in a bounded cache rather than read again. A running call shows its
+  arguments and **Running…** and MUST be read once more if its row's status
+  changes while open. A call an abort, error or shutdown ended unfinished MUST
+  open as failed, as its row shows it.
 - Each text MUST be stripped of terminal escape sequences (colours, titles,
   hyperlinks) and NUL and cut at 256 KiB, saying how much is shown. **Copy**
   MUST also work over plain HTTP, where browsers withhold the Clipboard API.

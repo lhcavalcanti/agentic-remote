@@ -130,6 +130,38 @@ describe('activity details from the event log', () => {
     })
   })
 
+  it.each([
+    { ending: 'abort', data: { reason: 'user initiated' } },
+    { ending: 'session.error', data: { errorType: 'model', message: 'Rate limited' } },
+    { ending: 'session.shutdown', data: {} },
+  ])('fails a call that $ending ended before it finished, as its row does', ({ ending, data }) => {
+    const detail = activityDetailFromEvents([
+      start('call_cut', 'bash', { command: 'sleep 30' }),
+      event(ending, data, completedAt),
+    ], 'call_cut')
+
+    expect(detail).toEqual({
+      toolCallId: 'call_cut',
+      toolName: 'bash',
+      kind: 'tool',
+      status: 'failed',
+      startedAt,
+      arguments: { format: 'command', ...text('sleep 30') },
+    })
+  })
+
+  it('keeps a call running past an abort before it started, and takes a completion logged after one', () => {
+    expect(activityDetailFromEvents([
+      event('abort', { reason: 'user initiated' }, startedAt),
+      start('call_next', 'bash', { command: 'sleep 30' }),
+    ], 'call_next')?.status).toBe('running')
+    expect(activityDetailFromEvents([
+      start('call_late', 'bash', { command: 'true' }),
+      event('abort', { reason: 'user initiated' }, startedAt),
+      complete('call_late', { success: true, result: { content: 'done' } }),
+    ], 'call_late')).toMatchObject({ status: 'completed', result: text('done') })
+  })
+
   it('names skill and agent calls by their kind', () => {
     expect(activityDetailFromEvents([start('call_skill', 'skill', { skill: 'pdf' })], 'call_skill'))
       .toMatchObject({ kind: 'skill' })

@@ -2,8 +2,9 @@ import type { ActivityDetail } from '../shared/contracts'
 import { getActivityDetail } from './api'
 
 /**
- * A finished call's detail never changes, so it is kept for the next time its
- * row opens. The newest are kept, bounded by count and by text held.
+ * A call's detail is final once its completion is logged, so it is kept for
+ * the next time its row opens. The newest are kept, bounded by count and by
+ * text held.
  */
 const MAX_KEPT_DETAILS = 48
 const MAX_KEPT_CHARACTERS = 4 * 1024 * 1024
@@ -18,7 +19,9 @@ function detailKey(computerId: string, sessionId: string, toolCallId: string): s
 }
 
 function keep(key: string, detail: ActivityDetail): void {
-  if (detail.status === 'running') return
+  // A running call, or one an abort, error or shutdown cut short, can still
+  // log its completion.
+  if (!detail.completedAt) return
   const previous = kept.get(key)
   if (previous) {
     kept.delete(key)

@@ -189,6 +189,32 @@ describe('ActivityRow', () => {
     expect(getActivityDetail).toHaveBeenCalledTimes(2)
   })
 
+  it('reads a call an abort cut short again on each open, as its completion can still be logged', async () => {
+    const cutShort = bashDetail({ status: 'failed', completedAt: undefined, durationMs: undefined, result: undefined })
+    vi.mocked(getActivityDetail).mockResolvedValueOnce(cutShort).mockResolvedValueOnce(bashDetail())
+    renderTranscript([row('failed')])
+    const toggle = toggleFor(/^Failed: Bash/)
+    fireEvent.click(toggle)
+    expect(await screen.findByText('No output.')).toBeInTheDocument()
+
+    fireEvent.click(toggle)
+    fireEvent.click(toggle)
+    expect(await screen.findByText(output, raw)).toBeInTheDocument()
+    expect(getActivityDetail).toHaveBeenCalledTimes(2)
+  })
+
+  it('reads an open call an abort cut short once more when its completion is logged after all', async () => {
+    const cutShort = bashDetail({ status: 'failed', completedAt: undefined, durationMs: undefined, result: undefined })
+    vi.mocked(getActivityDetail).mockResolvedValueOnce(cutShort).mockResolvedValueOnce(bashDetail())
+    const view = renderTranscript([row('failed')])
+    fireEvent.click(toggleFor(/^Failed: Bash/))
+    expect(await screen.findByText('No output.')).toBeInTheDocument()
+
+    view.rerender([row('completed')])
+    expect(await screen.findByText(output, raw)).toBeInTheDocument()
+    expect(getActivityDetail).toHaveBeenCalledTimes(2)
+  })
+
   it.each([
     {
       name: 'a call the log does not have',

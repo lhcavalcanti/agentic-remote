@@ -535,7 +535,6 @@ function backScrollTop() {
   if (original) restoreScrollTop = () => Object.defineProperty(HTMLElement.prototype, 'scrollTop', original)
 }
 
-/** Draws in the background, as the worker does; documents starting with `held` wait for the test. */
 /**
  * Draws in the background, a top-level node a part; a document starting with
  * `held` gets only its first `shown` parts until the test releases the rest.
@@ -558,17 +557,36 @@ function partlyHeldRenderer(held: string, shown: number) {
   return { renderer, release: () => act(() => waiting.splice(0).forEach((deliver) => deliver())) }
 }
 
+/**
+ * Draws held documents once one has been asked for. "Rendering document…" is
+ * on the page as soon as a document is committed, but its render starts in an
+ * effect React may run only after the test has moved on; released before then,
+ * the render would stay held for good.
+ */
+async function releaseHeld(waiting: (() => void)[]) {
+  await waitFor(() => expect(waiting).not.toHaveLength(0))
+  act(() => waiting.splice(0).forEach((deliver) => deliver()))
+}
+
+/** Draws in the background, as the worker does; documents starting with `held` wait for the test. */
 function holdingRenderer(held: string) {
   const waiting: (() => void)[] = []
   const renderer: DocumentRenderer = {
     render(source, emit) {
       const deliver = () => [...documentRenderEvents(source)].forEach(emit)
-      if (source.startsWith(held)) waiting.push(deliver)
-      else queueMicrotask(deliver)
-      return () => undefined
+      if (!source.startsWith(held)) {
+        queueMicrotask(deliver)
+        return () => undefined
+      }
+      waiting.push(deliver)
+      // A cancelled render no longer counts as asked for.
+      return () => {
+        const index = waiting.indexOf(deliver)
+        if (index !== -1) waiting.splice(index, 1)
+      }
     },
   }
-  return { renderer, release: () => act(() => waiting.splice(0).forEach((deliver) => deliver())) }
+  return { renderer, release: () => releaseHeld(waiting) }
 }
 
 function openSessionActions() {
@@ -21025,7 +21043,7 @@ describe('App', () => {
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
 
-    act(() => held.splice(0).forEach((deliver) => deliver()))
+    await releaseHeld(held)
     const late = await screen.findByRole('heading', { name: 'Late' })
     await waitFor(() => expect(late).toHaveFocus())
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
@@ -21091,7 +21109,7 @@ describe('App', () => {
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
-    release()
+    await release()
     const late = await screen.findByRole('heading', { name: 'Late' })
     await waitFor(() => expect(late).toHaveFocus())
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
@@ -21139,7 +21157,7 @@ describe('App', () => {
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     const content = document.querySelector<HTMLElement>('.knowledge-reader .workspace-preview__content')!
     content.scrollTop = 300
-    release()
+    await release()
     expect(await screen.findByRole('heading', { name: 'Late' })).toBeInTheDocument()
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(content.scrollTop).toBe(300)
@@ -21153,7 +21171,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Open guide' }))
     expect(await screen.findByText('Rendering document…')).toBeInTheDocument()
     fireEvent.wheel(document.querySelector('.knowledge-reader .workspace-preview__content')!)
-    release()
+    await release()
     const late = await screen.findByRole('heading', { name: 'Late' })
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(late).not.toHaveFocus()
@@ -21386,7 +21404,7 @@ describe('App', () => {
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
-    release()
+    await release()
     const late = await screen.findByRole('heading', { name: 'Late' })
     await waitFor(() => expect(late).toHaveFocus())
     expect(screen.queryByText(/was not found in this document/)).not.toBeInTheDocument()
@@ -21435,7 +21453,7 @@ describe('App', () => {
     expect(await screen.findByText('Rendering document…')).toBeInTheDocument()
     const drawing = document.querySelector<HTMLElement>('.workspace-preview__content')!
     fireEvent.wheel(drawing)
-    act(() => waiting.splice(0).forEach((deliver) => deliver()))
+    await releaseHeld(waiting)
     await screen.findByRole('heading', { name: 'README.md' })
     await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
     expect(drawing.scrollTop).not.toBe(240)

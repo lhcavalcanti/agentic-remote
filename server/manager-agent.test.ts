@@ -1201,6 +1201,23 @@ describe('ManagerAgent', () => {
     expect(agent!.hiddenSessionIds()).toEqual(['sdk-1'])
   })
 
+  it('leaves schedules out of what Oracle is told on a hub without the scheduler', async () => {
+    await start()
+    await agent!.send('one')
+    await settled()
+    expect(sdk.clients[0].createSession.mock.calls[0][0].systemMessage.content).not.toContain('# Schedules')
+  })
+
+  it('tells Oracle how to manage schedules on a hub that runs the scheduler', async () => {
+    await start({ scheduler: () => undefined })
+    await agent!.send('one')
+    await settled()
+    const content = sdk.clients[0].createSession.mock.calls[0][0].systemMessage.content
+    expect(content).toContain('# Schedules')
+    expect(content).toContain('nothing applies until the user approves that exact proposal')
+    expect(content.indexOf('# Schedules')).toBeGreaterThan(content.indexOf('You are Oracle'))
+  })
+
   it("answers in the user's response style, read afresh each turn without another request", async () => {
     let style: 'concise' | 'balanced' | 'detailed' | undefined
     await start({ responseStyle: () => style })

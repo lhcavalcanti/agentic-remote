@@ -4550,7 +4550,7 @@ button {
 .background-task__row {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) minmax(104px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
   align-items: center;
   column-gap: 6px;
   padding-right: 8px;
@@ -4659,16 +4659,36 @@ button {
   white-space: nowrap;
 }
 
-.background-task__stop {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
+.background-task__action:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
 }
 
+/* Stopping ends work, so Stop keeps a danger outline of its own. */
+.background-task__stop {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: transparent;
+}
+
+.background-task__stop:hover:not(:disabled),
+.background-task__stop:focus-visible {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/* Asking only writes a draft. It stays text and icon until pointed at or
+   focused, so a list of running tasks does not read as a wall of buttons;
+   the transparent border keeps its size the same either way. */
 .background-task__ask {
   color: var(--task);
-  border-color: color-mix(in srgb, var(--task) 40%, transparent);
-  background: color-mix(in srgb, var(--task) 8%, transparent);
+  border-color: transparent;
+  background: transparent;
+}
+
+.background-task__ask:hover,
+.background-task__ask:focus-visible {
+  border-color: color-mix(in srgb, var(--task) 45%, transparent);
+  background: color-mix(in srgb, var(--task) 10%, transparent);
 }
 
 /* Lines up under the title, past the status icon. */
@@ -4829,10 +4849,6 @@ button {
 /* On a phone the kind and time move under the title, which keeps the width
    for what the task is, and every control is at least 40px tall. */
 @media (max-width: 560px) {
-  .background-task__row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
   .background-task__toggle {
     min-height: 48px;
     grid-template-areas:

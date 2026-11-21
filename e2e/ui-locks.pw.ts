@@ -290,6 +290,14 @@ for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' ||
         await expect(sheet.getByRole('note')).toHaveCount(1)
         await expect(sheet.getByRole('button', { name: /^Ask to stop: / })).toHaveCount(8)
         await expect(sheet.getByRole('button', { name: /^Stop task: / })).toHaveCount(0)
+        // Asking stays text and icon until pointed at, so eight of them do not
+        // read as a wall of buttons.
+        const ask = sheet.getByRole('button', { name: 'Ask to stop: pnpm dev --host 127.0.0.1', exact: true })
+        await expect(ask).toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)')
+        if (viewport.name === 'desktop') {
+          await ask.hover()
+          await expect(ask).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)')
+        }
         if (viewport.name === 'phone') {
           const targets = [...await rows.all(), ...await sheet.getByRole('button', { name: /^Ask to stop: / }).all()]
           for (const target of targets) {
@@ -306,7 +314,9 @@ for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' ||
         const sheet = page.getByRole('dialog', { name: /^Background tasks · / })
         const row = sheet.getByRole('button', { name: 'Running subagent: Review the recovery paths', exact: true })
         await expect(row).toHaveAttribute('aria-expanded', 'true')
-        await expect(sheet.getByRole('button', { name: 'Stop task: Review the recovery paths', exact: true })).toBeVisible()
+        const stop = sheet.getByRole('button', { name: 'Stop task: Review the recovery paths', exact: true })
+        await expect(stop).toBeVisible()
+        await expect(stop).not.toHaveCSS('border-top-color', 'rgba(0, 0, 0, 0)')
         await expect(sheet.getByRole('button', { name: 'Ask to stop: tail -f logs/sync.log', exact: true })).toBeVisible()
         const activity = sheet.getByRole('list', { name: 'Recent activity' })
         await expect(activity.getByRole('listitem')).toHaveCount(5)

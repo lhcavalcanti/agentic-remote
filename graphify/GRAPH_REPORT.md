@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `f7bff71fb739215a835b1194a04f749daf29e8b347b508c9aae4f6679b762643`
+Snapshot: `5b96406ff2970de3cefbdaad4bcb1fb3a507216689714b020830873d35b6e1a1`
 
-Source checkout: `2c76687355bef15a4eb2fec352087576cffe9188`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `04bca66db32495c5c2551221818f7efd0779e6a2`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 
@@ -12,7 +12,7 @@ Documentation, styles, images, and other non-code files are inventoried but **no
 
 
 ## Corpus Check
-- 644 files · ~1,157,443 words
+- 644 files · ~1,157,511 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -1313,6 +1313,11 @@ _Questions this graph is uniquely positioned to answer:_
 - `docs/superpowers/specs/2026-11-06-oracle-actionable-morning-plan-design.md`
 - `docs/superpowers/specs/2026-11-07-dreamer-periodic-refresh-design.md`
 - `e2e/ui-locks.pw.ts-snapshots/desktop-app-settings-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-expanded-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-light-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-sheet-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-sheet-light-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/desktop-composer-busy-queue-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/desktop-composer-button-row-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/desktop-composer-delivery-menu-chromium-linux.png`
@@ -1355,6 +1360,11 @@ _Questions this graph is uniquely positioned to answer:_
 - `e2e/ui-locks.pw.ts-snapshots/desktop-settings-skill-confirmation-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/desktop-settings-skills-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/foldable-app-settings-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/foldable-background-tasks-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/foldable-background-tasks-expanded-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/foldable-background-tasks-light-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/foldable-background-tasks-sheet-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/foldable-background-tasks-sheet-light-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/foldable-composer-busy-queue-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/foldable-composer-button-row-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/foldable-composer-delivery-menu-chromium-linux.png`
@@ -1396,6 +1406,11 @@ _Questions this graph is uniquely positioned to answer:_
 - `e2e/ui-locks.pw.ts-snapshots/foldable-settings-skill-confirmation-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/foldable-settings-skills-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/phone-app-settings-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/phone-background-tasks-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/phone-background-tasks-expanded-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/phone-background-tasks-light-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/phone-background-tasks-sheet-chromium-linux.png`
+- `e2e/ui-locks.pw.ts-snapshots/phone-background-tasks-sheet-light-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/phone-composer-busy-queue-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/phone-composer-button-row-chromium-linux.png`
 - `e2e/ui-locks.pw.ts-snapshots/phone-composer-delivery-menu-chromium-linux.png`

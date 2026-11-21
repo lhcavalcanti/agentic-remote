@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "2c76687355bef15a4eb2fec352087576cffe9188",
+  "built_at_commit": "04bca66db32495c5c2551221818f7efd0779e6a2",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -13061,7 +13061,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L754",
+      "source_location": "L764",
       "target": "e2e_ui_locks_pw_composerpart",
       "weight": 1.0
     },
@@ -13072,7 +13072,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L825",
+      "source_location": "L835",
       "target": "e2e_ui_locks_pw_composerparts",
       "weight": 1.0
     },
@@ -13083,7 +13083,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L845",
+      "source_location": "L855",
       "target": "e2e_ui_locks_pw_expectcolumn",
       "weight": 1.0
     },
@@ -13094,7 +13094,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L793",
+      "source_location": "L803",
       "target": "e2e_ui_locks_pw_expectruntimeinrow",
       "weight": 1.0
     },
@@ -13127,7 +13127,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L347",
+      "source_location": "L357",
       "target": "e2e_ui_locks_pw_mockmicrophone",
       "weight": 1.0
     },
@@ -13138,7 +13138,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L916",
+      "source_location": "L926",
       "target": "e2e_ui_locks_pw_open",
       "weight": 1.0
     },
@@ -13149,7 +13149,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L813",
+      "source_location": "L823",
       "target": "e2e_ui_locks_pw_pasteimage",
       "weight": 1.0
     },
@@ -13160,7 +13160,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L757",
+      "source_location": "L767",
       "target": "e2e_ui_locks_pw_runtimeinrow",
       "weight": 1.0
     },
@@ -13171,7 +13171,7 @@
       "relation": "contains",
       "source": "e2e_ui_locks_pw",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L875",
+      "source_location": "L885",
       "target": "e2e_ui_locks_pw_startrecording",
       "weight": 1.0
     },
@@ -13387,7 +13387,7 @@
       "relation": "calls",
       "source": "e2e_ui_locks_pw_open",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L868",
+      "source_location": "L878",
       "target": "e2e_ui_locks_pw_mockmicrophone",
       "weight": 1.0
     },
@@ -13399,7 +13399,7 @@
       "relation": "calls",
       "source": "e2e_ui_locks_pw_open",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L870",
+      "source_location": "L880",
       "target": "e2e_ui_scenes_assertmousepointer",
       "weight": 1.0
     },
@@ -13411,7 +13411,7 @@
       "relation": "calls",
       "source": "e2e_ui_locks_pw_open",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L869",
+      "source_location": "L879",
       "target": "e2e_ui_scenes_createuiscenes",
       "weight": 1.0
     },
@@ -13423,7 +13423,7 @@
       "relation": "calls",
       "source": "e2e_ui_locks_pw_pasteimage",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L814",
+      "source_location": "L824",
       "target": "e2e_ui_locks_pw_message",
       "weight": 1.0
     },
@@ -313514,7 +313514,7 @@
       "label": "ComposerPart",
       "norm_label": "composerpart",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L754"
+      "source_location": "L764"
     },
     {
       "_callable": true,
@@ -313526,7 +313526,7 @@
       "label": "composerParts()",
       "norm_label": "composerparts()",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L825"
+      "source_location": "L835"
     },
     {
       "_callable": true,
@@ -313538,7 +313538,7 @@
       "label": "expectColumn()",
       "norm_label": "expectcolumn()",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L845"
+      "source_location": "L855"
     },
     {
       "_callable": true,
@@ -313550,7 +313550,7 @@
       "label": "expectRuntimeInRow()",
       "norm_label": "expectruntimeinrow()",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L793"
+      "source_location": "L803"
     },
     {
       "_origin": "ast",
@@ -313585,7 +313585,7 @@
       "label": "mockMicrophone()",
       "norm_label": "mockmicrophone()",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L347"
+      "source_location": "L357"
     },
     {
       "_callable": true,
@@ -313597,7 +313597,7 @@
       "label": "open()",
       "norm_label": "open()",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L867"
+      "source_location": "L877"
     },
     {
       "_callable": true,
@@ -313609,7 +313609,7 @@
       "label": "pasteImage()",
       "norm_label": "pasteimage()",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L813"
+      "source_location": "L823"
     },
     {
       "_callable": true,
@@ -313621,7 +313621,7 @@
       "label": "runtimeInRow()",
       "norm_label": "runtimeinrow()",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L757"
+      "source_location": "L767"
     },
     {
       "_callable": true,
@@ -313633,7 +313633,7 @@
       "label": "startRecording()",
       "norm_label": "startrecording()",
       "source_file": "e2e/ui-locks.pw.ts",
-      "source_location": "L875"
+      "source_location": "L885"
     },
     {
       "_origin": "ast",

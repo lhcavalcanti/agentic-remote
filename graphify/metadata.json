@@ -934,8 +934,8 @@
     "server/agent-service-event-projection.test.ts": "f30cd38fa15b0cf3db334a894955914f85e60bb286c3b2ebc26210a9ec1cd659",
     "server/agent-service-recovery.test.ts": "6c3e3eac2e25f1d7c276bf3c78eff185683b4cecc7ba3d1b264634ed2ebc3202",
     "server/agent-service-side-question.test.ts": "45cac53dc6d833ca8ee3c8cb4b0642d9ee42db8150d121b7884de2f124b015ba",
-    "server/agent-service.test.ts": "3e9466cf322c91985128530f0eb737bb6792848f96d4bc48930855e454211c8a",
-    "server/agent-service.ts": "fd97c641483bfa9789159e3321bdb55dcf81272bc015325b32b4e13c9817a49a",
+    "server/agent-service.test.ts": "973ad7a68913359f5e01dbe542243e2c0c7fdc8034df63538cbf0e079b37050d",
+    "server/agent-service.ts": "d1e287a302b0a956aab6b687cc9573fa025f1fc4ca2d172b0c13a90beba4eccb",
     "server/api-origin.test.ts": "7834409881aae57cda9ed1927f8e69b047e6891a1c05047ab0eb298b6371b99d",
     "server/app-build.test.ts": "7cf68b7ea614c08f8451bb22d1181934b613fc8b5bd77d5a09481ae4ad71b8be",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
@@ -1769,13 +1769,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6251a78c807ec400180f20db843c96fc3fdc129306fe37c8eaaf4aa72fc00d92",
+    "GRAPH_REPORT.md": "9ad323268daeebad496f7356cbc3686805fed12b743ae7f01c0556c7405000e6",
     "communities.json": "3df39cdabf1170cba5e862cc02fefb69a0fd270d806c67cfe94b112c4bf99f62",
-    "graph.html": "6c949099dbb4a89617eb966c0864189fb74426f669a0014007ef4ea961a2b183",
-    "graph.json": "9e03435773a29abe22474d308311cb7867631d73ad578f3e5a21c60c8ee89e01"
+    "graph.html": "cdf25505e1f31d0a5f03089fbe745b1a71a13cf11f1169eb6ac654635bb3e847",
+    "graph.json": "f0cfae7ce171ef278365347382dee67979ffdf880f311354d0c78d04fca68145"
   },
   "schema_version": 1,
-  "source_commit": "635d0f0ad47c86ff41c06de0e96ce26c8014a323",
-  "source_fingerprint": "bf988a9f422a396f3f36a74ee81f865de1ea0aed4a5220362beb1c72ced1ccd3",
+  "source_commit": "992149dc80687e7c1ef6b7c96618e281e52ab1a4",
+  "source_fingerprint": "2438091391fec95c9593fcd37898e8d5976ffbc662aec7101242d00ab4fe62da",
   "working_tree_changes": []
 }

@@ -46,6 +46,7 @@ export const uiSceneNames = [
   'session-origin-run',
   'session-subagents',
   'session-list',
+  'session-actions',
   'app-settings',
   'preview-features',
   'settings-navigation',
@@ -289,6 +290,13 @@ export function createUIScenes(
         await expect(page.getByRole('button', { name: '2 subagents running', exact: true })).toBeVisible()
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)
+      } else if (name === 'session-actions') {
+        await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+        const actions = page.getByRole('group', { name: 'Session actions', exact: true })
+        await expect(actions.getByRole('button', { name: 'Restart session', exact: true })).toBeVisible()
+        // Pause joins the menu only where the session list is a drawer.
+        await expect(actions.getByRole('button', { name: 'Pause session', exact: true }))
+          .toHaveCount(page.viewportSize()!.width > 960 ? 0 : 1)
       } else if (name === 'settings-skills' || name === 'settings-skill-confirmation' || name === 'settings-invalid-skill') {
         await openSessions(page)
         await page.getByRole('button', { name: 'App settings', exact: true }).click()

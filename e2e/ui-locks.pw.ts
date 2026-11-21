@@ -889,6 +889,18 @@ test.describe('browser interaction contracts', () => {
     await expect(page.locator('#oracle-panel')).toHaveCount(0)
   })
 
+  test('offers Pause in an open Session actions menu only while the session list is a drawer', async ({ page, baseURL }) => {
+    await open(page, baseURL, 'session-actions')
+    const pause = page.getByRole('group', { name: 'Session actions', exact: true })
+      .getByRole('button', { name: 'Pause session', exact: true })
+    await expect(pause).toHaveCount(0)
+    await page.setViewportSize({ width: 960, height: 900 })
+    await expect(pause).toBeEnabled()
+    await expect(pause).toHaveAttribute('title', 'Keep this session but stop what is running for it')
+    await page.setViewportSize({ width: 961, height: 900 })
+    await expect(pause).toHaveCount(0)
+  })
+
   test('rail opens Oracle and offers only implemented views', async ({ page, baseURL }) => {
     const handle = await open(page, baseURL, 'oracle-panel')
     await page.getByRole('button', { name: 'Close Oracle', exact: true }).click()

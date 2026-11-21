@@ -171,6 +171,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   does not grow. Close MUST use the same confirmation, close lifecycle (§3.3),
   and owning-computer route as **Close session**; Pause and
   Resume retain their existing suspend lifecycle, availability, and labels.
+  While the session list is a drawer, and only then, the open session's ⋯ menu
+  MUST also offer **Pause session** or **Resume session** above **Restart
+  session**, with the same lifecycle and availability.
   Hide and Show MUST stay available while the owning computer is offline, since
   the hub keeps them.
   While a session closes, only its own Close waits and its row is dimmed;

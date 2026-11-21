@@ -12930,6 +12930,220 @@ describe('App', () => {
     ).toBeInTheDocument()
   })
 
+  describe('Pause in Session actions', () => {
+    let restoreMatchMedia: (() => void) | undefined
+
+    afterEach(() => {
+      restoreMatchMedia?.()
+      restoreMatchMedia = undefined
+    })
+
+    /** A browser window the test can widen or narrow across the drawer breakpoint. */
+    function windowWidth(width: number) {
+      const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
+      const listeners = new Set<() => void>()
+      let current = width
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        value: (query: string) => ({
+          get matches() {
+            return query === '(max-width: 960px)' && current <= 960
+          },
+          media: query,
+          onchange: null,
+          addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+          removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+          addListener: () => undefined,
+          removeListener: () => undefined,
+          dispatchEvent: () => false,
+        }),
+      })
+      restoreMatchMedia = () => {
+        if (original) Object.defineProperty(window, 'matchMedia', original)
+        else Reflect.deleteProperty(window, 'matchMedia')
+      }
+      return (next: number) => {
+        current = next
+        act(() => listeners.forEach((listener) => listener()))
+      }
+    }
+
+    const menuEntry = (name: string) => within(
+      screen.getByRole('group', { name: 'Session actions' }),
+    ).queryByRole('button', { name })
+
+    it('pauses the open session from its menu while the list is a drawer, sharing the row\'s pending state', async () => {
+      windowWidth(390)
+      let finishSuspend: (value: ManagedSession) => void = () => {}
+      vi.mocked(suspendSession).mockImplementationOnce(
+        () => new Promise((resolve) => {
+          finishSuspend = resolve
+        }),
+      )
+      render(<App />)
+      await screen.findAllByText('Project chat')
+
+      const pause = sessionAction('Pause session')
+      expect(pause).toBeEnabled()
+      expect(pause).toHaveAttribute('title', 'Keep this session but stop what is running for it')
+      const entries = within(screen.getByRole('group', { name: 'Session actions' }))
+        .getAllByRole('button')
+      expect(entries[entries.indexOf(pause) + 1]).toHaveAccessibleName('Restart session')
+
+      fireEvent.click(pause)
+      expect(screen.queryByRole('group', { name: 'Session actions' })).toBeNull()
+      expect(suspendSession).toHaveBeenCalledOnce()
+      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-1')
+
+      const waiting = sessionAction('Pause session')
+      expect(waiting).toBeDisabled()
+      expect(waiting).toHaveAttribute('title', 'Wait for this suspend or resume to finish')
+      expect(screen.getByRole('button', { name: 'Suspend Project chat' })).toBeDisabled()
+
+      await act(async () => {
+        finishSuspend({ ...session, suspended: true })
+      })
+      expect(menuEntry('Pause session')).toBeNull()
+      expect(menuEntry('Resume session')).toBeEnabled()
+      expect(suspendSession).toHaveBeenCalledOnce()
+    })
+
+    it('resumes a suspended session from its menu', async () => {
+      windowWidth(390)
+      const resting = { ...session, suspended: true }
+      vi.mocked(listSessions).mockResolvedValue([resting])
+      vi.mocked(getSession).mockResolvedValue(resting)
+      render(<App />)
+      await screen.findAllByText('Project chat')
+
+      const resume = sessionAction('Resume session')
+      expect(menuEntry('Pause session')).toBeNull()
+      expect(resume).toBeEnabled()
+      expect(resume).toHaveAttribute('title', 'Start this session up again')
+      fireEvent.click(resume)
+
+      expect(resumeSession).toHaveBeenCalledOnce()
+      expect(resumeSession).toHaveBeenCalledWith('computer-1', 'session-1')
+      expect(suspendSession).not.toHaveBeenCalled()
+      expect(await findSessionAction('Pause session')).toBeEnabled()
+    })
+
+    it('reports a refused pause in the conversation, as the row does', async () => {
+      windowWidth(390)
+      vi.mocked(suspendSession).mockRejectedValueOnce(
+        new Error('Session can only be suspended while idle'),
+      )
+      render(<App />)
+      await screen.findAllByText('Project chat')
+
+      fireEvent.click(sessionAction('Pause session'))
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Session can only be suspended while idle',
+      )
+      expect(await findSessionAction('Pause session')).toBeEnabled()
+    })
+
+    it.each([
+      [
+        'busy',
+        { status: 'running' as const },
+        undefined,
+        'Wait for the session to finish before suspending it',
+      ],
+      [
+        'waiting on a question',
+        {
+          pendingUserInput: {
+            requestId: 'question', question: 'Keep this pending', choices: [], allowFreeform: true,
+          },
+        },
+        undefined,
+        'Wait for the session to finish before suspending it',
+      ],
+      [
+        'holding queued background work',
+        {},
+        {
+          tasks: [{
+            id: 'agent-1', type: 'agent' as const, description: 'Review',
+            status: 'queued' as const, startedAt: '2026-09-01T00:00:00Z', canCancel: true,
+          }],
+          runningCount: 0,
+          supported: true,
+        },
+        'Wait for its background tasks to finish before suspending it',
+      ],
+      [
+        'interrupted',
+        {
+          status: 'error' as const,
+          interruption: { detectedAt: '2026-09-01T00:00:00Z', previousStatus: 'running' as const },
+        },
+        undefined,
+        'Reopen this session before suspending it',
+      ],
+    ])('holds Pause back, saying why, while the session is %s', async (_state, change, tasks, reason) => {
+      windowWidth(390)
+      const held = { ...session, ...change }
+      vi.mocked(listSessions).mockResolvedValue([held])
+      vi.mocked(getSession).mockResolvedValue(held)
+      if (tasks) {
+        vi.mocked(listComputers).mockResolvedValue([taskComputer])
+        vi.mocked(listBackgroundTasks).mockResolvedValue(tasks)
+      }
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Suspend Project chat' })).toBeDisabled(),
+      )
+
+      const pause = sessionAction('Pause session')
+      expect(pause).toBeDisabled()
+      expect(pause).toHaveAttribute('title', reason)
+      fireEvent.click(pause)
+      expect(suspendSession).not.toHaveBeenCalled()
+    })
+
+    it('is not held back by another session\'s pending suspend', async () => {
+      windowWidth(390)
+      vi.mocked(listSessions).mockResolvedValue([session, secondSession])
+      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
+        sessionId === secondSession.id ? secondSession : session,
+      )
+      vi.mocked(suspendSession).mockImplementationOnce(() => new Promise(() => {}))
+      render(<App />)
+      await screen.findAllByText('Second chat')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Suspend Second chat' }))
+      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-2')
+
+      expect(sessionAction('Pause session')).toBeEnabled()
+    })
+
+    it('leaves Pause to the docked list on desktop, following the breakpoint while open or reopened', async () => {
+      const resize = windowWidth(1440)
+      render(<App />)
+      await screen.findAllByText('Project chat')
+
+      openSessionActions()
+      expect(menuEntry('Restart session')).toBeInTheDocument()
+      expect(menuEntry('Pause session')).toBeNull()
+      expect(menuEntry('Resume session')).toBeNull()
+
+      resize(390)
+      expect(menuEntry('Pause session')).toBeEnabled()
+      resize(1440)
+      expect(menuEntry('Pause session')).toBeNull()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
+      expect(screen.queryByRole('group', { name: 'Session actions' })).toBeNull()
+      resize(390)
+      expect(sessionAction('Pause session')).toBeEnabled()
+      expect(suspendSession).not.toHaveBeenCalled()
+    })
+  })
+
   it('mutes notifications for the selected session from the header', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')

@@ -138,7 +138,9 @@ import {
   MessageSquare,
   Minimize2,
   MonitorCog,
+  Pause,
   Pencil,
+  Play,
   Plus,
   Plug,
   RefreshCw,
@@ -196,6 +198,7 @@ import {
   retainedSessionNotice,
   sessionKey,
   shortPath,
+  suspendAvailability,
   taskSnapshot,
 } from './session-presentation'
 import type { SessionSort } from './session-presentation'
@@ -677,6 +680,25 @@ function subscribePrefersLight(notify: () => void): () => void {
 
 function prefersLightNow(): boolean {
   return typeof window.matchMedia === 'function' && Boolean(window.matchMedia(prefersLightQuery)?.matches)
+}
+
+const drawerQuery = '(max-width: 960px)'
+
+/** Whether the sidebar is the drawer that slides over everything. */
+function drawerIsOverlay(): boolean {
+  return typeof window.matchMedia === 'function'
+    ? window.matchMedia(drawerQuery).matches
+    : window.innerWidth <= 960
+}
+
+function subscribeDrawerOverlay(notify: () => void): () => void {
+  if (typeof window.matchMedia !== 'function') {
+    window.addEventListener('resize', notify)
+    return () => window.removeEventListener('resize', notify)
+  }
+  const media = window.matchMedia(drawerQuery)
+  media.addEventListener?.('change', notify)
+  return () => media.removeEventListener?.('change', notify)
 }
 
 function settingsNotice(state: SettingsProfileState): string | undefined {
@@ -3840,6 +3862,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [oracleFocusRequest, setOracleFocusRequest] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
   const desktopLayout = viewportWidth > 960
+  // Subscribed rather than read once, so what only the drawer layout offers
+  // follows the window across the breakpoint.
+  const sessionListIsDrawer = useSyncExternalStore(subscribeDrawerOverlay, drawerIsOverlay)
   // The open Oracle panel's width; the timeline dock moves beside it.
   const [oraclePanelWidth, setOraclePanelWidth] = useState<number>()
   const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
@@ -5539,6 +5564,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const selectedSuspending = Boolean(
     selected && suspendingSessions.has(sessionKey(selected)),
   )
+  const selectedSuspend = selected
+    ? suspendAvailability(selected, selectedBackgroundTasks, {
+        computerName: selected.computerName,
+        online: selectedComputerOnline,
+        suspending: selectedSuspending,
+      })
+    : undefined
   const selectedQueueHeadIsSteering = Boolean(
     selected?.status === 'running' &&
     selected.executionMode === 'tmux' &&
@@ -9549,13 +9581,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       setAddRootOpen(true)
     }
   }, [computers, knowledgeMode, knowledgeRootsLoaded, roots.length, selected, selectedKey, sessionKnowledgeRoot.binding])
-
-  /** Whether the sidebar is the drawer that slides over everything. */
-  function drawerIsOverlay(): boolean {
-    return typeof window.matchMedia === 'function'
-      ? window.matchMedia('(max-width: 960px)').matches
-      : window.innerWidth <= 960
-  }
 
   /** What a shortcut answers to now, for anything that tells the reader. */
   // Read rather than written out, or a remapped shortcut goes on being
@@ -14044,6 +14069,22 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 >
                   <SquareTerminal size={18} />
                   <span>Move session to tmux</span>
+                </button>
+              ) : null}
+              {/* Beside the docked list, its row already offers this. */}
+              {sessionListIsDrawer && selectedSuspend ? (
+                <button
+                  aria-label={selected.suspended ? 'Resume session' : 'Pause session'}
+                  className="session-action"
+                  disabled={!selectedSuspend.available}
+                  onClick={() => void toggleSelectedSessionSuspended()}
+                  title={selectedSuspend.title}
+                  type="button"
+                >
+                  {selected.suspended
+                    ? <Play aria-hidden="true" size={17} />
+                    : <Pause aria-hidden="true" size={17} />}
+                  <span>{selected.suspended ? 'Resume session' : 'Pause session'}</span>
                 </button>
               ) : null}
               <button

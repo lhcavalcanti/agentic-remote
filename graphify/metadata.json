@@ -1248,7 +1248,7 @@
     "server/tmux-errors.test.ts": "e2bb607b56cc62f117d1e7188cf874693c5a243f5d820c6f1b0d14d8b5141730",
     "server/tmux-errors.ts": "2c205965ce6ea3baa1f20607258890902d524b010fa05cb674354f595fd0eaad",
     "server/tmux-fixture-watchdog.ts": "00bcea2ca89856f982a737113b57e0c0d874d854485956d7034f948ac1cdd774",
-    "server/tmux-test-helpers.integration.test.ts": "9d6aa6cd87de73f7a400ee5545b15c27cf22eafdee9360be5e3c91a920c65ace",
+    "server/tmux-test-helpers.integration.test.ts": "dc7045ba5bd2b5a312fae9eff73b24a31e391e022d5fa19a448afad0e3d2d078",
     "server/tmux-test-helpers.test.ts": "145d392259dafb2b35f7525b35ed88256e8637b84e3bbc6dde57aa8bfd78eb5e",
     "server/tmux-test-helpers.ts": "5d9b2331b786b6c1dcd8641767affd536641eddb93c13d2b874af076ad1804b0",
     "server/transcript-test-helpers.ts": "4ce718e633ba153c02b01cf80c3674fb1e3bbc1dec793829669a248910f1cb75",
@@ -1817,27 +1817,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "0b08f2308220d7e10474b4e1e77ac9458563a635b6528b18772dfb0cb769bd84",
+    "GRAPH_REPORT.md": "70fc96013856f16cd8d31ca3206bfb5a6e6fff158bee820a8f0010737afd67ac",
     "communities.json": "3bf84cda31a04f8d5faf159af92a195a60cea00be2a8febed0aa30fe9037d774",
-    "graph.html": "844cb14bd26b25def7e03137c3512635726154e86f3ef2dfd1307169a5bf0a81",
-    "graph.json": "405f5f1048fe4ea3fa01c7caa83ca9c0ffc9990b825554fbb09829741973765e"
+    "graph.html": "5e9ce4ceba69c2ca017e3569a0231948a87a7f30f07a7cafc88ed7780c8a5580",
+    "graph.json": "688892bd3448269b116c56fa75bb8cc98bd70bcc773da76f664d8de9fbffc280"
   },
   "schema_version": 1,
-  "source_commit": "75005acc82d16690bf41b3d3e3c60f727a42b405",
-  "source_fingerprint": "60362d8d90a117b8b49b62d990ccdf4311a7c0300b4c437b6aebf3d0b65300c3",
+  "source_commit": "0dd48db1ff2a21d1cb54d38dac973e953ee67887",
+  "source_fingerprint": "2800bff45e60a8f531c787e251a8095c590856851b1775b2f192b000578f5752",
   "working_tree_changes": [
-    "README.md",
-    "docs/app-spec.md",
-    "e2e/ui-locks.pw.ts-snapshots/desktop-preview-features-chromium-linux.png",
-    "e2e/ui-locks.pw.ts-snapshots/desktop-settings-search-chromium-linux.png",
-    "e2e/ui-locks.pw.ts-snapshots/foldable-preview-features-chromium-linux.png",
-    "e2e/ui-locks.pw.ts-snapshots/foldable-settings-search-chromium-linux.png",
-    "e2e/ui-locks.pw.ts-snapshots/phone-preview-features-chromium-linux.png",
-    "e2e/ui-locks.pw.ts-snapshots/phone-settings-search-chromium-linux.png",
-    "src/PreviewFeaturesProvider.tsx",
-    "src/PreviewFeaturesSettings.test.tsx",
-    "src/PreviewFeaturesSettings.tsx",
-    "src/index.css",
-    "src/preview-features.ts"
+    "server/tmux-test-helpers.integration.test.ts"
   ]
 }

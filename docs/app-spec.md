@@ -1179,6 +1179,35 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   turn also without **Remove**; an edit saved for one is discarded.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
+- A tool row for a call its session logged MUST be a disclosure button
+  (`aria-expanded`, `aria-controls`, Enter/Space, a visible focus ring) that
+  opens in place onto the complete call: the command as a shell line or the
+  arguments as JSON or text, the output, and the error, each as plain text,
+  never Markdown or HTML, in a monospace block with its own scroll that wraps
+  on a phone, with **Copy**; and its status, duration, and start and finish
+  times. Rows MUST stay compact: on touch at least 28px tall, the whole
+  full-width row being the target, while the open panel's buttons are at least
+  44px. Skill and agent rows MUST stay headings with the button inside.
+- The call MUST be read only when its row opens, from the owning computer's
+  Copilot event log through
+  `GET /api/computers/:computerId/sessions/:sessionId/activities/:toolCallId`,
+  never by the transcript poll. A call whose completion is logged MUST be kept
+  in a bounded cache rather than read again. A running call shows its
+  arguments and **Running…** and MUST be read once more if its row's status
+  changes while open. A call an abort, error or shutdown ended unfinished MUST
+  open as failed, as its row shows it.
+- Each text MUST be stripped of terminal escape sequences (colours, titles,
+  hyperlinks) and NUL and cut at 256 KiB, saying how much is shown. **Copy**
+  MUST also work over plain HTTP, where browsers withhold the Clipboard API.
+  A call missing from the log MUST say so and offer **Try again**; a Claude
+  Agent session, or a computer that cannot read calls yet, MUST say that
+  details are unavailable.
+- Opening a tool row MUST keep it where it is and stop following the end;
+  closing it MUST bring it back into view. Rows MUST stay open across
+  transcript updates, and an open row MUST stay rendered when newer messages
+  push it past the rendered history. Closed there, it MUST stay in place until
+  it is back inside the rendered history or the reader moves to another
+  session. An unchanged row MUST NOT redraw.
 - Parallel tools MUST retain independent running/completed/failed states.
 - Unfinished tools at abort or error MUST become failed rather than spinning
   forever.

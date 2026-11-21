@@ -20,6 +20,7 @@ function provider(id: AgentProvider, supported = true) {
       ...(supported ? { supportsQueuedPromptDispatch: true } : {}),
       supportsContextRecovery: id === 'copilot' && supported,
       supportsSideQuestions: id === 'copilot' && supported,
+      supportsActivityDetails: id === 'copilot' && supported,
     }],
     dispatchQueuedPrompt: vi.fn(async (_sessionId: string, promptId: string, _content: string) => ({
       outcome: 'sent' as const, promptId, attemptId: '11111111-1111-4111-8111-111111111111', session,
@@ -28,6 +29,9 @@ function provider(id: AgentProvider, supported = true) {
       session, prompt: { id: 'prompt', content: 'original', createdAt: session.updatedAt },
     })),
     askSession: vi.fn(async (_sessionId: string, question: string) => `Answer: ${question}`),
+    readActivityDetail: vi.fn(async (_sessionId: string, toolCallId: string) => ({
+      toolCallId, toolName: 'bash', kind: 'tool' as const, status: 'completed' as const,
+    })),
     recoverConversation: vi.fn(async () => ({
       ...session,
       id: `${id}-recovered`,
@@ -200,6 +204,32 @@ describe('provider queued dispatch aggregation', () => {
     ).askSession('copilot-session', 'Why?')).rejects.toMatchObject({ statusCode: 400 })
     expect(unadvertised.askSession).not.toHaveBeenCalled()
   })
+
+  it('reads tool call details only from a provider that advertises them', async () => {
+    const copilot = provider('copilot')
+    const claude = provider('claude')
+    const aggregate = new ProviderSessionService(
+      copilot as unknown as SessionService,
+      claude as unknown as SessionService,
+    )
+
+    await expect(aggregate.readActivityDetail('copilot-session', 'call_bash'))
+      .resolves.toMatchObject({ toolCallId: 'call_bash' })
+    expect(copilot.readActivityDetail).toHaveBeenCalledExactlyOnceWith('copilot-session', 'call_bash')
+    await expect(aggregate.readActivityDetail('claude-session', 'toolu_bash')).rejects.toMatchObject({
+      statusCode: 501,
+      message: 'Tool call details are unavailable for this provider.',
+    })
+    expect(claude.readActivityDetail).not.toHaveBeenCalled()
+    await expect(aggregate.readActivityDetail('missing-session', 'call_bash')).rejects.toThrow('Session not found')
+
+    const unadvertised = provider('copilot', false)
+    await expect(new ProviderSessionService(
+      unadvertised as unknown as SessionService,
+      claude as unknown as SessionService,
+    ).readActivityDetail('copilot-session', 'call_bash')).rejects.toMatchObject({ statusCode: 501 })
+    expect(unadvertised.readActivityDetail).not.toHaveBeenCalled()
+  })
 })
 
 describe('closed sessions across providers', () => {
@@ -262,6 +292,27 @@ describe('provider routing', () => {
 
     expect(claude.listBackgroundTasks).toHaveBeenCalledWith('claude-session')
     expect(copilot.listBackgroundTasks).not.toHaveBeenCalled()
+    for (const copy of copies) expect(copy).not.toHaveBeenCalled()
+  })
+
+  it('reads tool call details, or refuses them, without copying the session', async () => {
+    // Every open of a tool row asks, and the copy would only name the provider.
+    const copilot = Object.assign(provider('copilot'), {
+      hasSession: (sessionId: string) => sessionId === 'copilot-session',
+    })
+    const claude = Object.assign(provider('claude'), {
+      hasSession: (sessionId: string) => sessionId === 'claude-session',
+    })
+    const copies = [vi.spyOn(copilot, 'getSession'), vi.spyOn(claude, 'getSession')]
+    const aggregate = new ProviderSessionService(
+      copilot as unknown as SessionService, claude as unknown as SessionService,
+    )
+
+    await expect(aggregate.readActivityDetail('copilot-session', 'call_bash'))
+      .resolves.toMatchObject({ toolCallId: 'call_bash' })
+    await expect(aggregate.readActivityDetail('claude-session', 'toolu_bash'))
+      .rejects.toMatchObject({ statusCode: 501 })
+    expect(claude.readActivityDetail).not.toHaveBeenCalled()
     for (const copy of copies) expect(copy).not.toHaveBeenCalled()
   })
 })

@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import type {
+  ActivityDetail,
   AgentProvider,
   AudioTranscription,
   CreateSessionInput,
@@ -851,6 +852,15 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   ): Promise<BackgroundTaskSnapshot> {
     return this.request<BackgroundTaskSnapshot>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/tasks`,
+    )
+  }
+
+  async readActivityDetail(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<ActivityDetail> {
+    return this.request<ActivityDetail>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/activities/${encodeURIComponent(toolCallId)}`,
     )
   }
 

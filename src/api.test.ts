@@ -10,6 +10,7 @@ import {
   importSettingsProfile,
   saveSettingsChanges,
   getProviderRuntimeOptions,
+  getActivityDetail,
   getSession,
   getSessionKnowledgeRoot,
   getRuntimeOptions,
@@ -525,6 +526,45 @@ describe('API request headers', () => {
 
     await cancelBackgroundTask('computer', 'session', 'task/id')
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('reads a tool call in full from its owning session without caching it', async () => {
+    const detail = {
+      toolCallId: 'call_bash', toolName: 'bash', kind: 'tool', status: 'completed',
+      startedAt: '2026-11-20T06:00:00.000Z', completedAt: '2026-11-20T06:00:01.000Z', durationMs: 1000,
+      arguments: { format: 'command', text: 'pnpm test', truncated: false, originalBytes: 9 },
+      result: { text: 'ok', truncated: false, originalBytes: 2 },
+    }
+    const fetchMock = vi.fn(async (_path: string, _init?: RequestInit) => Response.json(detail))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getActivityDetail('computer/one', 'session/one', 'call_bash')).resolves.toEqual(detail)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/computers/computer%2Fone/sessions/session%2Fone/activities/call_bash',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
+
+  it('refuses tool call details it cannot show as text', async () => {
+    for (const invalid of [
+      { toolCallId: 'call_bash', toolName: 'bash', kind: 'tool', status: 'done' },
+      { toolCallId: 'call_bash', toolName: 'bash', kind: 'tool', status: 'completed', result: { text: { html: '<b>' } } },
+      { toolCallId: 'call_bash', toolName: 'bash', kind: 'tool', status: 'completed',
+        arguments: { format: 'html', text: '<b>', truncated: false, originalBytes: 3 } },
+    ]) {
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json(invalid)))
+      await expect(getActivityDetail('computer', 'session', 'call_bash'))
+        .rejects.toThrow('The computer returned tool call details this app cannot show.')
+    }
+  })
+
+  it('keeps the status of a refused tool call read', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(
+      { error: 'Tool call details are unavailable for this provider.' }, { status: 501 },
+    )))
+    await expect(getActivityDetail('computer', 'session', 'toolu_bash')).rejects.toMatchObject({
+      statusCode: 501, message: 'Tool call details are unavailable for this provider.',
+    })
   })
 
   it('lets the browser set the multipart boundary for audio uploads', async () => {

@@ -9,7 +9,14 @@ import {
   type UISceneHandle,
   type UISceneName,
 } from './ui-scenes'
-import { FIXTURE_NOW, SELECTED_SESSION_ID, createWorkspaceFixtureState, setupWorkspaceFixture } from './workspace-fixtures'
+import {
+  FIXTURE_NOW,
+  SELECTED_SESSION_ID,
+  createWorkspaceFixtureState,
+  fixtureActivityDetails,
+  fixtureActivityMessages,
+  setupWorkspaceFixture,
+} from './workspace-fixtures'
 import { scheduleSchema, scheduleRunSchema } from '../shared/schedules'
 
 test.use(uiContextOptions)
@@ -352,6 +359,107 @@ for (const viewport of uiViewports.filter((entry) => entry.name === 'desktop' ||
     })
   })
 }
+
+/** The selected session with a synthetic bash call and MCP call its computer logged. */
+async function openToolCallFixture(page: Page, baseURL: string) {
+  const state = createWorkspaceFixtureState()
+  const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+  session.messages.splice(1, 0, ...structuredClone(fixtureActivityMessages))
+  const fixture = await setupWorkspaceFixture(page, {
+    baseUrl: baseURL, state, knowledgeMode: 'hidden', activityDetails: fixtureActivityDetails,
+  })
+  await page.goto(fixture.url)
+  await expect(message(page)).toBeVisible()
+  await page.evaluate(() => document.fonts.ready)
+  return fixture
+}
+
+const bashRow = (page: Page) => page.getByRole('button', { name: /^Completed: Bash · Check the field guide links/ })
+const searchRow = (page: Page) => page.getByRole('button', { name: /^Completed: MCP · GitHub · Search Code/ })
+const panelOf = async (page: Page, row: ReturnType<Page['getByRole']>) =>
+  page.locator(`[id="${await row.getAttribute('aria-controls')}"]`)
+
+for (const viewport of uiViewports) {
+  test.describe(`tool call details ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    test('opens a bash row and an MCP row onto their complete calls', async ({ page, baseURL }) => {
+      const fixture = await openToolCallFixture(page, baseURL!)
+      try {
+        const bash = bashRow(page)
+        const search = searchRow(page)
+        // Compact on touch too: the whole full-width row is the target.
+        const rowHeights = await page.locator('.activity-message--toggle')
+          .evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height))
+        expect(rowHeights).toHaveLength(fixtureActivityMessages.length)
+        for (const height of rowHeights) {
+          expect(height).toBeGreaterThanOrEqual(viewport.hasTouch ? 28 : 20)
+          expect(height).toBeLessThanOrEqual(viewport.hasTouch ? 29 : 24)
+        }
+        for (const row of [bash, search]) await expect(row).toHaveAttribute('aria-expanded', 'false')
+        const open = (row: typeof bash) => viewport.hasTouch ? row.tap() : row.click()
+
+        await open(bash)
+        await expect(bash).toHaveAttribute('aria-expanded', 'true')
+        const bashPanel = await panelOf(page, bash)
+        await expect(bashPanel).toContainText('pnpm run check-links docs/field-guide.md --format table')
+        await expect(bashPanel).toContainText('Checked 18 links: 17 ok, 1 redirected')
+        await expect(bashPanel).toContainText('reading-patterns-for-long-documents')
+        const copyOutput = bashPanel.getByRole('button', { name: 'Copy output' })
+        await expect(copyOutput).toBeVisible()
+        if (viewport.hasTouch) {
+          const copyBox = (await copyOutput.boundingBox())!
+          expect(Math.min(copyBox.width, copyBox.height)).toBeGreaterThanOrEqual(44)
+        }
+
+        await open(search)
+        const searchPanel = await panelOf(page, search)
+        await expect(searchPanel).toContainText('github-mcp-server › search_code')
+        await expect(searchPanel).toContainText('"perPage": 5')
+        await expect(searchPanel).toContainText('3 results for "recovery checklist"')
+        expect(fixture.requests.filter((request) => request.path.includes('/activities/'))).toEqual([
+          { method: 'GET', path: `${sessionPath}/activities/fixture-call-links` },
+          { method: 'GET', path: `${sessionPath}/activities/fixture-call-search` },
+        ])
+        await assertNoHorizontalOverflow(page)
+
+        await open(bash)
+        await expect(bash).toHaveAttribute('aria-expanded', 'false')
+        await expect(bashPanel).toHaveCount(0)
+        await page.mouse.move(0, 0)
+        // Scroll to latest and Oracle float over the timeline's corner; the lock is the row.
+        await page.addStyleTag({ content: '.timeline-dock { visibility: hidden; }' })
+        await expect(search.locator('xpath=ancestor::article[1]'))
+          .toHaveScreenshot(`tool-call-details-${viewport.name}.png`, lockedScreenshot)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
+test.describe('tool call details from the keyboard', () => {
+  test.use({ viewport: uiViewports[0].viewport, isMobile: false, hasTouch: false })
+  test('opens and closes a tool row with Enter and Space behind a visible focus ring', async ({ page, baseURL }) => {
+    const fixture = await openToolCallFixture(page, baseURL!)
+    try {
+      const bash = bashRow(page)
+      await bash.focus()
+      await page.keyboard.press('Enter')
+      await expect(bash).toHaveAttribute('aria-expanded', 'true')
+      await expect(bash).toHaveCSS('outline-style', 'solid')
+      await expect(await panelOf(page, bash)).toContainText('Checked 18 links: 17 ok, 1 redirected')
+      await page.keyboard.press('Space')
+      await expect(bash).toHaveAttribute('aria-expanded', 'false')
+      await page.keyboard.press('Space')
+      await expect(bash).toHaveAttribute('aria-expanded', 'true')
+      await page.keyboard.press('Tab')
+      await expect(page.getByRole('button', { name: 'Copy command' })).toBeFocused()
+      expect(fixture.requests.filter((request) => request.path.includes('/activities/'))).toHaveLength(1)
+    } finally {
+      fixture.assertHealthy()
+    }
+  })
+})
 
 /** A fake microphone whose recording the fixture transcribes as "Transcribed fixture note". */
 async function mockMicrophone(page: Page) {

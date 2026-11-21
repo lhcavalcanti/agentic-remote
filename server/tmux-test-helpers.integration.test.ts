@@ -212,8 +212,8 @@ describe('initialized tmux fixture lifecycle', () => {
   }, 10_000)
 
   it('tears down without a host-wide absence verdict, even while that verdict is indeterminate', async () => {
-    // A tmux process in another mount namespace (such as a sandboxed suite run)
-    // leaves the host-wide verdict indeterminate for as long as it runs.
+    // Any other tmux the host-wide verdict cannot rule out (one starting up, or
+    // in a mount namespace it may not inspect) leaves it indeterminate.
     const absence = vi.spyOn(tmuxErrors, 'noTmuxServer').mockResolvedValue(false)
     const parserOnly = await fixture()
     const closed = await fixture()

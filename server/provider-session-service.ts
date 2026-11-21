@@ -458,7 +458,9 @@ export class ProviderSessionService
 
   async readActivityDetail(sessionId: string, toolCallId: string): Promise<ActivityDetail> {
     const service = this.serviceFor(sessionId)
-    const provider = service.getSession(sessionId)?.provider || 'copilot'
+    // Named by the service that owns it: a copy of the session would carry
+    // its whole transcript, on every open of a tool row.
+    const provider: AgentProvider = service === this.claude ? 'claude' : 'copilot'
     if (!service.readActivityDetail || !service.providers().some((capability) =>
       capability.id === provider && capability.supportsActivityDetails === true)) {
       throw activityDetailsUnavailable()

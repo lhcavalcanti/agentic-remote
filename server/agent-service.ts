@@ -8484,7 +8484,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sessionId: string,
     toolCallId: string,
   ): Promise<ActivityDetail> {
-    if (!this.store.get(sessionId)) {
+    if (!this.store.has(sessionId)) {
       throw new Error('Session not found')
     }
     const detail = activityDetailFromEvents(

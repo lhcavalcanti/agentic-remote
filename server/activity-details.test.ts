@@ -204,7 +204,8 @@ describe('reading activity details from a Copilot session', () => {
     await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
   })
 
-  it('reads only that session log, and refuses a call the log does not have', async () => {
+  /** A stored Copilot session whose log holds one finished bash call. */
+  async function sessionWithLog() {
     const directory = path.resolve('graphify/.cache', `activity-details-${randomUUID()}`)
     await mkdir(directory, { recursive: true })
     directories.push(directory)
@@ -221,6 +222,11 @@ describe('reading activity details from a Copilot session', () => {
     const service = new AgentService(
       store, {} as unknown as CopilotClientLike, async () => [], async () => {}, reader,
     )
+    return { store, reader, service }
+  }
+
+  it('reads only that session log, and refuses a call the log does not have', async () => {
+    const { reader, service } = await sessionWithLog()
 
     await expect(service.readActivityDetail('session-with-log', 'call_bash')).resolves.toMatchObject({
       toolCallId: 'call_bash', status: 'completed', result: text('/home/demo'),
@@ -231,5 +237,15 @@ describe('reading activity details from a Copilot session', () => {
     await expect(service.readActivityDetail('another-session', 'call_bash')).rejects.toThrow('Session not found')
     expect(reader.mock.calls).toEqual([['session-with-log'], ['session-with-log']])
     expect(service.providers()[0]).toMatchObject({ supportsActivityDetails: true })
+  })
+
+  it('reads a call without copying the session, whose copy carries the whole transcript', async () => {
+    const { store, service } = await sessionWithLog()
+    const copies = vi.spyOn(store, 'get')
+
+    await expect(service.readActivityDetail('session-with-log', 'call_bash'))
+      .resolves.toMatchObject({ toolCallId: 'call_bash' })
+    await expect(service.readActivityDetail('another-session', 'call_bash')).rejects.toThrow('Session not found')
+    expect(copies).not.toHaveBeenCalled()
   })
 })

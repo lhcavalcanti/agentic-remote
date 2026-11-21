@@ -294,4 +294,25 @@ describe('provider routing', () => {
     expect(copilot.listBackgroundTasks).not.toHaveBeenCalled()
     for (const copy of copies) expect(copy).not.toHaveBeenCalled()
   })
+
+  it('reads tool call details, or refuses them, without copying the session', async () => {
+    // Every open of a tool row asks, and the copy would only name the provider.
+    const copilot = Object.assign(provider('copilot'), {
+      hasSession: (sessionId: string) => sessionId === 'copilot-session',
+    })
+    const claude = Object.assign(provider('claude'), {
+      hasSession: (sessionId: string) => sessionId === 'claude-session',
+    })
+    const copies = [vi.spyOn(copilot, 'getSession'), vi.spyOn(claude, 'getSession')]
+    const aggregate = new ProviderSessionService(
+      copilot as unknown as SessionService, claude as unknown as SessionService,
+    )
+
+    await expect(aggregate.readActivityDetail('copilot-session', 'call_bash'))
+      .resolves.toMatchObject({ toolCallId: 'call_bash' })
+    await expect(aggregate.readActivityDetail('claude-session', 'toolu_bash'))
+      .rejects.toMatchObject({ statusCode: 501 })
+    expect(claude.readActivityDetail).not.toHaveBeenCalled()
+    for (const copy of copies) expect(copy).not.toHaveBeenCalled()
+  })
 })

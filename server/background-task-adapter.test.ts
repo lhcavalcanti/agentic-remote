@@ -1,12 +1,18 @@
 import type { SessionEvent } from '@github/copilot-sdk'
 import { describe, expect, it } from 'vitest'
 import {
-  backgroundTasksFromEvents,
+  createBackgroundTaskProjector,
   MAX_BACKGROUND_TASKS,
   MAX_TASK_ACTIVITY_LINES,
   MAX_TASK_TEXT_LENGTH,
   normalizeBackgroundTask,
 } from './background-task-adapter.js'
+// Every projection checked below is also taken in a few events at a time and
+// must match the full scan at every prefix.
+import {
+  checkedBackgroundTasks as backgroundTasksFromEvents,
+  seededRandom,
+} from './projection-test-helpers.js'
 
 describe('background task adapter', () => {
   it('normalizes SDK idle tasks as queued and bounds task output', () => {
@@ -1895,6 +1901,191 @@ describe('background task adapter', () => {
     })
   })
 
+  it('keeps work a turn end swept live for the events after it', () => {
+    // The sweep at the end of a prefix speaks for that prefix only. Recorded
+    // in the projector, it would close a shell that later events still read.
+    const launch = lifecycleEvent('launch', 'tool.execution_start', '2026-09-02T08:00:00.000Z', {
+      toolCallId: 'shell-call',
+      toolName: 'bash',
+      arguments: { command: 'pnpm test' },
+    })
+    const turnEnd = lifecycleEvent('turn-end', 'assistant.turn_end', '2026-09-02T08:00:05.000Z', {})
+    const read = [
+      lifecycleEvent('read', 'tool.execution_start', '2026-09-02T08:00:06.000Z', {
+        toolCallId: 'read-call',
+        toolName: 'read_bash',
+        arguments: { shellId: 'shell-call' },
+      }),
+      lifecycleEvent('read-done', 'tool.execution_complete', '2026-09-02T08:00:07.000Z', {
+        toolCallId: 'read-call',
+        success: true,
+        result: 'still going',
+      }),
+    ]
+    const projector = createBackgroundTaskProjector({ assumeBackground: true })
+
+    projector.apply([launch, turnEnd] as unknown as SessionEvent[])
+    expect(projector.tasks()).toMatchObject([{ id: 'shell-call', status: 'failed' }])
+    projector.apply(read as unknown as SessionEvent[])
+
+    expect(projector.tasks()).toMatchObject([{
+      id: 'shell-call',
+      status: 'failed',
+      progress: { recentOutput: 'still going' },
+    }])
+  })
+
+  it('hands out tasks that share nothing with the projector', () => {
+    const projector = createBackgroundTaskProjector({ assumeBackground: true })
+    projector.apply([
+      lifecycleEvent('agent', 'subagent.started', '2026-09-02T08:00:00.000Z', { toolCallId: 'task-call' }, 'agent-1'),
+      lifecycleEvent('view', 'tool.execution_start', '2026-09-02T08:00:01.000Z', {
+        toolCallId: 'view-call',
+        toolName: 'view',
+      }, 'agent-1'),
+    ] as unknown as SessionEvent[])
+    const handedOut = projector.tasks()
+    const expected = structuredClone(handedOut)
+
+    handedOut[0].status = 'cancelled'
+    handedOut[0].progress!.recentActivity!.push({ message: 'forged', timestamp: 'never' })
+    handedOut.length = 0
+
+    expect(projector.tasks()).toEqual(expected)
+  })
+})
+
+describe('background task projector', () => {
+  /** A soak run sets this to explore new seeds; failures name the seed. */
+  const seedOffset = Number(process.env.PROPERTY_SEED_OFFSET ?? 0)
+
+  /**
+   * A log mixing every kind of event the projection reads. Ids come from
+   * small pools so launches, observers, notifications and agents collide.
+   */
+  function syntheticLog(seed: number, length: number): SessionEvent[] {
+    const next = seededRandom(seed)
+    const pick = <T,>(values: readonly T[]): T => values[Math.floor(next() * values.length)]
+    const chance = (probability: number) => next() < probability
+    const events: SessionEvent[] = []
+    let clock = Date.UTC(2026, 8, 2, 8)
+    for (let index = 0; index < length; index += 1) {
+      // Mostly forward, sometimes tied, now and then out of order.
+      clock += pick([0, 1_000, 1_000, 5_000, 60_000, -2_000])
+      const timestamp = new Date(clock).toISOString()
+      const agentId = chance(0.25) ? pick(['agent-1', 'agent-2']) : undefined
+      const onEnvelope = agentId !== undefined && chance(0.6)
+      const owner = agentId && !onEnvelope ? { agentId } : {}
+      const callId = pick(['call-1', 'call-2', 'call-3', 'call-4', 'call-5'])
+      const shellId = pick(['1', '2', '3', 'call-1', 'call-2'])
+      const base = { id: `event-${index}`, parentId: null, timestamp, ...(onEnvelope ? { agentId } : {}) }
+      const kind = next()
+      let event: Record<string, unknown>
+      if (kind < 0.2) {
+        event = { ...base, type: 'tool.execution_start', data: {
+          ...owner,
+          toolCallId: callId,
+          toolName: pick(['bash', 'bash', 'shell']),
+          arguments: {
+            command: `run ${index}`,
+            ...(chance(0.6) ? { mode: pick(['sync', 'async', 'background', 'detached']) } : {}),
+            ...(chance(0.2) ? { detach: true } : {}),
+            ...(chance(0.3) ? { shellId } : {}),
+          },
+        } }
+      } else if (kind < 0.27) {
+        event = { ...base, type: 'tool.execution_start', data: {
+          ...owner,
+          toolCallId: callId,
+          toolName: pick(['read_bash', 'stop_bash', 'list_bash']),
+          arguments: { shellId },
+        } }
+      } else if (kind < 0.32) {
+        event = { ...base, type: 'tool.execution_start', data: {
+          toolCallId: callId,
+          toolName: 'task',
+          arguments: { description: `agent ${index}`, agent_type: 'explore', ...(chance(0.3) ? { mode: 'sync' } : {}) },
+        } }
+      } else if (kind < 0.36) {
+        event = { ...base, type: 'tool.execution_start', data: { ...owner, toolCallId: callId, toolName: pick(['view', 'grep']) } }
+      } else if (kind < 0.58) {
+        const content = pick([
+          `output ${index}`,
+          `<command started in background with shellId: ${shellId}>`,
+          `<command started in detached background with shellId: ${shellId}>`,
+          `still busy\n<shellId: ${shellId} completed with exit code ${pick([0, 1])}>`,
+          `<command with id: ${shellId} stopped>`,
+          `<command still running after 30 seconds with shellId: ${shellId}>`,
+        ])
+        const result = chance(0.1)
+          ? { type: 'shell_exit', shellId, exitCode: pick([0, 2]) }
+          : chance(0.1)
+            ? {
+                content: 'inventory',
+                tasks: [{
+                  type: pick(['shell', 'agent']),
+                  id: pick([shellId, 'agent-1']),
+                  status: pick(['running', 'completed', 'failed', 'idle']),
+                  startedAt: new Date(clock - pick([0, 1_000, 60_000])).toISOString(),
+                  description: 'inventory row',
+                }],
+              }
+            : { content }
+        event = { ...base, type: 'tool.execution_complete', data: {
+          ...owner,
+          toolCallId: callId,
+          success: chance(0.8),
+          ...(chance(0.2)
+            ? { toolTelemetry: { properties: pick([
+                { executionMode: 'async', detached: 'false' },
+                { executionMode: 'async', detached: 'true' },
+                { shell_status: 'stopped' },
+              ]) } }
+            : {}),
+          result,
+        } }
+      } else if (kind < 0.68) {
+        const type = pick([
+          'shell_started', 'shell_detached_started', 'shell_completed',
+          'shell_detached_completed', 'agent_idle', 'agent_completed',
+        ])
+        event = { ...base, type: 'system.notification', data: { kind: {
+          type,
+          shellId,
+          agentId: pick(['agent-1', 'agent-2']),
+          ...(chance(0.4) ? { toolCallId: callId } : {}),
+          ...(chance(0.3) ? { startedAt: new Date(clock - pick([0, 1_000])).toISOString() } : {}),
+          ...(type.endsWith('completed') ? { exitCode: pick([0, 1]), status: pick(['completed', 'failed', 'cancelled']) } : {}),
+        } } }
+      } else if (kind < 0.78) {
+        event = {
+          ...base,
+          agentId: pick(['agent-1', 'agent-2']),
+          type: pick(['subagent.started', 'subagent.completed', 'subagent.failed']),
+          data: { toolCallId: callId, agentName: 'explore', ...(chance(0.5) ? { executionMode: pick(['sync', 'background']) } : {}) },
+        }
+      } else if (kind < 0.95) {
+        event = {
+          ...base,
+          type: pick(['assistant.turn_start', 'assistant.turn_end', 'assistant.turn_end', 'user.message', 'session.idle', 'abort', 'session.error']),
+          data: owner,
+        }
+      } else {
+        event = { ...base, type: pick(['session.start', 'session.resume', 'session.shutdown']), data: {} }
+      }
+      events.push(event as unknown as SessionEvent)
+    }
+    return events
+  }
+
+  it('agrees with the full scan at every prefix of generated logs', () => {
+    for (let seed = seedOffset + 1; seed <= seedOffset + 80; seed += 1) {
+      const events = syntheticLog(seed, 8 + (seed % 32))
+      for (const assumeBackground of [true, false]) {
+        backgroundTasksFromEvents(events, { assumeBackground }, `seed ${seed}, assumeBackground ${assumeBackground}`)
+      }
+    }
+  })
 })
 
 function lifecycleEvent(

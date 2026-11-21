@@ -4,6 +4,7 @@ import {
   defaultHubFeatureFlags,
   effectivePreviewFeatures,
   isPreviewAvailable,
+  type HubFeatureFlags,
 } from '../shared/feature-flags'
 import { fetchHubFeatureFlags } from './api'
 import { authoritativeRefresh, waitUntilAuthoritativeRefresh } from './OracleDreamer'
@@ -19,7 +20,7 @@ export function PreviewFeaturesProvider({
 }) {
   const profile = useSyncExternalStore(settingsClient.subscribe, settingsClient.getState)
   const preferences = profile.values.previewFeatures
-  const [hubFlags, setHubFlags] = useState(defaultHubFeatureFlags)
+  const [hubFlags, setHubFlags] = useState<HubFeatureFlags>()
   useEffect(() => {
     let active = true
     let controller: AbortController | undefined
@@ -50,17 +51,20 @@ export function PreviewFeaturesProvider({
       window.removeEventListener(authoritativeRefresh, refreshAuthoritative)
     }
   }, [])
-  const value = useMemo<PreviewFeatureState>(() => ({
-    hubFlags,
-    preferences,
-    effective: effectivePreviewFeatures(preferences, hubFlags),
-    set: (name, enabled) => {
-      if (!isPreviewAvailable(name, hubFlags)) return
-      settingsClient.set('previewFeatures', {
-        ...settingsClient.getState().values.previewFeatures,
-        [name]: enabled,
-      })
-    },
-  }), [hubFlags, preferences, settingsClient])
+  const value = useMemo<PreviewFeatureState>(() => {
+    const authority = hubFlags ?? defaultHubFeatureFlags
+    return {
+      hubFlags,
+      preferences,
+      effective: effectivePreviewFeatures(preferences, authority),
+      set: (name, enabled) => {
+        if (!isPreviewAvailable(name, authority)) return
+        settingsClient.set('previewFeatures', {
+          ...settingsClient.getState().values.previewFeatures,
+          [name]: enabled,
+        })
+      },
+    }
+  }, [hubFlags, preferences, settingsClient])
   return <PreviewFeaturesContext.Provider value={value}>{children}</PreviewFeaturesContext.Provider>
 }

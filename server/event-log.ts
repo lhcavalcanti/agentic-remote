@@ -111,11 +111,31 @@ async function readAt(
   return bytesRead === length ? buffer : Buffer.from(buffer.subarray(0, bytesRead))
 }
 
+// The read in flight for each log. A read takes the cached prefix for its
+// duration, so one that overlapped it would find nothing cached and parse the
+// whole log again; each read waits for the one before it instead.
+const readsInFlight = new Map<string, Promise<unknown>>()
+
 export async function readSessionEvents(
   sessionId: string,
 ): Promise<SessionEvent[]> {
-  const filePath = eventLogPath(sessionId)
   const key = cacheKey(sessionId)
+  const read = (readsInFlight.get(key) ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => readAppendedEvents(sessionId, key))
+  readsInFlight.set(key, read)
+  try {
+    return await read
+  } finally {
+    if (readsInFlight.get(key) === read) readsInFlight.delete(key)
+  }
+}
+
+async function readAppendedEvents(
+  sessionId: string,
+  key: string,
+): Promise<SessionEvent[]> {
+  const filePath = eventLogPath(sessionId)
   let size: number
   let mtimeMs: number
   let ino: number

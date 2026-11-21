@@ -239,3 +239,29 @@ describe('closed sessions across providers', () => {
     await aggregate.stop()
   })
 })
+
+describe('provider routing', () => {
+  it('finds the provider that owns a session without copying the session', async () => {
+    // A copy carries the whole transcript, and the background task list is
+    // asked for every session as the app loads.
+    const tasks = { tasks: [], runningCount: 0, supported: true }
+    const copilot = Object.assign(provider('copilot'), {
+      hasSession: (sessionId: string) => sessionId === 'copilot-session',
+      listBackgroundTasks: vi.fn(async () => tasks),
+    })
+    const claude = Object.assign(provider('claude'), {
+      hasSession: (sessionId: string) => sessionId === 'claude-session',
+      listBackgroundTasks: vi.fn(async () => tasks),
+    })
+    const copies = [vi.spyOn(copilot, 'getSession'), vi.spyOn(claude, 'getSession')]
+    const aggregate = new ProviderSessionService(
+      copilot as unknown as SessionService, claude as unknown as SessionService,
+    )
+
+    await aggregate.listBackgroundTasks('claude-session')
+
+    expect(claude.listBackgroundTasks).toHaveBeenCalledWith('claude-session')
+    expect(copilot.listBackgroundTasks).not.toHaveBeenCalled()
+    for (const copy of copies) expect(copy).not.toHaveBeenCalled()
+  })
+})

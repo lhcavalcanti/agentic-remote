@@ -19,13 +19,17 @@ import {
   AgentService,
   type CopilotClientLike,
   type CopilotSessionLike,
-  messagesFromHistory,
-  pendingUserInputFromEvents,
-  runtimeInfoFromEvents,
   foregroundTurnOpen,
-  statusFromEvents,
   terminalFormSteps,
 } from './agent-service.js'
+// Each transcript, pending question, status and runtime is also projected a few
+// events at a time and must match the full scan at every prefix.
+import {
+  checkedMessagesFromHistory as messagesFromHistory,
+  checkedPendingUserInput as pendingUserInputFromEvents,
+  checkedRuntimeInfoFromEvents as runtimeInfoFromEvents,
+  checkedStatusFromEvents as statusFromEvents,
+} from './transcript-test-helpers.js'
 import {
   MAX_BACKGROUND_TASKS,
   type CopilotTaskInfo,

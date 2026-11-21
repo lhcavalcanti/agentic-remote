@@ -515,9 +515,10 @@ scope discovery to fixture-owned processes, and investigate failures rather
 than repeatedly rerunning the promotion gate until it passes.
 `createIsolatedTmuxRoot()` (tmux 3.4+) starts a fixture-owned server that stays
 up with no sessions, so teardown retires that exact process instead of proving
-absence host-wide, which any tmux in another mount namespace leaves
-indeterminate. A detached watchdog, armed before the server starts and told its
-identity over a pipe, retires the namespace, panes included, when its creating
+absence host-wide, which any other tmux the scan cannot rule out (one starting
+up, or in a mount namespace it may not inspect) leaves indeterminate. A
+detached watchdog, armed before the server starts and told its identity over a
+pipe, retires the namespace, panes included, when its creating
 process ends without teardown (a throwing or timed-out `afterEach` skips the
 rest of that test's hooks; a killed run skips all of them). It verifies the
 server as teardown does; on any doubt it kills nothing and keeps the root, with

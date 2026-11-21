@@ -1,10 +1,17 @@
-import { readdir, readFile, readlink, realpath } from 'node:fs/promises'
+import { lstat, readdir, readFile, readlink, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 
 interface UnixSocket {
   inode: string
   name?: string
   listening: boolean
+}
+
+/** Where a socket lives: its directory, identified alike in every mount namespace, and its name there. */
+interface SocketPlace {
+  device: bigint
+  inode: bigint
+  name: string
 }
 
 /**
@@ -37,6 +44,7 @@ export async function noTmuxServer(error: unknown): Promise<boolean> {
       return false
     }
     let mountNamespace: string | undefined
+    let ours: SocketPlace | undefined
     for (const pid of await readdir('/proc')) {
       if (!/^\d+$/.test(pid)) {
         continue
@@ -66,21 +74,31 @@ export async function noTmuxServer(error: unknown): Promise<boolean> {
       // /proc/net is namespace-local. Inspect each live tmux process's own
       // namespace and descriptors before declaring its socket unrelated.
       mountNamespace ??= await readlink('/proc/self/ns/mnt')
-      if (
-        !/^mnt:\[\d+\]$/.test(mountNamespace) ||
-        (await readlink(`/proc/${pid}/ns/mnt`)) !== mountNamespace
-      ) {
+      if (!/^mnt:\[\d+\]$/.test(mountNamespace)) {
         return false
       }
+      // A pathname names something else in another mount namespace, such as a
+      // container's or a sandbox's, so that server's socket is placed as it sees it.
+      const foreign = (await readlink(`/proc/${pid}/ns/mnt`)) !== mountNamespace
       const sockets = await unixSockets(`/proc/${pid}/net/unix`)
       const descriptors = await readdir(`/proc/${pid}/fd`)
       const inodes = new Set(
         await Promise.all(
-          descriptors.map(async (fd) =>
-            /^socket:\[(\d+)\]$/.exec(
-              await readlink(`/proc/${pid}/fd/${fd}`),
-            )?.[1],
-          ),
+          descriptors.map(async (fd) => {
+            let file: string
+            try {
+              file = await readlink(`/proc/${pid}/fd/${fd}`)
+            } catch (failure) {
+              // A server closes each client's connection as that client
+              // leaves: a descriptor closed since it was listed holds nothing.
+              // Were it the listener, none would remain, and absence is refused.
+              if (processGone(failure)) {
+                return undefined
+              }
+              throw failure
+            }
+            return /^socket:\[(\d+)\]$/.exec(file)?.[1]
+          }),
         ),
       )
       const listeners = sockets.filter(
@@ -91,11 +109,15 @@ export async function noTmuxServer(error: unknown): Promise<boolean> {
       }
       const target = await socketIdentity(socket)
       for (const listener of listeners) {
-        if (
-          !listener.name ||
-          !path.isAbsolute(listener.name) ||
-          (await socketIdentity(listener.name)) === target
-        ) {
+        if (!listener.name || !path.isAbsolute(listener.name)) {
+          return false
+        }
+        if (foreign) {
+          ours ??= await socketPlace(target)
+          if (samePlace(await foreignSocketPlace(pid, listener.name), ours)) {
+            return false
+          }
+        } else if ((await socketIdentity(listener.name)) === target) {
           return false
         }
       }
@@ -177,6 +199,35 @@ async function socketIdentity(socket: string): Promise<string> {
   }
   // A dangling socket symlink cannot be compared by its filename.
   throw new Error('Indeterminate tmux socket alias')
+}
+
+/** Where `identity`, a socket path as `socketIdentity` resolves it here, lives. */
+async function socketPlace(identity: string): Promise<SocketPlace> {
+  const directory = await stat(path.dirname(identity), { bigint: true })
+  return { device: directory.dev, inode: directory.ino, name: path.basename(identity) }
+}
+
+/**
+ * Where a socket that process `pid`, in another mount namespace, bound at the
+ * absolute `name` lives, walked through that process's own root. A symbolic
+ * link on the way could resolve outside that view, so none is followed: each
+ * directory on the way is looked at before the walk goes through it.
+ */
+async function foreignSocketPlace(pid: string, name: string): Promise<SocketPlace> {
+  const segments = name.split('/').slice(1)
+  const root = `/proc/${pid}/root`
+  let directory = await stat(root, { bigint: true })
+  for (let depth = 1; depth < segments.length; depth += 1) {
+    directory = await lstat(`${root}/${segments.slice(0, depth).join('/')}`, { bigint: true })
+    if (!directory.isDirectory()) {
+      throw new Error('Indeterminate tmux socket directory')
+    }
+  }
+  return { device: directory.dev, inode: directory.ino, name: segments.at(-1)! }
+}
+
+function samePlace(left: SocketPlace, right: SocketPlace): boolean {
+  return left.device === right.device && left.inode === right.inode && left.name === right.name
 }
 
 function processGone(error: unknown): boolean {

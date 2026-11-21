@@ -610,8 +610,8 @@ describe('active Copilot processes', () => {
       directory,
       `echo "no server running on ${path.join(directory, 'absent-socket')}" >&2\nexit 1\n`,
     )
-    // The absence verdict reads the whole host, which any tmux in another
-    // mount namespace leaves indeterminate; tmux-errors tests own that proof.
+    // The absence verdict reads the whole host, which any other tmux it cannot
+    // rule out leaves indeterminate; tmux-errors tests own that proof.
     const absence = vi.spyOn(tmuxErrors, 'noTmuxServer').mockResolvedValue(true)
     try {
       await expect(findActiveCopilotProcesses()).resolves.toEqual([])

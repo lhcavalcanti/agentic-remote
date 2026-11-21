@@ -35,9 +35,9 @@ const lifelines = new Map<string, Writable>()
  * The namespace is served by a server the fixture starts and keeps until
  * teardown, even while it has no sessions. Left to exit with its last session
  * -- or never started, as in parser-only tests -- teardown had to prove the
- * server absent through a host-wide process scan, and any tmux in another
- * mount namespace (a sandboxed suite run on the same host) leaves that scan
- * indeterminate for as long as it runs.
+ * server absent through a host-wide process scan, and any other tmux the scan
+ * cannot rule out (one starting up, or in a mount namespace it may not
+ * inspect) leaves that scan indeterminate for as long as it runs.
  *
  * Requires tmux 3.4 or newer, the first release whose `update-environment`
  * copies every variable a pattern matches.

@@ -166,7 +166,10 @@ that session's Copilot event log through `readSessionEvents`. It answers the
 tool, its MCP server and tool, status, times, arguments, output and error,
 each cut at 256 KiB, with `404` when the log has no such call and `501` for a
 Claude Agent session or, from the hub, for a node that does not advertise
-`supportsActivityDetails`. The hub answers with `Cache-Control: no-store`.
+`supportsActivityDetails`. The session is found without copying it, and the
+log read shares any parse already under way. The hub answers with
+`Cache-Control: no-store`; a large call is gzipped once by the response
+compression below, on each hop.
 
 ### Read-only resource requests
 

@@ -2230,12 +2230,13 @@ button {
 /* The Tasks status remains a separate action without replacing the activity
    time or nesting a button inside the session button. It is the row's only
    background-work cue, so it stays a quiet label with the task colour's dot,
-   filled only while pointed at or focused. */
+   filled only while pointed at or focused. Its target is centred on the
+   badges' 15px line, so the label reads on that line with the other states. */
 .session-item__tasks {
   display: inline-flex;
   position: absolute;
   right: 0;
-  top: 0;
+  top: 7.5px;
   align-items: center;
   justify-content: center;
   min-height: 28px;
@@ -2246,6 +2247,7 @@ button {
   border: 0;
   border-radius: 4px;
   background: transparent;
+  transform: translateY(-50%);
 }
 
 .session-item__body--task-status .session-item__badges,
@@ -2393,6 +2395,7 @@ button {
   align-self: start;
   justify-self: end;
   min-height: 40px;
+  transform: none;
 }
 
 .session-item__body:has(> .session-origin-run-link) .session-item__badges,
@@ -3664,6 +3667,24 @@ button {
   margin-right: 6px;
 }
 
+/* A task's checkbox takes the bullet's place in the indent, so a wrapped line
+   starts under the text rather than under the box. */
+.markdown-body .task-list-item {
+  position: relative;
+  list-style: none;
+}
+
+.markdown-body .task-list-item > input[type='checkbox'],
+.markdown-body .task-list-item > p:first-child > input[type='checkbox']:first-child {
+  position: absolute;
+  top: 0.3em;
+  top: calc((1lh - 13px) / 2);
+  left: -19px;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
 .typing-indicator {
   display: inline-flex;
   height: 20px;
@@ -3746,6 +3767,12 @@ button {
   font-weight: 760;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+/* On a light page the accent needs its darker form to read as text. Kept at
+   the specificity of a class, so contexts that mute the eyebrow still win. */
+:where(.app-shell[data-appearance='light']) .eyebrow {
+  color: var(--accent-foreground);
 }
 
 .permission-card h3,
@@ -4090,7 +4117,8 @@ button {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(24, 25, 22, 0.96);
+  /* A tray a step darker than the page in either appearance. */
+  background: var(--navigation);
 }
 
 .queued-prompts > header {
@@ -4173,7 +4201,8 @@ button {
   border-radius: 7px;
   border: 1px solid rgba(110, 168, 254, 0.5);
   background: rgba(110, 168, 254, 0.16);
-  color: #cfe0ff;
+  /* A pale blue on graphite and a deep one on a light page, legible on both. */
+  color: color-mix(in srgb, var(--task) 25%, var(--text));
   font: inherit;
   font-size: 11px;
   font-weight: 650;
@@ -4189,10 +4218,10 @@ button {
   border-bottom: 0;
 }
 
-.queued-prompt > span {
+.queued-prompt__text {
   display: -webkit-box;
   overflow: hidden;
-  color: var(--text-soft);
+  color: var(--text);
   font-size: 11px;
   line-height: 1.35;
   white-space: pre-wrap;
@@ -4201,7 +4230,8 @@ button {
 }
 
 .queued-prompt__steer {
-  color: #9ec5fe;
+  /* The task blue, paler on graphite and deeper on a light tray. */
+  color: color-mix(in srgb, var(--task) 60%, var(--text));
   font-weight: 650;
 }
 
@@ -4360,6 +4390,19 @@ button {
 
 .composer--refresh > .composer-text-panel {
   padding: 7px 14px;
+}
+
+/* Recording takes the buttons' place. It keeps its tint but not the border and
+   shadow the other parts dropped, inset as far as those buttons with corners
+   that follow the composer's, so its edge never runs along the composer's own. */
+.composer--refresh > .recording-panel {
+  width: auto;
+  min-height: 40px;
+  margin: 6px;
+  padding: 4px;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
 }
 
 .composer-actions--refresh .composer-actions__spacer {
@@ -5179,6 +5222,12 @@ button {
   color: var(--computer-accent);
 }
 
+/* Each computer keeps its hue, deepened toward the text colour on a light page
+   so its name reads at 4.5:1. */
+:where(.app-shell[data-appearance='light']) .web-statusline__computer {
+  color: color-mix(in srgb, var(--computer-accent) 50%, var(--text));
+}
+
 .web-statusline__provider {
   color: var(--accent-foreground);
 }
@@ -5398,7 +5447,9 @@ button {
   color: var(--muted-strong);
   font-size: 11px;
 }
-.settings-navigation__content { min-width: 0; overflow-y: auto; padding: 0 4px 16px; }
+/* The padding keeps focus rings inside this scroller; the margin takes it back
+   so fields line up with the search field above. */
+.settings-navigation__content { min-width: 0; overflow-y: auto; margin-inline: -4px; padding: 0 4px 16px; }
 .settings-navigation__content .app-settings-group { padding-top: 0; }
 .settings-navigation .app-settings-group__body { grid-template-columns: 1fr; }
 .settings-navigation [hidden] { display: none !important; }
@@ -6021,7 +6072,7 @@ button {
 
 .send-button--stop {
   color: var(--text);
-  background: #383c34;
+  background: var(--panel-soft);
 }
 
 .send-button--queue {
@@ -6361,6 +6412,11 @@ button {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 24px;
+}
+
+/* A title long enough to wrap must not squeeze Close below 40px. */
+.dialog__header > .icon-button {
+  flex: none;
 }
 
 /* A side question is an aside to the conversation. Its thread docks above the
@@ -7954,7 +8010,7 @@ button {
     height: auto;
     max-height: 100%;
     padding: 20px max(18px, env(safe-area-inset-right))
-      max(6px, calc(env(safe-area-inset-bottom) - 20px))
+      max(12px, env(safe-area-inset-bottom))
       max(18px, env(safe-area-inset-left));
     overflow-y: auto;
     border-right: 0;
@@ -7989,8 +8045,10 @@ button {
     margin-top: 12px;
   }
 
+  /* The sheet's own padding keeps the home indicator clear; this only spaces
+     the last action from it. */
   .new-session-dialog > form {
-    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    padding-bottom: 12px;
   }
 
   .new-session-dialog .dialog__submit {
@@ -8052,10 +8110,18 @@ button {
   .document-code figcaption button,
   .knowledge-node,
   .knowledge-node__status button,
+  .workspace-crumbs button,
+  .knowledge-crumbs button,
   .session-filter,
   .session-list__results button,
+  .recording-panel button,
+  .dialog-tab,
   .session-item__tasks {
     min-height: 40px;
+  }
+
+  .session-filter {
+    min-width: 40px;
   }
 
   .document-view-controls .document-view-switch button {
@@ -8311,8 +8377,9 @@ button {
     white-space: nowrap;
   }
 
+  /* Its breadcrumbs are 40px targets now, so they set the bar's height. */
   .knowledge-reader__crumbs {
-    padding: 4px 16px;
+    padding: 0 16px;
   }
 
   .knowledge-reader__file-crumb {
@@ -8362,6 +8429,31 @@ button {
     width: 40px;
     height: 40px;
     flex: 0 0 40px;
+  }
+
+  /* The folder keeps its size as text in the header line; the line's height
+     around it, down to the header's foot, answers a touch. A browser without
+     overflow: clip keeps the line's hidden overflow and the smaller target. */
+  @supports (overflow: clip) {
+    .conversation-header__title .conversation-header__meta {
+      overflow-x: clip;
+      overflow-y: visible;
+    }
+  }
+
+  .conversation-header__cwd {
+    position: relative;
+  }
+
+  .conversation-header__cwd::before {
+    position: absolute;
+    inset: -16px 0 -10px;
+    content: "";
+  }
+
+  .timeline-follow__button {
+    width: 40px;
+    height: 40px;
   }
 
   .header-action-label {
@@ -8426,6 +8518,21 @@ button {
     max-height: 82px;
   }
 
+  /* A row is as tall as its 40px buttons, so two still fit the tray. */
+  .queued-prompt {
+    grid-template-columns: 16px minmax(0, 1fr) 40px 40px;
+    padding-block: 0;
+  }
+
+  .queued-prompt .icon-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .queued-prompt > .drag-handle {
+    height: 40px;
+  }
+
   .queued-edit-banner {
     font-size: 12px;
     line-height: 1.35;
@@ -8459,6 +8566,11 @@ button {
   .composer-actions,
   .recording-panel {
     border-radius: 13px;
+  }
+
+  /* Its 40px buttons fill the strip, which keeps the buttons row's height. */
+  .composer--refresh > .recording-panel {
+    padding: 0;
   }
 
   .composer textarea {
@@ -8654,6 +8766,16 @@ button {
   grid-auto-flow: column;
   grid-template-rows: auto auto;
   gap: 2px;
+}
+
+/* Until a desktop row is pointed at, a suspended one shows only Resume. It
+   sits on the folder and time line at the foot of the text, whose 15.5px
+   line centres 7.5px above it, rather than below the middle of the text. */
+@media (hover: hover) {
+  .session-item--suspended > .session-item__controls {
+    align-self: end;
+    margin-bottom: -3.5px;
+  }
 }
 
 .session-item__close,
@@ -10004,8 +10126,9 @@ button {
     margin-right: max(16px, env(safe-area-inset-right));
   }
 
-  .oracle-mode button {
-    min-height: 36px;
+  .oracle-mode button,
+  .oracle-runtime {
+    min-height: 40px;
   }
 
   .oracle-queue__editor textarea {

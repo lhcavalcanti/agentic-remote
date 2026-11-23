@@ -612,4 +612,44 @@ describe('sessions an older release suspended are closed when they load', () => 
     expect(info.mock.calls.flat().filter(lifecycle)).toEqual([])
     await restored.close()
   })
+
+  it('keeps a send that failed and a context brief still to go, for Reopen', async () => {
+    const { directory, file } = await suspendedOnDisk()
+    const failedPrompt = { content: 'Synthetic send that failed', failedAt: '2026-10-18T00:02:00.000Z' }
+    const recoverySeed = { prompt: 'Synthetic context brief', state: 'pending' }
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    Object.assign(state.sessions.retained, { failedPrompt, recoverySeed })
+    await writeFile(file, JSON.stringify(state))
+
+    const store = new SessionStore(directory, () => now + day)
+    await store.initialize()
+
+    expect(store.isClosed('retained')).toBe(true)
+    expect(store.failedPrompt('retained')).toEqual(failedPrompt)
+    expect(store.recoverySeed('retained')).toEqual(recoverySeed)
+    expect(store.get('retained')).toMatchObject({ queuedPrompts: [queued] })
+    await store.close()
+  })
+
+  it('leaves one that was archived archived, since closing it would start its deletion', async () => {
+    const { store, directory, advance } = await fixture({ retention: { pinned: false, idleDays: 7 } })
+    advance(30 * day)
+    await store.syncOpen([])
+    const archived = store.get('retained')
+    expect(archived?.archivedAt).toEqual(expect.any(String))
+    await store.close()
+    const file = path.join(directory, 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    state.sessions.retained.suspended = true
+    await writeFile(file, JSON.stringify(state))
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    const restored = new SessionStore(directory, () => now + 31 * day)
+    await restored.initialize()
+
+    expect(restored.get('retained')).toEqual(archived)
+    expect(restored.isClosed('retained')).toBe(false)
+    expect(info.mock.calls.flat().filter(lifecycle)).toEqual([])
+    await restored.close()
+  })
 })

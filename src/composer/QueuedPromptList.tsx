@@ -51,7 +51,7 @@ function SortableQueuedPrompt({
       >
         <GripVertical size={13} />
       </span>
-      <span>
+      <span className="queued-prompt__text">
         {steering && (
           <strong
             className="queued-prompt__steer"

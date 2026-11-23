@@ -35,6 +35,7 @@ export const uiSceneNames = [
   'conversation',
   'conversation-tool-rows',
   'composer-busy-queue',
+  'composer-busy-queue-light',
   'composer-family-claude',
   'composer-family-openai',
   'composer-status-busy',
@@ -267,7 +268,8 @@ export function createUIScenes(
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
-      if (name === 'composer-busy-queue') {
+      const busyQueue = name === 'composer-busy-queue' || name === 'composer-busy-queue-light'
+      if (busyQueue) {
         const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
         session.status = 'running'
         session.activity = 'Checking the workspace plan'
@@ -321,7 +323,7 @@ export function createUIScenes(
       await expect(page.getByText('I suggest three small changes:', { exact: true })).toBeVisible()
       await expect.poll(() => state.eventSockets.size).toBeGreaterThan(0)
       await expect.poll(() => state.settings.revision).toBeGreaterThan(0)
-      if (name === 'composer-busy-queue') {
+      if (busyQueue) {
         await expect(page.getByRole('region', { name: 'Queued prompts' })).toContainText('Check the release notes next.')
       } else if (toolRows) {
         const rows = page.getByRole('button', { name: /^(Completed|Failed): / })

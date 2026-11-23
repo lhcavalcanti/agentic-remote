@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -15237,6 +15237,46 @@ describe('AgentService recoverable close', () => {
 
     expect(client.resumedSessionIds).toEqual([created.id])
     expect(client.session.sentPrompts).toEqual([])
+  })
+
+  it('lists a session an older release suspended as closed, and Reopen keeps its history and queue', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-retired-suspend-'))
+    const seeded = new SessionStore(path.join(directory, 'state'))
+    await seeded.initialize()
+    await seeded.create({
+      id: 'paused-sdk', cwd: tmpdir(), title: 'Paused review', updatedAt: '2026-11-20T00:00:00.000Z',
+      status: 'idle', isOpen: true, queuedPrompts: [],
+      messages: [{ id: 'ask', role: 'user', content: 'Review the parser', createdAt: '2026-11-20T00:00:00.000Z' }],
+    }, { managedOpen: true, backend: 'sdk' })
+    await seeded.enqueuePrompt('paused-sdk', {
+      id: 'queued', content: 'Then run the tests', createdAt: '2026-11-20T00:01:00.000Z',
+    })
+    await seeded.close()
+    const file = path.join(directory, 'state', 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    // What an older release's Pause wrote.
+    state.sessions['paused-sdk'].suspended = true
+    await writeFile(file, JSON.stringify(state))
+
+    const { service } = await closableService({ directory })
+
+    expect(service.listSessions()).toEqual([])
+    expect(service.listClosedSessions()).toEqual([expect.objectContaining({
+      id: 'paused-sdk',
+      isOpen: false,
+      closedAt: expect.any(String),
+      closedContext: expect.objectContaining({ prompts: ['Review the parser'] }),
+      queuedPrompts: [expect.objectContaining({ id: 'queued' })],
+    })])
+
+    const reopened = await service.activateSession('paused-sdk')
+
+    expect(reopened).toMatchObject({ id: 'paused-sdk', isOpen: true })
+    expect(reopened.closedAt).toBeUndefined()
+    expect(service.getSession('paused-sdk')).toMatchObject({
+      messages: [expect.objectContaining({ id: 'ask', content: 'Review the parser' })],
+      queuedPrompts: [expect.objectContaining({ id: 'queued', content: 'Then run the tests' })],
+    })
   })
 
   it('refuses work on a closed session and reads it without starting a runtime', async () => {

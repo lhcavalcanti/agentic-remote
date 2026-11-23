@@ -114,6 +114,35 @@ describe('SessionOrderStore', () => {
     })
   })
 
+  it('reads a file that still says whether to show suspended sessions, and stops writing that', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'session-order-test-'))
+    directories.push(directory)
+    const statePath = path.join(directory, 'session-order.json')
+    await writeFile(statePath, JSON.stringify({
+      version: 1,
+      revision: 6,
+      bootstrapped: true,
+      showSuspended: false,
+      showHidden: true,
+      hidden: ['pc:b'],
+      unread: ['pc:a'],
+      order: { pc: ['pc:a', 'pc:b'] },
+    }))
+    const order = new SessionOrderStore(directory)
+    await order.initialize()
+
+    expect(order.snapshot()).toEqual({
+      revision: 6,
+      bootstrapped: true,
+      showHidden: true,
+      hidden: ['pc:b'],
+      unread: ['pc:a'],
+      order: { pc: ['pc:a', 'pc:b'] },
+    })
+    await order.appendSession('pc', 'c')
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).not.toHaveProperty('showSuspended')
+  })
+
   it('shares suspended visibility durably and advances only on a change', async () => {
     const { store: order, directory } = await store()
     const hidden = await order.setVisibility({ showSuspended: false })

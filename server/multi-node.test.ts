@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { AddressInfo } from 'node:net'
@@ -1704,6 +1704,111 @@ describe('multi-node hub', () => {
       expect(listed.json().sessions).toEqual([])
       expect(listClosed).not.toHaveBeenCalled()
       expect(remoteService.getSession('remote-session')).toMatchObject({ isOpen: true })
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
+  it('lists sessions an older release suspended as closed on hub and node, and routes no suspend or resume', async () => {
+    const client = {
+      start: async () => undefined,
+      stop: async () => [],
+      listSessions: async () => [],
+      rpc: {
+        models: { list: async () => ({ models: [] }) },
+        commands: { list: async () => ({ commands: [] }) },
+      },
+    } as unknown as CopilotClientLike
+    const pausedOn = async (computer: string, id: string) => {
+      const directory = await temporaryDirectory(`agentic-remote-retired-suspend-${computer}`)
+      const stateDirectory = path.join(directory, 'state')
+      const seeded = new SessionStore(stateDirectory)
+      await seeded.initialize()
+      await seeded.create({
+        id, cwd: directory, title: `Paused on the ${computer}`, updatedAt: '2026-11-20T00:00:00.000Z',
+        status: 'idle', isOpen: true, queuedPrompts: [],
+        messages: [{ id: 'ask', role: 'user', content: `Review the ${computer}`, createdAt: '2026-11-20T00:00:00.000Z' }],
+      }, { managedOpen: true, backend: 'sdk' })
+      await seeded.enqueuePrompt(id, { id: 'queued', content: 'Queued while paused', createdAt: '2026-11-20T00:01:00.000Z' })
+      await seeded.close()
+      const file = path.join(stateDirectory, 'state.json')
+      const state = JSON.parse(await readFile(file, 'utf8'))
+      // What an older release's Pause wrote.
+      state.sessions[id].suspended = true
+      await writeFile(file, JSON.stringify(state))
+      const store = new SessionStore(stateDirectory)
+      await store.initialize()
+      const service = new AgentService(
+        store, client, async () => [], async () => undefined, async () => [], async () => undefined,
+        { has: vi.fn(async () => false), send: vi.fn(async () => false), cancel: vi.fn(async () => false) },
+      )
+      return { directory, service }
+    }
+    const local = await pausedOn('hub', 'hub-paused')
+    const node = await pausedOn('node', 'node-paused')
+    const hub = await buildApp({
+      dataDirectory: path.join(local.directory, 'app'),
+      logger: false,
+      role: 'hub',
+      service: local.service,
+      managerAgent: false,
+      cliCanary: false,
+    })
+    const remote = await buildApp({
+      dataDirectory: path.join(node.directory, 'app'),
+      logger: false,
+      role: 'node',
+      service: node.service,
+      managerAgent: false,
+      cliCanary: false,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address() as AddressInfo
+      const hubId = hub.identity.info.id
+      const nodeId = remote.identity.info.id
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: { baseUrl: `http://127.0.0.1:${address.port}`, token: remote.identity.token, name: 'paused-node' },
+      })).statusCode).toBe(201)
+      await vi.waitFor(async () => {
+        const computers = (await hub.app.inject({ method: 'GET', url: '/api/computers' })).json().computers
+        expect(computers.find((computer: { id: string }) => computer.id === nodeId)?.online).toBe(true)
+      })
+
+      const listed = await hub.app.inject({ method: 'GET', url: '/api/closed-sessions' })
+      expect(listed.statusCode).toBe(200)
+      expect(listed.json().sessions.map((entry: { computerId: string; id: string; queuedPrompts: unknown[] }) =>
+        [`${entry.computerId}:${entry.id}`, entry.queuedPrompts.length]).sort())
+        .toEqual([[`${hubId}:hub-paused`, 1], [`${nodeId}:node-paused`, 1]].sort())
+      expect((await hub.app.inject({ method: 'GET', url: '/api/sessions' })).json().sessions).toEqual([])
+
+      const reopened = await hub.app.inject({
+        method: 'POST', url: `/api/computers/${nodeId}/sessions/node-paused/open`,
+      })
+      expect(reopened.statusCode, reopened.body).toBe(200)
+      expect(reopened.json().session).toMatchObject({
+        id: 'node-paused', computerId: nodeId, isOpen: true,
+        queuedPrompts: [expect.objectContaining({ id: 'queued', content: 'Queued while paused' })],
+      })
+      expect(reopened.json().session.closedAt).toBeUndefined()
+
+      for (const action of ['suspend', 'resume']) {
+        for (const [computerId, sessionId] of [[hubId, 'hub-paused'], [nodeId, 'node-paused']]) {
+          const response = await hub.app.inject({
+            method: 'POST', url: `/api/computers/${computerId}/sessions/${sessionId}/${action}`, payload: {},
+          })
+          expect(response.statusCode, `${action} on ${computerId}`).toBe(404)
+        }
+        const direct = await remote.app.inject({
+          method: 'POST',
+          url: `/node-api/sessions/node-paused/${action}`,
+          headers: { authorization: ['Bearer', remote.identity.token].join(' ') },
+          payload: {},
+        })
+        expect(direct.statusCode, `${action} on the node`).toBe(404)
+      }
     } finally {
       await Promise.all([hub.app.close(), remote.app.close()])
     }

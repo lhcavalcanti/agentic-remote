@@ -943,7 +943,7 @@
     "fixtures/voice/pt-BR-short-male-noisy.wav": "63a8d253514aaf2c6fa1ec1718058b8f64db3019203938cf80026507a70f9237",
     "fixtures/voice/silence-2s.wav": "9c805a5c322dc46e932d112658e7b4cff78ca3a8671c7b25cc190d47c2b62e9c",
     "index.html": "f32e27c772dd498dfc833c302dd18b1921ebd92ded02b6ca5e96a3e489559fb9",
-    "package.json": "b87b9dcdd7bdf00d03f0da8b43e0f75c4691e14911b119958493f51435208fc3",
+    "package.json": "a3dc3b97826203ea39bcf8e2dbd29e38f40fd78efb7d583818c9f522d91f0078",
     "playwright-config.test.ts": "f1360f60dc94e20a4c502cb80d9cd4c996a9cd1c9fef35f80a90a5eeb589aa27",
     "playwright.config.ts": "86903ed2c34d150f65872ab22b10277b45f9d08c3fe38d30e7623d8559f4ce28",
     "playwright.real-voice.config.ts": "6871b6d374f85441e55ba253727a12b7fd25d32b6fffd3ec95cc35050f630ffa",
@@ -1849,21 +1849,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "91a82f4347c0cb7b375f549517e776f781a2f5e37402f12f6add77ea16bebda5",
+    "GRAPH_REPORT.md": "61895961fbf47fa1e08f26456f6f0daadcf9735ccfb1f471b8e26b9df90b36a7",
     "communities.json": "42f8224a6dd48c4d333c82b062fdbeee5f18a018c6e3db3b296de4a9f392c0b3",
-    "graph.html": "de37828b64f5ee51ad2d353346fd62bc7e8bcae4630560fc9f174911a4b656c8",
-    "graph.json": "2250041794f4edb1e2c9322bb7b53139aa15cedec1f78504f105d58399248392"
+    "graph.html": "c84bcc9ab830ec2af7d771d8727cc3b6937e200e44e1e4c4ee6a552ed387abfd",
+    "graph.json": "a098a82b649a060864ec05e096928fd1100ac25b3d52aa7d5367c42b3d66f59c"
   },
   "schema_version": 1,
-  "source_commit": "b81b03fdadc01ac1da7ac406201c877a36c796ae",
-  "source_fingerprint": "8177d28346da53708d6066f473fe95bf238ebeb7d36593e85af484e62b3e3f5e",
-  "working_tree_changes": [
-    "package.json",
-    "server/session-patches.test.ts",
-    "server/session-patches.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
-  ]
+  "source_commit": "7fb0b9e4a12198e294a4b3b3a3f4ff3176b564b5",
+  "source_fingerprint": "c178cc8c8da2ef040e60bedde2f9c01e4b40bde00a85c18c0e3c6469ce12a0da",
+  "working_tree_changes": []
 }

@@ -1,8 +1,8 @@
 # Agentic Remote - Graphify code map
 
-Snapshot: `8177d28346da53708d6066f473fe95bf238ebeb7d36593e85af484e62b3e3f5e`
+Snapshot: `c178cc8c8da2ef040e60bedde2f9c01e4b40bde00a85c18c0e3c6469ce12a0da`
 
-Source checkout: `b81b03fdadc01ac1da7ac406201c877a36c796ae`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `7fb0b9e4a12198e294a4b3b3a3f4ff3176b564b5`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 

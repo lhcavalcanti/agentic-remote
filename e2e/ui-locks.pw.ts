@@ -1370,23 +1370,28 @@ for (const viewport of [uiViewports[0], phone]) {
         try {
           const session = fixture.state.sessions.find((entry) => entry.id === SUSPENDED_SESSION_ID)!
           session.provenance = structuredClone(fixture.state.sessions[0].provenance)
-          session.revision = (session.revision ?? 0) + 1
-          fixture.emit({ type: 'session.upserted', session })
-          const resume = page.getByRole('navigation', { name: 'Sessions', exact: true })
-            .getByRole('button', { name: 'Resume Sketch the next handoff', exact: true })
-          await expect.poll(() => resume.evaluate((button) =>
-            button.closest('.session-item')!.querySelector('.session-origin-run-link') !== null)).toBe(true)
-          const offsets = await resume.evaluate((button) => {
-            const row = button.closest('.session-item')!
-            const middle = (element: Element) => {
-              const box = element.getBoundingClientRect()
-              return (box.top + box.bottom) / 2
-            }
-            const time = middle(row.querySelector('.session-item__time')!)
-            return { resume: middle(button) - time, run: middle(row.querySelector('.session-origin-run-link')!) - time }
-          })
-          expect(Math.abs(offsets.resume), 'Resume off its time line').toBeLessThanOrEqual(1)
-          expect(Math.abs(offsets.run), 'run link off its time line').toBeLessThanOrEqual(1)
+          // A title too short to fill the row's Tasks and run-link cells leaves
+          // centred text, and its time line, above the row's foot.
+          for (const title of ['Handoff', 'Sketch the next handoff']) {
+            session.title = title
+            session.revision = (session.revision ?? 0) + 1
+            fixture.emit({ type: 'session.upserted', session })
+            const resume = page.getByRole('navigation', { name: 'Sessions', exact: true })
+              .getByRole('button', { name: `Resume ${title}`, exact: true })
+            await expect.poll(() => resume.evaluate((button) =>
+              button.closest('.session-item')!.querySelector('.session-origin-run-link') !== null)).toBe(true)
+            const offsets = await resume.evaluate((button) => {
+              const row = button.closest('.session-item')!
+              const middle = (element: Element) => {
+                const box = element.getBoundingClientRect()
+                return (box.top + box.bottom) / 2
+              }
+              const time = middle(row.querySelector('.session-item__time')!)
+              return { resume: middle(button) - time, run: middle(row.querySelector('.session-origin-run-link')!) - time }
+            })
+            expect(Math.abs(offsets.resume), `${title}: Resume off its time line`).toBeLessThanOrEqual(1)
+            expect(Math.abs(offsets.run), `${title}: run link off its time line`).toBeLessThanOrEqual(1)
+          }
         } finally { fixture.assertHealthy() }
       })
     }

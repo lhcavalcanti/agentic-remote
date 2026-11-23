@@ -258,23 +258,19 @@ describe('ClaudeAgentService', () => {
     expect(f.service.store.get(created.id)?.queuedPrompts ?? []).toEqual([])
   })
 
-  it.each(['restart', 'resume', 'clear', 'suspend'] as const)('refuses to %s an archived session until it is reopened', async (action) => {
+  it.each(['restart', 'clear'] as const)('refuses to %s an archived session until it is reopened', async (action) => {
     const f = await fixture(async function* () {})
     const created = await f.service.createSession(f.directory)
     await f.service.store.update(created.id, (session) => {
       session.isOpen = false
       session.archivedAt = '2026-10-19T00:00:00Z'
-      if (action === 'resume') session.suspended = true
     })
     const act = {
       restart: () => f.service.restartSession(created.id),
-      resume: () => f.service.resumeSession(created.id),
       clear: () => f.service.clearConversation(created.id),
-      suspend: () => f.service.suspendSession(created.id),
     }[action]
     await expect(act()).rejects.toMatchObject({ statusCode: 409 })
     expect(f.service.store.get(created.id)).toMatchObject({ isOpen: false, archivedAt: '2026-10-19T00:00:00Z' })
-    expect(f.service.store.get(created.id)?.suspended).toBe(action === 'resume' ? true : undefined)
   })
 
   it.each(['archived', 'interrupted'] as const)('refuses runtime changes on an %s session until it is reopened', async (state) => {
@@ -1048,35 +1044,6 @@ describe('ClaudeAgentService', () => {
     ).rejects.toThrow('Unknown option: Telemetry')
   })
 
-  it('leaves no half-written turn when suspension wins the send', async () => {
-    // Recording the prompt is awaited, and a suspension can land while it is.
-    // Refusing the send afterwards while keeping what was written leaves the
-    // prompt in the transcript with an assistant reply that stays blank, and
-    // the client puts the draft back on top of it.
-    const { directory, service } = await fixture(async function* () {})
-    const session = await service.createSession(directory, false, true, 'claude')
-    const before = service.getSession(session.id)?.messages.length ?? 0
-
-    // Suspension is admitted ahead of the atomic turn-record mutation.
-    const beginPrompt = service.store.beginPrompt.bind(service.store)
-    vi.spyOn(service.store, 'beginPrompt').mockImplementation(
-      async (...args) => {
-        const suspension = service.store.setSuspended(args[0], true)
-        const results = await Promise.allSettled([suspension, beginPrompt(...args)])
-        if (results[0].status === 'rejected') throw results[0].reason
-        if (results[1].status === 'rejected') throw results[1].reason
-        return results[1].value
-      },
-    )
-
-    await expect(
-      service.sendMessage(session.id, 'lost to a suspension'),
-    ).rejects.toThrow(/Resume the session/)
-
-    // The transcript is as it was: no orphaned prompt, no blank reply.
-    expect(service.getSession(session.id)?.messages.length).toBe(before)
-  })
-
   it('refuses a send during a running turn as definite, so a caller can queue it instead', async () => {
     let finish = () => {}
     const finishing = new Promise<void>((resolve) => { finish = resolve })
@@ -1192,100 +1159,16 @@ describe('ClaudeAgentService', () => {
     deleting.deletingSessions.delete(session.id)
   })
 
-  it('refuses a restart that a suspension has already claimed', async () => {
-    const { directory, service } = await fixture(async function* () {})
-    const session = await service.createSession(directory, false, true, 'claude')
-
-    // Suspension has claimed the session but has not written the flag yet.
-    // Reporting a restart on the strength of the stored flag alone let the
-    // suspension finish afterwards and write over it.
-    const suspending = service as unknown as {
-      suspendingSessions: Set<string>
-    }
-    suspending.suspendingSessions.add(session.id)
-
-    await expect(service.restartSession(session.id)).rejects.toThrow(
-      /Resume the session/,
-    )
-    suspending.suspendingSessions.delete(session.id)
-  })
-
-  it('refuses lifecycle changes as conflicts while a session is working', async () => {
+  it('refuses a restart as a conflict while a session is working', async () => {
     const { directory, service } = await fixture(async function* () {})
     const session = await service.createSession(directory, false, true, 'claude')
     await service.store.updateStatus(session.id, 'running')
 
     // A refusal the reader can act on, not a generic server error.
-    for (const change of [
-      () => service.suspendSession(session.id),
-      () => service.restartSession(session.id),
-    ]) {
-      await expect(change()).rejects.toMatchObject({
-        message: 'Session must be idle',
-        statusCode: 409,
-      })
-    }
-    expect(service.getSession(session.id)?.suspended).toBeFalsy()
-  })
-
-  it('logs each completed suspend and resume once', async () => {
-    const { directory, service } = await fixture(async function* () {})
-    const session = await service.createSession(directory, false, true, 'claude')
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-
-    await service.suspendSession(session.id)
-    await service.suspendSession(session.id)
-    await service.resumeSession(session.id)
-    await service.resumeSession(session.id)
-
-    expect(info.mock.calls.flat().filter((line) => typeof line === 'string' && line.includes('sessionLifecycle')))
-      .toEqual([
-        expect.stringContaining(`"sessionLifecycle":"suspended","sessionId":"${session.id}"`),
-        expect.stringContaining(`"sessionLifecycle":"resumed","sessionId":"${session.id}"`),
-      ])
-  })
-
-  it('suspends an unknown fenced Claude launch without reopening prompt or queue admissions', async () => {
-    const { directory, service, queryCalls } = await fixture(async function* () {})
-    const created = await service.createSession(directory, false, false, 'claude')
-    const initialQueries = queryCalls.length
-    const accepted = await service.store.acceptIdentifiedPrompt(created.id, 'follower', 'Synthetic follower', true)
-    expect(await service.cancelWithAck(created.id, 1)).toMatchObject({ outcome: 'unknown' })
-    await expect(service.suspendSession(created.id)).resolves.toMatchObject({ suspended: true, launchStopping: true })
-    await expect(service.sendMessage(created.id, 'Must not start', true)).rejects.toMatchObject({ statusCode: 409 })
-    await expect(service.dispatchQueuedPrompt(created.id, accepted.queuedPrompts![0].id, 'Must not start'))
-      .rejects.toMatchObject({ statusCode: 409 })
-    await expect(service.resumeSession(created.id)).rejects.toMatchObject({ statusCode: 409 })
-    expect(service.getSession(created.id)?.suspended).toBe(true)
-    expect(queryCalls).toHaveLength(initialQueries)
-    await service.cancelWithAck(created.id, 1)
-    await expect(service.closeSession(created.id)).resolves.toMatchObject({ closedAt: expect.any(String) })
-    await service.deleteSession(created.id)
-    expect(service.getSession(created.id)).toBeUndefined()
-  })
-
-  it('leaves a suspended session where it was when the send is refused', async () => {
-    // A refused admission must not change either the transcript or recency.
-    const { directory, service } = await fixture(async function* () {})
-    const session = await service.createSession(directory, false, true, 'claude')
-    const before = service.getSession(session.id)?.updatedAt
-
-    const beginPrompt = service.store.beginPrompt.bind(service.store)
-    vi.spyOn(service.store, 'beginPrompt').mockImplementation(
-      async (...args) => {
-        const suspension = service.store.setSuspended(args[0], true)
-        const results = await Promise.allSettled([suspension, beginPrompt(...args)])
-        if (results[0].status === 'rejected') throw results[0].reason
-        if (results[1].status === 'rejected') throw results[1].reason
-        return results[1].value
-      },
-    )
-
-    await expect(
-      service.sendMessage(session.id, 'lost to a suspension'),
-    ).rejects.toThrow(/Resume the session/)
-
-    expect(service.getSession(session.id)?.updatedAt).toBe(before)
+    await expect(service.restartSession(session.id)).rejects.toMatchObject({
+      message: 'Session must be idle',
+      statusCode: 409,
+    })
   })
 
 

@@ -1489,12 +1489,6 @@ button {
   border-bottom: 0;
 }
 
-.session-filters__visibility {
-  display: flex;
-  flex: 1 0 auto;
-  gap: 4px;
-}
-
 .session-filter {
   display: flex;
   flex: 1 0 auto;
@@ -1877,9 +1871,9 @@ button {
   --session-edge: transparent;
   display: grid;
   width: 100%;
-  /* Handle, the conversation itself, and the control that puts it down.
-     Opening and suspending are separate buttons side by side, so the row is
-     the thing that arranges them rather than a button of its own. */
+  /* Handle, the conversation itself, and its controls. Opening it and its
+     controls are separate buttons side by side, so the row is the thing that
+     arranges them rather than a button of its own. */
   grid-template-columns: 20px minmax(0, 1fr) auto;
   gap: 4px;
   align-items: start;
@@ -2510,17 +2504,6 @@ button {
 .session-action:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-/* An entry that writes out why it is unavailable dims only its icon and
-   label; dimmed with them, the reason fell to about 2:1 contrast. */
-.session-action--explained:disabled {
-  opacity: 1;
-}
-
-.session-action--explained:disabled > svg,
-.session-action--explained:disabled .session-action__label {
-  opacity: 0.45;
 }
 
 .session-action:focus-visible,
@@ -8642,10 +8625,10 @@ button {
 }
 
 /* Sits at the end of the row, out of the way of the title but reachable
-   without opening the conversation. Close stays above Pause so the destructive
-   and reversible lifecycle actions keep a stable order. Read and Hide, which
-   only change how the list treats the session, share a second column: a third
-   control under the first two would make every row taller. */
+   without opening the conversation. Close has the first column to itself.
+   Read and Hide, which only change how the list treats the session, share a
+   second column: a third control under the first two would make every row
+   taller. */
 .session-item__controls {
   grid-column: 3;
   grid-row: 1;
@@ -8656,8 +8639,12 @@ button {
   gap: 2px;
 }
 
+.session-item__close {
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
 .session-item__close,
-.session-item__suspend,
 .session-item__unread,
 .session-item__hide {
   flex: 0 0 auto;
@@ -8681,18 +8668,14 @@ button {
 }
 
 .session-item:hover .session-item__close,
-.session-item:hover .session-item__suspend,
 .session-item:hover .session-item__unread,
 .session-item:hover .session-item__hide,
 .session-item:focus-within .session-item__close,
-.session-item:focus-within .session-item__suspend,
 .session-item:focus-within .session-item__unread,
 .session-item:focus-within .session-item__hide,
 .session-item__close:focus-visible,
-.session-item__suspend:focus-visible,
 .session-item__unread:focus-visible,
-.session-item__hide:focus-visible,
-.session-item__suspend--active {
+.session-item__hide:focus-visible {
   opacity: 1;
 }
 
@@ -8701,19 +8684,13 @@ button {
   color: var(--danger);
 }
 
-.session-item__suspend:hover,
 .session-item__unread:hover,
 .session-item__hide:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text);
 }
 
-.session-item__suspend--active {
-  color: #6ea8fe;
-}
-
 .session-item__close:focus-visible,
-.session-item__suspend:focus-visible,
 .session-item__unread:focus-visible,
 .session-item__hide:focus-visible {
   outline: 2px solid var(--accent-foreground);
@@ -8721,24 +8698,20 @@ button {
 }
 
 /* Still hidden until the pointer is near. Fading a disabled control in on its
-   own left every busy session showing a faint pause button at all times. */
+   own left every busy session showing a faint button at all times. */
 .session-item__close:disabled,
-.session-item__suspend:disabled,
 .session-item__unread:disabled,
 .session-item__hide:disabled {
   cursor: not-allowed;
 }
 
 .session-item:hover .session-item__close:disabled,
-.session-item:hover .session-item__suspend:disabled,
 .session-item:hover .session-item__unread:disabled,
 .session-item:hover .session-item__hide:disabled,
 .session-item:focus-within .session-item__close:disabled,
-.session-item:focus-within .session-item__suspend:disabled,
 .session-item:focus-within .session-item__unread:disabled,
 .session-item:focus-within .session-item__hide:disabled,
 .session-item__close:disabled:focus-visible,
-.session-item__suspend:disabled:focus-visible,
 .session-item__unread:disabled:focus-visible,
 .session-item__hide:disabled:focus-visible {
   opacity: 0.35;
@@ -8749,7 +8722,6 @@ button {
    finding an invisible target. It stays visible, and large enough to hit. */
 @media (hover: none) {
   .session-item__close,
-  .session-item__suspend,
   .session-item__unread,
   .session-item__hide {
     opacity: 1;
@@ -8758,7 +8730,6 @@ button {
   }
 
   .session-item__close:disabled,
-  .session-item__suspend:disabled,
   .session-item__unread:disabled,
   .session-item__hide:disabled {
     opacity: 0.3;
@@ -8802,19 +8773,9 @@ button {
   white-space: nowrap;
 }
 
-/* A suspended session keeps its place and its history, and says plainly that
-   nothing is running in it. */
-.session-item--suspended {
-  opacity: 0.55;
-}
-
-.session-item--suspended .status-dot {
-  background: var(--muted);
-}
-
 /* Listed although hidden, because Hidden shows it or because it needs you: a
-   dashed outline sets it apart, and unlike a suspended row it keeps its full
-   strength. An unread or open row keeps its bars in place of the side dashes. */
+   dashed outline sets it apart, and it keeps its full strength. An unread or
+   open row keeps its bars in place of the side dashes. */
 .session-item--hidden {
   border-top: 1px dashed var(--border-strong);
   border-bottom: 1px dashed var(--border-strong);
@@ -8831,8 +8792,8 @@ button {
 
 /* Unread: a turn ended that nobody has read yet. The title carries the
    weight, an accent dot leads it and a bar on each side frames the row, which
-   no status, attention, hidden or suspended cue uses, so it combines with all
-   of them. The open row's own bars take precedence. */
+   no status, attention or hidden cue uses, so it combines with all of them.
+   The open row's own bars take precedence. */
 .session-item--unread:not(.session-item--active) {
   --session-edge: var(--session-unread);
 }

@@ -32,27 +32,6 @@ afterEach(async () => {
 })
 
 describe('session record retention is independent of provider ownership', () => {
-  it.each(['running', 'waiting', 'error'] as const)(
-    'does not let a suspension flag override unresolved %s state',
-    async (status) => {
-      const { store, directory, advance } = await fixture({
-        status, suspended: true, retention: { pinned: false, idleDays: 7 },
-      })
-      advance(30 * day)
-      await store.syncOpen([])
-      await store.syncOpen([])
-      expect(store.get('retained')).toMatchObject({ isOpen: true })
-      expect(store.get('retained')?.archivedAt).toBeUndefined()
-      await store.close()
-      const restarted = new SessionStore(directory, () => now + 30 * day)
-      await restarted.initialize()
-      await restarted.syncOpen([])
-      await restarted.syncOpen([])
-      expect(restarted.get('retained')).toMatchObject({ isOpen: true })
-      expect(restarted.get('retained')?.archivedAt).toBeUndefined()
-      await restarted.close()
-    },
-  )
 
   it('preserves failure protection across restart even without a failed-prompt envelope', async () => {
     const { store, directory } = await fixture({ status: 'error', retention: { pinned: false, idleDays: 7 } })
@@ -132,26 +111,6 @@ describe('session record retention is independent of provider ownership', () => 
       await restored.close()
     },
   )
-
-  it('does not mistake intentional suspension for process loss', async () => {
-    const { store } = await fixture()
-    await store.setSuspended('retained', true)
-    await store.syncOpen([])
-    expect(store.get('retained')).toMatchObject({ isOpen: true, suspended: true, status: 'idle' })
-    expect(store.get('retained')?.interruption).toBeUndefined()
-    await store.close()
-  })
-
-  it('clears an idle interruption when intentional suspension wins a discovery race', async () => {
-    const { store } = await fixture()
-    await store.syncOpen([])
-    expect(store.get('retained')?.interruption).toBeDefined()
-    await store.setSuspended('retained', true)
-    await store.syncOpen([])
-    expect(store.get('retained')).toMatchObject({ isOpen: true, suspended: true, status: 'idle' })
-    expect(store.get('retained')?.interruption).toBeUndefined()
-    await store.close()
-  })
 
   it('clears the interruption only after a positive owner or explicit reopen', async () => {
     const { store } = await fixture()
@@ -298,17 +257,6 @@ describe('session record retention is independent of provider ownership', () => 
     await restored.close()
   })
 
-  it('does not reopen an automatically archived suspended record on the next pass', async () => {
-    const { store, advance } = await fixture()
-    await store.setSuspended('retained', true)
-    await store.configureRetention('retained', { idleDays: 7, pinned: false })
-    advance(365 * day)
-    await store.syncOpen([])
-    await store.syncOpen([])
-    expect(store.get('retained')).toMatchObject({ isOpen: false, suspended: true, archivedAt: expect.any(String) })
-    await store.close()
-  })
-
   it('keeps a review pin but clears obsolete runtime loss on a conversation replacement', async () => {
     const { store } = await fixture()
     await store.configureRetention('retained', { pinned: true, idleDays: 30 })
@@ -401,7 +349,6 @@ describe('closed sessions stay reopenable without running', () => {
 
   it('leaves the open list and recovery set, keeping history and what it was about', async () => {
     const { store, directory, advance } = await fixture({
-      suspended: true,
       queuedPrompts: [{ id: 'queued', content: 'Queued follow-up', createdAt: '2026-10-18T00:00:00Z' }],
       pendingUserInput: { requestId: 'question', question: 'Continue?', choices: [], allowFreeform: true },
       messages: [
@@ -426,7 +373,6 @@ describe('closed sessions stay reopenable without running', () => {
       queuedPrompts: [],
       messages: [expect.objectContaining({ id: 'ask' }), expect.objectContaining({ id: 'final' })],
     })
-    expect(closed.suspended).toBeUndefined()
     expect(closed.pendingUserInput).toBeUndefined()
     expect(store.isManagedOpen('retained')).toBe(false)
     expect(store.terminalRecoverySessions()).toEqual([])

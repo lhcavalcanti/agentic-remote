@@ -507,12 +507,10 @@ describe('session Knowledge routes', () => {
     expect(repeated.json().binding.revision).toBe(2)
   })
 
-  it('supports suspended and historical sessions without opening them', async () => {
+  it('supports historical sessions without opening them', async () => {
     const { putPath, manager, service } = await fixture()
-    manager.sessions.push({ ...session('hub', 'suspended'), suspended: true })
     manager.history.push({ ...session('hub', 'closed'), isOpen: false })
 
-    expect((await putPath('knowledge', 0, 'hub', 'suspended')).statusCode).toBe(200)
     expect((await putPath('knowledge', 0, 'hub', 'closed')).statusCode).toBe(200)
     expect(service.openSession).not.toHaveBeenCalled()
     expect(service.activateSession).not.toHaveBeenCalled()

@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { activityDetailsUnavailable } from './activity-details.js'
 import { buildApp, type BuildAppOptions } from './app.js'
 import { SubmissionError } from '../shared/submission-error.js'
 import { TerminalDraftConflictError } from './terminal-session.js'
@@ -133,27 +134,24 @@ describe('refusal counting', () => {
 
   it('counts a 501 a route raises for what this computer cannot do, but not a server fault', async () => {
     const runtime = await start()
-    const suspendRoute = '/api/computers/:computerId/sessions/:sessionId/suspend'
-    vi.spyOn(runtime.service, 'suspendSession')
-      .mockRejectedValueOnce(Object.assign(new Error('Terminal session suspend is not available'), {
-        statusCode: 501,
-        reasonCode: 'suspend.terminal-unsupported',
-      }))
+    const activityRoute = '/api/computers/:computerId/sessions/:sessionId/activities/:toolCallId'
+    vi.spyOn(runtime.service, 'readActivityDetail')
+      .mockRejectedValueOnce(activityDetailsUnavailable())
       .mockRejectedValueOnce(new Error('Synthetic fault'))
-    const url = `/api/computers/${runtime.identity.info.id}/sessions/${sessionId}/suspend`
+    const url = `/api/computers/${runtime.identity.info.id}/sessions/${sessionId}/activities/call_synthetic`
 
-    const unsupported = await runtime.app.inject({ method: 'POST', url, headers: trusted })
-    const fault = await runtime.app.inject({ method: 'POST', url, headers: trusted })
+    const unsupported = await runtime.app.inject({ url, headers: trusted })
+    const fault = await runtime.app.inject({ url, headers: trusted })
 
     expect(unsupported.statusCode).toBe(501)
-    expect(unsupported.json()).toMatchObject({ error: 'Terminal session suspend is not available' })
+    expect(unsupported.json()).toMatchObject({ error: 'Tool call details are unavailable for this provider.' })
     expect(fault.statusCode).toBe(500)
     expect((await refusals(runtime)).refusals).toEqual([
       expect.objectContaining({
-        route: suspendRoute,
-        method: 'POST',
+        route: activityRoute,
+        method: 'GET',
         status: 501,
-        reason: 'suspend.terminal-unsupported',
+        reason: 'activity-details.unsupported-provider',
         count: 1,
       }),
     ])

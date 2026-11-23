@@ -220,7 +220,6 @@ describe('terminal command catalogs per folder', () => {
   })
 
   it.each([
-    ['suspended', { suspended: true }],
     ['interrupted', { interruption: { detectedAt: new Date(start).toISOString(), previousStatus: 'idle' as const } }],
     ['archived', { archivedAt: new Date(start).toISOString(), isOpen: false }],
   ])('lists nothing for a %s terminal session even with a fresh folder catalog', async (_state, extra) => {

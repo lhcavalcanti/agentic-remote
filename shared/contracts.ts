@@ -506,14 +506,6 @@ export interface SessionSummary {
   restartRecovery?: SessionRestartRecovery
   /** A recovery brief that still owns the session and must settle first. */
   recoverySeedState?: 'pending' | 'dispatching' | 'failed'
-  /**
-   * Whether the session is being kept without anything running for it.
-   *
-   * The conversation is on disk, so the process holding it is the expendable
-   * part: a suspended session keeps its id, its history and its place in the
-   * list, and gives back the memory and CPU until it is wanted again.
-   */
-  suspended?: boolean
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -898,8 +890,6 @@ export interface SessionOrderSnapshot {
    * appends on its own, so a non-empty order does not mean a migration ran.
    */
   bootstrapped: boolean
-  /** Shared visibility for sessions paused through Agentic Remote. */
-  showSuspended: boolean
   /** Shared visibility for hidden sessions. A hub that predates it sends none: false. */
   showHidden?: boolean
   /**

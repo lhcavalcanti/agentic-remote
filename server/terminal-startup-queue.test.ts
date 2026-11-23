@@ -462,7 +462,7 @@ describe('Persisted native queue startup', () => {
     expect(runtime.creates).not.toHaveBeenCalled()
   }, 15_000)
 
-  it.each(['closed', 'unmanaged', 'suspended', 'deleted', 'uncertain recovery', 'pending claim'])(
+  it.each(['closed', 'unmanaged', 'deleted', 'uncertain recovery', 'pending claim'])(
     'does not automatically dispatch an initially %s queue',
     async (state) => {
       const native = await fixture()
@@ -472,8 +472,7 @@ describe('Persisted native queue startup', () => {
           await store.update(native.id, (session) => {
             Object.assign(session, { managedOpen: false })
           })
-        } else if (state === 'suspended') await store.setSuspended(native.id, true)
-        else if (state === 'deleted') await store.remove(native.id)
+        } else if (state === 'deleted') await store.remove(native.id)
         else if (state === 'uncertain recovery') {
           await store.update(native.id, (session) => {
             session.failedPrompt = { content: 'Uncertain prior work', failedAt: new Date().toISOString(), uncertain: true }
@@ -1480,7 +1479,7 @@ describe('Persisted native queue startup', () => {
     expect(runtime.creates).not.toHaveBeenCalled()
   }, 15_000)
 
-  it.each(['stop', 'suspend', 'delete', 'clear'] as const)('respects %s during the startup observation boundary', async (action) => {
+  it.each(['stop', 'delete', 'clear'] as const)('respects %s during the startup observation boundary', async (action) => {
     const native = await fixture()
     await native.seed(['Do not outlive the owner'])
     const runtime = native.connect()
@@ -1495,12 +1494,11 @@ describe('Persisted native queue startup', () => {
     const starting = runtime.service.start()
     await entered.promise
     const changing = action === 'stop' ? runtime.service.stop()
-      : action === 'suspend' ? runtime.service.suspendSession(native.id).then((value) => ({ value }), (error: unknown) => ({ error }))
-        : action === 'delete' ? runtime.service.deleteSession(native.id)
-          : runtime.service.clearConversation(native.id).then((value) => ({ value }), (error: unknown) => ({ error }))
+      : action === 'delete' ? runtime.service.deleteSession(native.id)
+        : runtime.service.clearConversation(native.id).then((value) => ({ value }), (error: unknown) => ({ error }))
     release.finish()
     const [, changed] = await Promise.all([starting, changing])
-    if (action === 'clear' || action === 'suspend') {
+    if (action === 'clear') {
       expect(changed).toMatchObject({ error: { statusCode: 409 } })
       expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)).pastes)
         .toEqual(['Do not outlive the owner'])
@@ -1710,7 +1708,6 @@ describe('PR162 startup pump composition', () => {
 
   it.each([
     { lifecycle: 'stop', cleanup: 'retry' },
-    { lifecycle: 'suspend', cleanup: 'retry' },
     { lifecycle: 'delete', cleanup: 'retry' },
     { lifecycle: 'closed', cleanup: 'retry' },
     { lifecycle: 'unmanaged', cleanup: 'retry' },
@@ -1725,10 +1722,7 @@ describe('PR162 startup pump composition', () => {
       const { native, runtime, queued, claims } = context
       let changing: Promise<unknown> | undefined
       if (lifecycle === 'stop') changing = runtime.service.stop()
-      else if (lifecycle === 'suspend') {
-        changing = runtime.service.suspendSession(native.id)
-        await vi.waitFor(() => expect(runtime.service['suspendingSessions'].has(native.id)).toBe(true))
-      } else if (lifecycle === 'delete') {
+      else if (lifecycle === 'delete') {
         changing = runtime.service.deleteSession(native.id)
         await vi.waitFor(() => expect(runtime.service['deletingSessions'].has(native.id)).toBe(true))
       } else if (lifecycle === 'closed') await runtime.store.setOpen(native.id, false, true)

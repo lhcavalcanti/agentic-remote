@@ -87,7 +87,7 @@ history is not transferred between providers.
   servers, perform MCP OAuth onboarding, edit provider configuration, render
   MCP Apps, or emulate the Copilot CLI TUI.
 - Resource inspection never creates or resumes a provider session merely to
-  read metadata. Copilot terminal, suspended, and unloaded sessions use
+  read metadata. Copilot terminal and unloaded sessions use
   server-scoped folder discovery when available. This shows configured defaults,
   not ephemeral terminal overrides or live MCP connections.
 - Claude metadata comes from an already-active query and its reported skill

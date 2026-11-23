@@ -415,8 +415,7 @@ export function sanitizeMcpSnapshot(
 export function sameResourceOwner(before: SessionDetail, after: SessionDetail | undefined): boolean {
   return after !== undefined && before.id === after.id &&
     (before.provider ?? 'copilot') === (after.provider ?? 'copilot') &&
-    before.cwd === after.cwd && before.executionMode === after.executionMode &&
-    Boolean(before.suspended) === Boolean(after.suspended)
+    before.cwd === after.cwd && before.executionMode === after.executionMode
 }
 
 // Observers do not join lifecycle/turn queues, hydrate sessions, or write to

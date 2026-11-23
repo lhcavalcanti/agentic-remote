@@ -107,11 +107,11 @@ export function classifyHubNotification(
       results.push(sessionRecord(session, 'session.needs-input', action, body, now,
         action.startsWith('permission:') ? 'permission' : 'question'))
     }
-    // Never invent a finished turn from initial history, queued work, a
-    // suspension or recovery. Missing root IDs are resolved by the service.
+    // Never invent a finished turn from initial history, queued work or
+    // recovery. Missing root IDs are resolved by the service.
     if (baseline || !before || !rootPromptId || actions.length) return results
     if (before.status === 'running' && session.status === 'idle' && !session.queuedCount &&
-        !session.suspended && session.restartRecovery?.state !== 'recovering' && !session.recoverySeedState &&
+        session.restartRecovery?.state !== 'recovering' && !session.recoverySeedState &&
         !session.queuedDispatch && !session.terminalQueueDispatchPending && !session.recoveryAcknowledgementPending) {
       results.push(sessionRecord(session, 'session.completed', rootPromptId, 'No action needed', now))
     } else if (session.status === 'error' && before.status !== 'error') {

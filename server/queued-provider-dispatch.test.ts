@@ -393,14 +393,14 @@ describe('provider queued delivery', () => {
   it('rechecks terminal availability after capture before crossing the acceptance boundary', async () => {
     const { service, store, terminal } = await copilotFixture(true)
     terminal.capture.mockImplementationOnce(async () => {
-      await store.setSuspended('session', true)
+      await store.updateStatus('session', 'running')
       return undefined
     })
     expect(await service.dispatchQueuedPrompt('session', 'middle', 'rewritten'))
       .toMatchObject({ outcome: 'refused', restored: true })
     expect(terminal.send).not.toHaveBeenCalled()
     expect(store.get('session')?.queuedPrompts).toEqual(originalQueue)
-    expect(store.get('session')?.suspended).toBe(true)
+    expect(store.get('session')?.status).toBe('running')
   })
 
   it('does not let late hydration replace a queued turn or its placeholders', async () => {
@@ -424,7 +424,7 @@ describe('provider queued delivery', () => {
     expect(sdk.send).toHaveBeenCalledTimes(1)
   })
 
-  it('blocks clear, restart, suspension, migration and a second dispatch during queued preflight', async () => {
+  it('blocks clear, restart, migration and a second dispatch during queued preflight', async () => {
     const { service, sdk, client, store } = await copilotFixture()
     const began = pause()
     const release = pause()
@@ -438,7 +438,6 @@ describe('provider queued delivery', () => {
     for (const action of [
       () => service.clearConversation('session'),
       () => service.restartSession('session'),
-      () => service.suspendSession('session'),
       () => service.moveToTerminal('session'),
       () => service.dispatchQueuedPrompt('session', 'middle', 'second attempt'),
     ]) await expect(action()).rejects.toThrow()
@@ -671,21 +670,20 @@ describe('provider queued delivery', () => {
       () => service.reorderQueuedPrompts('session', ['last', 'middle', 'first']),
       () => service.clearConversation('session'),
       () => service.restartSession('session'),
-      () => service.suspendSession('session'),
     ]) await expect(action()).rejects.toThrow()
     expect(service.getSession('session')?.queuedPrompts).toEqual(before?.queuedPrompts)
     expect(service.getSession('session')?.queuedDispatch?.attemptId).toBe(before?.queuedDispatch?.attemptId)
   })
 
-  it.each(['copilot', 'claude'] as const)('admits targeted %s dispatch only for open, idle, unsuspended sessions', async (provider) => {
+  it.each(['copilot', 'claude'] as const)('admits targeted %s dispatch only for open, idle sessions', async (provider) => {
     const { service, store } = provider === 'copilot' ? await copilotFixture() : await claudeFixture()
     for (const change of [
       { isOpen: false }, { status: 'running' }, { status: 'waiting' },
-      { status: 'error' }, { suspended: true },
+      { status: 'error' },
       { pendingUserInput: { requestId: 'waiting', question: 'Question', choices: [], allowFreeform: true } },
     ] as Partial<SessionDetail>[]) {
       await store.update('session', (session) => Object.assign(session, {
-        isOpen: true, status: 'idle', suspended: false, pendingUserInput: undefined,
+        isOpen: true, status: 'idle', pendingUserInput: undefined,
       }, change))
       await expect(service.dispatchQueuedPrompt('session', 'middle', 'rewrite'))
         .rejects.toMatchObject({ statusCode: 409 })

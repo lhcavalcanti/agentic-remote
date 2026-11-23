@@ -398,17 +398,6 @@ export async function fetchSessionOrder(): Promise<SessionOrderSnapshot> {
   return response.sessionOrder
 }
 
-/** Saves the hub-owned session-list visibility shared by every browser. */
-export async function saveSessionVisibility(
-  showSuspended: boolean,
-): Promise<SessionOrderSnapshot> {
-  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
-    '/api/session-order',
-    { method: 'PUT', body: JSON.stringify({ showSuspended }) },
-  )
-  return response.sessionOrder
-}
-
 /** Saves whether every browser on this hub lists hidden sessions. */
 export async function saveHiddenSessionVisibility(
   showHidden: boolean,
@@ -964,34 +953,6 @@ export async function configureRetention(
   const response = await request<{ session: ManagedSession }>(
     `${sessionPath(computerId, sessionId)}/retention`,
     { method: 'PATCH', body: JSON.stringify(input) },
-  )
-  return response.session
-}
-
-export async function suspendSession(
-  computerId: string,
-  sessionId: string,
-): Promise<ManagedSession> {
-  const response = await request<{ session: ManagedSession }>(
-    `${sessionPath(computerId, sessionId)}/suspend`,
-    {
-      method: 'POST',
-      body: '{}',
-    },
-  )
-  return response.session
-}
-
-export async function resumeSession(
-  computerId: string,
-  sessionId: string,
-): Promise<ManagedSession> {
-  const response = await request<{ session: ManagedSession }>(
-    `${sessionPath(computerId, sessionId)}/resume`,
-    {
-      method: 'POST',
-      body: '{}',
-    },
   )
   return response.session
 }

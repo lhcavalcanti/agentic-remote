@@ -64,7 +64,7 @@ export function ComposerActions({
   const sendDisabled = !composer.trim() || sending || transcribing || uploadingFile ||
     (!readonlyResourceCommand && (
       Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
-      queuedEditUnconfirmed || selected.suspended === true ||
+      queuedEditUnconfirmed ||
       Boolean(selected.interruption || selected.archivedAt) ||
       Boolean(editingQueuedPromptId && supportsQueuedPromptDispatch &&
         (selected.status === 'running' || selected.status === 'waiting'))))

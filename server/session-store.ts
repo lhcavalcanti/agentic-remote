@@ -415,9 +415,9 @@ function clearRecoverySeedFailure(session: StoredSession): void {
 }
 
 /**
- * A live tmux session the app types work or answers into, relaunches, clears,
- * suspends, or resumes is one the app now owns, so it joins boot recovery
- * like one the app created there. Work only queued to it is granted by the
+ * A live tmux session the app types work or answers into, relaunches, or
+ * clears is one the app now owns, so it joins boot recovery like one the app
+ * created there. Work only queued to it is granted by the
  * discovery pass that next lists the owner (`syncBackends`), never by the
  * queue write: a snapshot taken before that write commits may no longer list
  * the owner.
@@ -430,6 +430,53 @@ function grantTerminalRecovery(session: StoredSession): void {
 
 function requiresExplicitTerminalReopen(session: StoredSession): boolean {
   return session.managedOpen !== true && Boolean(session.queuedPrompts?.length)
+}
+
+/**
+ * Records a session as closed without deleting it. It leaves the open list and
+ * the recovery set, keeps its identity, transcript, and provider data, and
+ * records what it was about. Unless `keepQueue` is set, anything waiting to be
+ * sent goes with the runtime, so reopening never sends anything by itself.
+ */
+function recordClosure(session: StoredSession, closedAt: string, keepQueue = false): void {
+  session.closedContext = closedSessionContext({
+    title: session.title,
+    cwd: session.cwd,
+    messages: [...(session.archivedMessages || []), ...session.messages],
+  })
+  session.closedAt = closedAt
+  session.isOpen = false
+  session.managedOpen = false
+  session.archivedAt = undefined
+  session.interruption = undefined
+  session.sdkRestartRecovery = undefined
+  session.sdkAcceptedReply = undefined
+  session.status = 'idle'
+  session.activity = undefined
+  session.pendingPermission = undefined
+  session.pendingUserInput = undefined
+  if (!keepQueue) {
+    session.queuedPrompts = []
+    session.queuedCount = 0
+  }
+  session.queueState = undefined
+  session.queuedDispatch = undefined
+  session.queueDispatchAt = undefined
+  session.terminalQueueDispatch = undefined
+  session.queuedPromptReservation = undefined
+  session.sdkQueueAdmission = undefined
+  session.recoverySeed = undefined
+  session.recoveryResend = undefined
+  session.failedPrompt = undefined
+  // Whatever was reading the transcript when it closed must not land
+  // afterwards.
+  session.transcriptEpoch = randomUUID()
+  for (const message of session.messages) {
+    message.streaming = false
+    if (message.role === 'activity' && message.activityStatus === 'running') {
+      message.activityStatus = 'failed'
+    }
+  }
 }
 
 // A committed session is never changed in place: every change installs a new
@@ -745,6 +792,7 @@ export class SessionStore {
     for (const reply of Object.values(replies)) validateSdkAcceptedReply(reply)
     const legacyRetirements: string[] = []
     const interrupted: string[] = []
+    const suspensionsRetired: string[] = []
     let staleSdkInteractionMarked = launchIdentityAdopted || deliveryOwnersChanged || Object.keys(recoveries).some((id) => !Object.hasOwn(loaded.sessions, id)) ||
       Object.keys(replies).some((id) => !Object.hasOwn(loaded.sessions, id))
     for (const [id, session] of Object.entries(loaded.sessions)) {
@@ -825,6 +873,19 @@ export class SessionStore {
         throw new Error('Invalid recovery claim metadata')
       }
       if (session.queueState !== undefined) validateQueueState(session.queueState)
+      // Sessions are no longer suspended. One an older release suspended is
+      // closed as Close records it, keeping what was queued for it, so it can
+      // be reopened like any other; the flag itself is dropped everywhere.
+      const legacy = session as StoredSession & { suspended?: unknown }
+      if (legacy.suspended !== undefined) {
+        if (legacy.suspended === true && !session.closedAt) {
+          recordClosure(session, new Date(this.now()).toISOString(), true)
+          session.revision = (session.revision ?? 0) + 1
+          suspensionsRetired.push(id)
+        }
+        delete legacy.suspended
+        staleSdkInteractionMarked = true
+      }
       session.provider ??= 'copilot'
       session.isOpen = !session.closedAt && (session.managedOpen === true || (session.isOpen === true && Boolean(
         session.retention?.pinned || session.queuedPrompts?.length || session.pendingPermission ||
@@ -979,6 +1040,11 @@ export class SessionStore {
     this.state = loaded
     this.checkpoint = loaded
     this.liveMutableSessions = new WeakSet()
+    for (const id of suspensionsRetired) {
+      console.info(JSON.stringify({
+        sessionLifecycle: 'closed', cause: 'suspend-retired', sessionId: id, at: loaded.sessions[id]?.closedAt,
+      }))
+    }
     for (const id of interrupted) {
       const interruption = loaded.sessions[id]?.interruption
       if (interruption) logInterruption(id, interruption)
@@ -1368,17 +1434,13 @@ export class SessionStore {
           (canArchive?.(session.id) ?? true)
         const isOpen = !archive && (
           present ||
-          // A suspended session has nothing running by design. Reading that as
-          // closed would hide it from the list, and the only way back to it is
-          // the button on the session itself.
-          (session.suspended === true && !session.archivedAt) ||
           session.managedOpen === true ||
           (session.isOpen === true && protectedRecord))
         const retainQueuedTerminal =
           present && session.backend === 'terminal' && requiresExplicitTerminalReopen(session)
         const interruption = present && !session.sdkRestartRecovery && !retainQueuedTerminal
           ? undefined
-          : isOpen && session.backend === 'terminal' && !session.suspended
+          : isOpen && session.backend === 'terminal'
             ? session.interruption ?? {
               detectedAt: new Date(this.now()).toISOString(), previousStatus: session.status,
               cause: retainQueuedTerminal ? 'queue-held' : 'terminal-stopped',
@@ -1483,9 +1545,7 @@ export class SessionStore {
   }
 
   shouldRecoverTerminalSession(id: string): boolean {
-    const session = this.state.sessions[id]
-    return this.isManagedOpen(id) && session?.backend === 'terminal' &&
-      session.suspended !== true
+    return this.isManagedOpen(id) && this.state.sessions[id]?.backend === 'terminal'
   }
 
   /**
@@ -1616,8 +1676,7 @@ export class SessionStore {
       if (
         existing.backend !== 'sdk' ||
         !existing.interruption ||
-        existing.archivedAt ||
-        existing.suspended
+        existing.archivedAt
       ) {
         throw new Error('SDK session is not eligible for restart recovery')
       }
@@ -1860,92 +1919,18 @@ export class SessionStore {
   }
 
   /**
-   * Closes a session without deleting it. It leaves the open list and the
-   * recovery set, keeps its identity, transcript, and provider data, and
-   * records what it was about. Anything waiting to be sent goes with the
-   * runtime, so reopening never sends anything by itself. Closing a closed
-   * session changes nothing, so its retention keeps counting from the first.
+   * Closes a session without deleting it (see `recordClosure`). Closing a
+   * closed session changes nothing, so its retention keeps counting from the
+   * first.
    */
   async closeSession(sessionId: string): Promise<SessionDetail> {
     let closedAt: string | undefined
     const closed = await this.mutate(sessionId, (session) => {
-      session.closedContext = closedSessionContext({
-        title: session.title,
-        cwd: session.cwd,
-        messages: [...(session.archivedMessages || []), ...session.messages],
-      })
-      session.closedAt = new Date(this.now()).toISOString()
-      closedAt = session.closedAt
-      session.isOpen = false
-      session.managedOpen = false
-      session.suspended = undefined
-      session.archivedAt = undefined
-      session.interruption = undefined
-      session.sdkRestartRecovery = undefined
-      session.sdkAcceptedReply = undefined
-      session.status = 'idle'
-      session.activity = undefined
-      session.pendingPermission = undefined
-      session.pendingUserInput = undefined
-      session.queuedPrompts = []
-      session.queuedCount = 0
-      session.queueState = undefined
-      session.queuedDispatch = undefined
-      session.queueDispatchAt = undefined
-      session.terminalQueueDispatch = undefined
-      session.queuedPromptReservation = undefined
-      session.sdkQueueAdmission = undefined
-      session.recoverySeed = undefined
-      session.recoveryResend = undefined
-      session.failedPrompt = undefined
-      // Whatever was reading the transcript when it closed must not land
-      // afterwards.
-      session.transcriptEpoch = randomUUID()
-      for (const message of session.messages) {
-        message.streaming = false
-        if (message.role === 'activity' && message.activityStatus === 'running') {
-          message.activityStatus = 'failed'
-        }
-      }
+      closedAt = new Date(this.now()).toISOString()
+      recordClosure(session, closedAt)
     }, (session) => !session.closedAt, true)
     if (closedAt) console.info(JSON.stringify({ sessionLifecycle: 'closed', sessionId, at: closedAt }))
     return closed
-  }
-
-  async setSuspended(
-    sessionId: string,
-    suspended: boolean,
-  ): Promise<SessionDetail> {
-    let changed = false
-    const session = await this.mutate(sessionId, (session) => {
-      changed = Boolean(session.suspended) !== suspended
-      session.suspended = suspended
-      // A suspended session is put down on purpose, not found missing, and it
-      // keeps its place in the list either way. Written here so the state is
-      // the same however the teardown and a discovery pass interleaved:
-      // without it a pass that saw the pane go marked the session closed, and
-      // this call left that in place -- a session both suspended and gone.
-      session.isOpen = true
-      grantTerminalRecovery(session)
-      session.status = 'idle'
-      session.interruption = undefined
-      session.activity = undefined
-      session.pendingPermission = undefined
-      session.pendingUserInput = undefined
-      // `updatedAt` is when the conversation last moved, and the list is
-      // ordered by it. Suspending is not the conversation moving, so touching
-      // it here would send a session to the top of the list for being put
-      // down -- the opposite of keeping the place it had.
-    })
-    // Both providers suspend and resume through here, once the change is durable.
-    if (changed) {
-      console.info(JSON.stringify({
-        sessionLifecycle: suspended ? 'suspended' : 'resumed',
-        sessionId,
-        at: new Date(this.now()).toISOString(),
-      }))
-    }
-    return session
   }
 
   async setBackend(
@@ -2342,7 +2327,7 @@ export class SessionStore {
       if (!existing || this.retiredIds(state).has(sessionId)) throw new Error('Session not found')
       const session = structuredClone(existing)
       assertSessionNotRetained(session, 'accepting a prompt')
-      if (session.launchStopping || session.suspended ||
+      if (session.launchStopping ||
           (!enqueue && (session.status === 'running' || session.status === 'waiting'))) {
         throw Object.assign(new Error('This session cannot accept a new prompt now.'), {
           statusCode: 409, uncertainDelivery: false,
@@ -2426,7 +2411,7 @@ export class SessionStore {
       if (!prompt) return () => ({ session: this.requireSession(sessionId) })
       assertSessionNotRetained(existing, 'dispatching its queue')
       if (
-        !isCurrent() || existing.suspended || existing.launchStopping ||
+        !isCurrent() || existing.launchStopping ||
         (existing.status !== 'idle' && existing.status !== 'error') ||
         existing.failedPrompt || existing.recoverySeed || existing.terminalQueueDispatch ||
         existing.pendingPermission || existing.pendingUserInput
@@ -2464,9 +2449,6 @@ export class SessionStore {
         throw Object.assign(new Error('Reopen the interrupted session before sending. Nothing was sent.'), {
           statusCode: 409, uncertainDelivery: false,
         })
-      }
-      if (session.suspended) {
-        throw Object.assign(new Error('Resume the session before sending to it'), { statusCode: 409, uncertainDelivery: false })
       }
       if (session.launchStopping) {
         throw Object.assign(new Error('The launch is stopping; no new turn can start.'), { statusCode: 409 })
@@ -2611,12 +2593,6 @@ export class SessionStore {
         this.lastSdkAdmissionAt + 1,
       )
       const createdAt = new Date(this.lastSdkAdmissionAt).toISOString()
-      if (session.suspended) {
-        throw Object.assign(
-          new Error('Resume the session before sending to it'),
-          { statusCode: 409 },
-        )
-      }
       if (!isCurrent()) {
         throw Object.assign(
           new Error(
@@ -2825,7 +2801,7 @@ export class SessionStore {
       assertSessionNotRetained(stored, 'dispatching its queue')
       const head = stored.queuedPrompts?.[0]
       if (
-        !isCurrent() || stored.suspended || stored.launchStopping ||
+        !isCurrent() || stored.launchStopping ||
         (midTurnSteer ? stored.status !== 'running' || head?.steer !== true : stored.status !== 'idle') ||
         (requireManagedTerminal && (!stored.isOpen || stored.managedOpen !== true || stored.backend !== 'terminal')) ||
         stored.pendingPermission || stored.pendingUserInput || stored.recoverySeed ||
@@ -3171,7 +3147,7 @@ export class SessionStore {
         throw Object.assign(new Error('That recovery has already been handled or replaced; refresh before retrying.'), { statusCode: 409 })
       }
       if (session.launchStopping || session.recoverySeed || session.terminalQueueDispatch || session.sdkQueueAdmission ||
-          session.suspended || !isCurrent(session)) {
+          !isCurrent(session)) {
         throw Object.assign(new Error('The session changed before recovery admission; the recovery was not consumed.'), { statusCode: 409 })
       }
       // Consumption and retained work are one durable operation. A replay
@@ -3706,8 +3682,7 @@ export class SessionStore {
       session.revision = Math.max(existing.revision ?? 0, session.revision ?? 0) + 1
       state.sessions[sessionId] = session
       const ownerChanged = replaceOwner || existing.cwd !== session.cwd ||
-        existing.provider !== session.provider || existing.backend !== session.backend ||
-        Boolean(existing.suspended) !== Boolean(session.suspended)
+        existing.provider !== session.provider || existing.backend !== session.backend
       return () => {
         if (ownerChanged) this.observationOwners.delete(sessionId)
         return this.requireSession(sessionId)

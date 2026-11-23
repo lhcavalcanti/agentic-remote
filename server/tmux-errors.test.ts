@@ -429,26 +429,6 @@ describe('tmux absence callers', () => {
     expect(execute.mock.calls[0][1][0]).toBe('list-sessions')
   })
 
-  it('refuses terminal stop before confirming any teardown', async () => {
-    files.set('/proc/net/unix', header + listener())
-    const controller = new TmuxTerminalSessionController()
-    const confirm = vi.fn()
-    await expect(controller.stop('owned-session', confirm)).rejects.toThrow(
-      'No such file or directory',
-    )
-    expect(confirm).not.toHaveBeenCalled()
-  })
-
-  it('does not accept a lost socket as proof that no panes remain', async () => {
-    execute.mockResolvedValue({ stdout: '', stderr: '' })
-    const controller = new TmuxTerminalSessionController()
-    expect(await controller.has('owned-session')).toBe(false)
-    execute.mockRejectedValue(missing())
-    files.set('/proc/net/unix', header + listener())
-
-    await expect(controller.stop('owned-session')).resolves.toBe(false)
-  })
-
   it('propagates lost socket failures when looking up a known pane owner', async () => {
     vi.spyOn(activeSessions, 'findActiveCopilotProcesses').mockResolvedValue([
       { pid: 456, sessionId: 'owned-session', source: 'argument' },

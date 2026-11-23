@@ -62,9 +62,7 @@ const actions = {
   onSelectSession: vi.fn(),
   onOpenSessionTasks: vi.fn(),
   onCloseSession: vi.fn(),
-  onToggleSessionSuspended: vi.fn(),
   closingSessions: new Set<string>(),
-  suspendingSessions: new Set<string>(),
   hiddenSessions: new Set<string>(),
   hidingSessions: new Set<string>(),
   onToggleSessionHidden: vi.fn(),
@@ -85,8 +83,6 @@ function NavigationHarness({
   snapshots = backgroundTasks,
   loading = false,
   loadingError,
-  initialShowSuspended = true,
-  showSuspendedSaving = false,
   initialHidden = [],
   initialShowHidden = false,
   showHiddenSaving = false,
@@ -95,7 +91,6 @@ function NavigationHarness({
   markingUnreadSessions = new Set<string>(),
   pendingCreations,
   closingSessions = new Set<string>(),
-  suspendingSessions = new Set<string>(),
   recentlyClosedCount,
   onOpenRecentlyClosed,
   onRefresh,
@@ -106,8 +101,6 @@ function NavigationHarness({
   snapshots?: Record<string, BackgroundTaskSnapshot>
   loading?: boolean
   loadingError?: string
-  initialShowSuspended?: boolean
-  showSuspendedSaving?: boolean
   initialHidden?: string[]
   initialShowHidden?: boolean
   showHiddenSaving?: boolean
@@ -116,14 +109,12 @@ function NavigationHarness({
   markingUnreadSessions?: ReadonlySet<string>
   pendingCreations?: PendingSessionCreation[]
   closingSessions?: ReadonlySet<string>
-  suspendingSessions?: ReadonlySet<string>
   recentlyClosedCount?: number
   onOpenRecentlyClosed?: () => void
   onRefresh?: () => void
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<SessionFilter>('all')
-  const [showSuspended, setShowSuspended] = useState(initialShowSuspended)
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set(initialHidden))
   const [showHidden, setShowHidden] = useState(initialShowHidden)
   const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set(initialUnread))
@@ -132,7 +123,6 @@ function NavigationHarness({
       <SessionNavigation
         {...actions}
         closingSessions={closingSessions}
-        suspendingSessions={suspendingSessions}
         hiddenSessions={hidden}
         hidingSessions={hidingSessions}
         onToggleSessionHidden={(target) => {
@@ -162,19 +152,15 @@ function NavigationHarness({
           snapshots,
           query,
           filter,
-          showSuspended,
           { keys: hidden, shown: showHidden },
           unread,
         )}
         query={query}
         filter={filter}
-        showSuspended={showSuspended}
-        showSuspendedSaving={showSuspendedSaving}
         showHidden={showHidden}
         showHiddenSaving={showHiddenSaving}
         onQueryChange={setQuery}
         onFilterChange={setFilter}
-        onShowSuspendedChange={setShowSuspended}
         onShowHiddenChange={(show) => {
           hiddenVisibility(show)
           setShowHidden(show)
@@ -235,13 +221,10 @@ describe('session navigation', () => {
           view={sessionNavigationView([], new Map(), {}, '', 'all')}
           query=""
           filter="all"
-          showSuspended
-          showSuspendedSaving={false}
           showHidden={false}
           showHiddenSaving={false}
           onQueryChange={vi.fn()}
           onFilterChange={vi.fn()}
-          onShowSuspendedChange={vi.fn()}
           onShowHiddenChange={vi.fn()}
           loading={false}
           loadingError="The gateway could not reach Agentic Remote."
@@ -272,13 +255,10 @@ describe('session navigation', () => {
           )}
           query=""
           filter="all"
-          showSuspended
-          showSuspendedSaving={false}
           showHidden={false}
           showHiddenSaving={false}
           onQueryChange={vi.fn()}
           onFilterChange={vi.fn()}
-          onShowSuspendedChange={vi.fn()}
           onShowHiddenChange={vi.fn()}
           loading={false}
           onRefresh={onRefresh}
@@ -404,30 +384,6 @@ describe('session navigation', () => {
     expect(screen.getByRole('region', { name: 'Travel laptop' })).toBeVisible()
   })
 
-  it('allows custom dragging when only suspended sessions are hidden', () => {
-    const suspended = {
-      ...session,
-      id: 'paused-review',
-      title: 'Paused review',
-      suspended: true,
-    }
-    const sessions = new Map(sessionsByComputer)
-    sessions.set('studio', [session, suspended, question])
-
-    render(
-      <NavigationHarness
-        initialShowSuspended={false}
-        sessions={sessions}
-      />,
-    )
-
-    expect(screen.queryByRole('button', { name: /^Paused review,/ })).toBeNull()
-    expect(screen.getByLabelText('Reorder Review the release')).not
-      .toHaveAttribute('aria-disabled', 'true')
-    expect(screen.getByLabelText('Reorder Choose a direction')).not
-      .toHaveAttribute('aria-disabled', 'true')
-  })
-
   it('filters attention without changing selection or hiding any computer', () => {
     render(navigation())
     fireEvent.click(screen.getByRole('button', { name: 'Needs you' }))
@@ -468,57 +424,6 @@ describe('session navigation', () => {
     expect(screen.getByRole('status', { name: 'Session filter results' })).toHaveTextContent('1 of 4 sessions')
     fireEvent.click(screen.getByRole('button', { name: 'View background tasks for Build docs' }))
     expect(actions.onOpenSessionTasks).toHaveBeenCalledWith(worker)
-  })
-
-  it('hides and restores sessions paused through the suspension control', () => {
-    const suspended = {
-      ...session,
-      id: 'paused',
-      title: 'Paused planning',
-      suspended: true,
-    }
-    const sessions = new Map(sessionsByComputer)
-    sessions.set('studio', [session, question, suspended])
-    render(navigation(sessions))
-
-    const toggle = screen.getByRole('button', { name: 'Include suspended sessions' })
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-    expect(toggle).toHaveTextContent('Suspended1')
-    expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
-
-    fireEvent.click(toggle)
-
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.queryByRole('button', { name: /^Paused planning,/ })).toBeNull()
-    expect(screen.getByRole('status', { name: 'Session filter results' }))
-      .toHaveTextContent('4 of 5 sessions')
-    expect(screen.getByRole('region', { name: 'Studio' })).toBeVisible()
-    expect(screen.getByRole('region', { name: 'Build node' })).toBeVisible()
-    expect(screen.getByRole('region', { name: 'Travel laptop' })).toBeVisible()
-    expect(screen.getByLabelText('Reorder Review the release'))
-      .toHaveAttribute('aria-disabled', 'false')
-    expect(actions.onSelectSession).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
-
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
-    expect(screen.queryByRole('status', { name: 'Session filter results' })).toBeNull()
-  })
-
-  it('holds Clear filters while suspended visibility is being saved', () => {
-    render(
-      <NavigationHarness
-        initialShowSuspended={false}
-        showSuspendedSaving
-      />,
-    )
-
-    const clear = screen.getByRole('button', { name: 'Clear filters' })
-    expect(clear).toBeDisabled()
-    fireEvent.click(clear)
-    expect(screen.getByRole('button', { name: 'Include suspended sessions' }))
-      .toHaveAttribute('aria-pressed', 'false')
   })
 
   it('hides a session from the list without a filter, and shows it again on request', () => {
@@ -573,16 +478,14 @@ describe('session navigation', () => {
     expect(screen.getByRole('button', { name: /^Choose a direction,/ })).toBeVisible()
   })
 
-  it('marks a listed hidden row apart from ordinary and suspended rows', () => {
+  it('marks a listed hidden row apart from ordinary rows', () => {
     const ordinary = { ...session, id: 'ordinary', title: 'Sort the inbox' }
     const tidy = { ...session, id: 'tidy', title: 'Tidy the reading list' }
-    const paused = { ...session, id: 'paused', title: 'Paused planning', suspended: true }
-    const parked = { ...session, id: 'parked', title: 'Parked archive', suspended: true }
     render(
       <NavigationHarness
-        initialHidden={['studio:review', 'studio:tidy', 'studio:parked']}
+        initialHidden={['studio:review', 'studio:tidy']}
         initialShowHidden
-        sessions={new Map([['studio', [session, ordinary, tidy, paused, parked]]])}
+        sessions={new Map([['studio', [session, ordinary, tidy]]])}
       />,
     )
     const row = (title: string) => {
@@ -594,19 +497,12 @@ describe('session navigation', () => {
 
     const hidden = row('Tidy the reading list')
     expect(hidden).toHaveClass('session-item--hidden')
-    expect(hidden).not.toHaveClass('session-item--suspended')
     // Told by an icon and the word as well as by the outline.
     const tag = within(hidden).getByText('Hidden')
     expect(tag).toHaveAttribute('title', 'Hidden from the list; the session keeps running')
     expect(tag.querySelector('svg.lucide-eye-off')).toHaveAttribute('aria-hidden', 'true')
 
     expect(row('Sort the inbox')).not.toHaveClass('session-item--hidden')
-    expect(row('Paused planning')).toHaveClass('session-item--suspended')
-    expect(row('Paused planning')).not.toHaveClass('session-item--hidden')
-    const both = row('Parked archive')
-    expect(both).toHaveClass('session-item--hidden', 'session-item--suspended')
-    expect(within(both).getByText('Hidden')).toBeVisible()
-    expect(within(both).getByText('Suspended')).toBeVisible()
     // Hiding the open session leaves it marked as the open one.
     expect(row('Review the release')).toHaveClass('session-item--hidden', 'session-item--active')
   })
@@ -637,12 +533,10 @@ describe('session navigation', () => {
     expect(screen.queryByRole('button', { name: /^Build docs,/ })).toBeNull()
   })
 
-  it('places Hide after Close and Pause, and keeps it usable while a computer is offline', () => {
+  it('places Hide after Close, and keeps it usable while a computer is offline', () => {
     render(<NavigationHarness hidingSessions={new Set(['studio:question'])} />)
     const close = screen.getByRole('button', { name: 'Close Review the release' })
-    const pause = screen.getByRole('button', { name: 'Suspend Review the release' })
     const hide = screen.getByRole('button', { name: 'Hide Review the release from the list' })
-    expect(pause.compareDocumentPosition(hide) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(close.compareDocumentPosition(hide) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(hide).toHaveAttribute('title', 'Hide from the list; the session keeps running')
     expect(hide.closest('.session-item__open')).toBeNull()
@@ -667,13 +561,13 @@ describe('session navigation', () => {
   })
 
   it('marks an unread row with a bold title, an accent dot, and the word in its name', () => {
-    const paused = { ...session, id: 'paused', title: 'Paused planning', suspended: true }
+    const parked = { ...session, id: 'parked', title: 'Parked planning' }
     render(
       <NavigationHarness
-        initialHidden={['studio:paused']}
+        initialHidden={['studio:parked']}
         initialShowHidden
-        initialUnread={['studio:review', 'studio:paused']}
-        sessions={new Map([['studio', [session, question, paused]], ['worker', [worker]]])}
+        initialUnread={['studio:review', 'studio:parked']}
+        sessions={new Map([['studio', [session, question, parked]], ['worker', [worker]]])}
       />,
     )
     const row = (title: string) => {
@@ -700,11 +594,10 @@ describe('session navigation', () => {
     expect(screen.getByRole('button', { name: /^Choose a direction,/ }))
       .not.toHaveAccessibleName(/unread/)
 
-    // Unread combines with the hidden and suspended cues rather than replacing them.
-    const both = row('Paused planning')
-    expect(both).toHaveClass('session-item--unread', 'session-item--hidden', 'session-item--suspended')
+    // Unread combines with the hidden cue rather than replacing it.
+    const both = row('Parked planning')
+    expect(both).toHaveClass('session-item--unread', 'session-item--hidden')
     expect(within(both).getByText('Hidden')).toBeVisible()
-    expect(within(both).getByText('Suspended')).toBeVisible()
   })
 
   it('marks a session read or unread beside Hide, without opening it', () => {
@@ -714,10 +607,10 @@ describe('session navigation', () => {
         markingUnreadSessions={new Set(['worker:build'])}
       />,
     )
-    const pause = screen.getByRole('button', { name: 'Suspend Review the release' })
+    const close = screen.getByRole('button', { name: 'Close Review the release' })
     const markRead = screen.getByRole('button', { name: 'Mark Review the release as read' })
     const hide = screen.getByRole('button', { name: 'Hide Review the release from the list' })
-    expect(pause.compareDocumentPosition(markRead) & Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(close.compareDocumentPosition(markRead) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy()
     expect(markRead.compareDocumentPosition(hide) & Node.DOCUMENT_POSITION_FOLLOWING)
       .toBeTruthy()
@@ -847,91 +740,23 @@ describe('session navigation', () => {
     )
   })
 
-  it('keeps accessible Close above Pause without changing either action', () => {
+  it('keeps Close accessible beside the row without opening it', () => {
     render(navigation())
     const open = screen.getByRole('button', { name: /^Review the release,/ })
     expect(within(open).queryByRole('button')).toBeNull()
     fireEvent.click(open)
     expect(actions.onSelectSession).toHaveBeenCalledWith(session)
     const close = screen.getByRole('button', { name: 'Close Review the release' })
-    const pause = screen.getByRole('button', { name: 'Suspend Review the release' })
-    expect(close.compareDocumentPosition(pause) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy()
     expect(close).toHaveAttribute(
       'title',
       'Permanently delete this session and its history',
     )
     fireEvent.click(close)
     expect(actions.onCloseSession).toHaveBeenCalledWith(session)
-    fireEvent.click(pause)
-    expect(actions.onToggleSessionSuspended).toHaveBeenCalledWith(session)
     expect(screen.getByText('2/3 online')).toBeVisible()
     expect(within(screen.getByRole('region', { name: 'Travel laptop' }))
       .getAllByText('Offline')).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Close Last known work' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Suspend Last known work' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Suspend Choose a direction' })).toBeDisabled()
-  })
-
-  it('offers Suspend only when the owning computer would accept it, and says why not', () => {
-    const interrupted: ManagedSession = {
-      ...session,
-      id: 'interrupted',
-      title: 'Interrupted work',
-      status: 'error',
-      interruption: { detectedAt: '2026-09-01T00:00:00Z', previousStatus: 'running' },
-    }
-    const waitingAgent: ManagedSession = { ...session, id: 'agent', title: 'Waiting agent' }
-    const suspendTitle = (title: string) =>
-      screen.getByRole('button', { name: `Suspend ${title}` })
-    const { rerender } = render(
-      <NavigationHarness
-        sessions={new Map([
-          ['studio', [session, interrupted, waitingAgent]],
-          ['worker', [worker]],
-        ])}
-        snapshots={{
-          ...backgroundTasks,
-          // Queued work is refused too, though it is not counted as running.
-          'studio:agent': {
-            tasks: [{
-              id: 'agent-1', type: 'agent', description: 'Review',
-              status: 'queued', startedAt: '2026-09-01T00:00:00Z', canCancel: true,
-            }],
-            runningCount: 0,
-            supported: true,
-          },
-        }}
-      />,
-    )
-
-    expect(suspendTitle('Review the release')).toBeEnabled()
-    expect(suspendTitle('Review the release')).toHaveAttribute(
-      'title', 'Keep this session but stop what is running for it',
-    )
-    for (const title of ['Build docs', 'Waiting agent']) {
-      expect(suspendTitle(title)).toBeDisabled()
-      expect(suspendTitle(title)).toHaveAttribute(
-        'title', 'Wait for its background tasks to finish before suspending it',
-      )
-    }
-    expect(suspendTitle('Interrupted work')).toBeDisabled()
-    expect(suspendTitle('Interrupted work')).toHaveAttribute(
-      'title', 'Reopen this session before suspending it',
-    )
-
-    rerender(
-      <NavigationHarness
-        sessions={new Map([['studio', [session, waitingAgent]]])}
-        suspendingSessions={new Set(['studio:review'])}
-      />,
-    )
-    expect(suspendTitle('Review the release')).toBeDisabled()
-    expect(suspendTitle('Review the release')).toHaveAttribute(
-      'title', 'Wait for this suspend or resume to finish',
-    )
-    // Another session's suspend or resume does not hold this one back.
-    expect(suspendTitle('Waiting agent')).toBeEnabled()
   })
 
   it('says Close keeps a session reopenable where its computer keeps closed sessions', () => {

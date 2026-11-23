@@ -198,14 +198,12 @@ describe('session resources', () => {
     expect(screen.getByText('Failed')).toBeInTheDocument()
   })
 
-  it.each(['executionMode', 'suspended'] as const)('abandons old metadata after %s changes', async (change) => {
+  it('abandons old metadata after the execution mode changes', async () => {
     let resolveOld!: (value: ManagedSessionSkillsSnapshot) => void
     vi.mocked(listSessionSkills).mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
     const view = render(<SessionResources session={session} online supported initialTab="skills" />)
     const signal = vi.mocked(listSessionSkills).mock.calls[0][3]
-    const changed: ManagedSession = {
-      ...session, ...(change === 'executionMode' ? { executionMode: 'tmux' } : { suspended: true }),
-    }
+    const changed: ManagedSession = { ...session, executionMode: 'tmux' }
     vi.mocked(listSessionSkills).mockResolvedValueOnce({
       ...skills, scope: 'workspace', skills: [{ name: 'configured-new-owner' }],
     })

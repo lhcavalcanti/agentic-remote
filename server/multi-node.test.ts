@@ -432,23 +432,6 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(recovered)
   }
 
-  async suspendSession(id: string): Promise<SessionDetail> {
-    return this.setSuspended(id, true)
-  }
-
-  async resumeSession(id: string): Promise<SessionDetail> {
-    return this.setSuspended(id, false)
-  }
-
-  private setSuspended(id: string, suspended: boolean): SessionDetail {
-    const session = this.sessions.get(id)
-    if (!session) {
-      throw new Error('Session not found')
-    }
-    session.suspended = suspended
-    return session
-  }
-
   async restartSession(id: string): Promise<SessionDetail> {
     const session = this.sessions.get(id)
     if (!session) {
@@ -546,10 +529,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
     return structuredClone(session)
   }
 
-  async listCommands(id: string): Promise<SlashCommand[]> {
-    if (this.sessions.get(id)?.suspended) {
-      return []
-    }
+  async listCommands(_id: string): Promise<SlashCommand[]> {
     return [
       {
         name: 'model',
@@ -1998,117 +1978,17 @@ describe('multi-node hub', () => {
     }
   })
 
-  it('keeps local and remote suspend refreshes explicit, idempotent, and owner-routed', async () => {
-    const localService = new FakeSessionService(session('local-session', 'Local'))
-    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
-    const remoteSuspend = vi.spyOn(remoteService, 'suspendSession')
-    const remoteResume = vi.spyOn(remoteService, 'resumeSession')
-    const hub = await buildApp({
-      dataDirectory: await temporaryDirectory('agentic-remote-suspend-hub'),
-      logger: false,
-      role: 'hub',
-      service: localService,
-    })
-    const remote = await buildApp({
-      dataDirectory: await temporaryDirectory('agentic-remote-suspend-node'),
-      logger: false,
-      role: 'node',
-      service: remoteService,
-    })
-    try {
-      await remote.app.listen({ host: '127.0.0.1', port: 0 })
-      const address = remote.app.server.address()
-      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
-      expect((await hub.app.inject({
-        method: 'POST',
-        url: '/api/computers',
-        payload: {
-          baseUrl: `http://127.0.0.1:${address.port}`,
-          token: remote.identity.token,
-          name: 'suspend-node',
-        },
-      })).statusCode).toBe(201)
-
-      for (const target of [
-        { computerId: hub.identity.info.id, sessionId: 'local-session' },
-        { computerId: remote.identity.info.id, sessionId: 'remote-session' },
-      ]) {
-        const base = `/api/computers/${target.computerId}/sessions/${target.sessionId}`
-        const suspended = await hub.app.inject({
-          method: 'POST',
-          url: `${base}/suspend`,
-          payload: {},
-        })
-        expect(suspended.statusCode, suspended.body).toBe(200)
-        expect(suspended.json().session).toMatchObject({
-          id: target.sessionId,
-          computerId: target.computerId,
-          suspended: true,
-        })
-
-        const detail = await hub.app.inject({ method: 'GET', url: base })
-        expect(detail.statusCode, detail.body).toBe(200)
-        expect(detail.json().session).toMatchObject({
-          id: target.sessionId,
-          computerId: target.computerId,
-          suspended: true,
-        })
-        const commands = await hub.app.inject({
-          method: 'GET',
-          url: `${base}/commands`,
-        })
-        expect(commands.statusCode, commands.body).toBe(200)
-        expect(commands.json()).toEqual({ commands: [] })
-
-        const repeated = await hub.app.inject({
-          method: 'POST',
-          url: `${base}/suspend`,
-          payload: {},
-        })
-        expect(repeated.statusCode, repeated.body).toBe(200)
-        expect(repeated.json().session.suspended).toBe(true)
-
-        const resumed = await hub.app.inject({
-          method: 'POST',
-          url: `${base}/resume`,
-          payload: {},
-        })
-        expect(resumed.statusCode, resumed.body).toBe(200)
-        expect(resumed.json().session).toMatchObject({
-          id: target.sessionId,
-          computerId: target.computerId,
-          suspended: false,
-        })
-        const resumedCommands = await hub.app.inject({
-          method: 'GET',
-          url: `${base}/commands`,
-        })
-        expect(resumedCommands.statusCode, resumedCommands.body).toBe(200)
-        expect(resumedCommands.json().commands).toEqual([
-          expect.objectContaining({ name: 'model' }),
-        ])
-      }
-
-      expect(remoteSuspend).toHaveBeenCalledTimes(2)
-      expect(remoteSuspend).toHaveBeenCalledWith('remote-session')
-      expect(remoteResume).toHaveBeenCalledOnce()
-      expect(remoteResume).toHaveBeenCalledWith('remote-session')
-    } finally {
-      await Promise.all([hub.app.close(), remote.app.close()])
-    }
-  })
-
   it('preserves typed remote owner conflicts and sanitizes unexpected provider failures', async () => {
     const localService = new FakeSessionService(session('local-session', 'Local'))
     const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
     const hub = await buildApp({
-      dataDirectory: await temporaryDirectory('agentic-remote-suspend-errors-hub'),
+      dataDirectory: await temporaryDirectory('agentic-remote-owner-errors-hub'),
       logger: false,
       role: 'hub',
       service: localService,
     })
     const remote = await buildApp({
-      dataDirectory: await temporaryDirectory('agentic-remote-suspend-errors-node'),
+      dataDirectory: await temporaryDirectory('agentic-remote-owner-errors-node'),
       logger: false,
       role: 'node',
       service: remoteService,
@@ -2131,7 +2011,7 @@ describe('multi-node hub', () => {
       const listCommands = vi.spyOn(remoteService, 'listCommands')
 
       listCommands.mockRejectedValueOnce(Object.assign(
-        new Error('Resume the session before using its provider runtime'),
+        new Error('Reopen the closed session before using its provider runtime.'),
         { statusCode: 409, uncertainDelivery: false },
       ))
       const conflict = await hub.app.inject({
@@ -2140,7 +2020,7 @@ describe('multi-node hub', () => {
       })
       expect(conflict.statusCode, conflict.body).toBe(409)
       expect(conflict.json()).toEqual({
-        error: 'Resume the session before using its provider runtime',
+        error: 'Reopen the closed session before using its provider runtime.',
         uncertainDelivery: false,
       })
 
@@ -2155,103 +2035,6 @@ describe('multi-node hub', () => {
         uncertainDelivery: true,
       })
       expect(unexpected.body).not.toContain('credentials')
-    } finally {
-      await Promise.all([hub.app.close(), remote.app.close()])
-    }
-  })
-
-  it('reports a remote suspension refused over live background work as a conflict', async () => {
-    // The owning computer is right to refuse while a detached shell runs; the
-    // browser used to be told only "Unexpected server error".
-    const nodeDirectory = await temporaryDirectory('agentic-remote-busy-node')
-    const store = new SessionStore(path.join(nodeDirectory, 'state'))
-    await store.initialize()
-    await store.create(
-      {
-        id: 'busy-terminal',
-        cwd: nodeDirectory,
-        title: 'Busy terminal',
-        updatedAt: '2026-09-02T00:00:00.000Z',
-        status: 'idle',
-        isOpen: true,
-        messages: [],
-      },
-      { managedOpen: true, backend: 'terminal' },
-    )
-    const detachedShell = {
-      type: 'tool.execution_start',
-      id: 'detached-start',
-      parentId: null,
-      timestamp: '2026-09-02T00:01:00.000Z',
-      data: {
-        toolCallId: 'detached-call',
-        toolName: 'bash',
-        arguments: { command: 'pnpm dev', description: 'Start the dev server', mode: 'async' },
-      },
-    } as unknown as SessionEvent
-    const stop = vi.fn(async () => true)
-    const nodeService = new AgentService(
-      store,
-      {
-        start: async () => undefined,
-        stop: async () => [],
-        listSessions: async () => [],
-        rpc: {
-          models: { list: async () => ({ models: [] }) },
-          commands: { list: async () => ({ commands: [] }) },
-        },
-      } as unknown as CopilotClientLike,
-      async () => [],
-      async () => undefined,
-      async () => [detachedShell],
-      async () => '1',
-      {
-        has: vi.fn(async () => true),
-        stop,
-        send: vi.fn(async () => true),
-        cancel: vi.fn(async () => true),
-      },
-    )
-    nodeService['externalSessionIds'].add('busy-terminal')
-    const hub = await buildApp({
-      dataDirectory: await temporaryDirectory('agentic-remote-busy-hub'),
-      logger: false,
-      role: 'hub',
-      service: new FakeSessionService(session('local-session', 'Local')),
-    })
-    const remote = await buildApp({
-      dataDirectory: path.join(nodeDirectory, 'app'),
-      logger: false,
-      role: 'node',
-      service: nodeService,
-      managerAgent: false,
-      cliCanary: false,
-    })
-    try {
-      await remote.app.listen({ host: '127.0.0.1', port: 0 })
-      const address = remote.app.server.address()
-      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
-      expect((await hub.app.inject({
-        method: 'POST',
-        url: '/api/computers',
-        payload: {
-          baseUrl: `http://127.0.0.1:${address.port}`,
-          token: remote.identity.token,
-          name: 'busy-node',
-        },
-      })).statusCode).toBe(201)
-
-      const refused = await hub.app.inject({
-        method: 'POST',
-        url: `/api/computers/${remote.identity.info.id}/sessions/busy-terminal/suspend`,
-        payload: {},
-      })
-      expect(refused.statusCode, refused.body).toBe(409)
-      expect(refused.json()).toMatchObject({
-        error: 'Session can only be suspended once its background tasks finish',
-      })
-      expect(stop).not.toHaveBeenCalled()
-      expect(nodeService.getSession('busy-terminal')?.suspended).toBeFalsy()
     } finally {
       await Promise.all([hub.app.close(), remote.app.close()])
     }

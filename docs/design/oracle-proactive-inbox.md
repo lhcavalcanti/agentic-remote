@@ -44,7 +44,6 @@ await inbox.observe({
   queuedCount,
   hasPendingRequest,
   isOpen,
-  suspended,
   recovering,
 })
 const events = inbox.pending(20)

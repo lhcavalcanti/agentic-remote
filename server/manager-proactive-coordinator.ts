@@ -74,7 +74,6 @@ interface SessionLifecycle {
   queuedCount: number
   hasPendingRequest: boolean
   isOpen: boolean
-  suspended: boolean
   recovering: boolean
   /** The inbox fields above, as one comparable value. */
   signature: string
@@ -95,7 +94,6 @@ function sessionLifecycle(
       session.pendingPermission || session.pendingUserInput,
     ),
     isOpen: session.isOpen !== false,
-    suspended: session.suspended === true,
     recovering:
       session.restartRecovery?.state === 'recovering' ||
       session.recoverySeedState === 'pending' ||

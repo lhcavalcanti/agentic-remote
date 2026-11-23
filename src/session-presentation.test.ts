@@ -243,10 +243,9 @@ describe('session presentation', () => {
           ...older, id: 'question',
           pendingUserInput: { requestId: 'q', question: 'Choose?', choices: [], allowFreeform: true },
         }
-        const suspended = { ...newer, id: 'suspended', suspended: true }
         expect(pendingSessionPlacements(
-          [suspended, newer, working, question], [creation], [], 'attention', {},
-        )).toEqual([{ id: 'pending-1', followers: ['studio:newer', 'studio:suspended'] }])
+          [newer, working, question], [creation], [], 'attention', {},
+        )).toEqual([{ id: 'pending-1', followers: ['studio:newer'] }])
       })
 
       it('places a creation by its folder name, after equal names', () => {
@@ -322,9 +321,6 @@ describe('session presentation', () => {
     })
     expect(sessionPresentation(session)).toMatchObject({
       state: 'idle', label: 'Idle', working: false,
-    })
-    expect(sessionPresentation({ ...session, suspended: true }, tasks)).toMatchObject({
-      state: 'suspended', working: false,
     })
   })
 

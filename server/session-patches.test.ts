@@ -78,6 +78,20 @@ describe('diffMessages', () => {
     expect(diffMessages([a], [{ ...a, streaming: undefined }]).keep).toBe(0)
     expect(diffMessages([], [a]).keep).toBe(0)
   })
+
+  it('keeps a rebuilt task completion that holds the same evidence', () => {
+    const evidence = () => ({ source: 'root-task-complete' as const, toolCallId: 'call-1', completedAt: at })
+    // A transcript rebuilt from the event log makes new evidence objects for
+    // messages that did not change; only the new message is sent.
+    const done = (taskCompletion: ChatMessage['taskCompletion']): ChatMessage =>
+      ({ id: 'done', role: 'assistant', content: 'Finished', createdAt: at, taskCompletion })
+    const later = { id: 'later', role: 'user' as const, content: 'next', createdAt: at }
+    expect(diffMessages([done(evidence())], [done(evidence()), later]))
+      .toEqual({ keep: 1, messages: [later] })
+    // Different evidence is still a change.
+    expect(diffMessages([done(evidence())], [done({ ...evidence(), toolCallId: 'call-2' })]).keep).toBe(0)
+    expect(diffMessages([done(evidence())], [done(undefined)]).keep).toBe(0)
+  })
 })
 
 describe('session publications', () => {

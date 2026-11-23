@@ -290,9 +290,9 @@ agentic-remote uninstall
 
 Release 2.0 removes suspended sessions; Close and Reopen cover them. When each
 computer first starts on it, every session an older release suspended becomes
-a closed session that keeps its queued messages, so it is listed under
-**Recently closed** and can be reopened for 14 days. Rolling back to 1.x reads
-these records as the closed sessions that release already supports.
+a closed session that keeps the messages still waiting for it, so it is listed
+under **Recently closed** and can be reopened for 14 days. Rolling back to 1.x
+reads these records as the closed sessions that release already supports.
 
 `doctor` is read-only and works with the service down. It checks the installed service, local health, provider tools, configured transcription/voice assets, origins, and recent startup phases. `--tunnel ID` (or `AGENTIC_REMOTE_DEVTUNNEL_ID` in the shell or service environment file, preserved by setup/update) also checks Dev Tunnel login and both tunnel and port ACLs: empty or deny-only ACLs pass; any allow entry, unknown JSON, or missing `devtunnel` binary fails closed. Tunnel checks skip only when no tunnel is selected. The origin check warns unless the allowlist includes the selected tunnel's HTTPS hostname, configured port, and region (when included in its ID); another tunnel's origin does not satisfy it. It reports the login provider without requiring a particular one and never changes ACLs. `--json` emits `{check, status, detail}` records; exit status is 1 if any check fails, otherwise 0. No package manager is executed: the pinned pnpm version must already be locally resolvable through its installation metadata or Corepack cache.
 

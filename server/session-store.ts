@@ -435,10 +435,12 @@ function requiresExplicitTerminalReopen(session: StoredSession): boolean {
 /**
  * Records a session as closed without deleting it. It leaves the open list and
  * the recovery set, keeps its identity, transcript, and provider data, and
- * records what it was about. Unless `keepQueue` is set, anything waiting to be
- * sent goes with the runtime, so reopening never sends anything by itself.
+ * records what it was about. Unless `keepWork` is set, anything waiting to be
+ * sent goes with the runtime, so reopening never sends anything by itself;
+ * with it, the queue, a failed send, and a context brief wait for Reopen as
+ * they do on any retained record.
  */
-function recordClosure(session: StoredSession, closedAt: string, keepQueue = false): void {
+function recordClosure(session: StoredSession, closedAt: string, keepWork = false): void {
   session.closedContext = closedSessionContext({
     title: session.title,
     cwd: session.cwd,
@@ -455,19 +457,19 @@ function recordClosure(session: StoredSession, closedAt: string, keepQueue = fal
   session.activity = undefined
   session.pendingPermission = undefined
   session.pendingUserInput = undefined
-  if (!keepQueue) {
+  session.queueDispatchAt = undefined
+  if (!keepWork) {
     session.queuedPrompts = []
     session.queuedCount = 0
+    session.queueState = undefined
+    session.queuedDispatch = undefined
+    session.terminalQueueDispatch = undefined
+    session.queuedPromptReservation = undefined
+    session.sdkQueueAdmission = undefined
+    session.recoverySeed = undefined
+    session.recoveryResend = undefined
+    session.failedPrompt = undefined
   }
-  session.queueState = undefined
-  session.queuedDispatch = undefined
-  session.queueDispatchAt = undefined
-  session.terminalQueueDispatch = undefined
-  session.queuedPromptReservation = undefined
-  session.sdkQueueAdmission = undefined
-  session.recoverySeed = undefined
-  session.recoveryResend = undefined
-  session.failedPrompt = undefined
   // Whatever was reading the transcript when it closed must not land
   // afterwards.
   session.transcriptEpoch = randomUUID()
@@ -874,11 +876,13 @@ export class SessionStore {
       }
       if (session.queueState !== undefined) validateQueueState(session.queueState)
       // Sessions are no longer suspended. One an older release suspended is
-      // closed as Close records it, keeping what was queued for it, so it can
-      // be reopened like any other; the flag itself is dropped everywhere.
+      // closed as Close records it, keeping the work still waiting for it, so
+      // it can be reopened like any other. A closed or archived one stays as
+      // it is: closing an archived one would start a deletion it never had.
+      // The flag itself is dropped everywhere.
       const legacy = session as StoredSession & { suspended?: unknown }
       if (legacy.suspended !== undefined) {
-        if (legacy.suspended === true && !session.closedAt) {
+        if (legacy.suspended === true && !session.closedAt && !session.archivedAt) {
           recordClosure(session, new Date(this.now()).toISOString(), true)
           session.revision = (session.revision ?? 0) + 1
           suspensionsRetired.push(id)

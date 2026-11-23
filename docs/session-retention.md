@@ -40,7 +40,8 @@ history, deletes a folder/worktree, or erases resumability. Close and Delete
 permanently are confirmed user actions ([app spec §3.3](app-spec.md)): Close
 keeps a session reopenable for 14 days, then deletes it. A session an older
 release suspended is closed when its computer first loads it, keeping its
-queued prompts, and logged as closed with cause `suspend-retired`. Default
+queued prompts, failed send, and context brief, and logged as closed with
+cause `suspend-retired`; an archived one stays archived. Default
 retention does not start a process for every retained record. Existing safe
 startup recovery may restore an owned terminal; ordinary discovery does not
 respawn a missing one. Failed recovery leaves a visible interruption.

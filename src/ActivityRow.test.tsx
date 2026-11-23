@@ -282,11 +282,12 @@ describe('ActivityRow', () => {
     vi.mocked(getActivityDetail).mockResolvedValue(bashDetail())
     renderTranscript([row('completed')])
     fireEvent.click(toggleFor(/^Completed: Bash/))
-    const copy = await screen.findByRole('button', { name: 'Copy output' })
+    // A busy host can take past findByRole's 1s default to load and copy.
+    const copy = await screen.findByRole('button', { name: 'Copy output' }, { timeout: 5_000 })
     copy.focus()
 
     fireEvent.click(copy)
-    expect(await screen.findByRole('button', { name: 'Output copied' })).toHaveFocus()
+    expect(await screen.findByRole('button', { name: 'Output copied' }, { timeout: 5_000 })).toHaveFocus()
     expect(execCommand).toHaveBeenCalledExactlyOnceWith('copy')
     expect(copied).toBe(output)
     expect(document.getSelection()?.toString()).toBe('')

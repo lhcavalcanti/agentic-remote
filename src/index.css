@@ -2230,8 +2230,8 @@ button {
 /* The Tasks status remains a separate action without replacing the activity
    time or nesting a button inside the session button. It is the row's only
    background-work cue, so it stays a quiet label with the task colour's dot,
-   filled only while pointed at or focused. Its target is centred on the
-   badges' 15px line, so the label reads on that line with the other states. */
+   filled only while pointed at or focused. Its label is centred on the
+   badges' 15px line, so it reads on that line with the other states. */
 .session-item__tasks {
   display: inline-flex;
   position: absolute;
@@ -2395,7 +2395,15 @@ button {
   align-self: start;
   justify-self: end;
   min-height: 40px;
+  margin-top: -6px;
   transform: none;
+}
+
+/* With Tasks beside it, the text hangs from the top instead of centring, so
+   its badges line meets the label, which rises into the row's padding. */
+.session-item__body--task-status:has(> .session-origin-run-link) > .session-item__open {
+  align-content: start;
+  padding-top: 6.5px;
 }
 
 .session-item__body:has(> .session-origin-run-link) .session-item__badges,
@@ -8120,8 +8128,19 @@ button {
     min-height: 40px;
   }
 
+  .workspace-crumbs button,
+  .knowledge-crumbs button,
   .session-filter {
     min-width: 40px;
+  }
+
+  /* Centred on the badges line, a 40px target would reach into the row
+     above, so it starts at the row's edge and holds its label up on that
+     line instead. */
+  .session-item__body:not(:has(> .session-origin-run-link)) > .session-item__tasks {
+    top: -6px;
+    padding: 0 5px 13px;
+    transform: none;
   }
 
   .document-view-controls .document-view-switch button {
@@ -8445,9 +8464,11 @@ button {
     position: relative;
   }
 
+  /* A folder as short as "~/" also reaches back over the line's plain text,
+     which it ends, to 44px wide. */
   .conversation-header__cwd::before {
     position: absolute;
-    inset: -16px 0 -10px;
+    inset: -16px 0 -10px min(0px, calc(100% - 44px));
     content: "";
   }
 
@@ -8775,6 +8796,18 @@ button {
   .session-item--suspended > .session-item__controls {
     align-self: end;
     margin-bottom: -3.5px;
+  }
+
+  /* A schedule-origin row centres its text against its Tasks and run-link
+     cells. Suspended, the text rests on the run link's line instead, so the
+     time, the run link and Resume share it. */
+  .session-item--suspended > .session-item__body:has(> .session-origin-run-link) > .session-item__open {
+    align-content: end;
+    padding: 0 0 12.5px;
+  }
+
+  .session-item--suspended:has(> .session-item__body > .session-origin-run-link) > .session-item__controls {
+    margin-bottom: 9px;
   }
 }
 

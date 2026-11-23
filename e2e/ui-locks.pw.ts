@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
   assertMousePointer,
   assertNoHorizontalOverflow,
@@ -11,6 +11,7 @@ import {
 } from './ui-scenes'
 import {
   FIXTURE_NOW,
+  KNOWLEDGE_DOCUMENT_TITLE,
   SELECTED_SESSION_ID,
   createWorkspaceFixtureState,
   fixtureActivityDetails,
@@ -1023,6 +1024,385 @@ for (const viewport of [uiViewports[0].viewport, { width: 1000, height: 640 }]) 
     })
   })
 }
+
+const phone = uiViewports.find((entry) => entry.name === 'phone')!
+const openScene = (page: Page, baseURL: string | undefined, name: UISceneName) =>
+  createUIScenes(baseURL).find((scene) => scene.name === name)!.setup(page)
+
+/**
+ * How far a touch through a control's centre still lands on it. Padding or a
+ * pseudo-element can make that more than the box the control draws, and
+ * anything laid over it less.
+ */
+function touchExtent(element: Element) {
+  const box = element.getBoundingClientRect()
+  const x = box.left + box.width / 2
+  const y = box.top + box.height / 2
+  const lands = (left: number, top: number) => {
+    const target = document.elementFromPoint(left, top)
+    return target !== null && (target === element || element.contains(target))
+  }
+  const reach = (dx: number, dy: number) => {
+    let steps = 0
+    while (steps < 40 && lands(x + dx * (steps + 1), y + dy * (steps + 1))) steps += 1
+    return steps
+  }
+  const name = element.getAttribute('aria-label') ?? element.textContent?.trim() ?? ''
+  if (!lands(x, y)) return { name, width: 0, height: 0 }
+  return { name, width: reach(-1, 0) + 1 + reach(1, 0), height: reach(0, -1) + 1 + reach(0, 1) }
+}
+
+async function expectTouchTargets(controls: Locator[], minimum = { width: 40, height: 40 }) {
+  for (const control of controls) {
+    await control.scrollIntoViewIfNeeded()
+    const extent = await control.evaluate(touchExtent)
+    expect(extent.width, `${extent.name} width`).toBeGreaterThanOrEqual(minimum.width)
+    expect(extent.height, `${extent.name} height`).toBeGreaterThanOrEqual(minimum.height)
+  }
+}
+
+/** WCAG contrast of an element's colour over the backgrounds painted behind it. */
+function paintedContrast(element: Element) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 1
+  canvas.height = 1
+  const context = canvas.getContext('2d', { willReadFrequently: true })!
+  // The canvas resolves any computed colour, color-mix() included, to sRGB.
+  const rgba = (color: string) => {
+    context.clearRect(0, 0, 1, 1)
+    context.fillStyle = color
+    context.fillRect(0, 0, 1, 1)
+    const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data
+    return [red, green, blue, alpha / 255]
+  }
+  const over = (top: number[], below: number[]) =>
+    [0, 1, 2].map((channel) => top[channel] * top[3] + below[channel] * (1 - top[3])).concat(1)
+  const layers: number[][] = []
+  for (let node: Element | null = element; node; node = node.parentElement) {
+    const layer = rgba(getComputedStyle(node).backgroundColor)
+    if (layer[3] > 0) layers.unshift(layer)
+    if (layer[3] === 1) break
+  }
+  const background = layers.reduce((below, layer) => over(layer, below), [255, 255, 255, 1])
+  const foreground = over(rgba(getComputedStyle(element).color), background)
+  const luminance = (color: number[]) => {
+    const [red, green, blue] = color.slice(0, 3).map((value) => {
+      const channel = value / 255
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+  }
+  const [lighter, darker] = [luminance(foreground), luminance(background)].sort((a, b) => b - a)
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+// §11 asks for 40px targets on a phone. The queue grip stays narrow beside the
+// message it drags but is as tall as the row's buttons, and the header folder
+// keeps its size as text while the line around it answers a touch.
+test.describe('phone touch targets', () => {
+  test.use({ viewport: phone.viewport, isMobile: phone.isMobile, hasTouch: phone.hasTouch })
+
+  test('queued prompt controls and grips', async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'composer-busy-queue')
+    try {
+      const queue = page.getByRole('region', { name: 'Queued prompts' })
+      for (const index of [1, 2]) {
+        await expectTouchTargets([
+          queue.getByRole('button', { name: `Edit queued prompt ${index}`, exact: true }),
+          queue.getByRole('button', { name: `Remove queued prompt ${index}`, exact: true }),
+        ])
+        await expectTouchTargets([queue.getByRole('button', { name: `Reorder queued prompt ${index}`, exact: true })],
+          { width: 16, height: 40 })
+      }
+      await assertNoHorizontalOverflow(page)
+    } finally { fixture.assertHealthy() }
+  })
+
+  test('recording strip', async ({ page, baseURL }) => {
+    await mockMicrophone(page)
+    const fixture = await openScene(page, baseURL, 'conversation')
+    try {
+      await page.getByRole('button', { name: 'Start microphone recording', exact: true }).click()
+      const strip = page.locator('.composer > .recording-panel')
+      await expect(strip).toContainText(/Recording \d+:\d\d/)
+      await expectTouchTargets([
+        strip.getByRole('button', { name: 'Cancel', exact: true }),
+        strip.getByRole('button', { name: 'Stop & transcribe', exact: true }),
+      ])
+    } finally { fixture.assertHealthy() }
+  })
+
+  test("Oracle's mode and model", async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'oracle-panel')
+    try {
+      const oracle = page.locator('#oracle-panel')
+      const mode = oracle.getByRole('group', { name: 'Oracle mode', exact: true })
+      await expectTouchTargets([
+        mode.getByRole('button', { name: 'Ask', exact: true }),
+        mode.getByRole('button', { name: 'Delegate', exact: true }),
+        oracle.getByRole('button', { name: /^Oracle model:/ }),
+      ])
+    } finally { fixture.assertHealthy() }
+  })
+
+  test("the tasks sheet's Close beside its wrapping title", async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'background-tasks-sheet')
+    try {
+      await expectTouchTargets([
+        page.getByRole('dialog', { name: /^Background tasks · / }).getByRole('button', { name: 'Close', exact: true }),
+      ])
+    } finally { fixture.assertHealthy() }
+  })
+
+  test('Knowledge breadcrumbs in the reader and the folder tree', async ({ page, baseURL }) => {
+    const fixture = await setupWorkspaceFixture(page, { baseUrl: baseURL!, knowledgeMode: 'hidden' })
+    try {
+      await page.goto(fixture.url)
+      await page.getByRole('button', { name: 'Session knowledge', exact: true }).click()
+      const knowledge = page.getByRole('complementary', { name: 'Session knowledge', exact: true })
+      await expect(knowledge.getByRole('heading', { name: KNOWLEDGE_DOCUMENT_TITLE, exact: true })).toBeVisible()
+      const reader = knowledge.getByRole('navigation', { name: 'Knowledge breadcrumb', exact: true })
+      await expectTouchTargets(await reader.getByRole('button').filter({ visible: true }).all())
+      await knowledge.getByRole('button', { name: /^(Show files|Back to files)$/ }).click()
+      // The folder tree is the sidebar's Knowledge view, a drawer on a phone.
+      const folder = page.getByRole('group', { name: 'Knowledge folder', exact: true })
+      await expect(folder.getByRole('button', { name: 'handbook', exact: true })).toBeVisible()
+      await expectTouchTargets(await folder.getByRole('button').all())
+    } finally { fixture.assertHealthy() }
+  })
+
+  test('the header folder', async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'conversation')
+    try {
+      await expectTouchTargets([page.getByRole('button', { name: 'Browse current session folder', exact: true })])
+    } finally { fixture.assertHealthy() }
+  })
+
+  test('Scroll to latest', async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'conversation-tool-rows')
+    try {
+      await page.getByRole('button', { name: /^Completed: Bash/ }).first().tap()
+      await expect(page.getByRole('button', { name: 'Copy output' }).first()).toBeVisible()
+      await page.locator('.timeline').evaluate((timeline) => { timeline.scrollTop = 0 })
+      await expectTouchTargets([page.getByRole('button', { name: 'Scroll to latest', exact: true })])
+    } finally { fixture.assertHealthy() }
+  })
+
+  test('the All filter', async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'session-list')
+    try {
+      await expectTouchTargets([page.getByRole('group', { name: 'Filter sessions', exact: true })
+        .getByRole('button', { name: 'All', exact: true })])
+    } finally { fixture.assertHealthy() }
+  })
+
+  test('the new-session tabs', async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'new-session-dialog')
+    try {
+      await expectTouchTargets(await page.getByRole('tablist', { name: 'Session type', exact: true }).getByRole('tab').all())
+    } finally { fixture.assertHealthy() }
+  })
+})
+
+for (const viewport of [uiViewports[0], phone]) {
+  test.describe(`queued prompts ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+
+    test('centre each grip in its handle', async ({ page, baseURL }) => {
+      const fixture = await openScene(page, baseURL, 'composer-busy-queue')
+      try {
+        const offsets = await page.locator('.queued-prompt > .drag-handle').evaluateAll((handles) => handles.map((handle) => {
+          const box = handle.getBoundingClientRect()
+          const grip = handle.querySelector('svg')!.getBoundingClientRect()
+          return {
+            x: grip.left + grip.width / 2 - (box.left + box.width / 2),
+            y: grip.top + grip.height / 2 - (box.top + box.height / 2),
+          }
+        }))
+        expect(offsets).toHaveLength(2)
+        for (const offset of offsets) {
+          expect(Math.abs(offset.x), 'horizontal offset').toBeLessThanOrEqual(1)
+          expect(Math.abs(offset.y), 'vertical offset').toBeLessThanOrEqual(1)
+        }
+      } finally { fixture.assertHealthy() }
+    })
+
+    for (const name of ['composer-busy-queue', 'composer-busy-queue-light'] as const) {
+      test(`keep queued text at 4.5:1 and the Stop icon at 3:1 in ${name.endsWith('-light') ? 'light' : 'graphite'}`, async ({ page, baseURL }) => {
+        const fixture = await openScene(page, baseURL, name)
+        try {
+          const queue = page.getByRole('region', { name: 'Queued prompts' })
+          const text = [...await queue.locator('header > *').all(), ...await queue.locator('.queued-prompt > span:nth-child(2)').all()]
+          expect(text).toHaveLength(4)
+          for (const line of text) {
+            expect(await line.evaluate(paintedContrast), await line.textContent() ?? '').toBeGreaterThanOrEqual(4.5)
+          }
+          const stop = page.getByRole('button', { name: 'Stop response', exact: true }).locator('svg')
+          expect(await stop.evaluate(paintedContrast), 'Stop icon').toBeGreaterThanOrEqual(3)
+          // A message waiting to steer the running turn is labelled in the task colour.
+          const session = fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+          session.queuedPrompts![0].steer = true
+          session.revision = (session.revision ?? 0) + 1
+          fixture.emit({ type: 'session.upserted', session })
+          const steer = page.locator('.queued-prompt__steer')
+          await expect(steer).toBeVisible()
+          expect(await steer.evaluate(paintedContrast), 'Steer label').toBeGreaterThanOrEqual(4.5)
+        } finally { fixture.assertHealthy() }
+      })
+
+      test(`keep Save to queue at 4.5:1 while a queued prompt is rewritten in ${name.endsWith('-light') ? 'light' : 'graphite'}`, async ({ page, baseURL }) => {
+        const fixture = await openScene(page, baseURL, name)
+        try {
+          await page.getByRole('button', { name: 'Edit queued prompt 1', exact: true }).click()
+          const save = page.getByRole('button', { name: 'Save to queue', exact: true })
+          await expect(save).toBeEnabled()
+          expect(await save.evaluate(paintedContrast)).toBeGreaterThanOrEqual(4.5)
+        } finally { fixture.assertHealthy() }
+      })
+    }
+  })
+
+  test.describe(`recording strip ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+
+    test('sits inside the composer, inset like the buttons it replaces', async ({ page, baseURL }) => {
+      await mockMicrophone(page)
+      const fixture = await openScene(page, baseURL, 'conversation')
+      try {
+        // A fixed clock holds the strip's timer at 0:00 for the lock.
+        await page.clock.setFixedTime(await page.evaluate(() => Date.now()))
+        await page.getByRole('button', { name: 'Start microphone recording', exact: true }).click()
+        await expect(page.locator('.composer > .recording-panel')).toContainText('Recording 0:00')
+        const layout = await page.locator('.composer').evaluate((composer) => {
+          const outer = composer.getBoundingClientRect()
+          const frame = getComputedStyle(composer)
+          const strip = composer.querySelector(':scope > .recording-panel')!
+          const box = strip.getBoundingClientRect()
+          const own = getComputedStyle(strip)
+          return {
+            border: [own.borderTopWidth, own.borderRightWidth, own.borderBottomWidth, own.borderLeftWidth],
+            left: box.left - outer.left - parseFloat(frame.borderLeftWidth),
+            right: outer.right - parseFloat(frame.borderRightWidth) - box.right,
+            bottom: outer.bottom - parseFloat(frame.borderBottomWidth) - box.bottom,
+          }
+        })
+        // No border of its own along the composer's, so no doubled edge.
+        expect(layout.border).toEqual(['0px', '0px', '0px', '0px'])
+        for (const side of ['left', 'right', 'bottom'] as const) {
+          expect(layout[side], `${side} inset`).toBeGreaterThanOrEqual(5.5)
+        }
+        await assertNoHorizontalOverflow(page)
+        await expect(page.locator('.composer-area')).toHaveScreenshot(`${viewport.name}-composer-recording.png`, lockedScreenshot)
+      } finally { fixture.assertHealthy() }
+    })
+  })
+
+  test.describe(`session rows ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+
+    test('keep the Tasks label on the badges line', async ({ page, baseURL }) => {
+      const fixture = await openScene(page, baseURL, 'session-list')
+      try {
+        const offset = await page.getByRole('navigation', { name: 'Sessions', exact: true })
+          .getByRole('button', { name: 'View background tasks for Check handbook links', exact: true })
+          .evaluate((button) => {
+            const label = document.createRange()
+            label.selectNodeContents(button.lastChild!)
+            const text = label.getBoundingClientRect()
+            const badge = button.parentElement!.querySelector('.provider-badge')!.getBoundingClientRect()
+            return (text.top + text.bottom) / 2 - (badge.top + badge.bottom) / 2
+          })
+        expect(Math.abs(offset), 'Tasks label below its badges line').toBeLessThanOrEqual(1)
+      } finally { fixture.assertHealthy() }
+    })
+
+    // Only a row under a mouse hides its other controls until pointed at.
+    if (!viewport.hasTouch) {
+      test('keep a lone Resume on the time line', async ({ page, baseURL }) => {
+        const fixture = await openScene(page, baseURL, 'session-list')
+        try {
+          const offset = await page.getByRole('navigation', { name: 'Sessions', exact: true })
+            .getByRole('button', { name: 'Resume Sketch the next handoff', exact: true })
+            .evaluate((button) => {
+              const time = button.closest('.session-item')!.querySelector('.session-item__time')!.getBoundingClientRect()
+              const box = button.getBoundingClientRect()
+              return (box.top + box.bottom) / 2 - (time.top + time.bottom) / 2
+            })
+          expect(Math.abs(offset), 'Resume below its time line').toBeLessThanOrEqual(1)
+        } finally { fixture.assertHealthy() }
+      })
+    }
+  })
+}
+
+test.describe('phone sheets and reading', () => {
+  test.use({ viewport: phone.viewport, isMobile: phone.isMobile, hasTouch: phone.hasTouch })
+
+  // §11: an installed iPhone reports its home indicator as a 34px inset.
+  for (const bottom of [0, 34]) {
+    test(`end a sheet's last action ${bottom ? 'above the home indicator' : 'clear of the screen edge'}`, async ({ page, baseURL, context }) => {
+      if (bottom) {
+        const session = await context.newCDPSession(page)
+        await session.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 59, bottom, left: 0, right: 0 } })
+      }
+      const fixture = await openScene(page, baseURL, 'runtime-dialog')
+      try {
+        const apply = page.getByRole('dialog', { name: 'Model and context' })
+          .getByRole('button', { name: 'Apply runtime settings', exact: true })
+        await apply.scrollIntoViewIfNeeded()
+        const below = await apply.evaluate((button) => window.innerHeight - button.getBoundingClientRect().bottom)
+        expect(below).toBeGreaterThanOrEqual(Math.max(12, bottom) - 0.5)
+      } finally { fixture.assertHealthy() }
+    })
+  }
+
+  test('line settings up with their search field', async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'app-settings')
+    try {
+      const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+      const search = (await dialog.getByRole('searchbox', { name: 'Search settings' })
+        .or(dialog.getByRole('textbox', { name: 'Search settings' })).boundingBox())!
+      const field = (await dialog.getByRole('combobox', { name: 'GitHub Copilot default model', exact: true }).boundingBox())!
+      expect(Math.abs(field.x - search.x), 'left edges').toBeLessThanOrEqual(0.5)
+      expect(Math.abs(field.x + field.width - search.x - search.width), 'right edges').toBeLessThanOrEqual(0.5)
+    } finally { fixture.assertHealthy() }
+  })
+
+  test('read the sheet eyebrow and the status line computer at 4.5:1 in light', async ({ page, baseURL }) => {
+    const fixture = await openScene(page, baseURL, 'background-tasks-sheet-light')
+    try {
+      const eyebrow = page.getByRole('dialog', { name: /^Background tasks · / }).locator('.eyebrow')
+      const computer = page.getByTestId('web-statusline').locator('.web-statusline__computer')
+      for (const text of [eyebrow, computer]) {
+        expect(await text.evaluate(paintedContrast), await text.textContent() ?? '').toBeGreaterThanOrEqual(4.5)
+      }
+    } finally { fixture.assertHealthy() }
+  })
+
+  test('hang a Knowledge task checkbox where the bullet was', async ({ page, baseURL }) => {
+    const fixture = await setupWorkspaceFixture(page, { baseUrl: baseURL!, knowledgeMode: 'hidden' })
+    try {
+      await page.goto(fixture.url)
+      await page.getByRole('button', { name: 'Session knowledge', exact: true }).click()
+      const knowledge = page.getByRole('complementary', { name: 'Session knowledge', exact: true })
+      await expect(knowledge.getByRole('heading', { name: KNOWLEDGE_DOCUMENT_TITLE, exact: true })).toBeVisible()
+      const items = knowledge.locator('.task-list-item')
+      await expect(items).toHaveCount(3)
+      const tasks = await items.evaluateAll((elements) => elements.map((item) => {
+        const text = [...item.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim())!
+        const range = document.createRange()
+        range.selectNodeContents(text)
+        return { marker: getComputedStyle(item).listStyleType, lines: [...range.getClientRects()].map((line) => line.left) }
+      }))
+      expect(tasks.some((task) => task.lines.length > 1), 'a task that wraps').toBe(true)
+      for (const task of tasks) {
+        expect(task.marker).toBe('none')
+        // A wrapped line starts where the first one's text does, after the box.
+        expect(Math.max(...task.lines) - Math.min(...task.lines)).toBeLessThanOrEqual(1)
+      }
+    } finally { fixture.assertHealthy() }
+  })
+})
 
 // App.test.tsx covers reconciliation, receipt failures, serialized queue races,
 // clipboard variants and history ownership. These locks add real-browser event

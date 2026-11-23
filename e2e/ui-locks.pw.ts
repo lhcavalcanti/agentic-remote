@@ -12,7 +12,9 @@ import {
 import {
   FIXTURE_NOW,
   KNOWLEDGE_DOCUMENT_TITLE,
+  KNOWLEDGE_ROOT_ID,
   SELECTED_SESSION_ID,
+  SUSPENDED_SESSION_ID,
   createWorkspaceFixtureState,
   fixtureActivityDetails,
   fixtureActivityMessages,
@@ -1030,9 +1032,9 @@ const openScene = (page: Page, baseURL: string | undefined, name: UISceneName) =
   createUIScenes(baseURL).find((scene) => scene.name === name)!.setup(page)
 
 /**
- * How far a touch through a control's centre still lands on it. Padding or a
- * pseudo-element can make that more than the box the control draws, and
- * anything laid over it less.
+ * How far a touch through a control's centre still lands on it, and where
+ * that reach ends above and below. Padding or a pseudo-element can make it
+ * more than the box the control draws, and anything laid over it less.
  */
 function touchExtent(element: Element) {
   const box = element.getBoundingClientRect()
@@ -1048,8 +1050,10 @@ function touchExtent(element: Element) {
     return steps
   }
   const name = element.getAttribute('aria-label') ?? element.textContent?.trim() ?? ''
-  if (!lands(x, y)) return { name, width: 0, height: 0 }
-  return { name, width: reach(-1, 0) + 1 + reach(1, 0), height: reach(0, -1) + 1 + reach(0, 1) }
+  if (!lands(x, y)) return { name, width: 0, height: 0, top: y, bottom: y }
+  const up = reach(0, -1)
+  const down = reach(0, 1)
+  return { name, width: reach(-1, 0) + 1 + reach(1, 0), height: up + 1 + down, top: y - up, bottom: y + down }
 }
 
 async function expectTouchTargets(controls: Locator[], minimum = { width: 40, height: 40 }) {
@@ -1155,26 +1159,38 @@ test.describe('phone touch targets', () => {
   })
 
   test('Knowledge breadcrumbs in the reader and the folder tree', async ({ page, baseURL }) => {
-    const fixture = await setupWorkspaceFixture(page, { baseUrl: baseURL!, knowledgeMode: 'hidden' })
+    // A one-letter folder makes the narrowest crumb.
+    const state = createWorkspaceFixtureState()
+    state.roots.find((root) => root.id === KNOWLEDGE_ROOT_ID)!.name = 'a'
+    const fixture = await setupWorkspaceFixture(page, { baseUrl: baseURL!, knowledgeMode: 'hidden', state })
     try {
       await page.goto(fixture.url)
       await page.getByRole('button', { name: 'Session knowledge', exact: true }).click()
       const knowledge = page.getByRole('complementary', { name: 'Session knowledge', exact: true })
       await expect(knowledge.getByRole('heading', { name: KNOWLEDGE_DOCUMENT_TITLE, exact: true })).toBeVisible()
       const reader = knowledge.getByRole('navigation', { name: 'Knowledge breadcrumb', exact: true })
+      await expect(reader.getByRole('button', { name: 'a', exact: true })).toBeVisible()
       await expectTouchTargets(await reader.getByRole('button').filter({ visible: true }).all())
       await knowledge.getByRole('button', { name: /^(Show files|Back to files)$/ }).click()
       // The folder tree is the sidebar's Knowledge view, a drawer on a phone.
       const folder = page.getByRole('group', { name: 'Knowledge folder', exact: true })
       await expect(folder.getByRole('button', { name: 'handbook', exact: true })).toBeVisible()
+      await expect(folder.getByRole('button', { name: 'a', exact: true })).toBeVisible()
       await expectTouchTargets(await folder.getByRole('button').all())
     } finally { fixture.assertHealthy() }
   })
 
-  test('the header folder', async ({ page, baseURL }) => {
+  test("the header folder, down to a home folder's ~/", async ({ page, baseURL }) => {
     const fixture = await openScene(page, baseURL, 'conversation')
     try {
-      await expectTouchTargets([page.getByRole('button', { name: 'Browse current session folder', exact: true })])
+      const folder = page.getByRole('button', { name: 'Browse current session folder', exact: true })
+      await expectTouchTargets([folder])
+      const session = fixture.state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
+      session.cwd = '/home/demo'
+      session.revision = (session.revision ?? 0) + 1
+      fixture.emit({ type: 'session.upserted', session })
+      await expect(folder).toHaveText('~/')
+      await expectTouchTargets([folder])
     } finally { fixture.assertHealthy() }
   })
 
@@ -1300,21 +1316,38 @@ for (const viewport of [uiViewports[0], phone]) {
   test.describe(`session rows ${viewport.name}`, () => {
     test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
 
-    test('keep the Tasks label on the badges line', async ({ page, baseURL }) => {
-      const fixture = await openScene(page, baseURL, 'session-list')
-      try {
-        const offset = await page.getByRole('navigation', { name: 'Sessions', exact: true })
-          .getByRole('button', { name: 'View background tasks for Check handbook links', exact: true })
-          .evaluate((button) => {
+    // A schedule-origin row gives its Tasks label a cell of its own beside the
+    // text, so it is checked as well as a plain row.
+    for (const [scene, title] of [
+      ['session-list', 'Check handbook links'],
+      ['session-origin-tasks', 'Review the complete field guide and the scheduled recovery checklist'],
+    ] as const) {
+      test(`keep the Tasks label on the badges line and its target inside a ${scene === 'session-list' ? 'plain' : 'schedule-origin'} row`, async ({ page, baseURL }) => {
+        const fixture = await openScene(page, baseURL, scene)
+        try {
+          const tasks = page.getByRole('navigation', { name: 'Sessions', exact: true })
+            .getByRole('button', { name: `View background tasks for ${title}`, exact: true })
+          await tasks.scrollIntoViewIfNeeded()
+          const offset = await tasks.evaluate((button) => {
             const label = document.createRange()
             label.selectNodeContents(button.lastChild!)
             const text = label.getBoundingClientRect()
             const badge = button.parentElement!.querySelector('.provider-badge')!.getBoundingClientRect()
             return (text.top + text.bottom) / 2 - (badge.top + badge.bottom) / 2
           })
-        expect(Math.abs(offset), 'Tasks label below its badges line').toBeLessThanOrEqual(1)
-      } finally { fixture.assertHealthy() }
-    })
+          expect(Math.abs(offset), 'Tasks label below its badges line').toBeLessThanOrEqual(1)
+          // Its target takes no touch meant for the row above or below.
+          const extent = await tasks.evaluate(touchExtent)
+          const row = await tasks.evaluate((button) => {
+            const box = button.closest('.session-item')!.getBoundingClientRect()
+            return { top: box.top, bottom: box.bottom }
+          })
+          expect(extent.top, 'Tasks target above its row').toBeGreaterThanOrEqual(row.top)
+          expect(extent.bottom, 'Tasks target below its row').toBeLessThanOrEqual(row.bottom)
+          if (viewport.hasTouch) expect(extent.height, 'Tasks target height').toBeGreaterThanOrEqual(40)
+        } finally { fixture.assertHealthy() }
+      })
+    }
 
     // Only a row under a mouse hides its other controls until pointed at.
     if (!viewport.hasTouch) {
@@ -1329,6 +1362,31 @@ for (const viewport of [uiViewports[0], phone]) {
               return (box.top + box.bottom) / 2 - (time.top + time.bottom) / 2
             })
           expect(Math.abs(offset), 'Resume below its time line').toBeLessThanOrEqual(1)
+        } finally { fixture.assertHealthy() }
+      })
+
+      test("keep a lone Resume on a schedule-origin row's time line, with its run link", async ({ page, baseURL }) => {
+        const fixture = await openScene(page, baseURL, 'session-origins')
+        try {
+          const session = fixture.state.sessions.find((entry) => entry.id === SUSPENDED_SESSION_ID)!
+          session.provenance = structuredClone(fixture.state.sessions[0].provenance)
+          session.revision = (session.revision ?? 0) + 1
+          fixture.emit({ type: 'session.upserted', session })
+          const resume = page.getByRole('navigation', { name: 'Sessions', exact: true })
+            .getByRole('button', { name: 'Resume Sketch the next handoff', exact: true })
+          await expect.poll(() => resume.evaluate((button) =>
+            button.closest('.session-item')!.querySelector('.session-origin-run-link') !== null)).toBe(true)
+          const offsets = await resume.evaluate((button) => {
+            const row = button.closest('.session-item')!
+            const middle = (element: Element) => {
+              const box = element.getBoundingClientRect()
+              return (box.top + box.bottom) / 2
+            }
+            const time = middle(row.querySelector('.session-item__time')!)
+            return { resume: middle(button) - time, run: middle(row.querySelector('.session-origin-run-link')!) - time }
+          })
+          expect(Math.abs(offsets.resume), 'Resume off its time line').toBeLessThanOrEqual(1)
+          expect(Math.abs(offsets.run), 'run link off its time line').toBeLessThanOrEqual(1)
         } finally { fixture.assertHealthy() }
       })
     }

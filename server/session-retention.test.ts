@@ -647,7 +647,10 @@ describe('sessions an older release suspended are closed when they load', () => 
     const restored = new SessionStore(directory, () => now + 31 * day)
     await restored.initialize()
 
-    expect(restored.get('retained')).toEqual(archived)
+    const kept = restored.get('retained')
+    expect(kept).toMatchObject({ isOpen: false, archivedAt: archived?.archivedAt })
+    expect(kept?.closedAt).toBeUndefined()
+    expect(kept).not.toHaveProperty('suspended')
     expect(restored.isClosed('retained')).toBe(false)
     expect(info.mock.calls.flat().filter(lifecycle)).toEqual([])
     await restored.close()

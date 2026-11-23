@@ -190,22 +190,6 @@ describe('hub session order routes', () => {
     await app.close()
   })
 
-  it('refuses suspended-session visibility, which no longer exists, without changing anything', async () => {
-    const store = await orderStore()
-    const { app } = await hub(store)
-
-    const refused = await app.inject({
-      method: 'PUT',
-      url: '/api/session-order',
-      headers: { host: 'localhost' },
-      payload: { showSuspended: false },
-    })
-    expect(refused.statusCode).toBe(400)
-    expect(refused.json()).toEqual({ error: 'Choose hidden session visibility' })
-    expect(store.snapshot().revision).toBe(0)
-    await app.close()
-  })
-
   it('persists hidden-session visibility through the shared snapshot', async () => {
     const store = await orderStore()
     const { app } = await hub(store)

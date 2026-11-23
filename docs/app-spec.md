@@ -496,11 +496,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Sessions are no longer suspended. When a computer loads a session an older
   release suspended, it MUST close it as Close records it, except that the
   work still waiting for it (queued messages, a failed send, a context brief)
-  is kept, log it once as closed with cause `suspend-retired`, and leave its
-  history, provider data, Knowledge binding, and hidden, unread, and order
-  entries untouched, so it appears in Recently closed and Reopen restores it.
-  A session that was already closed or archived stays as it was, and loading
-  again changes nothing.
+  is kept, and log it once as closed with cause `suspend-retired`. Its
+  history, provider data, and Knowledge binding MUST be kept, so it appears in
+  Recently closed and Reopen restores it. A session that was already closed or
+  archived stays as it was, and loading again changes nothing.
 - **Recently closed**, in the Sessions header between Refresh and New session,
   MUST list closed sessions newest first with when each closed and will be
   deleted, its context, **Reopen**, and a confirmed **Delete permanently**.

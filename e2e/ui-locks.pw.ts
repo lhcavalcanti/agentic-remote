@@ -242,6 +242,99 @@ for (const viewport of uiViewports) {
   })
 }
 
+for (const viewport of uiViewports) {
+  test.describe(`recently closed ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    const wide = viewport.viewport.width > 960
+    const title = 'Audit disk usage and propose cleanup'
+
+    test(wide
+      ? 'spreads each card across a wider dialog, with its buttons beside the title and its context in two columns'
+      : 'keeps the full-width sheet, with the buttons in a row below the context', async ({ page, baseURL }) => {
+      const fixture = await createUIScenes(baseURL).find((scene) => scene.name === 'recently-closed')!.setup(page)
+      try {
+        await assertNoHorizontalOverflow(page)
+        const dialog = page.getByRole('dialog', { name: 'Recently closed', exact: true })
+        const card = dialog.getByRole('article', { name: title })
+        const more = card.getByRole('button', { name: /^Show (more|less)$/ })
+        const measure = () => dialog.evaluate((element, title) => {
+          const box = (target: Element | null | undefined) => {
+            if (!target) throw new Error('Expected a laid-out element')
+            const { left, right, top, bottom, width, height } = target.getBoundingClientRect()
+            return { left, right, top, bottom, width, height }
+          }
+          const article = [...element.querySelectorAll('article')]
+            .find((candidate) => candidate.querySelector('h3')?.textContent === title)!
+          const button = (name: string) => [...article.querySelectorAll('button')]
+            .find((candidate) => (candidate.getAttribute('aria-label') ?? candidate.textContent) === name)
+          const [asked, replied] = article.querySelectorAll('.recently-closed-card__part')
+          // What you asked and the last reply, each in lines of its text.
+          const clamped = [asked!.querySelector('ul')!, replied!.querySelector('p')!].map((part) => ({
+            lines: Math.round(part.clientHeight / Number.parseFloat(getComputedStyle(part.firstElementChild ?? part).lineHeight)),
+            cut: part.scrollHeight > part.clientHeight + 1,
+          }))
+          return {
+            dialog: box(element),
+            intro: box(element.querySelector('.recently-closed-dialog__intro')),
+            list: box(element.querySelector('.recently-closed-list')),
+            header: box(article.querySelector('header')),
+            summary: box(article.querySelector('.recently-closed-card__summary')),
+            asked: box(asked),
+            replied: box(replied),
+            reopen: box(button(`Reopen ${title}`)),
+            remove: box(button(`Delete ${title} permanently`)),
+            toggle: box(button('Show more') ?? button('Show less')),
+            clamped,
+          }
+        }, title)
+        const layout = await measure()
+
+        // The note on how long sessions are kept stands apart from the first card.
+        expect(layout.list.top - layout.intro.bottom).toBeGreaterThanOrEqual(12)
+        // Three lines of each until Show more, which a finger hits easily.
+        for (const part of layout.clamped) expect(part.lines).toBeLessThanOrEqual(3)
+        expect(layout.clamped.some((part) => part.cut)).toBe(true)
+        expect(layout.toggle.height).toBeGreaterThanOrEqual(40)
+        expect(layout.toggle.width).toBeGreaterThanOrEqual(40)
+        for (const action of [layout.reopen, layout.remove]) expect(action.height).toBeGreaterThanOrEqual(40)
+        expect(layout.reopen.right).toBeLessThanOrEqual(layout.remove.left)
+        if (wide) {
+          expect(layout.dialog.width).toBe(900)
+          // Reopen and Delete permanently sit in the header, right of the title, where and when.
+          for (const action of [layout.reopen, layout.remove]) {
+            expect(action.top).toBeGreaterThanOrEqual(layout.header.top - 0.5)
+            expect(action.bottom).toBeLessThanOrEqual(layout.header.bottom + 0.5)
+            expect(action.left).toBeGreaterThanOrEqual(layout.summary.right)
+            expect(action.bottom).toBeLessThanOrEqual(layout.asked.top)
+          }
+          // You asked beside Last reply.
+          expect(layout.replied.top).toBeCloseTo(layout.asked.top, 0)
+          expect(layout.replied.left).toBeGreaterThanOrEqual(layout.asked.right + 16)
+        } else {
+          expect(layout.dialog.width).toBe(viewport.viewport.width)
+          expect(layout.replied.top).toBeGreaterThanOrEqual(layout.asked.bottom)
+          // The button row shares the card's width, below Show more.
+          expect(layout.reopen.top).toBeCloseTo(layout.remove.top, 0)
+          expect(layout.reopen.top).toBeGreaterThanOrEqual(layout.toggle.bottom)
+          expect(layout.remove.right - layout.reopen.left).toBeGreaterThanOrEqual(layout.header.width - 1)
+        }
+
+        await more.click()
+        await expect(more).toHaveAttribute('aria-expanded', 'true')
+        await expect(more).toHaveText('Show less')
+        const open = await measure()
+        expect(open.clamped.map((part) => part.cut)).toEqual([false, false])
+        expect(Math.max(...open.clamped.map((part) => part.lines))).toBeGreaterThan(3)
+        await more.click()
+        await expect(more).toHaveAttribute('aria-expanded', 'false')
+        expect((await measure()).clamped).toEqual(layout.clamped)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+  })
+}
+
 const sessionPath = `/api/computers/fixture-studio/sessions/${SELECTED_SESSION_ID}`
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true })
 

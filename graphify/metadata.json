@@ -1038,7 +1038,7 @@
     "server/feature-flags.test.ts": "5e918fec771a56ce6f4dcd354cbf41c8ad8740c067ece5acffd6100aed9d34ab",
     "server/file-upload-routes.test.ts": "c9714330279f98c3942fe8e5e26a6d9c89bd80ac05c7929eef758b956f073d2b",
     "server/file-upload-routes.ts": "cf922309a2f3bba0c83e2448f39bc292b983c9f3830ccffe0adbab241d3aa7a9",
-    "server/full-gate.test.ts": "0d5ee37c73e959ccb0a3a80203e2785c1a225339824d43eaa99ef94131d3db5a",
+    "server/full-gate.test.ts": "57bfc5c0a645a0afca682e149729bb44483f7d00f919c256902ac5f5e5cd5b75",
     "server/history-projection.test.ts": "21dafd80c118238e83ae63320993d68fcb62b3a5179b56d0bc114501ba79550f",
     "server/host-telemetry/alerts.test.ts": "44f3fd9e2646178eb195b436a6e9ab3fa01d9af47236d1d887c0bc64ac18e51b",
     "server/host-telemetry/alerts.ts": "1fba4a02feabfbb5c8df62e153a57689db4275e67d359e35f96dbccf4cb785a1",
@@ -1863,13 +1863,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "0f8df3c2b0eecb247ce124862624fd10d5cd475291b43b109e0a0d9b7c8ec7d1",
+    "GRAPH_REPORT.md": "d49456d6bfb77e20a9353bae44a99538304bd8d2736ad3d7ccbb8a30f58447da",
     "communities.json": "7b2d0637c53434bfa30850f704500923d0a502cc9dabc6c6712bb4ce61243fc5",
-    "graph.html": "93318efc40b8f4de5b78dd0914287142fabe15abe58760872586061bdcf6594c",
-    "graph.json": "51b4a0dee2de439acf7feff2eb83e4139994112efdc81d40288836e8c6c3da63"
+    "graph.html": "57347c70c4e969df105582e1af61803b4af173d76be58b78d731422ba4427720",
+    "graph.json": "cf2894fe16359e2ae20537347a5d3c5e8bc50815818931f2cbfd24e2600f53c6"
   },
   "schema_version": 1,
-  "source_commit": "c06994dca18c2fcc912366f47adc826757b5ffb1",
-  "source_fingerprint": "76ecf6873539c02c386efc4e55a77b62e7f36a31443c8ca6b392258f7d65c3bb",
-  "working_tree_changes": []
+  "source_commit": "62f34489d5583c9800bc07c1dd8a11ac85ee766a",
+  "source_fingerprint": "8face890291233d06ea42650384f846e22f96b39f941ab1157c50cd695a013f6",
+  "working_tree_changes": [
+    "server/full-gate.test.ts"
+  ]
 }

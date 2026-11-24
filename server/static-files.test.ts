@@ -135,6 +135,28 @@ describe('static files', () => {
     expect(plain.rawPayload.toString()).toBe(script.slice(0, 10))
   })
 
+  it('answers 406 when only the unencoded file is left for a client that refuses it', async () => {
+    const encoded = await get(asset, { 'accept-encoding': 'br, identity;q=0' })
+    expect(encoded.statusCode).toBe(200)
+    expect(encoded.headers['content-encoding']).toBe('br')
+
+    for (const [url, acceptEncoding] of [
+      [asset, 'identity;q=0, br;q=0, gzip;q=0'],
+      ['/assets/small-AbC123xy.css', 'br, gzip, identity;q=0'],
+      ['/sessions/example', '*;q=0'],
+      ['/manifest.webmanifest', 'gzip;q=1, *;q=0'],
+    ]) {
+      for (const method of ['GET', 'HEAD'] as const) {
+        const response = await app.inject({ method, url, headers: { 'accept-encoding': acceptEncoding } })
+        expect(response.statusCode, `${method} ${url}`).toBe(406)
+        expect(response.headers.vary, url).toMatch(/accept-encoding/i)
+        expect(response.headers['cache-control'], url).toBeUndefined()
+        expect(response.headers.etag, url).toBeUndefined()
+        if (method === 'GET') expect(response.json(), url).toEqual({ error: 'Not acceptable' })
+      }
+    }
+  })
+
   it('answers API paths, missing assets and compressed siblings with a JSON 404', async () => {
     for (const url of [
       '/api/missing',

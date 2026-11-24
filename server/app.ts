@@ -3,7 +3,6 @@ import { fileURLToPath } from 'node:url'
 import { readFile, realpath } from 'node:fs/promises'
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import fastifyMultipart from '@fastify/multipart'
-import fastifyStatic from '@fastify/static'
 import fastifyWebsocket from '@fastify/websocket'
 import { z } from 'zod'
 import { parseAppVersion, type AppVersion } from '../shared/app-version.js'
@@ -42,6 +41,7 @@ import { KnowledgeStore } from './knowledge-store.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
 import { registerResponseCompression } from './response-compression.js'
+import { registerStaticFiles } from './static-files.js'
 import { resolveDataDirectory } from './paths.js'
 import { PushNotificationService } from './push-notification-service.js'
 import { NotificationStore } from './notification-store.js'
@@ -152,12 +152,6 @@ function errorStatusCode(error: unknown): number | undefined {
   }
   const statusCode = Reflect.get(error, 'statusCode')
   return typeof statusCode === 'number' ? statusCode : undefined
-}
-
-function isAppleTouchIconProbe(url: string): boolean {
-  const pathname = url.split(/[?#]/, 1)[0]
-  const name = pathname.slice(pathname.lastIndexOf('/') + 1)
-  return /^apple-touch-icon(?:-\d+x\d+)?(?:-precomposed)?\.png$/i.test(name)
 }
 
 export async function buildApp(
@@ -870,23 +864,7 @@ export async function buildApp(
     node: identity.info,
   }))
 
-  if (publicDirectory) {
-    await app.register(fastifyStatic, {
-      root: publicDirectory,
-      wildcard: false,
-    })
-    app.setNotFoundHandler((request, reply) => {
-      if (
-        request.url.startsWith('/api/') ||
-        request.url.startsWith('/node-api/') ||
-        request.url.startsWith('/assets/') ||
-        isAppleTouchIconProbe(request.url)
-      ) {
-        return reply.code(404).send({ error: 'Not found' })
-      }
-      return reply.sendFile('index.html')
-    })
-  }
+  if (publicDirectory) await registerStaticFiles(app, publicDirectory)
 
   const cliCanary = agent && options.cliCanary
     ? createCliCanary({

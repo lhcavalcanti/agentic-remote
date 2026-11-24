@@ -557,10 +557,10 @@ is embedded in the browser bundle and `sw.js`, and recorded with the package
 version in `dist/build-info.json`. Rebuilding an unchanged commit deliberately
 creates a new identity; copying or restarting that build does not.
 
-Publication copies the complete `dist` directory, including this metadata,
-without regenerating the ID. Rollback restores the original artifact and ID,
-not a new build of the old sources. No Git metadata is needed in an installed
-release.
+Publication copies the complete `dist` directory, including this metadata and
+the precompressed `.br`/`.gz` files, without regenerating the ID. Rollback
+restores the original artifact and ID, not a new build of the old sources. No
+Git metadata is needed in an installed release.
 
 A static-serving hub resolves `AGENTIC_REMOTE_RELEASE_DIR` (or its default
 `dist`) once at startup and reads the identity there. `/api/version` returns

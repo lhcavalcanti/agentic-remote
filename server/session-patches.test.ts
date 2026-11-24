@@ -828,7 +828,7 @@ describe('task patch receiver', () => {
 
 describe('session patch receiver', () => {
   it('asks once for a session whose patch does not apply, and drops patches until it arrives', () => {
-    const requests: HubResyncRequest[] = []
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
     const receiver = new SessionPatchReceiver((request) => requests.push(request))
     const { messages: _messages, ...summary } = session('a', [])
     const patch = (from: number, to: number): HubWireEvent => ({
@@ -845,7 +845,7 @@ describe('session patch receiver', () => {
   })
 
   it('rejects a patch whose counts do not add up', () => {
-    const requests: HubResyncRequest[] = []
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
     const receiver = new SessionPatchReceiver((request) => requests.push(request))
     receiver.receive({ type: 'session.upserted', session: session('a', []), patchVersion: 1 })
     const { messages: _messages, ...summary } = session('a', [])
@@ -856,7 +856,7 @@ describe('session patch receiver', () => {
   })
 
   it('treats a whole session without a version as having no base', () => {
-    const requests: HubResyncRequest[] = []
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
     const receiver = new SessionPatchReceiver((request) => requests.push(request))
     receiver.receive({ type: 'session.upserted', session: session('a', []), patchVersion: 1 })
     receiver.receive({ type: 'session.upserted', session: session('a', []) })

@@ -1978,6 +1978,76 @@ describe('multi-node hub', () => {
     }
   })
 
+  it('opens a window of a long session and pages it, on the hub and through a node', async () => {
+    const long = (id: string): SessionDetail => ({
+      ...session(id, id),
+      messages: Array.from({ length: 12 }, (_, index) => ({
+        id: `m${index}`, role: 'assistant' as const, content: `line ${index}`, createdAt: '2026-07-22T00:00:00.000Z',
+      })),
+    })
+    const localService = new FakeSessionService(long('local-session'))
+    const remoteService = new FakeSessionService(long('remote-session'))
+    const remoteOpen = vi.spyOn(remoteService, 'openSession')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-window-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-window-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address()
+      if (!address || typeof address === 'string') throw new Error('Node has no TCP address')
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: { baseUrl: `http://127.0.0.1:${address.port}`, token: remote.identity.token, name: 'window-node' },
+      })).statusCode).toBe(201)
+      const ids = (messages: { id: string }[]) => messages.map((message) => message.id)
+      for (const [computerId, sessionId] of [
+        [hub.identity.info.id, 'local-session'],
+        [remote.identity.info.id, 'remote-session'],
+      ]) {
+        const path = `/api/computers/${computerId}/sessions/${sessionId}`
+        for (const query of ['?window=5', '?passive=1&window=5']) {
+          const opened = await hub.app.inject({ method: 'GET', url: `${path}${query}` })
+          expect(opened.statusCode, opened.body).toBe(200)
+          expect(opened.json().session).toMatchObject({ computerId, messagesStart: 7, messagesTotal: 12 })
+          expect(ids(opened.json().session.messages)).toEqual(['m7', 'm8', 'm9', 'm10', 'm11'])
+        }
+        const page = await hub.app.inject({ method: 'GET', url: `${path}/messages?before=7&beforeId=m7&limit=5` })
+        expect(page.statusCode, page.body).toBe(200)
+        expect(page.json()).toMatchObject({ messagesStart: 2, messagesTotal: 12 })
+        expect(ids(page.json().messages)).toEqual(['m2', 'm3', 'm4', 'm5', 'm6'])
+        const moved = await hub.app.inject({ method: 'GET', url: `${path}/messages?before=7&beforeId=m3&limit=5` })
+        expect(moved.statusCode).toBe(409)
+        const invalid = await hub.app.inject({ method: 'GET', url: `${path}?window=0` })
+        expect(invalid.statusCode).toBe(400)
+        // A reader that does not ask is sent the whole transcript, as before.
+        const whole = await hub.app.inject({ method: 'GET', url: path })
+        expect(whole.json().session.messages).toHaveLength(12)
+        expect(whole.json().session).not.toHaveProperty('messagesStart')
+        // What a change answers with is windowed for a browser that says so.
+        const renamed = await hub.app.inject({
+          method: 'PATCH', url: path, payload: { title: 'Renamed' }, headers: { 'x-transcript-window': '5' },
+        })
+        expect(renamed.statusCode, renamed.body).toBe(200)
+        expect(renamed.json().session).toMatchObject({ title: 'Renamed', messagesStart: 7, messagesTotal: 12 })
+        const renamedWhole = await hub.app.inject({ method: 'PATCH', url: path, payload: { title: 'Whole' } })
+        expect(renamedWhole.json().session.messages).toHaveLength(12)
+      }
+      expect(remoteOpen).toHaveBeenCalledWith('remote-session', { window: 5 })
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
   it('preserves typed remote owner conflicts and sanitizes unexpected provider failures', async () => {
     const localService = new FakeSessionService(session('local-session', 'Local'))
     const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
@@ -3494,6 +3564,36 @@ function taskSnapshot(running: boolean): BackgroundTaskSnapshot {
 }
 
 describe('remote snapshot consistency', () => {
+  it('windows a whole answer from a node that predates windows, and pages it on the hub', async () => {
+    const { manager, client, computer } = await remoteSnapshotFixture()
+    const whole: SessionDetail = {
+      ...session('long', 'Long'),
+      messages: Array.from({ length: 12 }, (_, index) => ({
+        id: `m${index}`, role: 'assistant' as const, content: `line ${index}`, createdAt: '2026-07-22T00:00:00.000Z',
+      })),
+    }
+    vi.spyOn(client, 'getSession').mockResolvedValue(whole)
+    // An older node has no route for pages.
+    vi.spyOn(client, 'readMessages').mockRejectedValue(new RemoteNodeRequestError('Not Found', 404))
+    const ids = (messages: { id: string }[]) => messages.map((message) => message.id)
+
+    const opened = await manager.getSession(computer.id, 'long', { window: 5 })
+    const read = await manager.readSession(computer.id, 'long', { window: 5 })
+    const page = await manager.readMessages(computer.id, 'long', { before: 7, beforeId: 'm7', limit: 5 })
+
+    expect(client.getSession).toHaveBeenCalledWith('long', { window: 5 })
+    expect(client.getSession).toHaveBeenCalledWith('long', { passive: true, window: 5 })
+    for (const windowed of [opened, read]) {
+      expect(windowed).toMatchObject({ computerId: computer.id, messagesStart: 7, messagesTotal: 12 })
+      expect(ids(windowed.messages)).toEqual(['m7', 'm8', 'm9', 'm10', 'm11'])
+    }
+    expect(page).toMatchObject({ messagesStart: 2, messagesTotal: 12 })
+    expect(ids(page.messages)).toEqual(['m2', 'm3', 'm4', 'm5', 'm6'])
+    await expect(manager.readMessages(computer.id, 'long', { before: 7, beforeId: 'm3', limit: 5 }))
+      .rejects.toMatchObject({ statusCode: 409 })
+    manager.stop()
+  })
+
   it('removes an archived cache entry explicitly deleted while the node was disconnected', async () => {
     const { manager, client, computer, managed, events } = await remoteSnapshotFixture()
     vi.spyOn(client, 'providers', 'get').mockReturnValue([{

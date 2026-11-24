@@ -46,6 +46,7 @@ import {
   rebaseKnowledgeRelativePath,
 } from '../shared/knowledge-path'
 import { closedSessionContext } from '../shared/closed-sessions'
+import { pageWholeSession, windowSession } from '../shared/transcript-window'
 
 export const FIXTURE_NOW = '2026-09-04T16:20:00.000Z'
 export const SELECTED_SESSION_ID = 'fixture-plan-workspace'
@@ -1911,11 +1912,26 @@ export async function setupWorkspaceFixture(
         await respond({ binding })
         return
       }
-      if (
-        (method === 'GET' && action === '') ||
-        (method === 'POST' && action === '/open')
-      ) {
+      if (method === 'GET' && action === '') {
+        // As the hub does: a read that asks for a window gets one.
+        const window = Number(url.searchParams.get('window'))
+        await respond({ session: windowSession(session, Number.isInteger(window) && window > 0 ? window : undefined) })
+        return
+      }
+      if (method === 'POST' && action === '/open') {
         await respond({ session })
+        return
+      }
+      if (method === 'GET' && action === '/messages') {
+        try {
+          await respond(pageWholeSession(session, {
+            before: Number(url.searchParams.get('before')),
+            beforeId: url.searchParams.get('beforeId') ?? '',
+            limit: Number(url.searchParams.get('limit')),
+          }))
+        } catch (error) {
+          await respond({ error: (error as Error).message }, (error as { statusCode?: number }).statusCode ?? 500)
+        }
         return
       }
       if (method === 'GET' && action === '/commands') {

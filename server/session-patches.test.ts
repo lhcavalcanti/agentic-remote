@@ -43,11 +43,12 @@ class Browser {
   dropNext = false
   readonly socket: PatchSocket
 
-  constructor(patches: boolean) {
+  constructor(patches: boolean, window?: number) {
     this.socket = {
       readyState: 1,
       send: (payload) => this.deliver(payload),
       ...(patches ? { patchVersions: new Map<string, number>() } : {}),
+      ...(window === undefined ? {} : { transcriptWindow: window }),
     }
   }
 
@@ -268,6 +269,194 @@ describe('session publications', () => {
     // Not vacuous: most deliveries were patches, and lost frames were recovered.
     expect(patched).toBeGreaterThan(5_000)
     expect(resynced).toBeGreaterThan(50)
+  })
+})
+
+describe('windowed session publications', () => {
+  const line = (index: number, extra: Partial<ChatMessage> = {}): ChatMessage =>
+    ({ id: `m${index}`, role: 'assistant', content: `line ${index}`, createdAt: at, ...extra })
+  const lines = (count: number) => Array.from({ length: count }, (_, index) => line(index))
+  const ids = (messages: readonly ChatMessage[] | undefined) => messages?.map((message) => message.id)
+  const frames = (browser: Browser) => browser.sent.map((payload) => JSON.parse(payload) as HubWireEvent)
+
+  it('sends a windowed socket the latest window first, then patches by absolute index', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(true, 3)
+    publications.add(browser.socket)
+    const ten = lines(10)
+    publications.broadcast({ type: 'session.upserted', session: session('a', ten) })
+    publications.broadcast({ type: 'session.upserted', session: session('a', [...ten, line(10)]) })
+
+    const [first, patch] = frames(browser)
+    expect(first).toMatchObject({
+      type: 'session.upserted', patchVersion: 1,
+      session: { messagesStart: 7, messagesTotal: 10, carriedMessages: [] },
+    })
+    expect(first.type === 'session.upserted' && ids(first.session.messages)).toEqual(['m7', 'm8', 'm9'])
+    expect(patch).toMatchObject({
+      type: 'session.patched', patch: { from: 1, to: 2, keep: 10, count: 11, messages: [line(10)] },
+    })
+    const seen = browser.seen.get('local:a')!
+    expect(seen).toMatchObject({ messagesStart: 7, messagesTotal: 11 })
+    expect(ids(seen.messages)).toEqual(['m7', 'm8', 'm9', 'm10'])
+  })
+
+  it('sends a fresh window, never the whole tail, when a change reaches back before it', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(true, 3)
+    publications.add(browser.socket)
+    const messages = lines(1_000)
+    messages[2] = line(2, { role: 'activity', activityStatus: 'running' })
+    publications.broadcast({ type: 'session.upserted', session: session('a', messages) })
+    // A long-running activity far back finishes.
+    const finished = messages.map((message, index) =>
+      index === 2 ? { ...message, activityStatus: 'completed' as const } : message)
+    publications.broadcast({ type: 'session.upserted', session: session('a', finished) })
+    // A burst longer than the window arrives between two publications.
+    publications.broadcast({ type: 'session.upserted', session: session('a', [...finished, ...lines(1_010).slice(1_000)]) })
+
+    const [first, refreshed, burst] = frames(browser)
+    expect(first.type === 'session.upserted' && ids(first.session.carriedMessages)).toEqual(['m2'])
+    expect(refreshed).toMatchObject({
+      type: 'session.upserted', patchVersion: 2,
+      session: { messagesStart: 997, messagesTotal: 1_000, carriedMessages: [finished[2]] },
+    })
+    expect(burst).toMatchObject({
+      type: 'session.upserted', patchVersion: 3, session: { messagesStart: 1_007, messagesTotal: 1_010 },
+    })
+    for (const payload of browser.sent) expect(payload.length).toBeLessThan(1_000)
+    expect(ids(browser.seen.get('local:a')!.messages)).toEqual(['m1007', 'm1008', 'm1009'])
+    expect(browser.resyncCount).toBe(0)
+  })
+
+  it('answers a windowed resync with the window, and sends other sockets what they always had', () => {
+    const publications = new SessionPublications()
+    const windowed = new Browser(true, 3)
+    const patching = new Browser(true)
+    const legacy = new Browser(false)
+    for (const browser of [windowed, patching, legacy]) publications.add(browser.socket)
+    const event: HubEvent = { type: 'session.upserted', session: session('a', lines(10)) }
+    publications.broadcast(event)
+    publications.resync(windowed.socket, 'local', 'a')
+
+    expect(frames(windowed)[1]).toMatchObject({
+      type: 'session.upserted', patchVersion: 1, session: { messagesStart: 7, messagesTotal: 10 },
+    })
+    expect(patching.sent).toEqual([JSON.stringify({ ...event, patchVersion: 1 })])
+    expect(legacy.sent).toEqual([JSON.stringify(event)])
+  })
+
+  it('converges every windowed browser on the latest window, in bounded frames, whatever happens', () => {
+    let patched = 0
+    let refreshed = 0
+    for (let seed = seedOffset + 1; seed <= seedOffset + 120; seed += 1) {
+      const next = random(seed)
+      const publications = new SessionPublications()
+      const browsers: Browser[] = []
+      const latest = new Map<string, ManagedSession>()
+      const join = () => {
+        const browser = new Browser(true, 3 + Math.floor(next() * 6))
+        browsers.push(browser)
+        publications.add(browser.socket)
+      }
+      join()
+      join()
+      let made = 0
+      for (let step = 0; step < 150; step += 1) {
+        const id = `s${Math.floor(next() * 3)}`
+        const key = `local:${id}`
+        const choice = next()
+        if (choice < 0.04) {
+          join()
+          continue
+        }
+        if (choice < 0.07) {
+          latest.delete(key)
+          publications.broadcast({ type: 'session.removed', computerId: 'local', sessionId: id })
+          continue
+        }
+        if (choice < 0.1) browsers[Math.floor(next() * browsers.length)].dropNext = true
+        let messages = (latest.get(key)?.messages ?? []).map((message) => ({ ...message }))
+        const edit = next()
+        if (edit < 0.45) {
+          const count = next() < 0.9 ? 1 : 1 + Math.floor(next() * 12)
+          for (let added = 0; added < count; added += 1) {
+            made += 1
+            messages.push(next() < 0.3
+              ? { id: `m${made}`, role: 'activity', content: `tool ${made}`, createdAt: at, activityStatus: next() < 0.5 ? 'running' : 'completed' }
+              : { id: `m${made}`, role: 'assistant', content: `step ${made}`, createdAt: at })
+          }
+        } else if (edit < 0.6 && messages.length) {
+          messages[messages.length - 1] = { ...messages.at(-1)!, content: `${messages.at(-1)!.content}+` }
+        } else if (edit < 0.75 && messages.length) {
+          // An activity anywhere finishes, often far before the window.
+          const index = Math.floor(next() * messages.length)
+          messages[index] = { ...messages[index], role: 'activity', activityStatus: 'completed' }
+        } else if (edit < 0.8 && messages.length > 1) {
+          messages.splice(Math.floor(next() * messages.length), 1)
+        } else if (edit < 0.83) {
+          messages = []
+        }
+        const published = session(id, messages, { revision: step })
+        latest.set(key, published)
+        publications.broadcast({ type: 'session.upserted', session: published })
+        for (const browser of browsers) {
+          for (const request of browser.resyncs.splice(0)) {
+            publications.resync(browser.socket, request.computerId, request.sessionId)
+          }
+        }
+      }
+      for (const [key, value] of latest) {
+        publications.broadcast({ type: 'session.upserted', session: value })
+        for (const browser of browsers) {
+          for (const request of browser.resyncs.splice(0)) {
+            publications.resync(browser.socket, request.computerId, request.sessionId)
+          }
+        }
+        for (const browser of browsers) {
+          const seen = browser.seen.get(key)!
+          const whole = JSON.parse(JSON.stringify(value.messages)) as ChatMessage[]
+          const start = seen.messagesStart!
+          expect(seen.messagesTotal, `seed ${seed} ${key}`).toBe(whole.length)
+          expect(seen.messages, `seed ${seed} ${key}`).toEqual(whole.slice(start))
+          const before = new Map(whole.slice(0, start).map((message) => [message.id, message]))
+          for (const message of whole.slice(0, start)) {
+            if (message.role === 'activity' && message.activityStatus === 'running') {
+              expect(seen.carriedMessages?.map((carried) => carried.id), `seed ${seed} ${key}`).toContain(message.id)
+            }
+          }
+          for (const carried of seen.carriedMessages ?? []) {
+            expect(before.get(carried.id), `seed ${seed} ${key} carried`).toEqual(carried)
+          }
+        }
+      }
+      for (const browser of browsers) {
+        const size = browser.socket.transcriptWindow!
+        for (const frame of browser.sent.map((payload) => JSON.parse(payload) as HubWireEvent)) {
+          if (frame.type === 'session.patched') {
+            patched += 1
+            expect(frame.patch.messages.length).toBeLessThanOrEqual(size)
+          } else if (frame.type === 'session.upserted') {
+            refreshed += 1
+            expect(frame.session.messages.length).toBeLessThanOrEqual(size)
+          }
+        }
+      }
+    }
+    // Not vacuous: both kinds of frame were sent.
+    expect(patched).toBeGreaterThan(5_000)
+    expect(refreshed).toBeGreaterThan(1_000)
+  })
+
+  it('keeps the transcript a windowed socket holds when a roster summary arrives first', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(true, 3)
+    publications.add(browser.socket)
+    publications.broadcast({ type: 'session.upserted', summary: true, session: session('a', [], { revision: 2 }) })
+    expect(frames(browser)[0]).toMatchObject({ type: 'session.upserted', summary: true, session: { messages: [] } })
+    expect(frames(browser)[0].type === 'session.upserted' && frames(browser)[0]).not.toHaveProperty('session.messagesStart')
+    publications.broadcast({ type: 'session.upserted', session: session('a', lines(10)) })
+    expect(frames(browser)[1]).toMatchObject({ type: 'session.upserted', session: { messagesStart: 7, messagesTotal: 10 } })
   })
 })
 

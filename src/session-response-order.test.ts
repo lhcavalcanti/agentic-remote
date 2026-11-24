@@ -116,6 +116,13 @@ describe('Snapshot transcripts', () => {
     expect(row.messages).toEqual(held)
   })
 
+  it('carries a held window, with where it starts and what it carries, onto a summary', () => {
+    const carried = [{ id: 'm0', role: 'activity' as const, content: 'Still running', createdAt: session.updatedAt, activityStatus: 'running' as const }]
+    const windowed = { ...open, messagesStart: 40, messagesTotal: 41, carriedMessages: carried }
+    const [row] = carrySnapshotTranscripts([{ ...session, title: 'Renamed', messages: [] }], [windowed])
+    expect(row).toMatchObject({ title: 'Renamed', messages: held, messagesStart: 40, messagesTotal: 41, carriedMessages: carried })
+  })
+
   it('leaves a row that carries its own transcript alone', () => {
     const own = [{ id: 'm2', role: 'user' as const, content: 'Newer', createdAt: session.updatedAt }]
     const [row] = carrySnapshotTranscripts([{ ...session, messages: own }], [open])

@@ -6,11 +6,15 @@ import { DialogFrame } from '../components/DialogFrame'
 import { filterSentMessages, type SentHistoryContext } from './composer-state'
 
 export function SentMessages({
-  messages, receipts, sessionState, onChoose, onCancel, onUse,
+  messages, receipts, sessionState, earlier = 0, loadingEarlier = false, onLoadEarlier, onChoose, onCancel, onUse,
 }: {
   messages: readonly ChatMessage[]
   receipts?: readonly PromptAcceptanceReceipt[]
   sessionState?: SentHistoryContext
+  /** Messages from before the ones held, which a long session leaves unread until asked. */
+  earlier?: number
+  loadingEarlier?: boolean
+  onLoadEarlier?: () => void
   onChoose: (id: string) => void
   onCancel: () => void
   onUse: () => void
@@ -98,6 +102,16 @@ export function SentMessages({
           ))}
           {!matches.length ? <p role="status">{query.trim() ? 'No matching sent messages.' : 'No sent messages yet.'}</p> : null}
         </div>
+        {earlier > 0 ? (
+          <p className="composer-history__earlier">
+            <span>{`${earlier} earlier message${earlier === 1 ? '' : 's'} in this session ${earlier === 1 ? 'is' : 'are'} not loaded yet.`}</span>
+            {onLoadEarlier ? (
+              <button className="transcript-earlier" disabled={loadingEarlier} onClick={onLoadEarlier} type="button">
+                {loadingEarlier ? 'Loading…' : 'Load earlier'}
+              </button>
+            ) : null}
+          </p>
+        ) : null}
         <p className="composer-history__hint" role="status">
           {chosen ? 'Loaded into the composer, not sent. Cancel restores your draft.' : 'Choose a message to preview it. Your unsent draft stays parked.'}
         </p>

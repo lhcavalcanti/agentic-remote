@@ -40,6 +40,9 @@ import { ClosedSessionSweeper } from './closed-session-sweeper.js'
 import { launchIdentitySchema } from '../shared/launch-identity.js'
 import { updateComputerForLaunchIdentity } from './launch-identity.js'
 import { activityDetailsUnavailable } from './activity-details.js'
+import {
+  pageWholeSession, type SessionReadOptions, type TranscriptPage, type TranscriptPageQuery,
+} from '../shared/transcript-window.js'
 
 interface ProviderSessionServiceEvents {
   event: [event: ServerEvent]
@@ -140,12 +143,19 @@ export class ProviderSessionService
     ].sort((left, right) => (right.closedAt ?? '').localeCompare(left.closedAt ?? ''))
   }
 
-  getSession(id: string): SessionDetail | undefined {
-    return this.copilot.getSession(id) || this.claude.getSession(id)
+  getSession(id: string, options?: SessionReadOptions): SessionDetail | undefined {
+    return this.copilot.getSession(id, options) || this.claude.getSession(id, options)
   }
 
-  openSession(id: string): Promise<SessionDetail> {
-    return this.serviceFor(id).openSession(id)
+  openSession(id: string, options?: SessionReadOptions): Promise<SessionDetail> {
+    return this.serviceFor(id).openSession(id, options)
+  }
+
+  readMessages(id: string, query: TranscriptPageQuery): TranscriptPage {
+    const service = this.serviceFor(id)
+    return service.readMessages
+      ? service.readMessages(id, query)
+      : pageWholeSession(service.getSession(id), query)
   }
 
   activateSession(id: string): Promise<SessionDetail> {

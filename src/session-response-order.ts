@@ -75,6 +75,9 @@ export function projectSessionResponse(
  * A conversation that really was emptied says so through its own response or
  * event, which is authoritative and carries the emptiness before any snapshot
  * built from it can arrive.
+ *
+ * A held window comes along whole: where it starts, how long the transcript
+ * is, and the rows it carries from before it.
  */
 export function carrySnapshotTranscripts(
   rows: ManagedSession[],
@@ -86,7 +89,7 @@ export function carrySnapshotTranscripts(
   const held = new Map(
     existing
       .filter((entry) => entry.messages.length > 0)
-      .map((entry) => [`${entry.computerId}:${entry.id}`, entry.messages]),
+      .map((entry) => [`${entry.computerId}:${entry.id}`, entry]),
   )
   if (held.size === 0) {
     return rows
@@ -95,7 +98,11 @@ export function carrySnapshotTranscripts(
     if (row.messages.length > 0) {
       return row
     }
-    const messages = held.get(`${row.computerId}:${row.id}`)
-    return messages ? { ...row, messages } : row
+    const entry = held.get(`${row.computerId}:${row.id}`)
+    if (!entry) return row
+    const { messages, messagesStart, messagesTotal, carriedMessages } = entry
+    return messagesStart === undefined
+      ? { ...row, messages }
+      : { ...row, messages, messagesStart, messagesTotal, carriedMessages }
   })
 }

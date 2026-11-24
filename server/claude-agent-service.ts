@@ -87,6 +87,7 @@ import {
 } from './session-resources.js'
 import { readClaudeMcp } from './session-resource-transport.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
+import type { SessionReadOptions, TranscriptPage, TranscriptPageQuery } from '../shared/transcript-window.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -479,8 +480,8 @@ export class ClaudeAgentService
       .sort((left, right) => right.closedAt!.localeCompare(left.closedAt!))
   }
 
-  getSession(id: string): SessionDetail | undefined {
-    const session = this.store.get(id)
+  getSession(id: string, options?: SessionReadOptions): SessionDetail | undefined {
+    const session = this.store.get(id, options)
     return session ? this.queuedDispatches.view(session) : undefined
   }
 
@@ -488,8 +489,14 @@ export class ClaudeAgentService
     return this.store.has(id)
   }
 
-  async openSession(id: string): Promise<SessionDetail> {
-    return this.queuedDispatches.view(this.requireSession(id))
+  readMessages(id: string, query: TranscriptPageQuery): TranscriptPage {
+    const page = this.store.readMessages(id, query)
+    if (!page) throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+    return page
+  }
+
+  async openSession(id: string, options?: SessionReadOptions): Promise<SessionDetail> {
+    return this.queuedDispatches.view(this.requireSession(id, options))
   }
 
   async activateSession(id: string): Promise<SessionDetail> {
@@ -2564,8 +2571,8 @@ export class ClaudeAgentService
     }
   }
 
-  private requireSession(id: string): SessionDetail {
-    const session = this.store.get(id)
+  private requireSession(id: string, options?: SessionReadOptions): SessionDetail {
+    const session = this.store.get(id, options)
     if (!session) {
       throw new Error('Session not found')
     }

@@ -23,6 +23,19 @@ describe('SentMessages', () => {
     rerender(<SentMessages messages={messages} sessionState={{ status: 'idle' }} {...callbacks} />)
     expect(screen.getAllByRole('option')).toHaveLength(2)
   })
+  it('says when earlier messages are not loaded yet, and loads them on request', () => {
+    const onLoadEarlier = vi.fn()
+    const callbacks = { onChoose: vi.fn(), onCancel: vi.fn(), onUse: vi.fn() }
+    const { rerender } = render(<SentMessages messages={messages} earlier={120} onLoadEarlier={onLoadEarlier} {...callbacks} />)
+    expect(screen.getByText('120 earlier messages in this session are not loaded yet.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Load earlier' }))
+    expect(onLoadEarlier).toHaveBeenCalledOnce()
+    rerender(<SentMessages messages={messages} earlier={120} loadingEarlier onLoadEarlier={onLoadEarlier} {...callbacks} />)
+    expect(screen.getByRole('button', { name: 'Loading…' })).toBeDisabled()
+    rerender(<SentMessages messages={messages} earlier={0} onLoadEarlier={onLoadEarlier} {...callbacks} />)
+    expect(screen.queryByRole('button', { name: 'Load earlier' })).not.toBeInTheDocument()
+  })
+
   it('portals outside composer containers but inside the viewport-owning shell', () => {
     const shell = document.createElement('div')
     shell.className = 'app-shell'

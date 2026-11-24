@@ -171,6 +171,35 @@ describe('/api/events session patches', () => {
     }
   })
 
+  it('sends a socket that asked for a window the latest messages, then patches', async () => {
+    const { app, manager } = await fixture()
+    const windowed = await app.injectWS('/api/events?patches=1&window=2', { headers: trusted })
+    const patching = await app.injectWS('/api/events?patches=1', { headers: trusted })
+    try {
+      const received = inbox(windowed)
+      const whole = inbox(patching)
+      const first = session(['a'.repeat(10_000), 'b', 'c'])
+      const second = session(['a'.repeat(10_000), 'b', 'c', 'd'])
+      manager.emit('event', { type: 'session.upserted', session: first })
+      manager.emit('event', { type: 'session.upserted', session: second })
+      const [window, patch] = await received.next(2)
+      expect(window).toEqual({
+        type: 'session.upserted',
+        session: { ...first, messages: first.messages.slice(1), messagesStart: 1, messagesTotal: 3, carriedMessages: [] },
+        patchVersion: 1,
+      })
+      expect(JSON.stringify(window).length).toBeLessThan(1_000)
+      expect(patch).toMatchObject({
+        type: 'session.patched', patch: { from: 1, to: 2, keep: 3, count: 4, messages: [second.messages[3]] },
+      })
+      // A socket that did not ask is sent whole sessions, as before.
+      expect((await whole.next(1))[0]).toEqual({ type: 'session.upserted', session: first, patchVersion: 1 })
+    } finally {
+      windowed.terminate()
+      patching.terminate()
+    }
+  })
+
   it('still refuses an untrusted origin that asks for patches', async () => {
     const { app } = await fixture()
     await expect(app.injectWS('/api/events?patches=1', {

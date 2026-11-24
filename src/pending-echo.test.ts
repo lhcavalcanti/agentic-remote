@@ -40,6 +40,16 @@ describe('pending echoes', () => {
     expect(retainPendingEchoes([echo], again, 'running', 2_000)).toEqual([])
   })
 
+  it('is not confirmed by an identical message from before the window it was sent in', () => {
+    // Held from the fourth message on; the earlier ones are paged in later.
+    const window = [agent('a3', 'ok')]
+    const echo = createPendingEcho('e1', 'continue', window, 1_000, 3)
+    const paged = [user('u1', 'continue'), agent('a1', 'done'), user('u2', 'more'), ...window]
+    expect(unloggedPendingEchoes([echo], paged, 0)).toEqual([echo])
+    expect(retainPendingEchoes([echo], paged, 'running', 2_000, 0)).toEqual([echo])
+    expect(unloggedPendingEchoes([echo], [...paged, user('u3', 'continue')], 0)).toEqual([])
+  })
+
   it('matches across whitespace differences and long or collapsed text', () => {
     const long = `Line one\n\n${'x'.repeat(400)}`
     const echo = createPendingEcho('e1', long, earlier, 1_000)

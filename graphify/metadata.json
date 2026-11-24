@@ -653,9 +653,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 264,
+  "communities": 267,
   "community_algorithm": "louvain-seed-42",
-  "edges": 26324,
+  "edges": 26326,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -1287,8 +1287,8 @@
     "shared/app-version.ts": "5ba68ef40e41824d0f07d2fb249c10b03c1d43eb725eb72013905915040426c4",
     "shared/background-tasks.test.ts": "64df752cbe4dcba7ea530c54a4ecde316c0b84bc00a9f3deaddba72b47463b9a",
     "shared/background-tasks.ts": "b92ee6b9f0950db5bf64f8fb72880a1dbbcc8f9ee43a9f21b8d9ec8243763a9e",
-    "shared/closed-sessions.test.ts": "12664e11801686bfefb0361a5d036800d3f4c6c5730ca4bd185476cb3d6cc8b4",
-    "shared/closed-sessions.ts": "bf0c6a73520efa82f935641d29362b3fd7ec63a44086457994162e7f6d93377e",
+    "shared/closed-sessions.test.ts": "207db7beab7a7a90d06b196b7dcd8a9c0b725e3a71d97b96891e2a172fdaf1dd",
+    "shared/closed-sessions.ts": "7c4b9618cf335fa64d573441ff70d1bfd5d98b82bd3bf6a3f933009518b4cae3",
     "shared/contracts.ts": "856cfc0408d663f5cc0df00d18fd9bc8820e9a9cd70a2d86b9ec752f63932b89",
     "shared/dreamer.ts": "8a1095260e58e1cbecaa1b4ae6b8710de6bb511d6a091868bc98af9c6df9653c",
     "shared/feature-flags.test.ts": "a13828b5be59589872def25f8760ac1e12886d12fd6ef4790ffd1c8f8d274dcf",
@@ -1586,7 +1586,7 @@
     "vite.config.ts": "108ea80875a9e6483eb24531c8d8a7e3cd68ce866e5db64e9c0c243125186b2d"
   },
   "mode": "local-ast-only",
-  "nodes": 9148,
+  "nodes": 9149,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1863,15 +1863,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "d49456d6bfb77e20a9353bae44a99538304bd8d2736ad3d7ccbb8a30f58447da",
-    "communities.json": "7b2d0637c53434bfa30850f704500923d0a502cc9dabc6c6712bb4ce61243fc5",
-    "graph.html": "57347c70c4e969df105582e1af61803b4af173d76be58b78d731422ba4427720",
-    "graph.json": "cf2894fe16359e2ae20537347a5d3c5e8bc50815818931f2cbfd24e2600f53c6"
+    "GRAPH_REPORT.md": "c3e43574d2439d2795131636a7dcdb5cc1ffb55daf62ec79856286de294a07c1",
+    "communities.json": "c69e65994b13ee46c9e51ea24130b83bae628227bf60931e8f5353f90e845c21",
+    "graph.html": "d183fb501e85d2cda02e3136479d78bfdf4abb2908b6ea1caf8755cafcae6230",
+    "graph.json": "6bb562a6402e0f5bc2850b7e4e8e91d42cdb71a6355c3e9ce427f379a222406b"
   },
   "schema_version": 1,
-  "source_commit": "62f34489d5583c9800bc07c1dd8a11ac85ee766a",
-  "source_fingerprint": "8face890291233d06ea42650384f846e22f96b39f941ab1157c50cd695a013f6",
-  "working_tree_changes": [
-    "server/full-gate.test.ts"
-  ]
+  "source_commit": "79662f7714414e757218afce679340794f439b7f",
+  "source_fingerprint": "80ebe3057d13b1057aa7d45185e9db44ed46e98c5233bc4cc7402eb924cb3aa5",
+  "working_tree_changes": []
 }

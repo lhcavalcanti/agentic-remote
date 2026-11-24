@@ -18,7 +18,11 @@ describe('markdownPlainText', () => {
   it.each([
     ['underscores inside a word', 'set my_var_name and other_name', 'set my_var_name and other_name'],
     ['spaced multiplication', 'about 2 * 3 * 4 runs', 'about 2 * 3 * 4 runs'],
+    ['a lone asterisk', 'prices marked * are estimates', 'prices marked * are estimates'],
     ['an asterisk against a word', 'prices marked* are estimates', 'prices marked* are estimates'],
+    ['a dash between words', 'the build passed - all good', 'the build passed - all good'],
+    ['a chain of plus signs', 'React + Vite + Tailwind', 'React + Vite + Tailwind'],
+    ['a regular expression class', 'match [^a-z] characters', 'match [^a-z] characters'],
     ['a spaced double asterisk', 'a ** b', 'a ** b'],
     ['an unpaired marker the excerpt did not cut', 'pass **kwargs through', 'pass **kwargs through'],
     ['a folder under the home directory', 'look in ~/src/app and ~/docs', 'look in ~/src/app and ~/docs'],
@@ -58,6 +62,9 @@ describe('markdownPlainText', () => {
     ['a collapsed reference link', 'see [the docs][] first', 'see the docs first'],
     ['a shortcut reference and its definition', 'see [docs] first. [docs]: https://example.com/docs', 'see docs first.'],
     ['link definitions', 'Done. [1]: https://example.com/a "A" [2]: ./b.md', 'Done.'],
+    ['a definition with a bare address', '[ref]: docs', ''],
+    ['a definition with a bare address on its own line', 'Notes\n[ref]: docs\nMore', 'Notes More'],
+    ['a definition a reference uses', 'see [the guide][g] [g]: guide', 'see the guide'],
     ['a link the excerpt cut in its address', 'see [the docs](https://exa…', 'see the docs…'],
     ['a link the excerpt cut in its text', 'see [the do…', 'see the do…'],
   ])('keeps the words of %s', (_case, markdown, text) => {
@@ -86,6 +93,7 @@ describe('markdownPlainText', () => {
     ['a heading with closing hashes', '# Title #', 'Title'],
     ['a heading over a paragraph', '## Summary\nAll good', 'Summary All good'],
     ['a heading collapsed into the middle of a line', 'Done. ## Next steps Run the tests', 'Done. Next steps Run the tests'],
+    ['a level-one heading collapsed into a line', 'Intro done. # Details Body', 'Intro done. Details Body'],
     ['a setext underline', 'Title\n=====\nBody', 'Title Body'],
   ])('drops the markers of %s', (_case, markdown, text) => {
     expect(markdownPlainText(markdown)).toBe(text)
@@ -93,6 +101,7 @@ describe('markdownPlainText', () => {
 
   it('keeps hashes that start no heading', () => {
     expect(markdownPlainText('PR #677 in C# and ####### seven')).toBe('PR #677 in C# and ####### seven')
+    expect(markdownPlainText('press # to dial')).toBe('press # to dial')
   })
 
   it.each([
@@ -137,6 +146,7 @@ describe('markdownPlainText', () => {
     ['form controls', '<form><label>Name <input type="text" name="n"></label><button>Save</button></form>', 'Name Save'],
     ['a table and a video', '<table><tr><td>a</td><td>b</td></tr></table><video src="v.mp4"></video>', 'a b'],
     ['a custom element', '<my-widget size="2">Hi</my-widget>', 'Hi'],
+    ['tags in capitals', '<DIV>text</DIV> and <B>bold</B><BR>', 'text and bold'],
   ])('removes the markup of %s', (_case, markdown, text) => {
     expect(markdownPlainText(markdown)).toBe(text)
   })
@@ -145,6 +155,7 @@ describe('markdownPlainText', () => {
     expect(markdownPlainText('Promise<void> and Map<K, V> when a < b > c'))
       .toBe('Promise<void> and Map<K, V> when a < b > c')
     expect(markdownPlainText('List<Option> renders <Button>')).toBe('List<Option> renders <Button>')
+    expect(markdownPlainText('Store<S> keeps <B>bold</B>')).toBe('Store<S> keeps bold')
   })
 
   it('reads character references as the characters they name, outside code only', () => {
@@ -175,6 +186,7 @@ describe('markdownPlainText', () => {
     expect(markdownPlainText('this is *important and _the full lo…')).toBe('this is important and the full lo…')
     expect(markdownPlainText('rename my_var to snake_ca…')).toBe('rename my_var to snake_ca…')
     expect(markdownPlainText('Done <deta…')).toBe('Done…')
+    expect(markdownPlainText('Done <DIV cla…')).toBe('Done…')
     expect(markdownPlainText('<!-- marker that the excerpt cu…')).toBe('')
   })
 

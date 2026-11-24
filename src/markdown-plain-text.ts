@@ -62,14 +62,27 @@ export function markdownPlainText(markdown: string): string {
       (_match, before: string, _ticks, code: string) => before + keep(code.trim()))
     .replace(/\\([!-/:-@[-`{-~])/g, (_match, character: string) => keep(character))
     .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
-    .replace(/\[\^[^\]\s]+\]:?/g, '')
+  // A footnote definition loses its marker; a reference goes when it is
+  // numbered or defined, so a class such as [^a-z] stays.
+  const footnotes = new Set([...text.matchAll(/\[\^([^\]\s]+)\]:/g)].map((match) => match[1]!.toLowerCase()))
+  text = text
+    .replace(/\[\^([^\]\s]+)\](:?)/g, (match, label: string, colon: string) =>
+      colon || /^\d+$/.test(label) || footnotes.has(label.toLowerCase()) ? '' : match)
     .replace(new RegExp(String.raw`!${words}(?:${target}|\[[^\]]*\])`, 'g'), '')
     .replace(new RegExp(words + target, 'g'), '$1')
-    // A definition's address has a slash, dot, hash or colon, which a label
-    // in prose, such as "[Update]: the build", is not followed by.
-    .replace(/(^|\s)\[([^\]]+)\]:[ \t]*(?:<[^<>\n]*>|[^\s<>]*[/.#:][^\s<>]*)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?/g,
-      (_match, before: string, label: string) => {
-        defined.add(label.toLowerCase())
+  const referenced = new Set([...text.matchAll(/\[([^[\]]*)\](?:\[([^[\]]*)\])?(?![:(])/g)]
+    .map((match) => (match[2] || match[1] || '').toLowerCase()))
+  text = text
+    .replace(/(^|\s)\[([^\]]+)\]:[ \t]*(<[^<>\n]*>|[^\s<>]+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?/g,
+      (match, before: string, label: string, address: string, offset: number, whole: string) => {
+        // A label in prose, such as "[Update]: the build", is no definition:
+        // a definition's address looks like one, ends its line, comes before
+        // another definition, or is one a reference uses.
+        const rest = whole.slice(offset + match.length)
+        const key = label.toLowerCase()
+        if (!/^<|[/.#:]/.test(address) && !/^[ \t]*(?:\n|$)/.test(rest) && !/^\s+\[[^\]]+\]:/.test(rest) &&
+          !referenced.has(key)) return match
+        defined.add(key)
         return before
       })
     // A reference starts a word, unlike an index such as `matrix[i][j]`.
@@ -80,42 +93,67 @@ export function markdownPlainText(markdown: string): string {
       .replace(new RegExp(String.raw`(!?)${words}\([^)]*$`), (_match, image: string, label: string) => (image ? '' : label))
       .replace(/(^|[^\p{L}\p{N}])(!?)\[([^\]]*)$/u,
         (_match, before: string, image: string, label: string) => before + (image ? '' : label))
-      .replace(/<\/?[a-z][^<>]*$/, '')
+      .replace(/<\/?[a-zA-Z][^<>]*$/, '')
   }
   text = text
     .replace(/<([a-z][a-z\d+.-]{1,31}:[^\s<>]*|[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+)>/gi,
       (_match, address: string) => keep(address))
     .replace(/\bhttps?:\/\/[^\s<>]*[^\s<>.,;:!?'")\]}*_~]/g, (address) => keep(address))
-    .replace(/<\/?([a-z][a-z\d]*(-[a-z\d-]*)?)(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>/g,
-      (tag, name: string, custom?: string) =>
-        custom || elements.has(name) ? (inlineElements.has(name) ? '' : ' ') : tag)
+    .replace(/<\/?([a-zA-Z][a-zA-Z\d]*(-[a-z\d-]*)?)(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>/g,
+      (tag, name: string, custom: string | undefined, _offset: number, whole: string) => {
+        // HTML is written in lower case or in capitals; a name in mixed case,
+        // such as <Option>, is a type or a component, and a lone capital is
+        // one too, as in Store<S>, unless the text also closes it.
+        const lower = name.toLowerCase()
+        if (name !== lower && (name !== name.toUpperCase() || (name.length === 1 && !whole.includes(`</${name}>`)))) {
+          return tag
+        }
+        if (custom ? name !== lower : !elements.has(lower)) return tag
+        return inlineElements.has(lower) ? '' : ' '
+      })
   // A table is known by its delimiter row; without one, a pipe is a pipe.
   const delimiterRow = /(^|\s)\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)+\|?(?=\s|$)/g
   if (delimiterRow.test(text)) text = text.replace(delimiterRow, '$1').replace(/\|/g, ' ')
   text = text
     // Markers that start a line: headings, setext underlines, thematic
-    // breaks, quotes, and bullets with their task boxes.
+    // breaks and quotes.
     .replace(/^[ \t]{0,3}#{1,6}(?=[ \t]|$)[ \t]*(.*?)(?:[ \t]+#+)?[ \t]*$/gm, '$1')
     .replace(/^[ \t]{0,3}=+[ \t]*$/gm, '')
     .replace(/^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, '')
     .replace(/^[ \t]{0,3}(?:>(?:[ \t]+|$))+/gm, '')
-    .replace(/^[ \t]*[-*+][ \t]+(?:\[[ xX]\][ \t]+)?/gm, '')
     // Headings and breaks within a line, where an excerpt's collapsed white
-    // space put them; a run of four equals signs is an underline, unlike ===.
-    .replace(/(^|\s)#{1,6}(?=\s)/g, '$1')
+    // space put them. A lone # heads only after the end of a sentence or
+    // clause, so "press # to dial" stays; a run of four equals signs is an
+    // underline, unlike ===.
+    .replace(/(^|\s)#{2,6}(?=\s)/g, '$1')
+    .replace(/(^|[.!?:;)]\s+)#(?=\s)/g, '$1')
     .replace(/(^|\s)(?:([-*_])\2{2,}|={4,})(?=\s|$)/g, '$1')
     .replace(/\*\*(?=[^\s*])([\s\S]*?[^\s*])\*\*/g, '$1')
     .replace(/(^|[^\p{L}\p{N}_])__(?=[^\s_])([\s\S]*?[^\s_])__(?![\p{L}\p{N}_])/gu, '$1$2')
     .replace(/\*(?=[^\s*])([\s\S]*?[^\s*])\*/g, '$1')
     .replace(/(^|[^\p{L}\p{N}_])_(?=[^\s_])([\s\S]*?[^\s_])_(?![\p{L}\p{N}_])/gu, '$1$2')
     .replace(/~~(?=[^\s~])([\s\S]*?[^\s~])~~/g, '$1')
-    // Bullets within a line, likewise. A spaced dash or asterisk is one
-    // unless it sits between numbers, as in "5 - 3"; a plus counts only after
-    // the end of a sentence or clause, so "React + Vite" stays.
-    .replace(/(\S?)(\s)[-*](?:\s+\[[ xX]\])?(?=\s(\S?))/g,
-      (match, before: string, space: string, after: string) =>
-        /\d/.test(before) && /\d/.test(after) ? match : before + space)
-    .replace(/(^|[.!?:;)]\s+)\+(?:\s+\[[ xX]\])?(?=\s)/g, '$1')
+  // A spaced dash, asterisk or plus is a bullet, with its task box, where a
+  // line starts or after the end of a sentence or clause; a dash or an
+  // asterisk is one too where it comes again, as a list's items do. One
+  // between numbers, as in "5 - 3", is arithmetic, and a lone one in prose,
+  // as in "prices marked * are estimates" or "React + Vite", stays.
+  const bullet = /(^|\s)([-*+])(?:[ \t]+\[[ xX]\])?(?=\s)/g
+  const arithmetic = (lead: string, rest: string) => /\d\s*$/.test(lead) && /^\s*\d/.test(rest)
+  const repeated = new Map<string, number>()
+  for (const match of text.matchAll(bullet)) {
+    const lead = text.slice(0, match.index + match[1]!.length)
+    if (!arithmetic(lead, text.slice(match.index + match[0].length))) {
+      repeated.set(match[2]!, (repeated.get(match[2]!) ?? 0) + 1)
+    }
+  }
+  text = text.replace(bullet, (match, before: string, marker: string, offset: number, whole: string) => {
+    const lead = whole.slice(0, offset + before.length)
+    if (arithmetic(lead, whole.slice(offset + match.length))) return match
+    const listed = /(?:^|\n)[ \t]*$/.test(lead) || /[.!?:;)]\s*$/.test(lead) ||
+      (marker !== '+' && (repeated.get(marker) ?? 0) > 1)
+    return listed ? before : match
+  })
   // A numbered item starts a line or follows the end of a sentence or
   // clause, and the items after it count up from there, which tells them
   // from a number ending a sentence, as in "Python 3. Then".

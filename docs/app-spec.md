@@ -1254,8 +1254,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   rebuilt at that boundary) reads a fresh window instead. Held rows from
   before a later window stay while every row both hold is the same row; a held
   row still running that the window does not carry as running goes, with
-  every row before it, and can be read again. Nothing held MUST be
-  duplicated, dropped from between other rows, or reordered.
+  every row before it, and can be read again. A page that arrives late is
+  brought up to what the window carries the same way, and an activity that
+  finished MUST NOT be shown running again. Nothing held MUST be duplicated,
+  dropped from between other rows, or reordered.
 - Sent messages and ArrowUp recall cover the messages held. While earlier
   ones are not, Sent messages MUST say how many and offer to load them.
   Readers that do not ask for a window — browsers from before windows,

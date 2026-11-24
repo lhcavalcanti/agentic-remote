@@ -57,7 +57,7 @@ export function transcriptOf(messages: readonly ChatMessage[]): TranscriptReader
  * transcript full of activities that never finished cannot make a window grow
  * with it.
  */
-const CARRIED_LIMIT = TRANSCRIPT_WINDOW
+export const TRANSCRIPT_CARRIED_LIMIT = TRANSCRIPT_WINDOW
 
 /**
  * The rows from before `start` that the conversation draws with the window:
@@ -78,7 +78,7 @@ export function carriedBefore(
   const carried: ChatMessage[] = []
   for (
     let index = Math.min(start, transcript.length) - 1;
-    index >= 0 && carried.length < CARRIED_LIMIT;
+    index >= 0 && carried.length < TRANSCRIPT_CARRIED_LIMIT;
     index -= 1
   ) {
     const message = transcript.at(index)

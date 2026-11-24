@@ -31,6 +31,14 @@ describe('mergeTranscriptWindow', () => {
     expect(mergeTranscriptWindow(windowed(2, range(2, 10)), after)).toBe(after)
   })
 
+  it('does not put a settled held row back to running from an older carried copy', () => {
+    const done = line(2, { role: 'activity', activityStatus: 'completed' })
+    const held = windowed(0, [line(0), line(1), done, ...range(3, 10)])
+    const merged = mergeTranscriptWindow(held, windowed(5, range(5, 10), [line(2, { role: 'activity', activityStatus: 'running' })]))
+    expect(merged.messagesStart).toBe(0)
+    expect(merged.messages[2]).toEqual(done)
+  })
+
   it('updates held rows from what the window carries, and lets go of a stale running one', () => {
     const held = windowed(0, [line(0, { role: 'activity', activityStatus: 'running' }), line(1),
       line(2, { role: 'activity', activityStatus: 'running' }), ...range(3, 10)])
@@ -60,5 +68,29 @@ describe('prependTranscriptPage', () => {
     expect(ids(grown.messages)).toEqual(ids(range(2, 8)))
     expect(prependTranscriptPage(windowed(6, range(6, 8)), page, 'm5')).toBeUndefined()
     expect(prependTranscriptPage(windowed(5, [line(5, { id: 'moved' })]), page, 'm5')).toBeUndefined()
+  })
+
+  it('keeps a completion the window carried over the running copy a late page holds', () => {
+    const finished = line(3, { role: 'activity', activityStatus: 'completed' })
+    const page = {
+      messages: [line(2), line(3, { role: 'activity', activityStatus: 'running' }), line(4)],
+      messagesStart: 2, messagesTotal: 8,
+    }
+    const grown = prependTranscriptPage(windowed(5, range(5, 8), [finished]), page, 'm5')!
+    expect(grown.messages[1]).toEqual(finished)
+    expect(grown).toMatchObject({ messagesStart: 2, carriedMessages: [] })
+  })
+
+  it('leaves out a page row still running that the window no longer carries, with every row before it', () => {
+    const page = {
+      messages: [line(2), line(3, { role: 'activity', activityStatus: 'running' }), line(4)],
+      messagesStart: 2, messagesTotal: 8,
+    }
+    const grown = prependTranscriptPage(windowed(5, range(5, 8)), page, 'm5')!
+    expect(grown.messagesStart).toBe(4)
+    expect(ids(grown.messages)).toEqual(ids(range(4, 8)))
+    // Nothing left to join: the session stays as it is and can be paged again.
+    const stale = { messages: [line(4, { role: 'activity', activityStatus: 'running' })], messagesStart: 4, messagesTotal: 8 }
+    expect(prependTranscriptPage(windowed(5, range(5, 8)), stale, 'm5')).toBeUndefined()
   })
 })

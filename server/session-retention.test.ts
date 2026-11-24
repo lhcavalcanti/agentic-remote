@@ -32,27 +32,6 @@ afterEach(async () => {
 })
 
 describe('session record retention is independent of provider ownership', () => {
-  it.each(['running', 'waiting', 'error'] as const)(
-    'does not let a suspension flag override unresolved %s state',
-    async (status) => {
-      const { store, directory, advance } = await fixture({
-        status, suspended: true, retention: { pinned: false, idleDays: 7 },
-      })
-      advance(30 * day)
-      await store.syncOpen([])
-      await store.syncOpen([])
-      expect(store.get('retained')).toMatchObject({ isOpen: true })
-      expect(store.get('retained')?.archivedAt).toBeUndefined()
-      await store.close()
-      const restarted = new SessionStore(directory, () => now + 30 * day)
-      await restarted.initialize()
-      await restarted.syncOpen([])
-      await restarted.syncOpen([])
-      expect(restarted.get('retained')).toMatchObject({ isOpen: true })
-      expect(restarted.get('retained')?.archivedAt).toBeUndefined()
-      await restarted.close()
-    },
-  )
 
   it('preserves failure protection across restart even without a failed-prompt envelope', async () => {
     const { store, directory } = await fixture({ status: 'error', retention: { pinned: false, idleDays: 7 } })
@@ -132,26 +111,6 @@ describe('session record retention is independent of provider ownership', () => 
       await restored.close()
     },
   )
-
-  it('does not mistake intentional suspension for process loss', async () => {
-    const { store } = await fixture()
-    await store.setSuspended('retained', true)
-    await store.syncOpen([])
-    expect(store.get('retained')).toMatchObject({ isOpen: true, suspended: true, status: 'idle' })
-    expect(store.get('retained')?.interruption).toBeUndefined()
-    await store.close()
-  })
-
-  it('clears an idle interruption when intentional suspension wins a discovery race', async () => {
-    const { store } = await fixture()
-    await store.syncOpen([])
-    expect(store.get('retained')?.interruption).toBeDefined()
-    await store.setSuspended('retained', true)
-    await store.syncOpen([])
-    expect(store.get('retained')).toMatchObject({ isOpen: true, suspended: true, status: 'idle' })
-    expect(store.get('retained')?.interruption).toBeUndefined()
-    await store.close()
-  })
 
   it('clears the interruption only after a positive owner or explicit reopen', async () => {
     const { store } = await fixture()
@@ -298,17 +257,6 @@ describe('session record retention is independent of provider ownership', () => 
     await restored.close()
   })
 
-  it('does not reopen an automatically archived suspended record on the next pass', async () => {
-    const { store, advance } = await fixture()
-    await store.setSuspended('retained', true)
-    await store.configureRetention('retained', { idleDays: 7, pinned: false })
-    advance(365 * day)
-    await store.syncOpen([])
-    await store.syncOpen([])
-    expect(store.get('retained')).toMatchObject({ isOpen: false, suspended: true, archivedAt: expect.any(String) })
-    await store.close()
-  })
-
   it('keeps a review pin but clears obsolete runtime loss on a conversation replacement', async () => {
     const { store } = await fixture()
     await store.configureRetention('retained', { pinned: true, idleDays: 30 })
@@ -401,7 +349,6 @@ describe('closed sessions stay reopenable without running', () => {
 
   it('leaves the open list and recovery set, keeping history and what it was about', async () => {
     const { store, directory, advance } = await fixture({
-      suspended: true,
       queuedPrompts: [{ id: 'queued', content: 'Queued follow-up', createdAt: '2026-10-18T00:00:00Z' }],
       pendingUserInput: { requestId: 'question', question: 'Continue?', choices: [], allowFreeform: true },
       messages: [
@@ -426,7 +373,6 @@ describe('closed sessions stay reopenable without running', () => {
       queuedPrompts: [],
       messages: [expect.objectContaining({ id: 'ask' }), expect.objectContaining({ id: 'final' })],
     })
-    expect(closed.suspended).toBeUndefined()
     expect(closed.pendingUserInput).toBeUndefined()
     expect(store.isManagedOpen('retained')).toBe(false)
     expect(store.terminalRecoverySessions()).toEqual([])
@@ -570,6 +516,143 @@ describe('closed sessions stay reopenable without running', () => {
     await restored.initialize()
 
     expect(restored.get('retained')).toMatchObject({ isOpen: false, closedAt: closed.closedAt })
+    await restored.close()
+  })
+})
+
+describe('sessions an older release suspended are closed when they load', () => {
+  const queued = { id: 'queued', content: 'Queued while paused', createdAt: '2026-10-18T00:00:00.000Z' }
+  const lifecycle = (line: unknown) => typeof line === 'string' && line.includes('sessionLifecycle')
+
+  async function suspendedOnDisk() {
+    const { store, directory } = await fixture({
+      messages: [
+        { id: 'ask', role: 'user', content: 'Review the release notes', createdAt: '2026-10-18T00:00:00.000Z' },
+        { id: 'final', role: 'assistant', content: 'Synthetic final status', createdAt: '2026-10-18T00:00:00.000Z' },
+      ],
+    })
+    await store.enqueuePrompt('retained', queued)
+    await store.close()
+    const file = path.join(directory, 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    // What an older release's Pause wrote.
+    Object.assign(state.sessions.retained, { suspended: true, isOpen: true, managedOpen: true })
+    await writeFile(file, JSON.stringify(state))
+    return { directory, file }
+  }
+
+  it('records it as Close would, keeping its history and queue', async () => {
+    const { directory, file } = await suspendedOnDisk()
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const closedAt = new Date(now + day).toISOString()
+
+    const store = new SessionStore(directory, () => now + day)
+    await store.initialize()
+
+    const retired = store.get('retained')
+    expect(retired).toMatchObject({
+      isOpen: false,
+      status: 'idle',
+      closedAt,
+      closedContext: {
+        title: 'Review implementation',
+        cwd: '/tmp/project/worktree',
+        prompts: ['Review the release notes'],
+        reply: 'Synthetic final status',
+      },
+      queuedPrompts: [queued],
+      queuedCount: 1,
+      messages: [expect.objectContaining({ id: 'ask' }), expect.objectContaining({ id: 'final' })],
+    })
+    expect(retired).not.toHaveProperty('suspended')
+    expect(store.isClosed('retained')).toBe(true)
+    expect(store.isManagedOpen('retained')).toBe(false)
+    expect(store.terminalRecoverySessions()).toEqual([])
+    expect(info.mock.calls.flat().filter(lifecycle)).toEqual([
+      JSON.stringify({ sessionLifecycle: 'closed', cause: 'suspend-retired', sessionId: 'retained', at: closedAt }),
+    ])
+    const persisted = JSON.parse(await readFile(file, 'utf8')).sessions.retained
+    expect(persisted).toMatchObject({ isOpen: false, managedOpen: false, closedAt, queuedPrompts: [queued] })
+    expect(persisted).not.toHaveProperty('suspended')
+    await store.close()
+  })
+
+  it('changes nothing when it loads again', async () => {
+    const { directory, file } = await suspendedOnDisk()
+    const first = new SessionStore(directory, () => now + day)
+    await first.initialize()
+    const retired = first.get('retained')
+    await first.close()
+    const written = await readFile(file, 'utf8')
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    const again = new SessionStore(directory, () => now + 2 * day)
+    await again.initialize()
+
+    expect(again.get('retained')).toEqual(retired)
+    expect(await readFile(file, 'utf8')).toBe(written)
+    expect(info.mock.calls.flat().filter(lifecycle)).toEqual([])
+    await again.close()
+  })
+
+  it('leaves one that was already closed as Close recorded it', async () => {
+    const { store, directory } = await fixture()
+    const closed = await store.closeSession('retained')
+    await store.close()
+    const file = path.join(directory, 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    state.sessions.retained.suspended = true
+    await writeFile(file, JSON.stringify(state))
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    const restored = new SessionStore(directory, () => now + day)
+    await restored.initialize()
+
+    expect(restored.get('retained')).toEqual(closed)
+    expect(info.mock.calls.flat().filter(lifecycle)).toEqual([])
+    await restored.close()
+  })
+
+  it('keeps a send that failed and a context brief still to go, for Reopen', async () => {
+    const { directory, file } = await suspendedOnDisk()
+    const failedPrompt = { content: 'Synthetic send that failed', failedAt: '2026-10-18T00:02:00.000Z' }
+    const recoverySeed = { prompt: 'Synthetic context brief', state: 'pending' }
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    Object.assign(state.sessions.retained, { failedPrompt, recoverySeed })
+    await writeFile(file, JSON.stringify(state))
+
+    const store = new SessionStore(directory, () => now + day)
+    await store.initialize()
+
+    expect(store.isClosed('retained')).toBe(true)
+    expect(store.failedPrompt('retained')).toEqual(failedPrompt)
+    expect(store.recoverySeed('retained')).toEqual(recoverySeed)
+    expect(store.get('retained')).toMatchObject({ queuedPrompts: [queued] })
+    await store.close()
+  })
+
+  it('leaves one that was archived archived, since closing it would start its deletion', async () => {
+    const { store, directory, advance } = await fixture({ retention: { pinned: false, idleDays: 7 } })
+    advance(30 * day)
+    await store.syncOpen([])
+    const archived = store.get('retained')
+    expect(archived?.archivedAt).toEqual(expect.any(String))
+    await store.close()
+    const file = path.join(directory, 'state.json')
+    const state = JSON.parse(await readFile(file, 'utf8'))
+    state.sessions.retained.suspended = true
+    await writeFile(file, JSON.stringify(state))
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+
+    const restored = new SessionStore(directory, () => now + 31 * day)
+    await restored.initialize()
+
+    const kept = restored.get('retained')
+    expect(kept).toMatchObject({ isOpen: false, archivedAt: archived?.archivedAt })
+    expect(kept?.closedAt).toBeUndefined()
+    expect(kept).not.toHaveProperty('suspended')
+    expect(restored.isClosed('retained')).toBe(false)
+    expect(info.mock.calls.flat().filter(lifecycle)).toEqual([])
     await restored.close()
   })
 })

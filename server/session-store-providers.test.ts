@@ -634,7 +634,7 @@ describe('Provider decisions after admitted writes', () => {
   )
 
   for (const [name, provider] of [['Copilot', copilot], ['Claude', claude]] as const) {
-    it.each(['restartSession', 'clearConversation', 'suspendSession'] as const)(
+    it.each(['restartSession', 'clearConversation'] as const)(
       `${name} does not %s against a pending running transition`,
       async (operation) => {
         const { store } = await fixture()
@@ -645,7 +645,6 @@ describe('Provider decisions after admitted writes', () => {
         gate.finish()
         await Promise.all([gate.writing, running, refused])
         expect(store.get('session')?.status).toBe('running')
-        expect(store.get('session')?.suspended).not.toBe(true)
         if ('resumeSession' in runtime) expect(runtime.resumeSession).not.toHaveBeenCalled()
         if ('query' in runtime) expect(runtime.query).not.toHaveBeenCalled()
         if ('deleteSession' in runtime) expect(runtime.deleteSession).not.toHaveBeenCalled()
@@ -663,19 +662,6 @@ describe('Provider decisions after admitted writes', () => {
       gate.finish()
       await Promise.all([gate.writing, running, refused])
       expect(store.get('session')?.runtime).toBeUndefined()
-    })
-
-    it(`${name} does not send into a pending suspension`, async () => {
-      const { store } = await fixture()
-      const runtime = provider(store)
-      const gate = await holdOtherWrite(store)
-      const suspending = store.setSuspended('session', true)
-      const refused = expect(runtime.service.sendMessage('session', 'Do not deliver'))
-        .rejects.toThrow(/Resume/)
-      gate.finish()
-      await Promise.all([gate.writing, suspending, refused])
-      if ('terminal' in runtime) expect(runtime.terminal.send).not.toHaveBeenCalled()
-      if ('query' in runtime) expect(runtime.query).not.toHaveBeenCalled()
     })
 
     it(`${name} does not clear a new permission while settling an earlier reply`, async () => {
@@ -753,47 +739,6 @@ describe('Provider decisions after admitted writes', () => {
 describe('Provider queue persistence boundaries', () => {
   const drainTerminal = (service: AgentService) =>
     (service as unknown as { drainTerminalQueue(id: string): Promise<void> }).drainTerminalQueue('session')
-
-  it('resumes an admitted SDK drain after suspension is refused', async () => {
-    const { store } = await fixture()
-    const { service, client } = copilot(store)
-    const sdk = sdkSession('session')
-    sdk.send = vi.fn(async () => {
-      queueMicrotask(() => sdk.emit(event('session.idle', {})))
-      return 'queued-first'
-    })
-    client.resumeSession = vi.fn(async () => sdk)
-    await service.openSession('session')
-    let enter = () => {}
-    let finish = () => {}
-    const entered = new Promise<void>((resolve) => { enter = resolve })
-    const gate = new Promise<void>((resolve) => { finish = resolve })
-    releases.push(finish)
-    const read = store.readAfterWrites.bind(store)
-    vi.spyOn(store, 'readAfterWrites').mockImplementationOnce(async (...args) => {
-      enter()
-      await gate
-      return read(...args)
-    })
-    const draining = (service as unknown as {
-      drainSdkQueue(id: string): Promise<void>
-    }).drainSdkQueue('session')
-    await entered
-    const suspension = service.suspendSession('session').then(
-      (value) => ({ value }),
-      (error: unknown) => ({ error }),
-    )
-    await vi.waitFor(() => expect(service['suspendingSessions'].has('session')).toBe(true))
-    finish()
-    const [, outcome] = await Promise.all([draining, suspension])
-    expect(outcome).toMatchObject({ error: { statusCode: 409 } })
-    await Promise.all([...service['sdkQueueWakeups'].values()])
-    await service['queuedPromptRuns'].get('session')
-    await store.flush()
-    expect(sdk.send).toHaveBeenCalledExactlyOnceWith({ prompt: 'first', mode: 'immediate' })
-    expect(store.get('session')?.queuedPrompts?.map(({ id }) => id)).toEqual(['second'])
-    await service.stop()
-  })
 
   it.each([['Copilot', copilot], ['Claude', claude]] as const)(
     '%s retains queued text when turn admission and all later writes fail',
@@ -1143,7 +1088,7 @@ describe('Provider queue persistence boundaries', () => {
     },
   )
 
-  it.each(['sendMessage', 'executeCommand', 'clearConversation', 'restartSession', 'suspendSession'] as const)(
+  it.each(['sendMessage', 'executeCommand', 'clearConversation', 'restartSession'] as const)(
     'refuses %s while an idle native completion still has an unsettled queue claim',
     async (method) => {
       const { store } = await fixture()
@@ -1259,31 +1204,6 @@ describe('Provider queue persistence boundaries', () => {
       failedPrompt: { content: 'first', uncertain: true },
       queuedPrompts: [{ id: 'second' }],
     })
-  })
-
-  it('does not leave an unowned claim when suspension arrives during its write', async () => {
-    const { store } = await fixture()
-    const { service, terminal } = copilot(store)
-    let enter = () => {}
-    let finish = () => {}
-    const entered = new Promise<void>((resolve) => { enter = resolve })
-    const gate = new Promise<void>((resolve) => { finish = resolve })
-    releases.push(finish)
-    vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
-      enter()
-      await gate
-      return disk.writeFile(...args)
-    })
-    const draining = drainTerminal(service)
-    await entered
-    const suspension = expect(service.suspendSession('session')).rejects.toThrow(/confirmation|idle/)
-    finish()
-    await Promise.all([draining, suspension])
-    expect(terminal.send).not.toHaveBeenCalled()
-    expect(store.terminalQueueDispatch('session')).toBeUndefined()
-    expect(store.get('session')?.failedPrompt).toBeUndefined()
-    expect(store.get('session')?.queuedPrompts?.map(({ id }) => id))
-      .toEqual(['first', 'second'])
   })
 
   it.each([

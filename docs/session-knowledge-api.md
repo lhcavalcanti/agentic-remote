@@ -137,8 +137,8 @@ matching claim before moving or removing its binding.
 
 ## Lifecycle
 
-- Active, suspended, and historical/closed sessions can be read or updated
-  without being opened or resumed.
+- Active and historical/closed sessions can be read or updated without being
+  opened or resumed.
 - A path update needs the owning computer online so it can validate the
   filesystem. The persisted association remains readable while that computer is
   offline.

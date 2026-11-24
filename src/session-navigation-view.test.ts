@@ -52,7 +52,7 @@ describe('shared session navigation view', () => {
     const view = sessionNavigationView(computers, grouped, {}, 'missing', 'all')
     expect(view.groups.map((group) => group.computer)).toEqual(computers)
     expect(view.visible).toEqual([])
-    expect(view.counts).toEqual({ all: 3, attention: 1, working: 0, unread: 0, suspended: 0, hidden: 0 })
+    expect(view.counts).toEqual({ all: 3, attention: 1, working: 0, unread: 0, hidden: 0 })
     expect(stepVisibleSession(view.visible, 'one:first', 1)).toBeUndefined()
     expect(stepVisibleSession(view.visible, 'one:first', -1)).toBeUndefined()
   })
@@ -66,38 +66,17 @@ describe('shared session navigation view', () => {
     expect(stepVisibleSession(view.visible, 'one:first', 1)).toBe(last)
   })
 
-  it('removes suspended sessions from rows and keyboard navigation when hidden', () => {
-    const suspended = {
-      ...first,
-      id: 'paused',
-      title: 'Paused planning',
-      suspended: true,
-    }
-    const sessions = new Map(grouped)
-    sessions.set('one', [first, hidden, suspended])
-
-    const view = sessionNavigationView(computers, sessions, {}, '', 'all', false)
-
-    expect(view.counts).toEqual({ all: 4, attention: 1, working: 0, unread: 0, suspended: 1, hidden: 0 })
-    expect(view.visible).toEqual([first, hidden, last])
-    expect(view.groups.map((group) => group.computer)).toEqual(computers)
-    expect(view.filtering).toBe(true)
-    expect(view.reorderDisabled).toBe(false)
-    expect(stepVisibleSession(view.visible, 'one:paused', 1)).toBe(first)
-    expect(stepVisibleSession(view.visible, 'one:paused', -1)).toBe(last)
-  })
-
   it('leaves hidden sessions out of rows, counts, and navigation until they are shown', () => {
     const tucked: ManagedSession = { ...first, id: 'tucked', title: 'Tucked away', status: 'running' }
     const sessions = new Map([['one', [first, tucked]], ['two', [last]]])
     const keys = new Set(['one:tucked'])
 
-    const view = sessionNavigationView(computers, sessions, {}, '', 'all', true, {
+    const view = sessionNavigationView(computers, sessions, {}, '', 'all', {
       keys,
       shown: false,
     })
     expect(view.visible).toEqual([first, last])
-    expect(view.counts).toEqual({ all: 2, attention: 1, working: 0, unread: 0, suspended: 0, hidden: 1 })
+    expect(view.counts).toEqual({ all: 2, attention: 1, working: 0, unread: 0, hidden: 1 })
     expect(view.groups.map((group) => group.computer)).toEqual(computers)
     expect(view.groups[0]).toMatchObject({ total: 1, hidden: 1 })
     // Hiding is not a filter: nothing to clear, and the order stays editable.
@@ -105,37 +84,37 @@ describe('shared session navigation view', () => {
     expect(view.reorderDisabled).toBe(false)
     expect(stepVisibleSession(view.visible, 'one:first', 1)).toBe(last)
     expect(stepVisibleSession(view.visible, 'one:tucked', 1)).toBe(first)
-    expect(sessionNavigationView(computers, sessions, {}, 'tucked', 'all', true, {
+    expect(sessionNavigationView(computers, sessions, {}, 'tucked', 'all', {
       keys,
       shown: false,
     }).visible).toEqual([])
 
-    const shown = sessionNavigationView(computers, sessions, {}, '', 'all', true, {
+    const shown = sessionNavigationView(computers, sessions, {}, '', 'all', {
       keys,
       shown: true,
     })
     expect(shown.visible).toEqual([first, tucked, last])
-    expect(shown.counts).toEqual({ all: 3, attention: 1, working: 1, unread: 0, suspended: 0, hidden: 1 })
+    expect(shown.counts).toEqual({ all: 3, attention: 1, working: 1, unread: 0, hidden: 1 })
     expect(shown.groups[0]).toMatchObject({ total: 2, hidden: 0 })
   })
 
   it('keeps a hidden session listed and counted while it needs you', () => {
     const keys = new Set(['two:last'])
-    const view = sessionNavigationView(computers, grouped, {}, '', 'all', true, {
+    const view = sessionNavigationView(computers, grouped, {}, '', 'all', {
       keys,
       shown: false,
     })
     expect(view.visible).toEqual([first, hidden, last])
-    expect(view.counts).toEqual({ all: 3, attention: 1, working: 0, unread: 0, suspended: 0, hidden: 1 })
+    expect(view.counts).toEqual({ all: 3, attention: 1, working: 0, unread: 0, hidden: 1 })
     expect(view.groups[1]).toMatchObject({ total: 1, hidden: 0 })
-    expect(sessionNavigationView(computers, grouped, {}, '', 'attention', true, {
+    expect(sessionNavigationView(computers, grouped, {}, '', 'attention', {
       keys,
       shown: false,
     }).visible).toEqual([last])
 
     const answered = new Map(grouped)
     answered.set('two', [{ ...last, pendingUserInput: undefined }])
-    const settled = sessionNavigationView(computers, answered, {}, '', 'all', true, {
+    const settled = sessionNavigationView(computers, answered, {}, '', 'all', {
       keys,
       shown: false,
     })
@@ -149,20 +128,20 @@ describe('shared session navigation view', () => {
     const unread = new Set(['one:first', 'one:tucked', 'two:last'])
     const keys = new Set(['one:tucked'])
 
-    const view = sessionNavigationView(computers, sessions, {}, '', 'unread', true, {
+    const view = sessionNavigationView(computers, sessions, {}, '', 'unread', {
       keys,
       shown: false,
     }, unread)
     expect(view.visible).toEqual([first, last])
     expect(view.counts).toEqual({
-      all: 3, attention: 1, working: 0, unread: 2, suspended: 0, hidden: 1,
+      all: 3, attention: 1, working: 0, unread: 2, hidden: 1,
     })
     expect(view.groups.map((group) => group.computer)).toEqual(computers)
     expect(view.filtering).toBe(true)
     expect(view.reorderDisabled).toBe(true)
     expect(stepVisibleSession(view.visible, 'one:first', 1)).toBe(last)
 
-    const shown = sessionNavigationView(computers, sessions, {}, '', 'unread', true, {
+    const shown = sessionNavigationView(computers, sessions, {}, '', 'unread', {
       keys,
       shown: true,
     }, unread)
@@ -170,7 +149,7 @@ describe('shared session navigation view', () => {
     expect(shown.counts.unread).toBe(3)
 
     // Like every hidden session, an unread one that needs you stays counted.
-    const waiting = sessionNavigationView(computers, sessions, {}, '', 'unread', true, {
+    const waiting = sessionNavigationView(computers, sessions, {}, '', 'unread', {
       keys: new Set(['one:tucked', 'two:last']),
       shown: false,
     }, unread)

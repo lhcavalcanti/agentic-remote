@@ -53,7 +53,7 @@ export const PENDING_SESSION_ID = 'fixture-review-recovery'
 export const PERMISSION_SESSION_ID = 'fixture-approve-check'
 export const BACKGROUND_SESSION_ID = 'fixture-check-links'
 export const IDLE_SESSION_ID = 'fixture-draft-summary'
-export const SUSPENDED_SESSION_ID = 'fixture-sketch-handoff'
+export const OFFLINE_SESSION_ID = 'fixture-sketch-handoff'
 export const KNOWLEDGE_ROOT_ID = 'fixture-field-notes'
 export const SECOND_KNOWLEDGE_ROOT_ID = 'fixture-build-playbooks'
 export const KNOWLEDGE_FILE_PATH = 'handbook/agent-workspace.md'
@@ -353,7 +353,7 @@ export const fixtureSessions: ManagedSession[] = [
     ],
   },
   {
-    id: SUSPENDED_SESSION_ID,
+    id: OFFLINE_SESSION_ID,
     computerId: 'fixture-travel',
     computerName: 'Travel laptop',
     title: 'Sketch the next handoff',
@@ -363,14 +363,13 @@ export const fixtureSessions: ManagedSession[] = [
     revision: 1,
     updatedAt: '2026-09-03T14:30:00.000Z',
     status: 'idle',
-    suspended: true,
     isOpen: true,
     runtime,
     messages: [
       {
         id: 'fixture-handoff-assistant',
         role: 'assistant',
-        content: 'This sketch is saved. Resume it when this computer is online.',
+        content: 'This sketch is saved. Pick it up again when this computer is online.',
         createdAt: '2026-09-03T14:30:00.000Z',
       },
     ],
@@ -808,7 +807,6 @@ export function createWorkspaceFixtureState(): WorkspaceFixtureState {
     sessionOrder: {
       revision: 1,
       bootstrapped: true,
-      showSuspended: true,
       showHidden: false,
       hidden: [],
       unread: [],
@@ -1426,9 +1424,8 @@ export async function setupWorkspaceFixture(
       await respond({ sessionOrder: state.sessionOrder })
     }
     if (method === 'PUT' && path === '/api/session-order') {
-      const input = request.postDataJSON() as { showSuspended?: boolean; showHidden?: boolean }
+      const input = request.postDataJSON() as { showHidden?: boolean }
       await commitSessionOrder({
-        ...(input.showSuspended === undefined ? {} : { showSuspended: input.showSuspended }),
         ...(input.showHidden === undefined ? {} : { showHidden: input.showHidden }),
       })
       return
@@ -1471,7 +1468,6 @@ export async function setupWorkspaceFixture(
           ...state.sessionOrder,
           revision: state.sessionOrder.revision + 1,
           bootstrapped: true,
-          showSuspended: state.sessionOrder.showSuspended,
           order: structuredClone(input.order),
         }
         emit({ type: 'session.order.updated', order: state.sessionOrder })

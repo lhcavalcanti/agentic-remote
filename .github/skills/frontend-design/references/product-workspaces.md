@@ -12,7 +12,7 @@ Pending questions and permissions retain the product's highest priority.
 
 Keep computer grouping, provider/runtime identity, and offline state
 discoverable. A quieter row must not become an ambiguous chat list. Empty,
-loading, offline, waiting, error, and suspended are different states; use
+loading, offline, waiting, error, and interrupted are different states; use
 specific guidance rather than one generic empty card.
 
 ## Reuse the actual system

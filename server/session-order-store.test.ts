@@ -24,7 +24,7 @@ describe('SessionOrderStore', () => {
   it('starts empty and advances a revision only when something changes', async () => {
     const { store: order } = await store()
     expect(order.snapshot()).toEqual({
-      revision: 0, bootstrapped: false, showSuspended: true, showHidden: false, hidden: [], unread: [], order: {},
+      revision: 0, bootstrapped: false, showHidden: false, hidden: [], unread: [], order: {},
     })
     expect(order.isBootstrapped()).toBe(false)
 
@@ -32,7 +32,6 @@ describe('SessionOrderStore', () => {
     expect(first).toEqual({
       revision: 1,
       bootstrapped: false,
-      showSuspended: true,
       showHidden: false,
       hidden: [],
       unread: [],
@@ -55,7 +54,6 @@ describe('SessionOrderStore', () => {
     expect(reloaded.snapshot()).toEqual({
       revision: 3,
       bootstrapped: false,
-      showSuspended: true,
       showHidden: false,
       hidden: [],
       unread: [],
@@ -106,7 +104,6 @@ describe('SessionOrderStore', () => {
     expect(order.snapshot()).toEqual({
       revision: 4,
       bootstrapped: false,
-      showSuspended: true,
       showHidden: false,
       hidden: ['pc:b'],
       unread: ['pc:a'],
@@ -114,15 +111,33 @@ describe('SessionOrderStore', () => {
     })
   })
 
-  it('shares suspended visibility durably and advances only on a change', async () => {
-    const { store: order, directory } = await store()
-    const hidden = await order.setVisibility({ showSuspended: false })
-    expect(hidden).toMatchObject({ revision: 1, showSuspended: false })
-    expect((await order.setVisibility({ showSuspended: false })).revision).toBe(1)
+  it('reads a file that still says whether to show suspended sessions, and stops writing that', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'session-order-test-'))
+    directories.push(directory)
+    const statePath = path.join(directory, 'session-order.json')
+    await writeFile(statePath, JSON.stringify({
+      version: 1,
+      revision: 6,
+      bootstrapped: true,
+      showSuspended: false,
+      showHidden: true,
+      hidden: ['pc:b'],
+      unread: ['pc:a'],
+      order: { pc: ['pc:a', 'pc:b'] },
+    }))
+    const order = new SessionOrderStore(directory)
+    await order.initialize()
 
-    const reloaded = new SessionOrderStore(directory)
-    await reloaded.initialize()
-    expect(reloaded.snapshot()).toEqual(hidden)
+    expect(order.snapshot()).toEqual({
+      revision: 6,
+      bootstrapped: true,
+      showHidden: true,
+      hidden: ['pc:b'],
+      unread: ['pc:a'],
+      order: { pc: ['pc:a', 'pc:b'] },
+    })
+    await order.appendSession('pc', 'c')
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).not.toHaveProperty('showSuspended')
   })
 
   it('hides a session and shows hidden sessions durably, advancing only on a change', async () => {
@@ -135,7 +150,7 @@ describe('SessionOrderStore', () => {
     expect((await order.setSessionHidden('pc', 'b', true)).revision).toBe(3)
 
     const shown = await order.setVisibility({ showHidden: true })
-    expect(shown).toMatchObject({ revision: 4, showHidden: true, showSuspended: true })
+    expect(shown).toMatchObject({ revision: 4, showHidden: true })
     expect((await order.setVisibility({ showHidden: true })).revision).toBe(4)
     // Hiding never reorders: the lane keeps the hidden session where it was.
     expect(shown.order).toEqual({ pc: ['pc:a', 'pc:b'] })
@@ -147,12 +162,6 @@ describe('SessionOrderStore', () => {
     const unhidden = await reloaded.setSessionHidden('pc', 'b', false)
     expect(unhidden).toMatchObject({ revision: 5, hidden: [] })
     expect((await reloaded.setSessionHidden('pc', 'b', false)).revision).toBe(5)
-  })
-
-  it('applies both visibility preferences in one commit', async () => {
-    const { store: order } = await store()
-    const committed = await order.setVisibility({ showSuspended: false, showHidden: true })
-    expect(committed).toMatchObject({ revision: 1, showSuspended: false, showHidden: true })
   })
 
   it('refuses to hide a session its lane does not hold, but unhides one freely', async () => {
@@ -639,7 +648,6 @@ describe('SessionOrderStore', () => {
       version: 1,
       revision: 1,
       bootstrapped: false,
-      showSuspended: true,
       showHidden: false,
       hidden: [],
       unread: [],

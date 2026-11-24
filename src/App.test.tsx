@@ -76,7 +76,6 @@ import {
   listCommands,
   listComputers,
   fetchSessionOrder,
-  saveSessionVisibility,
   saveHiddenSessionVisibility,
   saveSessionHidden,
   saveSessionUnread,
@@ -106,8 +105,6 @@ import {
   renameSession,
   readWorkspaceFile,
   restartSession,
-  resumeSession,
-  suspendSession,
   replyUserInput,
   sendMessage,
   sendTestPushNotification,
@@ -169,12 +166,11 @@ function submitComposerMessage(enqueue = false) {
 let hubSessionOrder: {
   revision: number
   bootstrapped: boolean
-  showSuspended: boolean
   showHidden?: boolean
   hidden?: string[]
   unread?: string[]
   order: Record<string, string[]>
-} = { revision: 0, bootstrapped: false, showSuspended: true, order: {} }
+} = { revision: 0, bootstrapped: false, order: {} }
 
 vi.mock('@dnd-kit/core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@dnd-kit/core')>()
@@ -272,7 +268,6 @@ vi.mock('./api', async (importOriginal) => ({
   listSessions: vi.fn(),
   listSessionListing: vi.fn(),
   fetchSessionOrder: vi.fn(),
-  saveSessionVisibility: vi.fn(),
   saveHiddenSessionVisibility: vi.fn(),
   saveSessionHidden: vi.fn(),
   saveSessionUnread: vi.fn(),
@@ -316,8 +311,6 @@ vi.mock('./api', async (importOriginal) => ({
   clearConversation: vi.fn(),
   recoverConversation: vi.fn(),
   restartSession: vi.fn(),
-  resumeSession: vi.fn(),
-  suspendSession: vi.fn(),
   configureRetention: vi.fn(),
   activateSession: vi.fn(),
   sendMessage: vi.fn(),
@@ -2220,7 +2213,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 0,
       bootstrapped: false,
-      showSuspended: true,
       order: {},
     }
     hubSettings = { revision: 0, values: {}, keyRevisions: {} }
@@ -2261,14 +2253,6 @@ describe('App', () => {
         ...hubSessionOrder,
         revision: hubSessionOrder.revision + 1,
         order: { ...hubSessionOrder.order, [computerId]: [...lane] },
-      }
-      return structuredClone(hubSessionOrder)
-    })
-    vi.mocked(saveSessionVisibility).mockImplementation(async (showSuspended) => {
-      hubSessionOrder = {
-        ...hubSessionOrder,
-        revision: hubSessionOrder.revision + 1,
-        showSuspended,
       }
       return structuredClone(hubSessionOrder)
     })
@@ -2505,8 +2489,6 @@ describe('App', () => {
       },
     })
     vi.mocked(restartSession).mockResolvedValue(session)
-    vi.mocked(suspendSession).mockResolvedValue({ ...session, suspended: true })
-    vi.mocked(resumeSession).mockResolvedValue({ ...session, suspended: false })
     vi.mocked(moveSessionToTmux).mockResolvedValue({
       ...session,
       executionMode: 'tmux',
@@ -3285,9 +3267,13 @@ describe('App', () => {
   })
 
   it('does not focus a disabled session composer when Oracle closes', async () => {
-    const suspended = { ...session, suspended: true }
-    vi.mocked(listSessions).mockResolvedValue([suspended])
-    vi.mocked(getSession).mockResolvedValue(suspended)
+    const interrupted = {
+      ...session,
+      status: 'error' as const,
+      interruption: { detectedAt: '2026-09-05T00:00:00.000Z', previousStatus: 'idle' as const },
+    }
+    vi.mocked(listSessions).mockResolvedValue([interrupted])
+    vi.mocked(getSession).mockResolvedValue(interrupted)
     vi.mocked(getManager).mockResolvedValue({
       available: true,
       status: 'idle',
@@ -4583,8 +4569,11 @@ describe('App', () => {
     expect(executeCommand).not.toHaveBeenCalled()
   })
 
-  it('allows a suspended session to inspect configured resources without resuming it', async () => {
-    const target = resourceSession({ suspended: true })
+  it('allows an interrupted session to inspect configured resources without reopening it', async () => {
+    const target = resourceSession({
+      status: 'error',
+      interruption: { detectedAt: '2026-09-05T00:00:00.000Z', previousStatus: 'idle' },
+    })
     const snapshot: ManagedSessionMcpServersSnapshot = {
       computerId: target.computerId, sessionId: target.id, provider: 'copilot',
       capturedAt: '2026-09-05T00:00:00.000Z', scope: 'workspace',
@@ -4599,7 +4588,7 @@ describe('App', () => {
     await screen.findByRole('heading', { name: 'configured-tools' })
     expect(screen.getByText('Configured for this folder')).toBeInTheDocument()
     expect(listCommands).not.toHaveBeenCalled()
-    expect(resumeSession).not.toHaveBeenCalled()
+    expect(activateSession).not.toHaveBeenCalled()
     expect(sendMessage).not.toHaveBeenCalled()
     expect(executeCommand).not.toHaveBeenCalled()
   })
@@ -4685,7 +4674,7 @@ describe('App', () => {
     expect(screen.queryByRole('dialog', { name: 'Skills and MCP servers' })).not.toBeInTheDocument()
   })
 
-  it.each(['cwd', 'executionMode', 'suspended', 'cwd-round-trip'] as const)(
+  it.each(['cwd', 'executionMode', 'cwd-round-trip'] as const)(
     'retires resource ownership on %s while ignoring a late response',
     async (change) => {
       const target = resourceSession()
@@ -4701,8 +4690,7 @@ describe('App', () => {
       const signal = vi.mocked(listSessionSkills).mock.calls[0][3]
       const changed: ManagedSession = {
         ...target,
-        ...(change.startsWith('cwd') ? { cwd: '/fixture/other' }
-          : change === 'executionMode' ? { executionMode: 'tmux' } : { suspended: true }),
+        ...(change.startsWith('cwd') ? { cwd: '/fixture/other' } : { executionMode: 'tmux' }),
       }
       await act(async () => {
         for (const next of change === 'cwd-round-trip' ? [changed, target] : [changed]) {
@@ -12682,7 +12670,6 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.queryByText('Recovering')).toBeNull())
     expect(screen.getByLabelText('Message')).toBeEnabled()
-    expect(resumeSession).not.toHaveBeenCalled()
     expect(activateSession).not.toHaveBeenCalled()
   })
 
@@ -12827,52 +12814,6 @@ describe('App', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Session retention' })).toBeNull())
   })
 
-  it('keeps a suspended conversation readable and closed to writing', async () => {
-    // Suspending stops the process, not the conversation: the history and the
-    // name stay, and the way back is the button rather than the composer.
-    const resting = { ...session, suspended: true }
-    vi.mocked(listSessions).mockResolvedValue([resting])
-    vi.mocked(getSession).mockResolvedValue(resting)
-    render(<App />)
-    await screen.findAllByText('Project chat')
-
-    // Still readable.
-    expect(screen.getByText('Hello agent')).toBeInTheDocument()
-    // ...and visibly not running.
-    expect(document.querySelector('.session-item')?.className).toContain(
-      'session-item--suspended',
-    )
-    // Writing is what resuming is for.
-    const composer = screen.getByLabelText('Message')
-    expect(composer).toBeDisabled()
-    expect(composer).toHaveAttribute('placeholder', 'Suspended · resume to send')
-    // Offered beside the conversation in the list, so a session can be picked
-    // up again without opening it first.
-    expect(
-      screen.getByRole('button', { name: 'Resume Project chat' }),
-    ).toBeInTheDocument()
-  })
-
-  it('suspends a session from the list and offers to start it again', async () => {
-    render(<App />)
-    await screen.findAllByText('Project chat')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
-
-    await waitFor(() =>
-      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-1'),
-    )
-    // The session is kept, so the way back has to be offered where the way
-    // out was.
-    const resume = await screen.findByRole('button', {
-      name: 'Resume Project chat',
-    })
-    fireEvent.click(resume)
-    await waitFor(() =>
-      expect(resumeSession).toHaveBeenCalledWith('computer-1', 'session-1'),
-    )
-  })
-
   it('renders an active command-catalog failure instead of silently clearing it', async () => {
     vi.mocked(listCommands).mockRejectedValueOnce(new Error('Catalog unavailable'))
 
@@ -12882,447 +12823,6 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Catalog unavailable',
     )
-  })
-
-  it('does not render a stale command-catalog failure after suspension succeeds', async () => {
-    let rejectCatalog: (error: Error) => void = () => {}
-    vi.mocked(listCommands).mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectCatalog = reject
-        }),
-    )
-
-    render(<App />)
-    await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
-    await screen.findByRole('button', { name: 'Resume Project chat' })
-
-    await act(async () => {
-      rejectCatalog(new Error('Late catalog failure'))
-      await Promise.resolve()
-    })
-    expect(screen.queryByText('Late catalog failure')).toBeNull()
-  })
-
-  it('does not retain a catalog failure that lands while suspension is pending', async () => {
-    let rejectCatalog: (error: Error) => void = () => {}
-    let finishSuspend: (value: typeof session) => void = () => {}
-    vi.mocked(listCommands).mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectCatalog = reject
-        }),
-    )
-    vi.mocked(suspendSession).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishSuspend = resolve
-        }),
-    )
-
-    render(<App />)
-    await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
-    await waitFor(() => expect(suspendSession).toHaveBeenCalledOnce())
-
-    await act(async () => {
-      rejectCatalog(new Error('Catalog failed during suspension'))
-      await Promise.resolve()
-    })
-    await act(async () => {
-      finishSuspend({ ...session, suspended: true })
-    })
-
-    await screen.findByRole('button', { name: 'Resume Project chat' })
-    expect(screen.queryByText('Catalog failed during suspension')).toBeNull()
-  })
-
-  it('keeps the selected catalog failure when another session starts suspending', async () => {
-    const other = {
-      ...session,
-      id: 'session-2',
-      title: 'Second chat',
-    }
-    let rejectCatalog: (error: Error) => void = () => {}
-    vi.mocked(listSessions).mockResolvedValue([session, other])
-    vi.mocked(listCommands).mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectCatalog = reject
-        }),
-    )
-    vi.mocked(suspendSession).mockResolvedValueOnce({
-      ...other,
-      suspended: true,
-    })
-
-    render(<App />)
-    await screen.findAllByText('Second chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Second chat' }))
-    await waitFor(() =>
-      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-2'),
-    )
-
-    await act(async () => {
-      rejectCatalog(new Error('Selected catalog unavailable'))
-      await Promise.resolve()
-    })
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Selected catalog unavailable',
-    )
-  })
-
-  it('keeps a suspension refusal when the pending command catalog fails later', async () => {
-    let rejectCatalog: (error: Error) => void = () => {}
-    vi.mocked(listCommands).mockImplementationOnce(
-      () =>
-        new Promise((_, reject) => {
-          rejectCatalog = reject
-        }),
-    )
-    vi.mocked(suspendSession).mockRejectedValueOnce(
-      new Error('Session can only be suspended while idle'),
-    )
-
-    render(<App />)
-    await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Session can only be suspended while idle',
-    )
-
-    await act(async () => {
-      rejectCatalog(new Error('Late catalog failure'))
-      await Promise.resolve()
-    })
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'Session can only be suspended while idle',
-    )
-    expect(screen.queryByText('Late catalog failure')).toBeNull()
-  })
-
-  it('submits only one suspension while the first request is pending', async () => {
-    let finishSuspend: (value: typeof session) => void = () => {}
-    vi.mocked(suspendSession).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishSuspend = resolve
-        }),
-    )
-
-    render(<App />)
-    await screen.findAllByText('Project chat')
-    const suspend = screen.getByRole('button', { name: 'Suspend Project chat' })
-    fireEvent.click(suspend)
-    fireEvent.click(suspend)
-
-    expect(suspendSession).toHaveBeenCalledOnce()
-    await act(async () => {
-      finishSuspend({ ...session, suspended: true })
-    })
-    expect(
-      await screen.findByRole('button', { name: 'Resume Project chat' }),
-    ).toBeInTheDocument()
-  })
-
-  it('suspends another session while the first is still suspending', async () => {
-    vi.mocked(listSessions).mockResolvedValue([session, secondSession])
-    vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
-      sessionId === secondSession.id ? secondSession : session,
-    )
-    let finishFirst: (value: typeof session) => void = () => {}
-    vi.mocked(suspendSession)
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finishFirst = resolve
-          }),
-      )
-      .mockResolvedValueOnce({ ...secondSession, suspended: true })
-
-    render(<App />)
-    await screen.findAllByText('Second chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
-    await waitFor(() =>
-      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-1'),
-    )
-    expect(screen.getByRole('button', { name: 'Suspend Project chat' })).toBeDisabled()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Second chat' }))
-    await waitFor(() =>
-      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-2'),
-    )
-    expect(
-      await screen.findByRole('button', { name: 'Resume Second chat' }),
-    ).toBeInTheDocument()
-
-    await act(async () => {
-      finishFirst({ ...session, suspended: true })
-    })
-    expect(
-      await screen.findByRole('button', { name: 'Resume Project chat' }),
-    ).toBeInTheDocument()
-    expect(suspendSession).toHaveBeenCalledTimes(2)
-  })
-
-  it('renders the owning computer refusal when suspension fails', async () => {
-    vi.mocked(suspendSession).mockRejectedValueOnce(
-      new Error('Session can only be suspended while idle'),
-    )
-
-    render(<App />)
-    await screen.findAllByText('Project chat')
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Project chat' }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Session can only be suspended while idle',
-    )
-  })
-
-  it('offers to start a suspended session even though it is not idle', async () => {
-    vi.mocked(listSessions).mockResolvedValue([
-      { ...session, suspended: true, status: 'error' },
-    ])
-    vi.mocked(getSession).mockResolvedValue({
-      ...session,
-      suspended: true,
-      status: 'error',
-    })
-
-    render(<App />)
-    await screen.findAllByText('Project chat')
-
-    expect(
-      await screen.findByRole('button', { name: 'Resume Project chat' }),
-    ).toBeInTheDocument()
-  })
-
-  describe('Pause in Session actions', () => {
-    let restoreMatchMedia: (() => void) | undefined
-
-    afterEach(() => {
-      restoreMatchMedia?.()
-      restoreMatchMedia = undefined
-    })
-
-    /** A browser window the test can widen or narrow across the drawer breakpoint. */
-    function windowWidth(width: number) {
-      const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
-      const listeners = new Set<() => void>()
-      let current = width
-      Object.defineProperty(window, 'matchMedia', {
-        configurable: true,
-        value: (query: string) => ({
-          get matches() {
-            return query === '(max-width: 960px)' && current <= 960
-          },
-          media: query,
-          onchange: null,
-          addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
-          removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
-          addListener: () => undefined,
-          removeListener: () => undefined,
-          dispatchEvent: () => false,
-        }),
-      })
-      restoreMatchMedia = () => {
-        if (original) Object.defineProperty(window, 'matchMedia', original)
-        else Reflect.deleteProperty(window, 'matchMedia')
-      }
-      return (next: number) => {
-        current = next
-        act(() => listeners.forEach((listener) => listener()))
-      }
-    }
-
-    const menuEntry = (name: string) => within(
-      screen.getByRole('group', { name: 'Session actions' }),
-    ).queryByRole('button', { name })
-
-    /** Touch screens show no `title`, so the entry says what it does, or why not, under its label. */
-    function expectShownReason(entry: HTMLElement, reason: string) {
-      const shown = within(entry).getByText(reason)
-      expect(shown).toBeVisible()
-      expect(shown.id).not.toBe('')
-      expect(entry).toHaveAttribute('aria-describedby', shown.id)
-      expect(entry).toHaveAccessibleDescription(reason)
-    }
-
-    it('pauses the open session from its menu while the list is a drawer, sharing the row\'s pending state', async () => {
-      windowWidth(390)
-      let finishSuspend: (value: ManagedSession) => void = () => {}
-      vi.mocked(suspendSession).mockImplementationOnce(
-        () => new Promise((resolve) => {
-          finishSuspend = resolve
-        }),
-      )
-      render(<App />)
-      await screen.findAllByText('Project chat')
-
-      const pause = sessionAction('Pause session')
-      expect(pause).toBeEnabled()
-      expect(pause).toHaveAttribute('title', 'Keep this session but stop what is running for it')
-      expectShownReason(pause, 'Keep this session but stop what is running for it')
-      const entries = within(screen.getByRole('group', { name: 'Session actions' }))
-        .getAllByRole('button')
-      expect(entries[entries.indexOf(pause) + 1]).toHaveAccessibleName('Restart session')
-
-      fireEvent.click(pause)
-      expect(screen.queryByRole('group', { name: 'Session actions' })).toBeNull()
-      expect(suspendSession).toHaveBeenCalledOnce()
-      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-1')
-
-      const waiting = sessionAction('Pause session')
-      expect(waiting).toBeDisabled()
-      expect(waiting).toHaveAttribute('title', 'Wait for this suspend or resume to finish')
-      expectShownReason(waiting, 'Wait for this suspend or resume to finish')
-      expect(screen.getByRole('button', { name: 'Suspend Project chat' })).toBeDisabled()
-
-      await act(async () => {
-        finishSuspend({ ...session, suspended: true })
-      })
-      expect(menuEntry('Pause session')).toBeNull()
-      expect(menuEntry('Resume session')).toBeEnabled()
-      expect(suspendSession).toHaveBeenCalledOnce()
-    })
-
-    it('resumes a suspended session from its menu', async () => {
-      windowWidth(390)
-      const resting = { ...session, suspended: true }
-      vi.mocked(listSessions).mockResolvedValue([resting])
-      vi.mocked(getSession).mockResolvedValue(resting)
-      render(<App />)
-      await screen.findAllByText('Project chat')
-
-      const resume = sessionAction('Resume session')
-      expect(menuEntry('Pause session')).toBeNull()
-      expect(resume).toBeEnabled()
-      expect(resume).toHaveAttribute('title', 'Start this session up again')
-      expectShownReason(resume, 'Start this session up again')
-      fireEvent.click(resume)
-
-      expect(resumeSession).toHaveBeenCalledOnce()
-      expect(resumeSession).toHaveBeenCalledWith('computer-1', 'session-1')
-      expect(suspendSession).not.toHaveBeenCalled()
-      expect(await findSessionAction('Pause session')).toBeEnabled()
-    })
-
-    it('reports a refused pause in the conversation, as the row does', async () => {
-      windowWidth(390)
-      vi.mocked(suspendSession).mockRejectedValueOnce(
-        new Error('Session can only be suspended while idle'),
-      )
-      render(<App />)
-      await screen.findAllByText('Project chat')
-
-      fireEvent.click(sessionAction('Pause session'))
-
-      expect(await screen.findByRole('alert')).toHaveTextContent(
-        'Session can only be suspended while idle',
-      )
-      expect(await findSessionAction('Pause session')).toBeEnabled()
-    })
-
-    it.each([
-      [
-        'busy',
-        { status: 'running' as const },
-        undefined,
-        'Wait for the session to finish before suspending it',
-      ],
-      [
-        'waiting on a question',
-        {
-          pendingUserInput: {
-            requestId: 'question', question: 'Keep this pending', choices: [], allowFreeform: true,
-          },
-        },
-        undefined,
-        'Wait for the session to finish before suspending it',
-      ],
-      [
-        'holding queued background work',
-        {},
-        {
-          tasks: [{
-            id: 'agent-1', type: 'agent' as const, description: 'Review',
-            status: 'queued' as const, startedAt: '2026-09-01T00:00:00Z', canCancel: true,
-          }],
-          runningCount: 0,
-          supported: true,
-        },
-        'Wait for its background tasks to finish before suspending it',
-      ],
-      [
-        'interrupted',
-        {
-          status: 'error' as const,
-          interruption: { detectedAt: '2026-09-01T00:00:00Z', previousStatus: 'running' as const },
-        },
-        undefined,
-        'Reopen this session before suspending it',
-      ],
-    ])('holds Pause back, saying why, while the session is %s', async (_state, change, tasks, reason) => {
-      windowWidth(390)
-      const held = { ...session, ...change }
-      vi.mocked(listSessions).mockResolvedValue([held])
-      vi.mocked(getSession).mockResolvedValue(held)
-      if (tasks) {
-        vi.mocked(listComputers).mockResolvedValue([taskComputer])
-        vi.mocked(listBackgroundTasks).mockResolvedValue(tasks)
-      }
-      render(<App />)
-      await screen.findAllByText('Project chat')
-      await waitFor(() =>
-        expect(screen.getByRole('button', { name: 'Suspend Project chat' })).toBeDisabled(),
-      )
-
-      const pause = sessionAction('Pause session')
-      expect(pause).toBeDisabled()
-      expect(pause).toHaveAttribute('title', reason)
-      expectShownReason(pause, reason)
-      fireEvent.click(pause)
-      expect(suspendSession).not.toHaveBeenCalled()
-    })
-
-    it('is not held back by another session\'s pending suspend', async () => {
-      windowWidth(390)
-      vi.mocked(listSessions).mockResolvedValue([session, secondSession])
-      vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
-        sessionId === secondSession.id ? secondSession : session,
-      )
-      vi.mocked(suspendSession).mockImplementationOnce(() => new Promise(() => {}))
-      render(<App />)
-      await screen.findAllByText('Second chat')
-
-      fireEvent.click(screen.getByRole('button', { name: 'Suspend Second chat' }))
-      expect(suspendSession).toHaveBeenCalledWith('computer-1', 'session-2')
-
-      expect(sessionAction('Pause session')).toBeEnabled()
-    })
-
-    it('leaves Pause to the docked list on desktop, following the breakpoint while open or reopened', async () => {
-      const resize = windowWidth(1440)
-      render(<App />)
-      await screen.findAllByText('Project chat')
-
-      openSessionActions()
-      expect(menuEntry('Restart session')).toBeInTheDocument()
-      expect(menuEntry('Pause session')).toBeNull()
-      expect(menuEntry('Resume session')).toBeNull()
-
-      resize(390)
-      expect(menuEntry('Pause session')).toBeEnabled()
-      resize(1440)
-      expect(menuEntry('Pause session')).toBeNull()
-
-      fireEvent.click(screen.getByRole('button', { name: 'Session actions' }))
-      expect(screen.queryByRole('group', { name: 'Session actions' })).toBeNull()
-      resize(390)
-      expect(sessionAction('Pause session')).toBeEnabled()
-      expect(suspendSession).not.toHaveBeenCalled()
-    })
   })
 
   it('mutes notifications for the selected session from the header', async () => {
@@ -16081,33 +15581,6 @@ describe('App', () => {
     )
   })
 
-  it('does not offer to rewrite a queued message while the session is put down', async () => {
-    // The composer is closed while a session is suspended, so opening a
-    // message for rewriting there gave a banner over a box nothing could be
-    // typed into.
-    const queued = {
-      id: 'q1',
-      content: 'the original text',
-      createdAt: '2026-07-25T01:00:00.000Z',
-    }
-    const suspended = {
-      ...session,
-      status: 'idle' as const,
-      suspended: true,
-      queuedCount: 1,
-      queuedPrompts: [queued],
-    }
-    vi.mocked(listSessions).mockResolvedValue([suspended])
-    vi.mocked(getSession).mockResolvedValue(suspended)
-
-    render(<App />)
-    await screen.findByText('the original text')
-
-    expect(
-      screen.getByRole('button', { name: 'Edit queued prompt 1' }),
-    ).toBeDisabled()
-  })
-
   it('lets the edit go when its message is deliberately removed', async () => {
     // Every other absence is a drain's doing and is waited out. This one is
     // the reader taking the message off themselves, and it is acknowledged --
@@ -18128,7 +17601,7 @@ describe('App', () => {
     expect(await screen.findByRole('dialog', { name: 'Skills and MCP servers' })).toBeInTheDocument()
   })
 
-  it('routes card Close and Pause actions to the remote session computer', async () => {
+  it('routes a card Close action to the remote session computer', async () => {
     const remoteSession = {
       ...secondSession,
       computerId: secondComputer.id,
@@ -18139,17 +17612,9 @@ describe('App', () => {
     vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>
       sessionId === remoteSession.id ? remoteSession : session,
     )
-    vi.mocked(suspendSession).mockResolvedValue({
-      ...remoteSession,
-      suspended: true,
-    })
     render(<App />)
     await screen.findAllByText('Second chat')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Suspend Second chat' }))
-    await waitFor(() =>
-      expect(suspendSession).toHaveBeenCalledWith('computer-2', 'session-2'),
-    )
     fireEvent.click(screen.getByRole('button', { name: 'Close Second chat' }))
 
     // This computer cannot keep a closed session, so Close only deletes there.
@@ -18566,7 +18031,6 @@ describe('App', () => {
         },
       },
     },
-    { state: 'suspended', selected: { ...session, suspended: true } },
     { state: 'offline', selected: session, offline: true },
     {
       state: 'holding a live prompt',
@@ -22935,7 +22399,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 9,
       bootstrapped: true,
-      showSuspended: true,
       order: { [computer.id]: [`${computer.id}:hub-b`, `${computer.id}:hub-a`] },
     }
 
@@ -22967,213 +22430,6 @@ describe('App', () => {
     await waitFor(() => expect(titles()).toEqual(['Bravo', 'Alpha']))
   })
 
-  it('persists suspended visibility and accepts newer changes from another device', async () => {
-    const paused = {
-      ...session,
-      id: 'shared-paused',
-      title: 'Paused planning',
-      suspended: true,
-      messages: [],
-    }
-    const items = [session, paused]
-    vi.mocked(listSessions).mockResolvedValue(items)
-    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
-      items.find((candidate) => candidate.id === id) ?? items[0],
-    )
-    hubSessionOrder = {
-      revision: 3,
-      bootstrapped: true,
-      showSuspended: false,
-      order: {
-        [computer.id]: items.map((item) => `${computer.id}:${item.id}`),
-      },
-    }
-
-    render(<App />)
-    await screen.findByLabelText('Message')
-    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    const toggle = await screen.findByRole('button', {
-      name: 'Include suspended sessions',
-    })
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'))
-    expect(screen.queryByRole('button', { name: /^Paused planning,/ })).toBeNull()
-
-    hubSessionOrder = { ...hubSessionOrder, revision: 4, showSuspended: true }
-    act(() => {
-      MockWebSocket.instances.at(-1)?.onmessage?.({
-        data: JSON.stringify({
-          type: 'session.order.updated',
-          order: hubSessionOrder,
-        }),
-      } as MessageEvent)
-    })
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
-
-    act(() => {
-      MockWebSocket.instances.at(-1)?.onmessage?.({
-        data: JSON.stringify({
-          type: 'session.order.updated',
-          order: { ...hubSessionOrder, revision: 3, showSuspended: false },
-        }),
-      } as MessageEvent)
-    })
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-
-    fireEvent.click(toggle)
-    await waitFor(() => expect(saveSessionVisibility).toHaveBeenCalledWith(false))
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'false'))
-    expect(screen.queryByRole('button', { name: /^Paused planning,/ })).toBeNull()
-  })
-
-  it('reorders active sessions with their trailing hidden suspended blocks', async () => {
-    const alpha = { ...session, id: 'block-alpha', title: 'Alpha' }
-    const alphaPaused = {
-      ...session,
-      id: 'block-alpha-paused',
-      title: 'Alpha paused',
-      suspended: true,
-      messages: [],
-    }
-    const bravo = {
-      ...session,
-      id: 'block-bravo',
-      title: 'Bravo',
-      messages: [],
-    }
-    const bravoPaused = {
-      ...session,
-      id: 'block-bravo-paused',
-      title: 'Bravo paused',
-      suspended: true,
-      messages: [],
-    }
-    const charlie = {
-      ...session,
-      id: 'block-charlie',
-      title: 'Charlie',
-      messages: [],
-    }
-    const items = [alpha, alphaPaused, bravo, bravoPaused, charlie]
-    const keys = items.map((item) => `${computer.id}:${item.id}`)
-    vi.mocked(listSessions).mockResolvedValue(items)
-    vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
-      items.find((candidate) => candidate.id === id) ?? alpha,
-    )
-    hubSessionOrder = {
-      revision: 5,
-      bootstrapped: true,
-      showSuspended: false,
-      order: { [computer.id]: keys },
-    }
-
-    render(<App />)
-    await screen.findByLabelText('Message')
-    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    await waitFor(() =>
-      expect(screen.getByRole('button', {
-        name: 'Include suspended sessions',
-      })).toHaveAttribute('aria-pressed', 'false'),
-    )
-    expect(screen.queryByRole('button', { name: /^Alpha paused,/ })).toBeNull()
-    expect(screen.queryByRole('button', { name: /^Bravo paused,/ })).toBeNull()
-    expect(screen.getByLabelText('Reorder Alpha')).not
-      .toHaveAttribute('aria-disabled', 'true')
-
-    act(() => {
-      finishReorder(
-        'session-navigation',
-        `session:${keys[0]}`,
-        `session:${keys[2]}`,
-      )
-    })
-
-    const expected = [keys[2], keys[3], keys[0], keys[1], keys[4]]
-    await waitFor(() =>
-      expect(saveSessionOrderLane).toHaveBeenCalledWith(computer.id, expected),
-    )
-    await waitFor(() =>
-      expect(
-        [...document.querySelectorAll('.session-item__open strong')]
-          .map((element) => element.textContent),
-      ).toEqual(['Bravo', 'Alpha', 'Charlie']),
-    )
-  })
-
-  it('keeps the committed visibility when saving it fails', async () => {
-    const paused = {
-      ...session,
-      id: 'failed-paused',
-      title: 'Paused planning',
-      suspended: true,
-      messages: [],
-    }
-    vi.mocked(listSessions).mockResolvedValue([session, paused])
-    vi.mocked(saveSessionVisibility).mockRejectedValueOnce(new Error('Hub unavailable'))
-
-    render(<App />)
-    await screen.findByLabelText('Message')
-    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    const toggle = await screen.findByRole('button', {
-      name: 'Include suspended sessions',
-    })
-    fireEvent.click(toggle)
-
-    expect(await screen.findAllByText(
-      'Could not save suspended-session visibility: Hub unavailable',
-    )).not.toHaveLength(0)
-    expect(toggle).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: /^Paused planning,/ })).toBeVisible()
-  })
-
-  it('does not let Clear filters race an in-flight visibility save', async () => {
-    const paused = {
-      ...session,
-      id: 'pending-paused',
-      title: 'Paused planning',
-      suspended: true,
-      messages: [],
-    }
-    vi.mocked(listSessions).mockResolvedValue([session, paused])
-    let finish!: (snapshot: typeof hubSessionOrder) => void
-    vi.mocked(saveSessionVisibility).mockImplementationOnce(() =>
-      new Promise((resolve) => {
-        finish = resolve
-      }),
-    )
-
-    render(<App />)
-    await screen.findByLabelText('Message')
-    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), {
-      target: { value: 'Project' },
-    })
-    const toggle = screen.getByRole('button', {
-      name: 'Include suspended sessions',
-    })
-    fireEvent.click(toggle)
-
-    const clear = screen.getByRole('button', { name: 'Clear filters' })
-    expect(clear).toBeDisabled()
-    fireEvent.click(clear)
-    expect(screen.getByRole('searchbox', { name: 'Search sessions' }))
-      .toHaveValue('Project')
-
-    const hidden = {
-      ...hubSessionOrder,
-      revision: hubSessionOrder.revision + 1,
-      showSuspended: false,
-    }
-    finish(hidden)
-    await waitFor(() => expect(clear).toBeEnabled())
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
-
-    fireEvent.click(clear)
-    await waitFor(() => expect(saveSessionVisibility).toHaveBeenLastCalledWith(true))
-    await waitFor(() => expect(toggle).toHaveAttribute('aria-pressed', 'true'))
-    expect(screen.getByRole('searchbox', { name: 'Search sessions' })).toHaveValue('')
-  })
-
   it('hides the open session from the list without changing it, and follows other devices', async () => {
     const other = { ...session, id: 'other-work', title: 'Other work', messages: [] }
     const items = [session, other]
@@ -23184,7 +22440,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 3,
       bootstrapped: true,
-      showSuspended: true,
       order: { [computer.id]: items.map((item) => `${computer.id}:${item.id}`) },
     }
     window.history.replaceState({}, '', `/?computer=${computer.id}&session=${session.id}`)
@@ -23264,7 +22519,6 @@ describe('App', () => {
       hubSessionOrder = {
         revision: 3,
         bootstrapped: true,
-        showSuspended: true,
         unread: unread.map(key),
         order: { [computer.id]: items.map((item) => key(item.id)) },
       }
@@ -23481,7 +22735,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
-      showSuspended: true,
       hidden: [`${computer.id}:tucked`],
       order: { [computer.id]: items.map((item) => `${computer.id}:${item.id}`) },
     }
@@ -23529,7 +22782,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
-      showSuspended: true,
       hidden: [`${computer.id}:tucked`],
       order: { [computer.id]: items.map((item) => `${computer.id}:${item.id}`) },
     }
@@ -23576,7 +22828,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
-      showSuspended: true,
       hidden: [key(session.id)],
       order: { [computer.id]: items.map((item) => key(item.id)) },
     }
@@ -23645,7 +22896,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
-      showSuspended: true,
       hidden: items.map((item) => key(item.id)),
       order: { [computer.id]: items.map((item) => key(item.id)) },
     }
@@ -23719,7 +22969,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
-      showSuspended: true,
       hidden: [`${computer.id}:nav-tucked`],
       order: { [computer.id]: items.map((item) => `${computer.id}:${item.id}`) },
     }
@@ -23755,7 +23004,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 5,
       bootstrapped: true,
-      showSuspended: true,
       hidden: [keys[1], keys[3]],
       order: { [computer.id]: keys },
     }
@@ -23799,7 +23047,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 4,
       bootstrapped: true,
-      showSuspended: true,
       order: { [computer.id]: [`${computer.id}:live-a`, `${computer.id}:live-b`] },
     }
     render(<App />)
@@ -23815,7 +23062,6 @@ describe('App', () => {
           order: {
             revision: 5,
             bootstrapped: true,
-            showSuspended: true,
             order: { [computer.id]: [`${computer.id}:live-b`, `${computer.id}:live-a`] },
           },
         }),
@@ -23831,7 +23077,6 @@ describe('App', () => {
           order: {
             revision: 4,
             bootstrapped: true,
-            showSuspended: true,
             order: { [computer.id]: [`${computer.id}:live-a`, `${computer.id}:live-b`] },
           },
         }),
@@ -23870,7 +23115,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
-      showSuspended: true,
       order: { [computer.id]: [`${computer.id}:gap-a`, `${computer.id}:gap-b`] },
     }
     render(<App />)
@@ -23884,7 +23128,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 3,
       bootstrapped: true,
-      showSuspended: true,
       order: { [computer.id]: [`${computer.id}:gap-b`, `${computer.id}:gap-a`] },
     }
     await act(async () => {
@@ -23907,7 +23150,6 @@ describe('App', () => {
     hubSessionOrder = {
       revision: 2,
       bootstrapped: true,
-      showSuspended: true,
       order: { [computer.id]: [key('race-a'), key('race-b'), key('race-c')] },
     }
     render(<App />)
@@ -23925,7 +23167,6 @@ describe('App', () => {
             order: {
               revision: 50,
               bootstrapped: true,
-              showSuspended: true,
               order: { [computer.id]: [key('race-c'), key('race-b'), key('race-a')] },
             },
           }),
@@ -24053,7 +23294,7 @@ describe('App', () => {
     expect(moveSessionToTmux).not.toHaveBeenCalled()
   })
 
-  it('does not let a stale idle status authorize restart, clear, migration or suspend over a pending question', async () => {
+  it('does not let a stale idle status authorize restart, clear or migration over a pending question', async () => {
     const pending = {
       ...session,
       executionMode: 'sdk' as const,
@@ -24064,7 +23305,7 @@ describe('App', () => {
     render(<App />)
     await screen.findByRole('heading', { name: 'Keep this pending' })
     openSessionActions()
-    for (const name of ['Restart session', 'Clear conversation', 'Move session to tmux', 'Suspend Project chat']) {
+    for (const name of ['Restart session', 'Clear conversation', 'Move session to tmux']) {
       expect(screen.getByRole('button', { name })).toBeDisabled()
     }
     expect(screen.getByRole('button', { name: 'Close session' })).toBeEnabled()

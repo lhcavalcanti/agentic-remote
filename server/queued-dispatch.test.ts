@@ -39,7 +39,7 @@ const accept = async (_prompt: QueuedPrompt, delivery: QueuedDelivery) => {
   delivery.accept()
 }
 const idle = (session: SessionDetail) => {
-  if (session.suspended || session.status !== 'idle') {
+  if (session.status !== 'idle') {
     throw Object.assign(new Error('Session must be idle'), { statusCode: 409 })
   }
 }
@@ -388,12 +388,12 @@ describe('Queued dispatch claims', () => {
     },
   )
 
-  it('checks suspension inside the claim transaction rather than trusting an ordered read', async () => {
+  it('checks idleness inside the claim transaction rather than trusting an ordered read', async () => {
     const { store } = await fixture()
     const claims = new QueuedDispatches(store, () => {})
     const dispatch = vi.fn(accept)
     await expect(claims.run('session', target, async (text) => {
-      await store.setSuspended('session', true)
+      await store.updateStatus('session', 'running')
       return text
     }, dispatch, idle)).rejects.toMatchObject({ statusCode: 409 })
     expect(dispatch).not.toHaveBeenCalled()

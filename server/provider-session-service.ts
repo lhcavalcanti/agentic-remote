@@ -291,14 +291,6 @@ export class ProviderSessionService
     return service.recoverConversation(id, reason)
   }
 
-  suspendSession(id: string): Promise<SessionDetail> {
-    return this.serviceFor(id).suspendSession(id)
-  }
-
-  resumeSession(id: string): Promise<SessionDetail> {
-    return this.serviceFor(id).resumeSession(id)
-  }
-
   restartSession(id: string): Promise<SessionDetail> {
     return this.serviceFor(id).restartSession(id)
   }

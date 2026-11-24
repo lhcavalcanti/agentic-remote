@@ -241,7 +241,7 @@ catalog is fresh is answered without process discovery.
 - A service restart reuses existing tmux processes. A full host reboot
   recreates missing tmux windows, with the same Copilot session IDs, for the
   sessions Agentic Remote manages: those it created, moved, reopened,
-  suspended, resumed, reconfigured, restarted, cleared, or recovered, or sent
+  reconfigured, restarted, cleared, or recovered, or sent
   a prompt, command, queued item, or answer. A Copilot process merely
   discovered in some other tmux pane is listed while it runs but is not
   recreated after it exits. Recovery intent recorded by earlier releases'
@@ -483,7 +483,7 @@ Queue wake-ups are coalesced and scheduled only after reply and drain locks
 have been released. A typed stale-reservation rejection requests a fresh pass
 over the committed canonical FIFO; authentication/storage failures stop that
 pass until a new trigger. Completion and durable reply settlement are both
-triggers. Every pass rechecks ownership, pending cards, and stop/suspend/delete
+triggers. Every pass rechecks ownership, pending cards, and stop/close/delete
 state before committing or dispatching work.
 
 `SessionStore.close()` fences new mutations and uploads, drains admitted

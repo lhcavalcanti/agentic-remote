@@ -195,12 +195,11 @@ export function Composer(props: ComposerProps) {
                 acceptanceReceiptMissing ? 'composer-acceptance-warning' : undefined,
               ].filter(Boolean).join(' ') || undefined
             }
-            // A suspended session has nothing running to send to. The
+            // A retained session has nothing running to send to. The
             // conversation stays here to be read; writing to it is what
-            // resuming is for.
-            // Asking aside reads the saved conversation, which a
-            // suspended session still has.
-            disabled={(selected.suspended === true || Boolean(selected.interruption || selected.archivedAt)) && !askingAside}
+            // reopening is for. Asking aside reads the saved conversation,
+            // which a retained session still has.
+            disabled={Boolean(selected.interruption || selected.archivedAt) && !askingAside}
             maxLength={askingAside ? SIDE_QUESTION_MAX_LENGTH : undefined}
             onBeforeInput={askingAside ? undefined : onBeforeInput}
             onCut={askingAside ? undefined : onCut}
@@ -216,13 +215,11 @@ export function Composer(props: ComposerProps) {
                   ? 'Archived - reopen to send'
                   : selected.interruption
                     ? 'Interrupted - reopen to send'
-                    : selected.suspended
-                      ? 'Suspended · resume to send'
-                      : editingQueuedPromptId
-                        ? phoneEnterCreatesNewline
-                          ? 'Editing a queued message · Save puts it back'
-                          : 'Editing a queued message · Enter puts it back'
-                        : `Message agent on ${selected.computerName}…`
+                    : editingQueuedPromptId
+                      ? phoneEnterCreatesNewline
+                        ? 'Editing a queued message · Save puts it back'
+                        : 'Editing a queued message · Enter puts it back'
+                      : `Message agent on ${selected.computerName}…`
             }
             ref={composerRef}
             rows={1}

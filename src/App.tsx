@@ -138,9 +138,7 @@ import {
   MessageSquare,
   Minimize2,
   MonitorCog,
-  Pause,
   Pencil,
-  Play,
   Plus,
   Plug,
   RefreshCw,
@@ -199,7 +197,6 @@ import {
   retainedSessionNotice,
   sessionKey,
   shortPath,
-  suspendAvailability,
   taskSnapshot,
 } from './session-presentation'
 import type { SessionSort } from './session-presentation'
@@ -308,12 +305,9 @@ import {
   renameSession,
   readWorkspaceFile,
   restartSession,
-  resumeSession,
-  saveSessionVisibility,
   saveHiddenSessionVisibility,
   saveSessionHidden,
   saveSessionUnread,
-  suspendSession,
   fetchSessionOrder,
   fetchSettingsProfile,
   importSettingsProfile,
@@ -691,16 +685,6 @@ function drawerIsOverlay(): boolean {
   return typeof window.matchMedia === 'function'
     ? window.matchMedia(drawerQuery).matches
     : window.innerWidth <= 960
-}
-
-function subscribeDrawerOverlay(notify: () => void): () => void {
-  if (typeof window.matchMedia !== 'function') {
-    window.addEventListener('resize', notify)
-    return () => window.removeEventListener('resize', notify)
-  }
-  const media = window.matchMedia(drawerQuery)
-  media.addEventListener?.('change', notify)
-  return () => media.removeEventListener?.('change', notify)
 }
 
 function settingsNotice(state: SettingsProfileState): string | undefined {
@@ -3683,9 +3667,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [oracleFocusRequest, setOracleFocusRequest] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
   const desktopLayout = viewportWidth > 960
-  // Subscribed rather than read once, so what only the drawer layout offers
-  // follows the window across the breakpoint.
-  const sessionListIsDrawer = useSyncExternalStore(subscribeDrawerOverlay, drawerIsOverlay)
   // The open Oracle panel's width; the timeline dock moves beside it.
   const [oraclePanelWidth, setOraclePanelWidth] = useState<number>()
   const [oracleIndicator, setOracleIndicator] = useState<OracleIndicator>({
@@ -4101,7 +4082,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     [expandedKnowledge, knowledgeFolders],
   )
   const [commands, setCommands] = useState<SlashCommand[]>([])
-  const commandCatalogEpoch = useRef(0)
   // Which session the list above belongs to. It is fetched per session, so
   // until the new one has arrived the old one is still on hand -- and reading
   // it as though it described the session now open let a command only the
@@ -4130,8 +4110,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // acted on a message that was not in front of the reader.
   const [queueActionId, setQueueActionId] = useState<string>()
   // Keyed by session: the owning computer serializes lifecycle work per
-  // session, so closing or suspending one never has to hold back another. The
-  // refs answer a second click before React has rendered the first one.
+  // session, so closing one never has to hold back another. The ref answers
+  // a second click before React has rendered the first one.
   const [closingSessions, setClosingSessions] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
@@ -4145,10 +4125,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [clearing, setClearing] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [restarting, setRestarting] = useState(false)
-  const [suspendingSessions, setSuspendingSessions] = useState<
-    ReadonlySet<string>
-  >(() => new Set())
-  const suspendingSessionsRef = useRef(new Set<string>())
   const [retentionOpen, setRetentionOpen] = useState(false)
   const [reopening, setReopening] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
@@ -4385,9 +4361,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // rather than written back. -1 means "nothing acknowledged yet", which keeps
   // revision 0 (an empty hub) from looking like a snapshot already applied.
   const [sessionOrderRevision, setSessionOrderRevision] = useState(-1)
-  const [showSuspendedSessions, setShowSuspendedSessions] = useState(true)
-  const [savingSuspendedVisibility, setSavingSuspendedVisibility] = useState(false)
-  const savingSuspendedVisibilityRef = useRef(false)
   // Hidden sessions keep running; only the list leaves them out.
   const [hiddenSessionKeys, setHiddenSessionKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -4442,7 +4415,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       acknowledgedSessionOrderRef.current = snapshot.order
       setSessionOrderRevision(snapshot.revision)
       setSessionOrder(snapshot.order)
-      setShowSuspendedSessions(snapshot.showSuspended !== false)
       // A hub that predates hiding sends neither field.
       setHiddenSessionKeys(new Set(Array.isArray(snapshot.hidden) ? snapshot.hidden : []))
       setShowHiddenSessions(snapshot.showHidden === true)
@@ -4903,7 +4875,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       backgroundTaskSnapshots,
       sessionQuery,
       sessionFilter,
-      showSuspendedSessions,
       { keys: listedHiddenKeys, shown: showHiddenSessions },
       listedUnreadKeys,
     ),
@@ -4913,7 +4884,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       backgroundTaskSnapshots,
       sessionQuery,
       sessionFilter,
-      showSuspendedSessions,
       listedHiddenKeys,
       showHiddenSessions,
       listedUnreadKeys,
@@ -5418,22 +5388,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // server refuses these actions too.
   const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
   const selectedClosing = Boolean(selected && closingSessions.has(sessionKey(selected)))
-  const selectedSuspending = Boolean(
-    selected && suspendingSessions.has(sessionKey(selected)),
-  )
-  const selectedSuspend = selected
-    ? suspendAvailability(selected, selectedBackgroundTasks, {
-        computerName: selected.computerName,
-        online: selectedComputerOnline,
-        suspending: selectedSuspending,
-      })
-    : undefined
   const selectedQueueHeadIsSteering = Boolean(
     selected?.status === 'running' &&
     selected.executionMode === 'tmux' &&
     selectedComputerOnline &&
     !selectedRetained &&
-    selected?.suspended !== true &&
     !selected.pendingUserInput &&
     !selected.pendingPermission &&
     !selected.failedPrompt &&
@@ -5449,12 +5408,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const selectedLifecycleBlocked = !selectedComputerOnline ||
     selectedRetained ||
     selected?.status !== 'idle' ||
-    selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
   const selectedRestartBlocked = !selectedComputerOnline ||
     selectedRetained ||
     (selected?.status !== 'idle' && selected?.status !== 'error') ||
-    selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
   const workspaceInsertUnavailableReason = selected && !selectedComputerOnline
     ? `Reconnect ${selected.computerName} to add a file reference.`
@@ -5483,7 +5440,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     selectedShowsRecovery &&
     selectedComputerOnline &&
     !selectedRetained &&
-    selected?.suspended !== true &&
     (selected?.status === 'idle' ||
       selected?.status === 'error') &&
     ((!selected?.pendingPermission &&
@@ -7091,22 +7047,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       setCommandsKey(selectedKey)
       return
     }
-    if (selected?.suspended || selected?.interruption || selected?.archivedAt) {
-      // A suspended session has no runtime to ask, and asking would start the
-      // one that suspending put down. Only local read-only resource views are
-      // offered until it is resumed.
-      //
-      // The flag is a dependency on purpose. Resuming is meant to bring the
-      // session back the way reopening the CLI does, so the runtime coming up
-      // on resume is the feature rather than a side effect of this read: the
-      // list is only knowable from a live runtime, and a resumed session that
-      // offered no commands until its first message would be the bug.
+    if (selected?.interruption || selected?.archivedAt) {
+      // A retained session has no runtime to ask, and asking would start one.
+      // Only local read-only resource views are offered until it is reopened.
       setCommands(sessionResourceCommands)
       setCommandsKey(selectedKey)
       return
     }
     let active = true
-    const catalogEpoch = commandCatalogEpoch.current
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
         if (active) {
@@ -7131,7 +7079,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         }
       })
       .catch((caught) => {
-        if (active && commandCatalogEpoch.current === catalogEpoch) {
+        if (active) {
           setCommands([])
           setCommandsKey(selectedKey)
           setError((current) =>
@@ -7143,7 +7091,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
   }, [
     selected?.provider,
-    selected?.suspended,
     selected?.interruption,
     selected?.archivedAt,
     selectedComputerId,
@@ -12421,54 +12368,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
   }
 
-  async function toggleSelectedSessionSuspended(
-    // Any session, not only the open one: the list offers this beside each
-    // conversation so it can be put down or picked up without opening it.
-    session?: ManagedSession,
-  ) {
-    const target = session || selected
-    if (!target) {
-      return
-    }
-    const targetKey = sessionKey(target)
-    if (suspendingSessionsRef.current.has(targetKey)) {
-      return
-    }
-    const wasSuspended = target.suspended === true
-    if (!wasSuspended && targetKey === selectedKey) {
-      // Synchronous before suspendSession's first await: any later selected
-      // catalog rejection belongs to the runtime being put down.
-      commandCatalogEpoch.current += 1
-    }
-    suspendingSessionsRef.current.add(targetKey)
-    setSuspendingSessions(new Set(suspendingSessionsRef.current))
-    setError(undefined)
-    try {
-      const updated = wasSuspended
-        ? await resumeSession(target.computerId, target.id)
-        : await suspendSession(target.computerId, target.id)
-      setSessions((current) => upsertSession(current, updated))
-    } catch (caught) {
-      // Offered from the list on purpose, so a session that is not open can be
-      // put down without navigating to it. A refusal has to be seen, though,
-      // and the error banner belongs to the conversation -- which on a narrow
-      // screen is behind the sidebar the reader is looking at.
-      //
-      // So a failure, and only a failure, opens the session it is about. The
-      // sidebar closes either way: a refusal for the session already open left
-      // the drawer sitting over the very message explaining it.
-      if (targetKey !== selectedKey) {
-        selectSession(target)
-      } else {
-        setSidebarOpen(false)
-      }
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      suspendingSessionsRef.current.delete(targetKey)
-      setSuspendingSessions(new Set(suspendingSessionsRef.current))
-    }
-  }
-
   async function reopenInterruptedSession() {
     if (!selected || reopening) return
     const target = selected
@@ -12508,8 +12407,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       selected.provider === 'claude' ||
       selected.executionMode !== 'sdk' ||
       selected.status !== 'idle' ||
-      selected.suspended === true ||
-      suspendingSessionsRef.current.has(sessionKey(selected)) ||
       !window.confirm(
         `Move "${selected.title}" to tmux?\n\nThe Copilot SDK process will disconnect and the same session will resume in a tmux window.`,
       )
@@ -13015,8 +12912,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const to = order.indexOf(overKey)
     if (from < 0 || to < 0) return
     const computerId = activeSession.computerId
-    // Each listed session carries the hidden or suspended sessions after it
-    // that the list leaves out, so they stay where they were relative to it.
+    // Each listed session carries the hidden sessions after it that the list
+    // leaves out, so they stay where they were relative to it.
     const lane = reorderSessionLaneWithHiddenFollowers(
       order,
       activeKey,
@@ -13149,30 +13046,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     if (unread && key === selectedKey) unreadHoldRef.current = key
     else if (unreadHoldRef.current === key) unreadHoldRef.current = undefined
     changeSessionUnread(session, unread, true)
-  }
-
-  function changeShowSuspendedSessions(showSuspended: boolean) {
-    if (
-      savingSuspendedVisibilityRef.current ||
-      showSuspended === showSuspendedSessions
-    ) return
-    savingSuspendedVisibilityRef.current = true
-    setSavingSuspendedVisibility(true)
-    void (async () => {
-      try {
-        applySessionOrderSnapshot(await saveSessionVisibility(showSuspended))
-      } catch (caught) {
-        void syncSessionOrderRef.current()
-        setError(
-          `Could not save suspended-session visibility: ${
-            caught instanceof Error ? caught.message : String(caught)
-          }`,
-        )
-      } finally {
-        savingSuspendedVisibilityRef.current = false
-        setSavingSuspendedVisibility(false)
-      }
-    })()
   }
 
   function closeShellView() {
@@ -13435,13 +13308,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 view={navigationView}
                 query={sessionQuery}
                 filter={sessionFilter}
-                showSuspended={showSuspendedSessions}
-                showSuspendedSaving={savingSuspendedVisibility}
                 showHidden={showHiddenSessions}
                 showHiddenSaving={savingHiddenVisibility}
                 onQueryChange={setSessionQuery}
                 onFilterChange={setSessionFilter}
-                onShowSuspendedChange={changeShowSuspendedSessions}
                 onShowHiddenChange={changeShowHiddenSessions}
                 onRefresh={refreshAuthoritative}
                 refreshMessage={refreshMessage}
@@ -13460,14 +13330,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 onOpenSessionTasks={openTasksForSession}
                 onCloseSession={requestSessionClose}
                 onSelectSession={selectSession}
-                onToggleSessionSuspended={(session) =>
-                  void toggleSelectedSessionSuspended(session)
-                }
                 selectedKey={selectedKey}
                 sort={sessionSort}
                 onSortChange={changeSessionSort}
                 closingSessions={closingSessions}
-                suspendingSessions={suspendingSessions}
                 hiddenSessions={hiddenSessionKeys}
                 hidingSessions={hidingSessions}
                 onToggleSessionHidden={toggleSessionHidden}
@@ -13926,44 +13792,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 <button
                   aria-label="Move session to tmux"
                   className="session-action"
-                  disabled={
-                    movingToTmux ||
-                    selectedLifecycleBlocked ||
-                    selectedSuspending
-                  }
+                  disabled={movingToTmux || selectedLifecycleBlocked}
                   onClick={() => void moveSelectedSessionToTmux()}
-                  title={
-                    selected.suspended
-                      ? 'Resume the session before moving it to tmux'
-                      : 'Move this Copilot session to tmux'
-                  }
+                  title="Move this Copilot session to tmux"
                   type="button"
                 >
                   <SquareTerminal size={18} />
                   <span>Move session to tmux</span>
-                </button>
-              ) : null}
-              {/* Beside the docked list, its row already offers this. */}
-              {sessionListIsDrawer && selectedSuspend ? (
-                <button
-                  aria-describedby="suspend-session-description"
-                  aria-label={selected.suspended ? 'Resume session' : 'Pause session'}
-                  className="session-action session-action--explained"
-                  disabled={!selectedSuspend.available}
-                  onClick={() => void toggleSelectedSessionSuspended()}
-                  title={selectedSuspend.title}
-                  type="button"
-                >
-                  {selected.suspended
-                    ? <Play aria-hidden="true" size={17} />
-                    : <Pause aria-hidden="true" size={17} />}
-                  <span>
-                    <span className="session-action__label">
-                      {selected.suspended ? 'Resume session' : 'Pause session'}
-                    </span>
-                    {/* Written out: a touch screen never shows the title. */}
-                    <small id="suspend-session-description">{selectedSuspend.title}</small>
-                  </span>
                 </button>
               ) : null}
               <button
@@ -14402,7 +14237,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               { label: 'Rename', onClick: () => setRenameOpen(true), disabled: !selectedComputerOnline },
               { label: selectedNotificationsMuted ? 'Unmute notifications' : 'Mute notifications', onClick: () => void toggleSelectedSessionMute(), disabled: mutingSession },
               ...(selected.provider !== 'claude' && selected.executionMode === 'sdk' && selectedProviderCapability?.supportsTmuxMigration
-                ? [{ label: 'Move session to tmux', onClick: () => void moveSelectedSessionToTmux(), disabled: movingToTmux || selectedLifecycleBlocked || selectedSuspending }] : []),
+                ? [{ label: 'Move session to tmux', onClick: () => void moveSelectedSessionToTmux(), disabled: movingToTmux || selectedLifecycleBlocked }] : []),
               { label: 'Restart', onClick: () => void restartSelectedSession(), disabled: restarting || selectedRestartBlocked },
               ...(selectedShowsRecovery
                 ? [{ label: 'Recover conversation', onClick: () => void recoverSelectedConversation(), disabled: !selectedCanRecover || recovering }] : []),

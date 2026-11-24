@@ -356,7 +356,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         historyAuthoritative = true
       } catch {
         // Failure to read history must not turn an empty active list into a
-        // claim that a suspended/historical session has been deleted.
+        // claim that a closed/historical session has been deleted.
       }
     }
     assertCurrent()
@@ -614,7 +614,7 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
         assertCurrent()
         if (info.id !== computerId) throw new SessionResourceError('pairing')
         // The session detail route hydrates/opens an SDK session. History is a
-        // pure identity read and also includes suspended and closed sessions.
+        // pure identity read and also includes closed sessions.
         const history = await client.listHistory(request.signal)
         assertCurrent()
         if (!Array.isArray(history)) throw new SessionResourceError('invalid')
@@ -945,30 +945,6 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       computerId === this.identity.info.id
         ? await this.localService.recoverConversation(sessionId, reason)
         : await this.requireClient(computerId).recoverConversation(sessionId, reason)
-    return managedSession(session, computer)
-  }
-
-  async suspendSession(
-    computerId: string,
-    sessionId: string,
-  ): Promise<ManagedSession> {
-    const computer = this.requireComputer(computerId)
-    const session =
-      computerId === this.identity.info.id
-        ? await this.localService.suspendSession(sessionId)
-        : await this.requireClient(computerId).suspendSession(sessionId)
-    return managedSession(session, computer)
-  }
-
-  async resumeSession(
-    computerId: string,
-    sessionId: string,
-  ): Promise<ManagedSession> {
-    const computer = this.requireComputer(computerId)
-    const session =
-      computerId === this.identity.info.id
-        ? await this.localService.resumeSession(sessionId)
-        : await this.requireClient(computerId).resumeSession(sessionId)
     return managedSession(session, computer)
   }
 

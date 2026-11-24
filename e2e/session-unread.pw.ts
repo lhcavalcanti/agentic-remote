@@ -6,8 +6,8 @@ import {
   IDLE_SESSION_ID,
   PENDING_SESSION_ID,
   SELECTED_SESSION_ID,
+  OFFLINE_SESSION_ID,
   setupWorkspaceFixture,
-  SUSPENDED_SESSION_ID,
   type WorkspaceFixtureOptions,
   type WorkspaceFixtureState,
 } from './workspace-fixtures'
@@ -23,8 +23,8 @@ const LONG_TITLE = 'Collect the unread review notes and the handbook drafts nobo
 
 /**
  * Unread sessions of every kind: an ordinary idle one, one waiting on you, one
- * running background work, a suspended one, and a hidden one with a long title
- * and the For review badge. The open session starts unread too.
+ * running background work, one on an offline computer, and a hidden one with a
+ * long title and the For review badge. The open session starts unread too.
  */
 function unreadState(): WorkspaceFixtureState {
   const state = createWorkspaceFixtureState()
@@ -50,7 +50,7 @@ function unreadState(): WorkspaceFixtureState {
     `fixture-studio:${PENDING_SESSION_ID}`,
     'fixture-studio:fixture-collect-notes',
     `fixture-build:${BACKGROUND_SESSION_ID}`,
-    `fixture-travel:${SUSPENDED_SESSION_ID}`,
+    `fixture-travel:${OFFLINE_SESSION_ID}`,
   ]
   return state
 }
@@ -243,33 +243,32 @@ for (const device of devices) {
           }
           await expect(selected.locator('.session-item__unread-dot')).toHaveCount(0)
 
-          // It combines with the attention, background-task and suspended cues.
+          // It combines with the attention, background-task and offline cues.
           const waiting = row(list, 'Review session recovery')
           await expect(waiting).toHaveClass(/session-item--unread/)
           await expect(waiting.getByText('Question', { exact: true })).toBeVisible()
           const tasks = row(list, 'Check handbook links')
           await expect(tasks).toHaveClass(/session-item--background-running/)
           await expect(tasks.locator('.session-item__unread-dot')).toBeVisible()
-          const paused = row(list, 'Sketch the next handoff')
-          await expect(paused).toHaveClass(/session-item--suspended/)
-          await expect(paused.locator('.session-item__unread-dot')).toBeVisible()
+          const offline = row(list, 'Sketch the next handoff')
+          await expect(offline.getByText('Offline', { exact: true })).toBeVisible()
+          await expect(offline.locator('.session-item__unread-dot')).toBeVisible()
 
-          // Close over Pause, then Read over Hide beside them: the row keeps
-          // its height and nothing spills sideways.
+          // Close beside Read over Hide: the row keeps its height and nothing
+          // spills sideways.
           await unread.hover()
           const close = await bounds(unread.getByRole('button', { name: 'Close Draft the weekly summary' }))
-          const pause = await bounds(unread.getByRole('button', { name: 'Suspend Draft the weekly summary' }))
           const markRead = unread.getByRole('button', { name: 'Mark Draft the weekly summary as read' })
           await expect(markRead).toHaveCSS('opacity', '1')
           const read = await bounds(markRead)
           const hide = await bounds(unread.getByRole('button', { name: 'Hide Draft the weekly summary from the list' }))
           const item = await bounds(unread)
-          expect(Math.abs(read.y - close.y)).toBeLessThan(1)
-          expect(Math.abs(hide.y - pause.y)).toBeLessThan(1)
           expect(Math.abs(read.x - hide.x)).toBeLessThan(1)
           expect(read.x).toBeGreaterThanOrEqual(close.x + close.width)
           expect(read.y + read.height).toBeLessThanOrEqual(hide.y)
-          for (const control of [close, pause, read, hide]) {
+          expect(close.y).toBeGreaterThanOrEqual(read.y)
+          expect(close.y + close.height).toBeLessThanOrEqual(hide.y + hide.height)
+          for (const control of [close, read, hide]) {
             expect(control.width).toBeGreaterThanOrEqual(device.target)
             expect(control.height).toBeGreaterThanOrEqual(device.target)
             expect(control.x + control.width).toBeLessThanOrEqual(item.x + item.width)

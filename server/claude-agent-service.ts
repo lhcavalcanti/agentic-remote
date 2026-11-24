@@ -160,12 +160,7 @@ interface ActiveClaudeQuery {
   query: Query
   resourceOwner: symbol
   resourceReads: ResourceReads
-  /**
-   * Settles when the run that owns this entry has finished tearing down.
-   *
-   * Suspending waits on it, so a resume cannot start a query while the
-   * previous one is still unwinding.
-   */
+  /** Settles when the run that owns this entry has finished tearing down. */
   done: Promise<void>
   /** Resolves `done`. */
   finish: () => void
@@ -219,12 +214,7 @@ export class ClaudeAgentService
   private available = false
   private unavailableReason = 'Claude Agent is not initialized'
   private models: RuntimeModelOption[] = []
-  /** Sessions being put down, which nothing may start a query into. */
-  private readonly suspendingSessions = new Set<string>()
   private readonly dispatchingSessions = new Map<string, number>()
-  // Not open for new work yet: resuming clears the suspended flag before the
-  // queue has been claimed, and that flag is what reopens sending.
-  private readonly admissionClosed = new Set<string>()
   private readonly lifecycleLocks = new Map<string, Promise<unknown>>()
 
   /** Runs lifecycle work for a session one at a time, in arrival order. */
@@ -368,10 +358,6 @@ export class ClaudeAgentService
           .filter(
             (session) =>
               session.status === 'idle' &&
-              // A suspended session has nothing to send to. Draining it would
-              // take the prompt off the queue and then refuse it, losing the
-              // work and failing the provider's own startup.
-              !session.suspended &&
               session.queuedPrompts?.length,
           )
           .map((session) => this.drainQueue(session.id)),
@@ -397,7 +383,7 @@ export class ClaudeAgentService
     // registered a query yet still owns the session.
     (id) => !this.active.has(id) && !this.startingQueries.has(id) &&
       !this.admissions.hasPending(id) && !this.drainingSessions.has(id) &&
-      !this.dispatchingSessions.has(id) && !this.suspendingSessions.has(id),
+      !this.dispatchingSessions.has(id),
     ).then(() => {
       if (this.stopped) return
       for (const indexed of this.store.discoveryIndex()) {
@@ -804,14 +790,6 @@ export class ClaudeAgentService
   ): Promise<SessionDetail> {
     await this.store.readAfterWrites(id)
     this.assertNotRetained(id, 'clearing it')
-    if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
-      throw Object.assign(new Error('Resume the session before clearing it'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
-    }
     const session = this.requireIdle(id)
     if (!this.store.isCurrentTranscript(id, observed)) {
       throw Object.assign(new Error('Conversation changed before clearing'), { statusCode: 409 })
@@ -850,113 +828,15 @@ export class ClaudeAgentService
     return cleared
   }
 
-  async suspendSession(id: string): Promise<SessionDetail> {
-    return this.queuedDispatches.view(await this.serializeLifecycle(id, () => this.suspendQueued(id)))
-  }
-
-  private async suspendQueued(id: string): Promise<SessionDetail> {
-    const stored = this.store.get(id)
-    if (!stored) {
-      throw new Error('Session not found')
-    }
-    if (stored.suspended) {
-      return stored
-    }
-    this.assertNotRetained(id, 'suspending it')
-    this.requireIdle(id)
-    // Claimed before anything is awaited: a message that got past the check on
-    // its way in would otherwise start a query into a session on its way down.
-    this.suspendingSessions.add(id)
-    // The conversation is held on disk and a query is started again for the
-    // next message, so letting go of it costs nothing but starting one.
-    try {
-      await this.store.readAfterWrites(id)
-      this.requireIdle(id)
-      const active = this.active.get(id)
-      if (active) {
-        active.abortController.abort()
-        if (this.active.get(id) === active) {
-          this.active.delete(id)
-        }
-        // Waited for rather than abandoned. The run tears down after the abort,
-        // and a resume that got in first would have registered its own query by
-        // then -- which the old run's cleanup used to remove, leaving the live
-        // query with nothing able to stop it.
-        await active.done
-      }
-      const suspended = await this.store.setSuspended(id, true)
-      this.publish(suspended)
-      return suspended
-    } finally {
-      this.suspendingSessions.delete(id)
-    }
-  }
-
-  async resumeSession(id: string): Promise<SessionDetail> {
-    return this.queuedDispatches.view(await this.serializeLifecycle(id, () => this.resumeQueued(id)))
-  }
-
-  private async resumeQueued(id: string): Promise<SessionDetail> {
-    const stored = await this.store.readAfterWrites(id)
-    if (!stored.suspended) {
-      return stored
-    }
-    if (this.admissions.launchBlocked(id) || stored.launchStopping) {
-      throw queueConflict('The launch is stopping; its runtime cannot resume.')
-    }
-    this.assertNotRetained(id, 'resuming it', true)
-    const hasQueue = Boolean(this.store.get(id)?.queuedPrompts?.length)
-    if (hasQueue) {
-      this.admissionClosed.add(id)
-    }
-    const resumed = await this.store.setSuspended(id, false)
-    this.publish(resumed)
-    // A prompt queued before the suspension is waiting with nothing to run
-    // it. Draining now keeps the queue in the order it was written: left
-    // until some later query happens to finish, a message sent after the
-    // resume would go first.
-    if (resumed.queuedPrompts?.length) {
-      // The drain requeues and rethrows when authentication, persistence or
-      // sending fails. Discarded, that rejection has nowhere to go and takes
-      // the process with it.
-      const releaseDispatch = this.holdDispatch(id)
-      try {
-        await this.drainQueue(id).catch((error: unknown) => {
-          this.emit('event', {
-            type: 'error',
-            sessionId: id,
-            message: error instanceof Error ? error.message : String(error),
-          })
-        })
-      } finally {
-        this.admissionClosed.delete(id)
-        releaseDispatch()
-      }
-    } else if (hasQueue) {
-      this.admissionClosed.delete(id)
-    }
-    return resumed
-  }
-
   async restartSession(id: string): Promise<SessionDetail> {
-    // In the same queue as suspend, resume and clear. Left outside it, a
-    // restart could report success after suspension had claimed the session
-    // but before the flag was written, and the suspension that finished
-    // afterwards wrote over it.
+    // In the same queue as clear, close and delete, so it never reports
+    // success for a session another lifecycle change is putting down.
     return this.queuedDispatches.view(await this.serializeLifecycle(id, () => this.restartSerialized(id)))
   }
 
   private async restartSerialized(id: string): Promise<SessionDetail> {
     await this.store.readAfterWrites(id)
     this.assertNotRetained(id, 'restarting it')
-    if (this.store.get(id)?.suspended || this.suspendingSessions.has(id)) {
-      throw Object.assign(new Error('Resume the session before restarting it'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
-    }
     this.requireIdle(id)
     const restarted = await this.store.updateStatus(id, 'idle')
     this.publish(restarted)
@@ -1159,7 +1039,6 @@ export class ClaudeAgentService
       }, acknowledgesFailure, (session) =>
         !session.interruption && !session.archivedAt &&
         !this.stopped && !this.deletingSessions.has(sessionId) &&
-        !this.suspendingSessions.has(sessionId) && !this.admissionClosed.has(sessionId) &&
         (enqueue || Boolean(session.queuedPrompts?.length) ||
           (session.status !== 'running' && session.status !== 'waiting' &&
             !this.active.has(sessionId) && !this.startingQueries.has(sessionId))))
@@ -1168,24 +1047,6 @@ export class ClaudeAgentService
       this.publish(queued)
       this.wakeQueue(sessionId)
       return queued
-    }
-    if (this.admissionClosed.has(sessionId)) {
-      if (enqueue || this.store.get(sessionId)?.queuedPrompts?.length) {
-        const queued = await this.store.enqueuePrompt(sessionId, {
-          id: randomUUID(), content, createdAt: new Date().toISOString(),
-        })
-        this.publish(queued)
-        return queued
-      }
-      // Resuming, and the prompt already queued has not been claimed yet, or a
-      // drain has taken its prompt off and not yet marked the session running.
-      // Only the idle check consulted this, which a send can reach past.
-      throw Object.assign(new Error('The session is still resuming'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
     }
     return this.dispatchQueued(sessionId, content, enqueue)
   }
@@ -1217,27 +1078,12 @@ export class ClaudeAgentService
       throw new Error('Session is no longer available')
     }
     if (delivery?.closed) throw queueConflict('This dispatch attempt has ended.')
-    if (!fromQueue && this.admissionClosed.has(sessionId) &&
-      !enqueue && !this.store.get(sessionId)?.queuedPrompts?.length) {
-      throw Object.assign(new Error('The session is still resuming'), { statusCode: 409 })
-    }
     if (!fromQueue && this.store.get(sessionId)?.queuedDispatch &&
       !enqueue) {
       this.queuedDispatches.assertAvailable(sessionId)
     }
-    if (
-      this.store.get(sessionId)?.suspended ||
-      this.suspendingSessions.has(sessionId)
-    ) {
-      throw Object.assign(new Error('Resume the session before sending to it'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
-    }
-    // Anything already waiting goes first. A resume whose drain failed puts
-    // the prompt back, and a message written after it must not overtake it.
+    // Anything already waiting goes first. A drain that failed puts the
+    // prompt back, and a message written after it must not overtake it.
     if (!fromQueue && this.store.get(sessionId)?.queuedPrompts?.length) {
       const queued = await this.store.enqueuePrompt(sessionId, {
         id: randomUUID(),
@@ -1259,19 +1105,8 @@ export class ClaudeAgentService
       throw new Error('The session service is stopping')
     }
     if (
-      delivery?.closed || this.stopped || this.deletingSessions.has(sessionId) ||
-      this.suspendingSessions.has(sessionId) || this.store.get(sessionId)?.suspended
+      delivery?.closed || this.stopped || this.deletingSessions.has(sessionId)
     ) throw queueConflict('This dispatch attempt has ended.')
-    // Suspending may have finished while authentication was being refreshed,
-    // and may still finish before the turn starts, so it is asked again there.
-    if (this.store.get(sessionId)?.suspended) {
-      throw Object.assign(new Error('Resume the session before sending to it'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
-    }
     const session = this.requireSession(sessionId)
     if (session.status === 'running' || session.status === 'waiting') {
       if (!enqueue) {
@@ -1291,17 +1126,6 @@ export class ClaudeAgentService
       this.publish(queued)
       return queued
     }
-    if (
-      this.store.get(sessionId)?.suspended ||
-      this.suspendingSessions.has(sessionId)
-    ) {
-      throw Object.assign(new Error('Resume the session before sending to it'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
-    }
     const assistantId = randomUUID()
     const running = delivery
       ? await preparePrompt(
@@ -1309,9 +1133,6 @@ export class ClaudeAgentService
           (current) => {
             if (this.stopped || this.deletingSessions.has(sessionId)) {
               throw queueConflict('This dispatch attempt has ended.')
-            }
-            if (current.suspended || this.suspendingSessions.has(sessionId)) {
-              throw queueConflict('Resume the session before sending to it')
             }
             if (
               this.active.has(sessionId) || current.status === 'running' ||
@@ -1326,15 +1147,14 @@ export class ClaudeAgentService
       : await this.store.beginPrompt(
           sessionId, content, assistantId,
           () => !this.stopped && !this.deletingSessions.has(sessionId) &&
-            !this.suspendingSessions.has(sessionId) && !this.active.has(sessionId) &&
-            !this.startingQueries.has(sessionId) && (fromQueue || !this.admissionClosed.has(sessionId)),
+            !this.active.has(sessionId) && !this.startingQueries.has(sessionId),
           reservation,
         )
     this.admissions.markCommitted(sessionId)
     if (reservation) {
       this.pendingQueueAdmissions.set(sessionId, { assistantId, started: false })
     }
-    if (this.stopped || this.deletingSessions.has(sessionId) || this.suspendingSessions.has(sessionId) ||
+    if (this.stopped || this.deletingSessions.has(sessionId) ||
         this.active.has(sessionId)) {
       if (delivery) {
         throw queueConflict('This dispatch attempt has ended.')
@@ -1346,8 +1166,7 @@ export class ClaudeAgentService
       { statusCode: this.stopped ? 503 : 409 })
     }
     if (
-      delivery?.closed || this.stopped || this.deletingSessions.has(sessionId) ||
-      this.suspendingSessions.has(sessionId) || this.store.get(sessionId)?.suspended
+      delivery?.closed || this.stopped || this.deletingSessions.has(sessionId)
     ) throw queueConflict('This dispatch attempt has ended.')
     this.publish(running)
     // Nothing waits on this, so a rejection escaping it would be unhandled and
@@ -1422,7 +1241,6 @@ export class ClaudeAgentService
       if (!ownsSession() || this.active.get(sessionId) !== active ||
         this.resourceObservations.get(sessionId) !== observation ||
         this.lifecycleLocks.has(sessionId) || this.deletingSessions.has(sessionId) ||
-        this.suspendingSessions.has(sessionId) ||
         (observation && !observation.isCurrent()) ||
         (active && observation?.owner !== active.resourceOwner)) {
         throw new SessionResourceError('changed')
@@ -1605,7 +1423,7 @@ export class ClaudeAgentService
   async deleteSession(sessionId: string): Promise<void> {
     this.resourceObservations.delete(sessionId)
     // Deleting takes the provider session and the stored state with it, so a
-    // resume running beside it could start a query against files that are
+    // restart running beside it could start a query against files that are
     // already going.
     return this.serializeLifecycle(sessionId, () =>
       this.deleteSerialized(sessionId),
@@ -2036,7 +1854,6 @@ export class ClaudeAgentService
         await this.sdk.getSessionInfo(sessionId, { dir: session.cwd }),
       )
       if (delivery?.closed || this.stopped || this.deletingSessions.has(sessionId) ||
-          this.suspendingSessions.has(sessionId) ||
           this.active.has(sessionId) || this.startingQueries.get(sessionId) !== registering) {
         aborted = true
         const admission = this.pendingQueueAdmissions.get(sessionId)
@@ -2208,10 +2025,10 @@ export class ClaudeAgentService
         })
       }
     } finally {
-      // Only this run's own entry is removed. A suspension that abandoned this
-      // query, followed by a resume that started another, leaves a newer entry
-      // here, and deleting by id alone took the live query's handle away and
-      // left nothing able to stop it.
+      // Only this run's own entry is removed. An abandoned run, followed by
+      // another that started, leaves a newer entry here, and deleting by id
+      // alone took the live query's handle away and left nothing able to stop
+      // it.
       if (owned && this.active.get(sessionId) === owned) {
         this.active.delete(sessionId)
       }
@@ -2616,9 +2433,6 @@ export class ClaudeAgentService
       throw queueConflict('The session is no longer available.')
     }
     this.assertNotRetained(sessionId, 'dispatching its queue')
-    if (this.admissionClosed.has(sessionId)) {
-      throw queueConflict('The session is still resuming.')
-    }
     if (this.drainingSessions.has(sessionId)) {
       throw queueConflict('The queue is already dispatching. Your rewrite was not sent.')
     }
@@ -2630,7 +2444,6 @@ export class ClaudeAgentService
         const assertIdle = (session: SessionDetail) => {
           if (
             this.stopped || this.deletingSessions.has(sessionId) ||
-            this.suspendingSessions.has(sessionId) || session.suspended ||
             !session.isOpen || session.status !== 'idle' ||
             session.failedPrompt || session.pendingPermission ||
             session.pendingUserInput || this.active.has(sessionId) ||
@@ -2681,18 +2494,12 @@ export class ClaudeAgentService
     }
     // A retained queue waits, untouched, for Reopen.
     if (session.interruption || session.archivedAt || session.closedAt) return undefined
-    if (session.suspended || this.suspendingSessions.has(sessionId)) {
-      // Suspending leaves a session idle, so the queue would take a prompt off
-      // and then be refused for being suspended, losing it for good.
-      return undefined
-    }
     if (!session.queuedPrompts?.length) {
       return undefined
     }
     const assertIdle = (current: SessionDetail) => {
       if (
         this.stopped || this.deletingSessions.has(sessionId) ||
-        this.suspendingSessions.has(sessionId) || current.suspended ||
         current.status !== 'idle' || current.failedPrompt ||
         current.pendingPermission || current.pendingUserInput ||
         this.active.has(sessionId) || this.startingQueries.has(sessionId)
@@ -2772,15 +2579,6 @@ export class ClaudeAgentService
   private requireIdle(id: string): SessionDetail {
     const session = this.requireSession(id)
     this.queuedDispatches.assertAvailable(id)
-    if (this.admissionClosed.has(id)) {
-      // Resuming, and the prompt already queued has not been claimed yet.
-      throw Object.assign(new Error('The session is still resuming'), {
-        // Carries a status so the reason reaches the reader. Left
-        // unclassified it was reported as a generic server error,
-        // which says nothing about what to do next.
-        statusCode: 409,
-      })
-    }
     if (
       session.status !== 'idle' ||
       // A prompt is already on its way. The status only turns to running once

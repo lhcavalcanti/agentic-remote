@@ -14,8 +14,6 @@ import {
   Mail,
   MailOpen,
   Monitor,
-  Pause,
-  Play,
   Plus,
   RefreshCw,
   Search,
@@ -36,7 +34,6 @@ import {
   sessionPresentation,
   sessionSortFrom,
   shortPath,
-  suspendAvailability,
   taskSnapshot,
 } from './session-presentation'
 import type { SessionPresentation, SessionSort } from './session-presentation'
@@ -62,11 +59,8 @@ type SessionActions = {
   onSelectSession: (session: ManagedSession) => void
   onOpenSessionTasks: (session: ManagedSession) => void
   onCloseSession: (session: ManagedSession) => void
-  onToggleSessionSuspended: (session: ManagedSession) => void
   /** `computerId:sessionId` of the sessions whose close is in flight. */
   closingSessions: ReadonlySet<string>
-  /** `computerId:sessionId` of the sessions whose suspend or resume is in flight. */
-  suspendingSessions: ReadonlySet<string>
   /** `computerId:sessionId` of the sessions left out of the list. */
   hiddenSessions: ReadonlySet<string>
   /** `computerId:sessionId` of the sessions whose hide or show is being saved. */
@@ -160,9 +154,7 @@ function SortableSessionItem({
   onOpenSessionTasks,
   onOpenScheduleRun,
   onCloseSession,
-  onToggleSessionSuspended,
   closingSessions,
-  suspendingSessions,
   hiddenSessions,
   hidingSessions,
   onToggleSessionHidden,
@@ -195,13 +187,10 @@ function SortableSessionItem({
   const presentation = sessionPresentation(session, backgroundTasks, online)
   const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
-  // Each session waits only for its own close or suspend; the owning computer
+  // Each session waits only for its own close; the owning computer
   // serializes lifecycle work per session, so others can go at the same time.
   const closing = closingSessions.has(sessionKey(session))
   const closeUnavailable = !online || closing
-  const suspend = suspendAvailability(session, backgroundTasks, {
-    computerName, online, suspending: suspendingSessions.has(sessionKey(session)),
-  })
   // The hub keeps this, not the owning computer, so it works offline too.
   const hidden = hiddenSessions.has(sessionKey(session))
   const hiding = hidingSessions.has(sessionKey(session))
@@ -213,8 +202,8 @@ function SortableSessionItem({
       className={`session-item session-item--tone-${computerTone(
         session.computerId,
       )} ${presentation.working && runningBackgroundTasks > 0 ? 'session-item--background-running' : ''} ${
-        session.suspended ? 'session-item--suspended' : ''
-      } ${hidden ? 'session-item--hidden' : ''} ${unread ? 'session-item--unread' : ''} ${
+        hidden ? 'session-item--hidden' : ''
+      } ${unread ? 'session-item--unread' : ''} ${
         presentation.needsAttention ? 'session-item--attention' : ''
       } ${
         selected ? 'session-item--active' : ''
@@ -329,21 +318,6 @@ function SortableSessionItem({
           type="button"
         >
           <X aria-hidden="true" size={13} />
-        </button>
-        <button
-          aria-label={
-            session.suspended ? `Resume ${session.title}` : `Suspend ${session.title}`
-          }
-          aria-pressed={session.suspended ? true : undefined}
-          className={`session-item__suspend${
-            session.suspended ? ' session-item__suspend--active' : ''
-          }`}
-          disabled={!suspend.available}
-          onClick={() => onToggleSessionSuspended(session)}
-          title={suspend.title}
-          type="button"
-        >
-          {session.suspended ? <Play aria-hidden="true" size={13} /> : <Pause aria-hidden="true" size={13} />}
         </button>
         <button
           aria-busy={markingUnread || undefined}
@@ -524,8 +498,6 @@ export function SessionNavigation({
   onNewSession,
   query,
   filter,
-  showSuspended,
-  showSuspendedSaving,
   showHidden,
   showHiddenSaving,
   creationError,
@@ -533,7 +505,6 @@ export function SessionNavigation({
   onDismissCreationError,
   onQueryChange: setQuery,
   onFilterChange: setFilter,
-  onShowSuspendedChange: setShowSuspended,
   onShowHiddenChange: setShowHidden,
   pendingCreations = [],
   onRefresh,
@@ -553,8 +524,6 @@ export function SessionNavigation({
   onNewSession: () => void
   query: string
   filter: SessionFilter
-  showSuspended: boolean
-  showSuspendedSaving: boolean
   showHidden: boolean
   showHiddenSaving: boolean
   creationError?: string
@@ -574,7 +543,6 @@ export function SessionNavigation({
   onOpenRecentlyClosed?: () => void
   onQueryChange: (query: string) => void
   onFilterChange: (filter: SessionFilter) => void
-  onShowSuspendedChange: (show: boolean) => void
   onShowHiddenChange: (show: boolean) => void
 }) {
   const searchRef = useRef<HTMLInputElement>(null)
@@ -717,48 +685,29 @@ export function SessionNavigation({
               <span aria-hidden="true">{entry.count}</span>
             </button>
           ))}
-          {/* These decide what the list includes rather than narrowing it,
-              so on a narrow list they wrap onto their own line together. */}
-          <div className="session-filters__visibility">
+          {/* Decides what the list includes rather than narrowing it. Offered
+              once something is hidden, and while hidden sessions are shown so
+              that can be undone. */}
+          {counts.hidden > 0 || showHidden ? (
             <button
-              aria-label="Include suspended sessions"
-              aria-busy={showSuspendedSaving}
-              aria-pressed={showSuspended}
-              className="session-filter session-filter--suspended"
-              disabled={showSuspendedSaving}
-              onClick={() => setShowSuspended(!showSuspended)}
-              title={showSuspendedSaving
-                ? 'Saving suspended-session visibility'
-                : showSuspended ? 'Hide suspended sessions' : 'Show suspended sessions'}
+              aria-label="Include hidden sessions"
+              aria-busy={showHiddenSaving}
+              aria-pressed={showHidden}
+              className="session-filter session-filter--hidden"
+              disabled={showHiddenSaving}
+              onClick={() => setShowHidden(!showHidden)}
+              title={showHiddenSaving
+                ? 'Saving hidden-session visibility'
+                : showHidden
+                  ? 'Leave hidden sessions out of the list'
+                  : 'Show hidden sessions in the list'}
               type="button"
             >
-              <Pause aria-hidden="true" size={11} />
-              Suspended
-              <span aria-hidden="true">{counts.suspended}</span>
+              <EyeOff aria-hidden="true" size={11} />
+              Hidden
+              {counts.hidden > 0 ? <span aria-hidden="true">{counts.hidden}</span> : null}
             </button>
-            {/* Offered once something is hidden, and while hidden sessions
-                are shown so that can be undone. */}
-            {counts.hidden > 0 || showHidden ? (
-              <button
-                aria-label="Include hidden sessions"
-                aria-busy={showHiddenSaving}
-                aria-pressed={showHidden}
-                className="session-filter session-filter--hidden"
-                disabled={showHiddenSaving}
-                onClick={() => setShowHidden(!showHidden)}
-                title={showHiddenSaving
-                  ? 'Saving hidden-session visibility'
-                  : showHidden
-                    ? 'Leave hidden sessions out of the list'
-                    : 'Show hidden sessions in the list'}
-                type="button"
-              >
-                <EyeOff aria-hidden="true" size={11} />
-                Hidden
-                {counts.hidden > 0 ? <span aria-hidden="true">{counts.hidden}</span> : null}
-              </button>
-            ) : null}
-          </div>
+          ) : null}
         </div>
         {filtering ? (
           <div className="session-list__results">
@@ -766,15 +715,10 @@ export function SessionNavigation({
               {shown} of {counts.all} sessions
             </span>
             <button
-              disabled={showSuspendedSaving}
               onClick={() => {
                 setQuery('')
                 setFilter('all')
-                setShowSuspended(true)
               }}
-              title={showSuspendedSaving
-                ? 'Wait for suspended-session visibility to finish saving'
-                : undefined}
               type="button"
             >
               Clear filters

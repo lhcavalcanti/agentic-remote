@@ -37,10 +37,9 @@ async function open(
 }
 
 /**
- * Hidden sessions shown beside ordinary and suspended ones on Studio: one
- * hidden, one suspended, and one both, whose long title comes with the For
- * review badge as well. Check handbook links, which runs background work, is
- * hidden too.
+ * Hidden sessions shown beside ordinary ones on Studio: one hidden, and one
+ * whose long title comes with the For review badge as well. Check handbook
+ * links, which runs background work, is hidden too.
  */
 function markedState(): WorkspaceFixtureState {
   const state = createWorkspaceFixtureState()
@@ -48,12 +47,10 @@ function markedState(): WorkspaceFixtureState {
   if (!draft) throw new Error('Expected the idle fixture session')
   const added = [
     { id: 'fixture-tidy-reading', title: 'Tidy the reading list' },
-    { id: 'fixture-pause-export', title: 'Pause the export audit', suspended: true },
     {
       id: 'fixture-park-archive',
       title: LONG_TITLE,
       provider: 'claude' as const,
-      suspended: true,
       retention: { pinned: true },
     },
   ].map((change) => ({ ...structuredClone(draft), ...change }))
@@ -130,26 +127,26 @@ for (const device of devices) {
   test.describe(`on a ${device.name}`, () => {
     test.use({ hasTouch: device.hasTouch, viewport: device.viewport })
 
-    test('Hide follows Close and Pause without making the row taller', async ({ page }, testInfo) => {
+    test('Hide follows Close without making the row taller', async ({ page }, testInfo) => {
       const { fixture, list } = await open(page, testInfo.project.use.baseURL!, device.name === 'phone')
       try {
         const draft = row(list, 'Draft the weekly summary')
         await draft.hover()
         const close = await bounds(draft.getByRole('button', { name: 'Close Draft the weekly summary' }))
-        const pause = await bounds(draft.getByRole('button', { name: 'Suspend Draft the weekly summary' }))
+        const read = await bounds(draft.getByRole('button', { name: 'Mark Draft the weekly summary as unread' }))
         const hide = draft.getByRole('button', { name: 'Hide Draft the weekly summary from the list' })
         await expect(hide).toHaveCSS('opacity', '1')
         const hidden = await bounds(hide)
         const item = await bounds(draft)
 
-        // Close stays directly above Pause, and Hide comes after both, beside
-        // them rather than under them: the row keeps its height.
-        expect(Math.abs(close.x - pause.x)).toBeLessThan(1)
-        expect(close.y + close.height).toBeLessThanOrEqual(pause.y)
+        // Close has a column to itself, and Hide comes under Read in the next
+        // one, beside Close rather than under it: the row keeps its height.
         expect(hidden.x).toBeGreaterThanOrEqual(close.x + close.width)
-        expect(hidden.y).toBeGreaterThanOrEqual(close.y)
-        expect(hidden.y + hidden.height).toBeLessThanOrEqual(pause.y + pause.height)
-        for (const control of [close, pause, hidden]) {
+        expect(Math.abs(read.x - hidden.x)).toBeLessThan(1)
+        expect(read.y + read.height).toBeLessThanOrEqual(hidden.y)
+        expect(close.y).toBeGreaterThanOrEqual(read.y)
+        expect(close.y + close.height).toBeLessThanOrEqual(hidden.y + hidden.height)
+        for (const control of [close, read, hidden]) {
           expect(control.width).toBeGreaterThanOrEqual(device.target)
           expect(control.height).toBeGreaterThanOrEqual(device.target)
           expect(control.x + control.width).toBeLessThanOrEqual(item.x + item.width)
@@ -217,7 +214,7 @@ for (const device of devices) {
     })
 
     for (const appearance of ['graphite', 'light'] as const) {
-      test(`outlines hidden rows unlike ordinary and suspended ones in the ${appearance} theme`, async ({ page }, testInfo) => {
+      test(`outlines hidden rows unlike ordinary ones in the ${appearance} theme`, async ({ page }, testInfo) => {
         const { fixture, list } = await open(page, testInfo.project.use.baseURL!, device.name === 'phone', {
           appearance,
           state: markedState(),
@@ -226,8 +223,7 @@ for (const device of devices) {
           const outline = await token(page, '--border-strong')
           const ordinary = row(list, 'Draft the weekly summary')
           const hidden = row(list, 'Tidy the reading list')
-          const suspended = row(list, 'Pause the export audit')
-          const both = row(list, LONG_TITLE)
+          const review = row(list, LONG_TITLE)
           const tasks = row(list, 'Check handbook links')
           await expect(tasks.getByRole('button', { name: 'View background tasks for Check handbook links' }))
             .toBeVisible()
@@ -244,20 +240,15 @@ for (const device of devices) {
           await expect(hidden.locator('.session-hidden-badge svg')).toBeVisible()
           await expect(hidden.getByText('Hidden', { exact: true })).toBeVisible()
 
-          // Ordinary rows have no outline; suspended ones are faded instead.
+          // Ordinary rows have no outline.
           const plain = await edges(ordinary)
           expect(plain.styles).not.toContain('dashed')
           expect(plain.opacity).toBe(1)
-          const paused = await edges(suspended)
-          expect(paused.styles).not.toContain('dashed')
-          expect(paused.opacity).toBeLessThan(1)
 
-          // Hidden and suspended carries both cues and both labels.
-          const marked = await edges(both)
-          expect(marked.styles).toEqual(['dashed', 'dashed', 'dashed', 'dashed'])
-          expect(marked.opacity).toBeLessThan(1)
-          await expect(both.getByText('Hidden', { exact: true })).toBeVisible()
-          await expect(both.getByText('Suspended', { exact: true })).toBeVisible()
+          // The long title kept for review carries its Hidden label too.
+          expect(await edges(review)).toEqual({ ...dashed, opacity: 1 })
+          await expect(review.getByText('Hidden', { exact: true })).toBeVisible()
+          await expect(review.getByText('For review', { exact: true })).toBeVisible()
 
           // Background work adds no edge of its own.
           expect(await edges(tasks)).toEqual({ ...dashed, opacity: 1 })
@@ -279,7 +270,7 @@ for (const device of devices) {
 
           // The outline keeps the text where it is on an ordinary row.
           const place = await inset(ordinary)
-          for (const item of [hidden, suspended, both, tasks, selected]) {
+          for (const item of [hidden, review, tasks, selected]) {
             expect(await inset(item)).toEqual(place)
           }
 

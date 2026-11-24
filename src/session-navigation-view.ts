@@ -20,7 +20,7 @@ export interface SessionNavigationView {
     /** Sessions left out of the list because they are hidden. */
     hidden: number
   }[]
-  counts: Record<SessionFilter, number> & { suspended: number; hidden: number }
+  counts: Record<SessionFilter, number> & { hidden: number }
   visible: ManagedSession[]
   shown: number
   filtering: boolean
@@ -43,12 +43,11 @@ export function sessionNavigationView(
   backgroundTasks: Record<string, BackgroundTaskSnapshot>,
   query: string,
   filter: SessionFilter,
-  showSuspended = true,
   hiddenSessions: HiddenSessions = noHiddenSessions,
   /** `computerId:sessionId` of the sessions not read since their last turn ended. */
   unreadSessions: ReadonlySet<string> = noUnreadSessions,
 ): SessionNavigationView {
-  const counts = { all: 0, attention: 0, working: 0, unread: 0, suspended: 0, hidden: 0 }
+  const counts = { all: 0, attention: 0, working: 0, unread: 0, hidden: 0 }
   const groups = computers.map((computer) => {
     const open = (sessionsByComputer.get(computer.id) || []).filter((session) => session.isOpen !== false)
     const states = open.map((session) => ({
@@ -71,14 +70,12 @@ export function sessionNavigationView(
     counts.attention += classified.filter(({ state }) => state.needsAttention).length
     counts.working += classified.filter(({ state }) => state.working).length
     counts.unread += classified.filter((entry) => entry.unread).length
-    counts.suspended += classified.filter(({ session }) => session.suspended === true).length
     return {
       computer,
       total: classified.length,
       hidden: states.length - classified.length,
       sessions: classified.filter(({ session, state, unread }) =>
-        (showSuspended || session.suspended !== true) &&
-          matchesSessionSearch(session, query, computer.name) &&
+        matchesSessionSearch(session, query, computer.name) &&
           (filter === 'all' ||
             (filter === 'attention' && state.needsAttention) ||
             (filter === 'working' && state.working) ||
@@ -92,7 +89,7 @@ export function sessionNavigationView(
     counts,
     visible,
     shown: visible.length,
-    filtering: query.trim().length > 0 || filter !== 'all' || !showSuspended,
+    filtering: query.trim().length > 0 || filter !== 'all',
     reorderDisabled: query.trim().length > 0 || filter !== 'all',
   }
 }

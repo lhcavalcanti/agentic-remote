@@ -14,7 +14,6 @@ import {
   KNOWLEDGE_DOCUMENT_TITLE,
   KNOWLEDGE_ROOT_ID,
   SELECTED_SESSION_ID,
-  SUSPENDED_SESSION_ID,
   createWorkspaceFixtureState,
   fixtureActivityDetails,
   fixtureActivityMessages,
@@ -1348,53 +1347,6 @@ for (const viewport of [uiViewports[0], phone]) {
         } finally { fixture.assertHealthy() }
       })
     }
-
-    // Only a row under a mouse hides its other controls until pointed at.
-    if (!viewport.hasTouch) {
-      test('keep a lone Resume on the time line', async ({ page, baseURL }) => {
-        const fixture = await openScene(page, baseURL, 'session-list')
-        try {
-          const offset = await page.getByRole('navigation', { name: 'Sessions', exact: true })
-            .getByRole('button', { name: 'Resume Sketch the next handoff', exact: true })
-            .evaluate((button) => {
-              const time = button.closest('.session-item')!.querySelector('.session-item__time')!.getBoundingClientRect()
-              const box = button.getBoundingClientRect()
-              return (box.top + box.bottom) / 2 - (time.top + time.bottom) / 2
-            })
-          expect(Math.abs(offset), 'Resume below its time line').toBeLessThanOrEqual(1)
-        } finally { fixture.assertHealthy() }
-      })
-
-      test("keep a lone Resume on a schedule-origin row's time line, with its run link", async ({ page, baseURL }) => {
-        const fixture = await openScene(page, baseURL, 'session-origins')
-        try {
-          const session = fixture.state.sessions.find((entry) => entry.id === SUSPENDED_SESSION_ID)!
-          session.provenance = structuredClone(fixture.state.sessions[0].provenance)
-          // A title too short to fill the row's Tasks and run-link cells leaves
-          // centred text, and its time line, above the row's foot.
-          for (const title of ['Handoff', 'Sketch the next handoff']) {
-            session.title = title
-            session.revision = (session.revision ?? 0) + 1
-            fixture.emit({ type: 'session.upserted', session })
-            const resume = page.getByRole('navigation', { name: 'Sessions', exact: true })
-              .getByRole('button', { name: `Resume ${title}`, exact: true })
-            await expect.poll(() => resume.evaluate((button) =>
-              button.closest('.session-item')!.querySelector('.session-origin-run-link') !== null)).toBe(true)
-            const offsets = await resume.evaluate((button) => {
-              const row = button.closest('.session-item')!
-              const middle = (element: Element) => {
-                const box = element.getBoundingClientRect()
-                return (box.top + box.bottom) / 2
-              }
-              const time = middle(row.querySelector('.session-item__time')!)
-              return { resume: middle(button) - time, run: middle(row.querySelector('.session-origin-run-link')!) - time }
-            })
-            expect(Math.abs(offsets.resume), `${title}: Resume off its time line`).toBeLessThanOrEqual(1)
-            expect(Math.abs(offsets.run), `${title}: run link off its time line`).toBeLessThanOrEqual(1)
-          }
-        } finally { fixture.assertHealthy() }
-      })
-    }
   })
 }
 
@@ -1558,23 +1510,11 @@ test.describe('browser interaction contracts', () => {
     await expect(page.locator('#oracle-panel')).toHaveCount(0)
   })
 
-  test('offers Pause in an open Session actions menu only while the session list is a drawer', async ({ page, baseURL }) => {
-    await open(page, baseURL, 'session-actions')
-    const pause = page.getByRole('group', { name: 'Session actions', exact: true })
-      .getByRole('button', { name: 'Pause session', exact: true })
-    await expect(pause).toHaveCount(0)
-    await page.setViewportSize({ width: 960, height: 900 })
-    await expect(pause).toBeEnabled()
-    await expect(pause).toHaveAttribute('title', 'Keep this session but stop what is running for it')
-    await page.setViewportSize({ width: 961, height: 900 })
-    await expect(pause).toHaveCount(0)
-  })
-
   test('keeps every Session actions icon at its size beside entries with a description', async ({ page, baseURL }) => {
     await open(page, baseURL, 'session-actions')
     await page.setViewportSize({ width: 960, height: 900 })
     const actions = page.getByRole('group', { name: 'Session actions', exact: true })
-    await expect(actions.getByRole('button', { name: 'Pause session', exact: true })).toBeVisible()
+    await expect(actions.getByRole('button', { name: 'Close session', exact: true })).toBeVisible()
     // A long description must not shrink its icon and pull the label out of line.
     const squeezed = await actions.locator('.session-action > svg').evaluateAll((icons) => icons
       .map((icon) => ({

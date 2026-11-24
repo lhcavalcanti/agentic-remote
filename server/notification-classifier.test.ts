@@ -64,7 +64,7 @@ describe('canonical hub notification classifier', () => {
   })
 
   it.each([
-    { queuedCount: 1 }, { suspended: true }, { pendingPermission: { requestId: 'p', title: 'Run?', options: [] } },
+    { queuedCount: 1 }, { pendingPermission: { requestId: 'p', title: 'Run?', options: [] } },
     { restartRecovery: { state: 'recovering' as const, detectedAt: now } }, { recoverySeedState: 'pending' as const },
     { terminalQueueDispatchPending: true }, { recoveryAcknowledgementPending: true },
   ])('does not fabricate completion while work is still owned: %j', (update) => {

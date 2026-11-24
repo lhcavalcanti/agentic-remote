@@ -191,10 +191,14 @@ export function createUIScenes(
         state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.executionMode = 'sdk'
       }
       if (name === 'composer-family-claude' || name === 'composer-family-openai') {
-        const family = name === 'composer-family-claude' ? 'claude' : 'gpt'
-        const model = { ...state.models[0], id: `fixture-${family}-99`, name: `${family} fictional model` }
+        const claude = name === 'composer-family-claude'
+        const model = claude
+          ? { ...state.models[0], id: 'claude-opus-5.5', name: 'Claude Opus 5.5' }
+          : { ...state.models[0], id: 'gpt-6.2-sol', name: 'GPT-6.2 Sol' }
         state.models.push(model)
-        state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.runtime!.model = model.id
+        const runtime = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!.runtime!
+        runtime.model = model.id
+        runtime.mode = claude ? 'autopilot' : 'interactive'
       }
       if (['composer-status-busy', 'composer-session-setup', 'composer-button-row', 'composer-session-panel', 'composer-sent-messages', 'composer-delivery-menu', 'composer-delivery-unavailable'].includes(name)) {
         const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!

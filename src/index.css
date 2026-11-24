@@ -4332,10 +4332,12 @@ button {
   white-space: nowrap;
 }
 
-/* Whole details drop out, the idle-only hint first and the mode last, and
-   the title and description keep the hint. Each step leaves the model at
-   least claude-opus-5.5's 15 characters, or 6 beside the mode alone, when
-   the details are their longest in this 9px monospace. */
+.composer-runtime__model--short,
+.composer-runtime__mode-icon {
+  display: none;
+}
+
+/* Whole details drop out, the idle-only hint first and the mode last. */
 @container composer-runtime (max-width: 459px) {
   .composer-runtime__hint {
     display: none;
@@ -4357,6 +4359,26 @@ button {
 @container composer-runtime (max-width: 131px) {
   .composer-runtime__detail--mode {
     display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  @container composer-runtime (max-width: 275px) {
+    .composer-runtime__model--full,
+    .composer-runtime__mode-icon + .composer-runtime__mode {
+      display: none;
+    }
+
+    .composer-runtime__model--short,
+    .composer-runtime__mode-icon {
+      display: inline;
+    }
+  }
+
+  @container composer-runtime (95px < width <= 131px) {
+    .composer-runtime__detail--mode:has(.composer-runtime__mode-icon) {
+      display: inline-flex;
+    }
   }
 }
 

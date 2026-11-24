@@ -677,6 +677,38 @@ for (const viewport of uiViewports) {
   })
 }
 
+for (const viewport of uiViewports) {
+  test.describe(`runtime names ${viewport.name}`, () => {
+    test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
+    for (const [name, full, short, mode] of [
+      ['composer-family-claude', 'claude-opus-5.5', 'Opus 5.5', 'autopilot'],
+      ['composer-family-openai', 'gpt-6.2-sol', '6.2 Sol', 'interactive'],
+    ] as const) {
+      test(`keeps ${short} and ${mode} legible and exposes the full state`, async ({ page, baseURL }) => {
+        const fixture = await createUIScenes(baseURL).find((scene) => scene.name === name)!.setup(page)
+        try {
+          const summary = page.getByRole('button', { name: 'Configure model, effort, and context' })
+          const narrow = viewport.name === 'phone'
+          await expect(summary.getByText(short, { exact: true })).toBeVisible({ visible: narrow })
+          await expect(summary.getByText(full, { exact: true })).toBeVisible({ visible: !narrow })
+          await expect(summary.locator('.composer-runtime__mode-icon')).toBeVisible({ visible: narrow })
+          await expect(summary.getByText(mode, { exact: true })).toBeVisible({ visible: !narrow })
+          await expect(summary).toHaveAccessibleDescription(
+            `Open session setup. Model: ${full}. Effort: medium. Context: 128k. Mode: ${mode}.`,
+          )
+          const layout = await runtimeInRow(page)
+          expectRuntimeInRow(layout)
+          expect(layout.shown.mode, 'mode beside the model').toBe(true)
+          if (narrow) expect(layout.name.full, 'short model name fits').toBeLessThanOrEqual(layout.name.visible)
+          await assertNoHorizontalOverflow(page)
+        } finally {
+          fixture.assertHealthy()
+        }
+      })
+    }
+  })
+}
+
 // From 361 to 530 px a running turn keeps Queue as its own button and Send
 // opens Steer or Queue itself; at 360 px and below Queue folds into that menu,
 // and from 531 px the arrow returns beside Send.
@@ -883,7 +915,8 @@ async function runtimeInRow(page: Page) {
     }
     const runtime = row.querySelector(':scope > [data-testid="composer-runtime"]')!
     const runtimeBox = box(runtime)!
-    const name = runtime.querySelector<HTMLElement>('.composer-runtime__model')!
+    const name = [...runtime.querySelectorAll<HTMLElement>('.composer-runtime__model')]
+      .find((element) => element.getClientRects().length > 0)!
     const composer = row.closest('.composer')!
     const area = composer.closest('.composer-area')!
     const shown = (selector: string) => Boolean(box(runtime.querySelector(selector)))

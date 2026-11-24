@@ -458,15 +458,19 @@ describe('windowed session publications', () => {
     expect(refreshed).toBeGreaterThan(1_000)
   })
 
-  it('keeps the transcript a windowed socket holds when a roster summary arrives first', () => {
+  it('keeps the transcript a windowed socket holds while only roster summaries arrive', () => {
     const publications = new SessionPublications()
     const browser = new Browser(true, 3)
     publications.add(browser.socket)
     publications.broadcast({ type: 'session.upserted', summary: true, session: session('a', [], { revision: 2 }) })
-    expect(frames(browser)[0]).toMatchObject({ type: 'session.upserted', summary: true, session: { messages: [] } })
-    expect(frames(browser)[0].type === 'session.upserted' && frames(browser)[0]).not.toHaveProperty('session.messagesStart')
+    // Another before the transcript is ever read says nothing about it either.
+    publications.broadcast({ type: 'session.upserted', summary: true, session: session('a', [], { revision: 3 }) })
+    for (const frame of frames(browser)) {
+      expect(frame).toMatchObject({ type: 'session.upserted', summary: true, session: { messages: [] } })
+      expect(frame).not.toHaveProperty('session.messagesStart')
+    }
     publications.broadcast({ type: 'session.upserted', session: session('a', lines(10)) })
-    expect(frames(browser)[1]).toMatchObject({ type: 'session.upserted', session: { messagesStart: 7, messagesTotal: 10 } })
+    expect(frames(browser)[2]).toMatchObject({ type: 'session.upserted', session: { messagesStart: 7, messagesTotal: 10 } })
   })
 })
 

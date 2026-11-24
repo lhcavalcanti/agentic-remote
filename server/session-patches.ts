@@ -24,7 +24,7 @@ export interface PatchSocket {
 interface Publication {
   version: number
   session: ManagedSession
-  /** A roster summary that never read the transcript, with nothing published before it. */
+  /** Roster summaries only, so its transcript was never read. */
   unread?: true
 }
 
@@ -208,7 +208,7 @@ export class SessionPublications {
       ? {
           version,
           session: { ...event.session, messages: event.session.messages.map((message) => ({ ...message })) },
-          ...(received.summary && !previous ? { unread: true as const } : {}),
+          ...(received.summary && (!previous || previous.unread) ? { unread: true as const } : {}),
         }
       : undefined
     if (publication) {
@@ -246,7 +246,7 @@ export class SessionPublications {
         continue
       }
       socket.windowStarts ??= new Map()
-      if (holds) {
+      if (holds && !publication!.unread) {
         const { keep, messages } = changes()
         if (keep >= (socket.windowStarts.get(key) ?? 0) && messages.length <= size) {
           patch ??= this.patch(event, previous, version, changes())

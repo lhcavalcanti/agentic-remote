@@ -1,5 +1,5 @@
 import { expect, type BrowserContextOptions, type Page } from '@playwright/test'
-import type { BackgroundTask, BackgroundTaskSnapshot } from '../shared/contracts'
+import type { BackgroundTask, BackgroundTaskSnapshot, ManagedSession } from '../shared/contracts'
 import { oracleHostStatusFixture } from './oracle-host-status-fixture'
 import { fixtureNotifications, fixtureScheduleProposals, fixtureScheduleRuns, fixtureSchedules } from './shell-fixtures'
 import {
@@ -81,6 +81,8 @@ export const uiSceneNames = [
   'scheduler-name-conflict',
   'scheduler-stale-link',
   'scheduler-unpaired-target',
+  'recently-closed',
+  'recently-closed-expanded',
 ] as const
 
 export type UISceneName = typeof uiSceneNames[number]
@@ -147,6 +149,40 @@ export function backgroundTasksFixture(stoppable: boolean): BackgroundTaskSnapsh
       }),
     ],
   }
+}
+
+/**
+ * Three closed sessions, newest first, with context in Markdown as agents
+ * write it: the first says more than three lines hold on every viewport, the
+ * last fits on any.
+ */
+export function recentlyClosedFixture(): ManagedSession[] {
+  const closed = (
+    id: string, computerId: string, computerName: string, title: string, secondsAgo: number,
+    prompts: string[], reply: string,
+  ): ManagedSession => ({
+    id, computerId, computerName, title, cwd: '/home/demo/field-notes', provider: 'copilot', executionMode: 'sdk',
+    updatedAt: fixtureAgo(secondsAgo), status: 'idle', isOpen: false, messages: [], closedAt: fixtureAgo(secondsAgo),
+    closedContext: { title, cwd: '/home/demo/field-notes', prompts, reply },
+  })
+  return [
+    closed('fixture-disk-audit', 'fixture-studio', 'Studio', 'Audit disk usage and propose cleanup', 50 * 60, [
+      'How do I give **WSL** 200 GB more?',
+      'Is it larger now? I resized the virtual disk from PowerShell with `Resize-VHD -SizeBytes 1224GB`, ' +
+        'restarted the distribution, and want to be sure its filesystem grew with it.',
+      'Continue',
+    ], 'Yes—the resize worked. I verified that `Ubuntu-26.04` went from **1,024 to 1,224 GiB** of virtual disk ' +
+      'capacity, exactly **+200 GiB**, and that the Linux filesystem grew too. WSL now has **1,203.7 GiB** of ' +
+      'filesystem capacity, with **521.3 GiB available** (55% used). Windows `C:` has **991.5 GiB available**. ' +
+      'I didn’t change anything else; the [cleanup plan](https://example.com/plan) lists three folders to rev…'),
+    closed('fixture-guide-revisions', 'fixture-build', 'Build node', 'Compare the field guide revisions', 3 * 60 * 60, [
+      'Compare the two field guide revisions and list what moved',
+      'Keep the [recovery checklist](https://example.com/checklist) as the reference',
+    ], '## Summary - Three sections moved and none were removed. - The checklist matches the newer revision.'),
+    closed('fixture-nightly-sync', 'fixture-studio', 'Studio', 'Profile the nightly sync', 2 * 24 * 60 * 60, [
+      'Find out why the nightly sync takes 40 minutes now',
+    ], 'Caching folder listings would bring it to about 12 minutes.'),
+  ]
 }
 
 /** The same fixed-clock, fail-closed scenes drive both locks and PR captures. */
@@ -268,6 +304,8 @@ export function createUIScenes(
       if (name === 'preview-features') {
         state.hubFlags = { notificationCenter: true, hostMonitor: false, scheduler: false }
       }
+      const recentlyClosed = name.startsWith('recently-closed')
+      if (recentlyClosed) state.closedSessions.push(...recentlyClosedFixture())
       const busyQueue = name === 'composer-busy-queue' || name === 'composer-busy-queue-light'
       if (busyQueue) {
         const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
@@ -384,6 +422,19 @@ export function createUIScenes(
             await sheet.getByRole('button', { name: 'Running subagent: Review the recovery paths', exact: true }).click()
             await expect(sheet.getByRole('button', { name: 'Show all (7)', exact: true })).toBeVisible()
           }
+        }
+      } else if (recentlyClosed) {
+        await openSessions(page)
+        await page.getByRole('navigation', { name: 'Sessions', exact: true })
+          .getByRole('button', { name: 'Recently closed, 3 sessions', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: 'Recently closed', exact: true })
+        await expect(dialog.getByRole('article')).toHaveCount(3)
+        const more = dialog.getByRole('article', { name: 'Audit disk usage and propose cleanup' })
+          .getByRole('button', { name: /^Show (more|less)$/ })
+        await expect(more).toHaveText('Show more')
+        if (name === 'recently-closed-expanded') {
+          await more.click()
+          await expect(more).toHaveAttribute('aria-expanded', 'true')
         }
       } else if (name === 'session-list' || name === 'desktop-rail') {
         await openSessions(page)

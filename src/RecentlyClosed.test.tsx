@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import { CloseSessionDialog, RecentlyClosedDialog } from './RecentlyClosed'
@@ -9,6 +9,7 @@ import { CloseSessionDialog, RecentlyClosedDialog } from './RecentlyClosed'
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 const now = Date.parse('2026-11-14T12:00:00.000Z')
@@ -37,6 +38,81 @@ const closed = session('release', {
     reply: 'The notes are ready.',
   },
 })
+
+// Closed with more to say than three lines hold, in Markdown as agents write it.
+function audit(title = 'Audit disk usage'): ManagedSession {
+  return session(title.toLowerCase().replaceAll(' ', '-'), {
+    title,
+    isOpen: false,
+    closedAt: '2026-11-14T11:00:00.000Z',
+    closedContext: {
+      title,
+      cwd: '/home/tester/src/app',
+      prompts: [
+        'How do I give **WSL** 200 GB more?',
+        '![screenshot](https://example.com/disk.png)',
+        'Is it larger now? See [the log](https://example.com/log)',
+      ],
+      reply:
+        'Yes. `Ubuntu-26.04` went from **1,024 to 1,224 GiB** of virtual disk capacity, exactly ' +
+        '**+200 GiB**, and the Linux filesystem grew too: WSL now has 1,203.7 GiB, with 521.3 GiB ' +
+        'free. <b>Nothing else changed.</b>',
+    },
+  })
+}
+
+const auditReply =
+  'Yes. Ubuntu-26.04 went from 1,024 to 1,224 GiB of virtual disk capacity, exactly +200 GiB, ' +
+  'and the Linux filesystem grew too: WSL now has 1,203.7 GiB, with 521.3 GiB free. Nothing else changed.'
+
+/** Lays text out at `perLine()` characters to an 18px line, cut after three lines. */
+function layOut(perLine: () => number) {
+  const height = (element: Element) => 18 * Math.ceil((element.textContent?.length ?? 0) / perLine())
+  vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (this: Element) {
+    return height(this)
+  })
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (this: Element) {
+    return Math.min(height(this), 3 * 18)
+  })
+}
+
+/** Reports a resize to every ResizeObserver the page has made. */
+function observeResizes() {
+  const callbacks: ResizeObserverCallback[] = []
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: ResizeObserverCallback) {
+      callbacks.push(callback)
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  })
+  return () => act(() => {
+    for (const callback of callbacks) callback([], {} as ResizeObserver)
+  })
+}
+
+/** A window wider than 960px, or not; the returned function resizes it across. */
+function windowWide(wide: boolean) {
+  const listeners = new Set<() => void>()
+  let current = wide
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    get matches() {
+      return query === '(min-width: 961px)' && current
+    },
+    media: query,
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+  }))
+  return (next: boolean) => {
+    current = next
+    act(() => listeners.forEach((listener) => listener()))
+  }
+}
+
+/** Every button's name, in the order the keyboard reaches them. */
+const buttonNames = (container: HTMLElement) =>
+  within(container).queryAllByRole('button').map((button) => button.getAttribute('aria-label') ?? button.textContent)
 
 describe('closing a session', () => {
   it('offers a close that can be undone for 14 days, a permanent delete, and a way back', () => {
@@ -161,5 +237,78 @@ describe('recently closed sessions', () => {
     expect(within(failed.dialog).getByRole('alert')).toHaveTextContent('Hub unavailable')
     fireEvent.click(within(failed.dialog).getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledOnce()
+  })
+
+  it('reads the prompts and the last reply as plain text, without their Markdown', () => {
+    const { dialog } = renderList({ sessions: [audit()] })
+    const card = within(dialog).getByRole('article', { name: 'Audit disk usage' })
+
+    // A prompt that was only an image says nothing in words, so it is left out.
+    expect(within(card).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'How do I give WSL 200 GB more?',
+      'Is it larger now? See the log',
+    ])
+    expect(within(card).getByText(auditReply)).toBeInTheDocument()
+    expect(card).not.toHaveTextContent(/[*`<>]/)
+    expect(card.querySelector('a, b, img')).toBeNull()
+  })
+
+  it('offers Show more only on a card whose context is cut, and opens that card alone', () => {
+    layOut(() => 60)
+    const { dialog } = renderList({ sessions: [closed, audit(), audit('Audit the backups')] })
+    const card = (name: string) => within(dialog).getByRole('article', { name })
+
+    expect(buttonNames(card('Release review'))).toEqual(['Reopen Release review', 'Delete Release review permanently'])
+    const more = within(card('Audit disk usage')).getByRole('button', { name: 'Show more' })
+    expect(more).toHaveAttribute('aria-expanded', 'false')
+    const context = document.getElementById(more.getAttribute('aria-controls') ?? '')
+    expect(context).toContainElement(within(card('Audit disk usage')).getByText(auditReply))
+    expect(context).toContainElement(within(card('Audit disk usage')).getByText('How do I give WSL 200 GB more?'))
+
+    fireEvent.click(more)
+    expect(more).toHaveAttribute('aria-expanded', 'true')
+    expect(more).toHaveTextContent('Show less')
+    expect(within(card('Audit the backups')).getByRole('button', { name: 'Show more' }))
+      .toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(more)
+    expect(more).toHaveAttribute('aria-expanded', 'false')
+    expect(more).toHaveTextContent('Show more')
+  })
+
+  it('looks again for a cut context when a card changes size', () => {
+    let perLine = 1000
+    layOut(() => perLine)
+    const resize = observeResizes()
+    const { dialog } = renderList({ sessions: [audit()] })
+    const card = within(dialog).getByRole('article', { name: 'Audit disk usage' })
+    expect(within(card).queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
+
+    perLine = 40
+    resize()
+    expect(within(card).getByRole('button', { name: 'Show more' })).toBeInTheDocument()
+
+    perLine = 1000
+    resize()
+    expect(within(card).queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument()
+  })
+
+  it('puts Reopen and Delete permanently beside the title on a desktop, and below the context on a phone', () => {
+    layOut(() => 60)
+    const resizeWindow = windowWide(true)
+    const { dialog } = renderList({ sessions: [audit()] })
+    const card = within(dialog).getByRole('article', { name: 'Audit disk usage' })
+    const header = () => card.querySelector('header') as HTMLElement
+    const reopen = 'Reopen Audit disk usage'
+    const remove = 'Delete Audit disk usage permanently'
+
+    expect(header()).toContainElement(within(card).getByRole('heading', { name: 'Audit disk usage' }))
+    expect(buttonNames(header())).toEqual([reopen, remove])
+    expect(buttonNames(card)).toEqual([reopen, remove, 'Show more'])
+
+    resizeWindow(false)
+    expect(header()).toContainElement(within(card).getByRole('heading', { name: 'Audit disk usage' }))
+    expect(buttonNames(header())).toEqual([])
+    expect(buttonNames(card)).toEqual(['Show more', reopen, remove])
   })
 })

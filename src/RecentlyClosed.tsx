@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { History, RotateCcw, Trash2 } from 'lucide-react'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import {
@@ -6,6 +6,7 @@ import {
   closedSessionExpiresAt,
 } from '../shared/closed-sessions'
 import { DialogFrame } from './components/DialogFrame'
+import { markdownPlainText } from './markdown-plain-text'
 import { computerTone, providerName, sessionKey, shortPath } from './session-presentation'
 
 // English like the rest of the interface, rather than the browser's language
@@ -14,6 +15,22 @@ const relativeTime = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 const minute = 60_000
 const hour = 60 * minute
 const day = 24 * hour
+
+/** Wider than the app's phone layout, as the stylesheet's desktop rules are. */
+const wideQuery = '(min-width: 961px)'
+
+function subscribeWide(notify: () => void): () => void {
+  if (typeof window.matchMedia !== 'function') return () => undefined
+  const media = window.matchMedia(wideQuery)
+  media.addEventListener?.('change', notify)
+  return () => media.removeEventListener?.('change', notify)
+}
+
+function wideNow(): boolean {
+  return typeof window.matchMedia === 'function'
+    ? Boolean(window.matchMedia(wideQuery)?.matches)
+    : window.innerWidth > 960
+}
 
 /** `at` relative to `now`, in the largest unit that reads naturally. */
 function relative(at: number, now: number): string {
@@ -94,20 +111,52 @@ export function CloseSessionDialog({
 function RecentlyClosedCard({
   session,
   now,
+  wide,
   onReopen,
   onDelete,
 }: {
   session: ManagedSession
   now: number
+  /** A desktop's layout: the actions sit in the header, beside the title. */
+  wide: boolean
   onReopen: (session: ManagedSession) => Promise<void>
   onDelete: (session: ManagedSession) => Promise<void>
 }) {
   const [pending, setPending] = useState<'reopen' | 'delete'>()
   const [error, setError] = useState<string>()
+  const [expanded, setExpanded] = useState(false)
+  const [cut, setCut] = useState(false)
+  const promptsRef = useRef<HTMLUListElement>(null)
+  const replyRef = useRef<HTMLParagraphElement>(null)
+  const contextId = useId()
   const context = session.closedContext
+  // A prompt that was only an image or markup says nothing in words.
+  const prompts = useMemo(() => context?.prompts.map(markdownPlainText).filter(Boolean) ?? [], [context])
+  const reply = useMemo(() => (context?.reply ? markdownPlainText(context.reply) : ''), [context])
   const closedAt = Date.parse(session.closedAt ?? '')
   const expiresAt = closedSessionExpiresAt(session.closedAt ?? '')
   const titleId = `recently-closed-${sessionKey(session)}`
+
+  // Whether three lines each hide some of the context, once it is laid out
+  // and again whenever a resize or a late web font rewraps it. Measuring only
+  // reads, so every card measures against the same layout. Show less stays
+  // while the card is open.
+  useLayoutEffect(() => {
+    if (expanded) return
+    const parts = [promptsRef.current, replyRef.current].filter((part) => part !== null)
+    let current = true
+    const measure = () => {
+      if (current) setCut(parts.some((part) => part.scrollHeight > part.clientHeight + 1))
+    }
+    measure()
+    void document.fonts?.ready.then(measure)
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : undefined
+    for (const part of parts) observer?.observe(part)
+    return () => {
+      current = false
+      observer?.disconnect()
+    }
+  }, [expanded, prompts, reply])
 
   async function act(kind: 'reopen' | 'delete') {
     if (
@@ -129,66 +178,98 @@ function RecentlyClosedCard({
     }
   }
 
+  const actions = (
+    <div className="recently-closed-card__actions">
+      <button
+        aria-label={`Reopen ${session.title}`}
+        className="primary-button"
+        disabled={pending !== undefined}
+        onClick={() => void act('reopen')}
+        type="button"
+      >
+        <RotateCcw aria-hidden="true" size={15} />
+        {pending === 'reopen' ? 'Reopening…' : 'Reopen'}
+      </button>
+      <button
+        aria-label={`Delete ${session.title} permanently`}
+        className="danger-button"
+        disabled={pending !== undefined}
+        onClick={() => void act('delete')}
+        type="button"
+      >
+        <Trash2 aria-hidden="true" size={15} />
+        {pending === 'delete' ? 'Deleting…' : 'Delete permanently'}
+      </button>
+    </div>
+  )
+  const failure = error ? <p className="form-error" role="alert">{error}</p> : null
+
+  // The actions and their error come where they are seen, so the keyboard
+  // reaches them in the same order: beside the title on a desktop, after the
+  // context on a phone.
   return (
     <li>
       <article
         aria-labelledby={titleId}
         className={`recently-closed-card recently-closed-card--tone-${computerTone(session.computerId)}`}
       >
-        <h3 id={titleId}>{session.title}</h3>
-        <p className="recently-closed-card__where">
-          <span className="recently-closed-card__computer">{session.computerName}</span>
-          <span className="recently-closed-card__folder">{shortPath(session.cwd)}</span>
-        </p>
-        <p className="recently-closed-card__when">
-          {Number.isFinite(closedAt) ? (
-            <time dateTime={session.closedAt} title={new Date(closedAt).toLocaleString()}>
-              Closed {relative(closedAt, now)}
-            </time>
-          ) : null}
-          {Number.isFinite(expiresAt) ? (
-            <time dateTime={new Date(expiresAt).toISOString()} title={new Date(expiresAt).toLocaleString()}>
-              Deleted {relative(expiresAt, now)}
-            </time>
-          ) : null}
-        </p>
-        {context?.prompts.length ? (
-          <div className="recently-closed-card__context">
-            <h4>You asked</h4>
-            <ul>
-              {context.prompts.map((prompt, index) => <li key={index}>{prompt}</li>)}
-            </ul>
+        <header className="recently-closed-card__header">
+          <div className="recently-closed-card__summary">
+            <h3 id={titleId}>{session.title}</h3>
+            <p className="recently-closed-card__where">
+              <span className="recently-closed-card__computer">{session.computerName}</span>
+              <span className="recently-closed-card__folder">{shortPath(session.cwd)}</span>
+            </p>
+            <p className="recently-closed-card__when">
+              {Number.isFinite(closedAt) ? (
+                <time dateTime={session.closedAt} title={new Date(closedAt).toLocaleString()}>
+                  Closed {relative(closedAt, now)}
+                </time>
+              ) : null}
+              {Number.isFinite(expiresAt) ? (
+                <time dateTime={new Date(expiresAt).toISOString()} title={new Date(expiresAt).toLocaleString()}>
+                  Deleted {relative(expiresAt, now)}
+                </time>
+              ) : null}
+            </p>
+          </div>
+          {wide ? actions : null}
+        </header>
+        {wide ? failure : null}
+        {prompts.length || reply ? (
+          <div
+            className={`recently-closed-card__context${expanded ? ' recently-closed-card__context--expanded' : ''}`}
+            id={contextId}
+          >
+            {prompts.length ? (
+              <div className="recently-closed-card__part">
+                <h4>You asked</h4>
+                <ul ref={promptsRef}>
+                  {prompts.map((prompt, index) => <li key={index}>{prompt}</li>)}
+                </ul>
+              </div>
+            ) : null}
+            {reply ? (
+              <div className="recently-closed-card__part">
+                <h4>Last reply</h4>
+                <p ref={replyRef}>{reply}</p>
+              </div>
+            ) : null}
           </div>
         ) : null}
-        {context?.reply ? (
-          <div className="recently-closed-card__context">
-            <h4>Last reply</h4>
-            <p>{context.reply}</p>
-          </div>
+        {cut || expanded ? (
+          <button
+            aria-controls={contextId}
+            aria-expanded={expanded}
+            className="recently-closed-card__more"
+            onClick={() => setExpanded(!expanded)}
+            type="button"
+          >
+            {expanded ? 'Show less' : 'Show more'}
+          </button>
         ) : null}
-        {error ? <p className="form-error" role="alert">{error}</p> : null}
-        <div className="recently-closed-card__actions">
-          <button
-            aria-label={`Reopen ${session.title}`}
-            className="primary-button"
-            disabled={pending !== undefined}
-            onClick={() => void act('reopen')}
-            type="button"
-          >
-            <RotateCcw aria-hidden="true" size={15} />
-            {pending === 'reopen' ? 'Reopening…' : 'Reopen'}
-          </button>
-          <button
-            aria-label={`Delete ${session.title} permanently`}
-            className="danger-button"
-            disabled={pending !== undefined}
-            onClick={() => void act('delete')}
-            type="button"
-          >
-            <Trash2 aria-hidden="true" size={15} />
-            {pending === 'delete' ? 'Deleting…' : 'Delete permanently'}
-          </button>
-        </div>
+        {wide ? null : failure}
+        {wide ? null : actions}
       </article>
     </li>
   )
@@ -217,6 +298,7 @@ export function RecentlyClosedDialog({
 }) {
   const offline = computers.filter((computer) => !computer.online).map((computer) => computer.name)
   const at = now()
+  const wide = useSyncExternalStore(subscribeWide, wideNow, () => false)
   return (
     <DialogFrame
       className="recently-closed-dialog"
@@ -253,6 +335,7 @@ export function RecentlyClosedDialog({
               onDelete={onDelete}
               onReopen={onReopen}
               session={session}
+              wide={wide}
             />
           ))}
         </ul>

@@ -1348,7 +1348,7 @@
     "shell/tsconfig.json": "50ff4be71f7b5ad0aceb43ff1d914baf31b71e92386bb681b59fce159076b67d",
     "shell/vite.config.ts": "1a629c7f879e8b118371ebdc11314dfa64d077bcbf9eaaa4d270b00253ebd462",
     "src/ActivityDetails.tsx": "6d871849962d193ca6894814111c8d0b911c5c1a39a550d8b71447a1a66debf4",
-    "src/ActivityRow.test.tsx": "a344f8c1a0911efdac03f4f8add1eb815370925aa8b7a725db2dae7c323bf299",
+    "src/ActivityRow.test.tsx": "e08ee4c7462b8ff914b4a58afc827a7e7df738b1af2977f91d76cf7359cd8765",
     "src/ActivityRow.tsx": "b46ef2fab57d4351b2017e9c5c1d2a85c5bacbd857e78fbcdd3279410d2cee3e",
     "src/App.test.tsx": "cd3f4b53d1516f50828541508ddf5b8772a44b83ec1c4897c5acc62c5641ddee",
     "src/App.tsx": "c03db02f3d893d599cd138a0640781b37a5424fb95243c1cf0e75539c5145e74",
@@ -1867,13 +1867,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "360d5b526b058e2793f486d926acf13070f735a78115d2d7f6ddc073f8ecea59",
+    "GRAPH_REPORT.md": "1a718b606faef2ec39aafb1133429182c460b2e3c3b7f93f86b402ba57ca37ba",
     "communities.json": "7b7c217ec33a0a67131cbc6d65b5044a10f61d0965405fc6e4809f528e02a575",
-    "graph.html": "a2c366308dbf31f32a3d0880015799801409c4517815cb66afdf0f46912e49ce",
-    "graph.json": "7afefbced0e0200fc9c5c22e1e0ce02197356a6382834f7f65a2bc6927a1f796"
+    "graph.html": "59eb4896ee409743708facd206b660f69595bff442db50f0dc2fdef8cdb751f3",
+    "graph.json": "bb17a99804e4f2ffe105cbc9db194b7138046ea9fc081f4ff481f6d05c156673"
   },
   "schema_version": 1,
-  "source_commit": "10dd2a55d8a09b170c73495b745101e2dbfa603e",
-  "source_fingerprint": "78f315df675ce673811c54e6153a51a3eb0342c70a5c9a503db903fc586c9dd1",
-  "working_tree_changes": []
+  "source_commit": "035a7fe16d528bd579e6b93618d63eb7e85b81eb",
+  "source_fingerprint": "065487debf135a5c68c448d9053960b814759c27e430c0b4e314703b742dc5b0",
+  "working_tree_changes": [
+    "src/ActivityRow.test.tsx"
+  ]
 }

@@ -10,7 +10,7 @@ stable as the app evolves.
 The words MUST, MUST NOT, SHOULD, and MAY describe required, prohibited,
 recommended, and optional behavior.
 
-The composer MUST show one session-setup button in its buttons row, between the microphone and Queue/Send, with the model-family glyph, model, effort, context window, and mode, rather than on a line below the message box. It takes the row's free width at the height of its controls. As its own width narrows, the idle-only hint, context, effort and mode drop out in that order; the glyph and model always show, the model truncating. While busy its title and description say changes apply when idle, and it shows “applies when idle” where that fits; it MUST NOT apply runtime changes mid-turn. The existing computer/provider/path/status/queue status line is unchanged.
+The composer MUST show one session-setup button in its buttons row, between the microphone and Queue/Send, with the model-family glyph, model, effort, context window, and mode, rather than on a line below the message box. It takes the row's free width at the height of its controls. As its own width narrows, the idle-only hint, context, effort and mode drop out in that order; the glyph and model always show, the model truncating. On phones where effort has dropped out, the model uses its short name (`claude-opus-5.5` as Opus 5.5, `gpt-6.2-sol` as 6.2 Sol; an unrecognized model or a bare version keeps its ID) and the mode uses an icon when it fits. The accessible description preserves the full model, effort, context and mode at every width. While busy its title and description say changes apply when idle, and it shows “applies when idle” where that fits; it MUST NOT apply runtime changes mid-turn. The existing computer/provider/path/status/queue status line is unchanged.
 
 The refreshed composer keeps its action row inside the message box: attach, session setup, context usage, microphone, session panel, runtime summary, and Queue/Send/Stop. Attachment, paste, transcription and delivery pipelines and shortcuts are unchanged. The SVG context ring MUST use measured or estimated context tokens, never subscription/plan usage, and MUST visibly distinguish unavailable measurements from measured zero without hover. At narrow widths secondary setup/context controls move into the session panel, and Send can use its icon alone to retain every 40×40 px target at 320 px, the runtime summary included. The panel links to the existing tasks, skills/MCP resources and session actions; it MUST stay inside the visual viewport with scrollable actions when the phone keyboard is open.
 
@@ -488,8 +488,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   messages (the confirmation counts queued ones), but the owning computer
   keeps the record, uploads, and the provider's saved session, with a short
   context computed without a model when it closes: title, folder, the last
-  three prompts, and an excerpt of the last reply. A closed session leaves the
-  list, custom order, and hidden set; discovery, restart recovery, and
+  three prompts, and an excerpt of the last reply, each read as Markdown and
+  kept as plain text without its syntax, images, or HTML. A closed session
+  leaves the list, custom order, and hidden set; discovery, restart recovery, and
   provider listings MUST NOT list it as open, and sends to it are refused until
   it is reopened. A computer that does not advertise recoverable close offers
   only Delete permanently.
@@ -503,6 +504,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - **Recently closed**, in the Sessions header between Refresh and New session,
   MUST list closed sessions newest first with when each closed and will be
   deleted, its context, **Reopen**, and a confirmed **Delete permanently**.
+  The context MUST show three lines each of the prompts and the last reply,
+  with **Show more** only when that cuts something. A desktop puts Reopen and
+  Delete permanently beside each card's title and the prompts beside the
+  reply; a phone keeps the full-width sheet with its button row.
   Reopen uses the history reopen lifecycle and sends nothing. The owning
   computer MUST delete a closed session permanently 14 days after it closed,
   checking at startup and hourly; a failed deletion is logged and retried at

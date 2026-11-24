@@ -2815,7 +2815,6 @@ button {
 
 .dialog.recently-closed-dialog {
   display: flex;
-  width: min(100%, 560px);
   min-height: 0;
   max-height: 100%;
   flex-direction: column;
@@ -2827,12 +2826,14 @@ button {
   margin-bottom: 10px;
 }
 
-.recently-closed-dialog__intro {
+/* Two classes, so its space above the first card outranks the margin that
+   .dialog-message, further down, gives every dialog's note. */
+.recently-closed-dialog .recently-closed-dialog__intro {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
-  margin: 0 0 14px;
+  margin-bottom: 14px;
 }
 
 .recently-closed-list {
@@ -2884,10 +2885,16 @@ button {
 }
 
 .recently-closed-card__context {
+  display: grid;
+  gap: 10px;
   margin-top: 10px;
 }
 
-.recently-closed-card__context h4 {
+.recently-closed-card__part {
+  min-width: 0;
+}
+
+.recently-closed-card__part h4 {
   margin: 0 0 4px;
   color: var(--muted);
   font-size: 11px;
@@ -2895,10 +2902,12 @@ button {
 }
 
 .recently-closed-card__context ul {
-  display: grid;
-  gap: 3px;
   margin: 0;
   padding-left: 16px;
+}
+
+.recently-closed-card__context li + li {
+  margin-top: 3px;
 }
 
 .recently-closed-card__context li,
@@ -2910,11 +2919,39 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* Three lines of what you asked and three of the last reply, until Show
+   more, which RecentlyClosed.tsx offers only when they hide something. */
+.recently-closed-card__context ul,
 .recently-closed-card__context p {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
+}
+
+.recently-closed-card__context--expanded ul,
+.recently-closed-card__context--expanded p {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: none;
+}
+
+/* Read as a line of text, it is still a 40px target: the height reaches
+   into the space around it rather than adding to the card. */
+.recently-closed-card__more {
+  display: flex;
+  width: fit-content;
+  min-height: 40px;
+  align-items: center;
+  margin: -6px 0 -10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-foreground);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
 }
 
 .recently-closed-card__actions {
@@ -2927,6 +2964,40 @@ button {
 .recently-closed-card__actions > button {
   flex: 1 1 0;
   white-space: nowrap;
+}
+
+/* A desktop has the room to lay each card out across: the title, where and
+   when beside Reopen and Delete permanently, as wide as their words, and
+   what you asked beside the last reply. A phone keeps the sheet, with the
+   buttons in a row of their own. */
+@media (min-width: 961px) {
+  .dialog.recently-closed-dialog {
+    width: min(100%, 900px);
+  }
+
+  .recently-closed-card__header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .recently-closed-card__header > .recently-closed-card__actions {
+    flex-wrap: nowrap;
+    margin-top: 0;
+  }
+
+  .recently-closed-card__header .recently-closed-card__actions > button {
+    flex: none;
+    min-height: 40px;
+    padding: 0 14px;
+  }
+
+  .recently-closed-card__context {
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    column-gap: 24px;
+  }
 }
 
 .message-stack {
@@ -4332,10 +4403,12 @@ button {
   white-space: nowrap;
 }
 
-/* Whole details drop out, the idle-only hint first and the mode last, and
-   the title and description keep the hint. Each step leaves the model at
-   least claude-opus-5.5's 15 characters, or 6 beside the mode alone, when
-   the details are their longest in this 9px monospace. */
+.composer-runtime__model--short,
+.composer-runtime__mode-icon {
+  display: none;
+}
+
+/* Whole details drop out, the idle-only hint first and the mode last. */
 @container composer-runtime (max-width: 459px) {
   .composer-runtime__hint {
     display: none;
@@ -4357,6 +4430,26 @@ button {
 @container composer-runtime (max-width: 131px) {
   .composer-runtime__detail--mode {
     display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  @container composer-runtime (max-width: 275px) {
+    .composer-runtime__model--full,
+    .composer-runtime__mode-icon + .composer-runtime__mode {
+      display: none;
+    }
+
+    .composer-runtime__model--short,
+    .composer-runtime__mode-icon {
+      display: inline;
+    }
+  }
+
+  @container composer-runtime (95px < width <= 131px) {
+    .composer-runtime__detail--mode:has(.composer-runtime__mode-icon) {
+      display: inline-flex;
+    }
   }
 }
 

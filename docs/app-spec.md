@@ -503,6 +503,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - **Recently closed**, in the Sessions header between Refresh and New session,
   MUST list closed sessions newest first with when each closed and will be
   deleted, its context, **Reopen**, and a confirmed **Delete permanently**.
+  The context MUST read as plain text, without Markdown syntax or HTML, three
+  lines each of the prompts and the last reply, with **Show more** only when
+  that cuts something. A desktop puts Reopen and Delete permanently beside each
+  card's title and the prompts beside the reply; a phone keeps the full-width
+  sheet with its button row.
   Reopen uses the history reopen lifecycle and sends nothing. The owning
   computer MUST delete a closed session permanently 14 days after it closed,
   checking at startup and hourly; a failed deletion is logged and retried at

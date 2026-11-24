@@ -1220,7 +1220,7 @@
     "server/session-order-store.ts": "37bfe18e97542fc60c57b78bc02dbec567df3eed0dc725371fb69753f20d15fc",
     "server/session-patch-integration.test.ts": "9ed3b21239d86119a1b74d634121563d5e5c2595e7326e5da50fd17c8aa9dda8",
     "server/session-patch-routes.test.ts": "269a95ad48f7f0169850850ee1189132dcf1c8c2fe0d93286578ca517657a8b3",
-    "server/session-patches.test.ts": "7ab175c15b2e627fc6713b3a4f1a6c80bda15ebc32b24b07c3b58a88650c3c36",
+    "server/session-patches.test.ts": "557df6797554c4e13f9fe44565096807c9f553cea1f8e99dbfc4296c4914e2f9",
     "server/session-patches.ts": "e688703bd47ecc1ddd946d1fecdcf773b2a5a0712ced6673e2db235b3c32c3c6",
     "server/session-provenance.test.ts": "39454ad107ded7581254609dd3c49f27309db8dfb8d029437dda4cb190c5e430",
     "server/session-provenance.ts": "e5367af4390ae7233b17346c665c7dc06fbf520e70deeef57eef84ea8d52495a",
@@ -1875,13 +1875,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ba4c160638d1d98f4c768c1527699abc94313877d56b79dde716b5649231c369",
+    "GRAPH_REPORT.md": "3d8e05ed8a2520f25960b7a3a3cd25171263bf29f09a7dc7770811fd03d31998",
     "communities.json": "c7224163ccdf4d8dfb431f56b51652ae3eae3d298bcf360aff33230f15bd2a0c",
-    "graph.html": "bf0673dc5de67576a2e206299ec423d437536d89114f5a9c52bdf01e7a63969d",
-    "graph.json": "96a1497f3027e8e88d9706abb54b403aebed168e7034af08e18e9e026c8a2719"
+    "graph.html": "52b79d5489cfea95a409eb5ace4a294cac96218901ae2e3d656b2208a1ebcce7",
+    "graph.json": "e853ff559282e482a8b15edb536e1cfc68708655652c498ae0e9456011fea8e4"
   },
   "schema_version": 1,
-  "source_commit": "0a63d4a51e411199afe509b60e86dc31cff95aa5",
-  "source_fingerprint": "ac97e47870de42aa280f4a7946b6a04e02f42e35cf2f99c7314b762ea62cc932",
+  "source_commit": "11e17f8caffe1cdcabad9b9c35d0f0b9063a6e54",
+  "source_fingerprint": "293a13b40ca156034f25ec67cea7408f9e0747c42541af03ad8fd7cff0ff2a30",
   "working_tree_changes": []
 }

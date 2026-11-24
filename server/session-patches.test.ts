@@ -396,6 +396,16 @@ describe('windowed session publications', () => {
           messages.splice(Math.floor(next() * messages.length), 1)
         } else if (edit < 0.83) {
           messages = []
+        } else if (edit < 0.86) {
+          // Rebuilt from its log with a row it did not have before.
+          made += 1
+          messages.unshift({ id: `m${made}`, role: 'notice', content: 'earlier', createdAt: at })
+        } else if (edit < 0.89 && latest.has(key)) {
+          // A node's roster after it reconnects: metadata only.
+          publications.broadcast({
+            type: 'session.upserted', summary: true, session: session(id, [], { revision: step }),
+          })
+          continue
         }
         const published = session(id, messages, { revision: step })
         latest.set(key, published)

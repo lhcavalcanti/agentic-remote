@@ -6770,6 +6770,41 @@ describe('App', () => {
       expect(screen.queryByRole('button', { name: /earlier messages/ })).not.toBeInTheDocument()
     })
 
+    it('keeps every row once and in order when changes land while a page loads', async () => {
+      let answer: (page: { messages: ChatMessage[]; messagesStart: number; messagesTotal: number }) => void = () => {}
+      vi.mocked(readSessionMessages).mockImplementation(() => new Promise((resolve) => { answer = resolve }))
+      vi.mocked(listSessions).mockResolvedValue([{ ...session, messages: [] }])
+      vi.mocked(getSession).mockResolvedValue(windowed)
+      render(<App />)
+      const deliver = (event: unknown) => act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent)
+      })
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Show 50 earlier messages' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Show 40 earlier messages' }))
+      expect(await screen.findByRole('button', { name: 'Loading earlier messages…' })).toBeDisabled()
+      // The socket's window and a patch to it arrive while the page is out.
+      deliver({
+        type: 'session.upserted', patchVersion: 1,
+        session: { ...windowed, messages: rows(40, 301), messagesTotal: 301 },
+      })
+      const { messages: _messages, ...summary } = windowed
+      deliver({
+        type: 'session.patched', session: summary,
+        patch: { from: 1, to: 2, keep: 301, count: 302, messages: [line(301)] },
+      })
+      await act(async () => answer({ messages: rows(0, 40), messagesStart: 0, messagesTotal: 302 }))
+      expect(await screen.findByText('window line 0')).toBeInTheDocument()
+      // A fresh window, as a new socket is first sent, keeps them all too.
+      deliver({
+        type: 'session.upserted', patchVersion: 1,
+        session: { ...windowed, messages: rows(52, 302), messagesStart: 52, messagesTotal: 302 },
+      })
+
+      const shown = screen.getAllByText(/^window line \d+$/).map((element) => element.textContent)
+      expect(shown).toEqual(rows(0, 302).map((message) => message.content))
+    })
+
     it('reads a fresh window rather than splicing a page onto a transcript that moved', async () => {
       const rebuilt = {
         ...windowed,

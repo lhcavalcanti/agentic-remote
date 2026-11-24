@@ -284,6 +284,7 @@ import {
   executeCommand,
   getPushSettings,
   getSession,
+  readSessionMessages,
   SessionKnowledgeRequestError,
   listComputers,
   listCommands,
@@ -403,6 +404,8 @@ import { useMarkdownDocument } from './markdown-document/use-markdown-document'
 import { PauseFollowingContext } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
 import { SessionPatchReceiver } from './session-patches'
+import { mergeTranscriptWindow, prependTranscriptPage } from './session-transcript'
+import { TRANSCRIPT_WINDOW } from '../shared/transcript-window'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import { BackgroundTasksStatus } from './features/background-tasks/BackgroundTasksStatus'
 import { backgroundTaskStopRequest } from './features/background-tasks/task-summary'
@@ -1452,7 +1455,8 @@ function upsertSessionSnapshot(
   }
   const projected = projectSessionResponse(session, existing, lastEventAt)
   return sortSessions([
-    projected,
+    // A window keeps the earlier rows already held that line up with it.
+    mergeTranscriptWindow(existing, projected),
     ...sessions.filter((entry) => sessionKey(entry) !== key),
   ])
 }
@@ -1845,16 +1849,25 @@ function releaseClosedActivityRows(
 
 const ConversationMessages = memo(function ConversationMessages({
   messages: allMessages,
+  messagesStart = 0,
+  carriedMessages,
   pendingEchoes,
   currentToolId,
   showAll,
   onShowAll,
+  loadingEarlier = false,
+  earlierFailed = false,
+  onLoadEarlier,
   computerId,
   sessionId,
   activityRows,
   onToggleActivity,
 }: {
+  // The transcript held, which starts `messagesStart` rows into the whole one.
   messages: ChatMessage[]
+  messagesStart?: number
+  // Rows from before the held ones that are still drawn, as the hub carried them.
+  carriedMessages?: ChatMessage[]
   pendingEchoes: PendingEcho[]
   currentToolId?: string
   // Held by the conversation rather than here. A snapshot refresh installs
@@ -1864,6 +1877,10 @@ const ConversationMessages = memo(function ConversationMessages({
   // reader had opened would close under them.
   showAll: boolean
   onShowAll: () => void
+  // Earlier messages not held yet are read a page at a time.
+  loadingEarlier?: boolean
+  earlierFailed?: boolean
+  onLoadEarlier?: () => void
   computerId: string
   sessionId: string
   // The tool rows the reader has opened, held by the conversation for the
@@ -1883,17 +1900,21 @@ const ConversationMessages = memo(function ConversationMessages({
   // under them, and so is one they closed again there, or it vanishes before
   // it can be brought back into view. The parent of a visible child is a
   // third, or the child is lifted out of the group it belongs to and read as
-  // work of its own.
+  // work of its own. Rows from before the held ones are looked for too, among
+  // those the hub carried with them.
+  const before = carriedMessages?.length
+    ? [...carriedMessages, ...allMessages.slice(0, cut)]
+    : cut ? allMessages.slice(0, cut) : []
   const carried: ChatMessage[] = []
-  if (cut > 0) {
+  if (before.length > 0) {
     const wanted = new Set<string>()
     for (const message of tail) {
       if (message.role === 'activity' && message.activityGroupId) {
         wanted.add(message.activityGroupId)
       }
     }
-    for (let index = cut - 1; index >= 0; index -= 1) {
-      const message = allMessages[index]
+    for (let index = before.length - 1; index >= 0; index -= 1) {
+      const message = before[index]
       if (message.role !== 'activity') {
         continue
       }
@@ -1924,7 +1945,66 @@ const ConversationMessages = memo(function ConversationMessages({
       ),
     [onToggleActivity],
   )
-  const hidden = cut - carried.length
+  // Earlier rows go in above the reader, who stays on what they were reading:
+  // the row they had at the top keeps its place on screen, however long the
+  // rows above it turn out to be and however late a page arrives.
+  const stackRef = useRef<HTMLDivElement>(null)
+  const anchorIndexRef = useRef<number | undefined>(undefined)
+  const scrollAnchorRef = useRef<{
+    element: Element
+    top: number
+    start: number
+    expanded: boolean
+    loaded: boolean
+    release: () => void
+  } | undefined>(undefined)
+  const releaseScrollAnchor = () => {
+    scrollAnchorRef.current?.release()
+    scrollAnchorRef.current = undefined
+  }
+  useEffect(() => releaseScrollAnchor, [])
+  const revealsHeld = cut > 0
+  const showEarlier = () => {
+    const timeline = stackRef.current?.closest('.timeline')
+    const index = anchorIndexRef.current
+    const element = index === undefined ? undefined : stackRef.current?.children[index]
+    releaseScrollAnchor()
+    if (timeline && element) {
+      const viewTop = () => element.getBoundingClientRect().top - timeline.getBoundingClientRect().top
+      const remembered = {
+        element, top: viewTop(), start: messagesStart, expanded: showAll, loaded: false,
+        release: () => timeline.removeEventListener('scroll', follow),
+      }
+      // The reader may scroll while a page loads; their place then is the one kept.
+      const follow = () => { if (element.isConnected) remembered.top = viewTop() }
+      timeline.addEventListener('scroll', follow, { passive: true })
+      scrollAnchorRef.current = remembered
+    }
+    if (revealsHeld) onShowAll()
+    else onLoadEarlier?.()
+  }
+  useLayoutEffect(() => {
+    const remembered = scrollAnchorRef.current
+    if (!remembered) return
+    const timeline = stackRef.current?.closest('.timeline')
+    if (!timeline || !remembered.element.isConnected) {
+      releaseScrollAnchor()
+      return
+    }
+    if (messagesStart !== remembered.start || showAll !== remembered.expanded) {
+      const top = remembered.element.getBoundingClientRect().top - timeline.getBoundingClientRect().top
+      timeline.scrollTop += top - remembered.top
+      releaseScrollAnchor()
+    } else if (loadingEarlier) {
+      remembered.loaded = true
+    } else if (remembered.loaded) {
+      // The page did not land: nothing moved.
+      releaseScrollAnchor()
+    }
+  })
+  // Everything from the start of the transcript up to the rows drawn in order,
+  // less the ones that came along with them.
+  const hidden = messagesStart + cut - carried.length
   const messages = carried.length ? [...carried, ...tail] : tail
   const activityMessages = new Map(
     messages
@@ -1999,26 +2079,38 @@ const ConversationMessages = memo(function ConversationMessages({
     )
   }
   const rendered: ReactNode[] = []
-  if (hidden > 0) {
+  const earlier = hidden > 0 || loadingEarlier
+  if (earlier) {
     rendered.push(
       <button
+        aria-busy={loadingEarlier || undefined}
         className="transcript-earlier"
+        disabled={loadingEarlier}
         key="show-earlier"
-        onClick={onShowAll}
+        onClick={showEarlier}
         type="button"
       >
-        {`Show ${hidden} earlier message${hidden === 1 ? '' : 's'}`}
+        {loadingEarlier
+          ? 'Loading earlier messages…'
+          : earlierFailed && cut === 0
+            ? 'Earlier messages did not load. Try again'
+            : `Show ${hidden} earlier message${hidden === 1 ? '' : 's'}`}
       </button>,
     )
   }
-  for (const message of messages) {
+  // The first row drawn in order, rather than one carried along: it is where
+  // the reader is when earlier rows go in above it.
+  let anchor: number | undefined
+  for (const [index, message] of messages.entries()) {
     if (message.role === 'activity') {
       if (groupedActivityIds.has(message.id)) {
         continue
       }
+      if (anchor === undefined && index >= carried.length) anchor = rendered.length
       rendered.push(renderActivity(message))
       continue
     }
+    if (anchor === undefined && index >= carried.length) anchor = rendered.length
     rendered.push(
       <TranscriptMessage key={message.id} message={message} />,
     )
@@ -2028,7 +2120,10 @@ const ConversationMessages = memo(function ConversationMessages({
       <PendingEchoMessage content={echo.content} key={echo.id} />,
     )
   }
-  return <div className="message-stack">{rendered}</div>
+  useLayoutEffect(() => {
+    anchorIndexRef.current = anchor
+  })
+  return <div className="message-stack" ref={stackRef}>{rendered}</div>
 })
 
 function EmptyConversation({ onCreate, onKnowledge }: {
@@ -4739,6 +4834,51 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     ) return current
     return upsertSessionSnapshot(current, incoming, lastEventAt)
   }, [])
+  // Earlier messages the selected session holds none of yet, a page at a time.
+  const [earlierLoads, setEarlierLoads] = useState<Readonly<Record<string, 'loading' | 'failed'>>>({})
+  const earlierLoadsRef = useRef(new Set<string>())
+  const loadEarlierMessages = useCallback(() => {
+    const session = selectedRef.current
+    const first = session?.messages[0]
+    const start = session?.messagesStart ?? 0
+    if (!session || !first || start <= 0) return
+    const key = sessionKey(session)
+    if (earlierLoadsRef.current.has(key)) return
+    earlierLoadsRef.current.add(key)
+    const settle = (state?: 'failed') => {
+      earlierLoadsRef.current.delete(key)
+      setEarlierLoads((current) => {
+        const { [key]: _settled, ...rest } = current
+        return state ? { ...rest, [key]: state } : rest
+      })
+    }
+    setEarlierLoads((current) => ({ ...current, [key]: 'loading' }))
+    void readSessionMessages(session.computerId, session.id, {
+      before: start, beforeId: first.id, limit: TRANSCRIPT_WINDOW,
+    }).then((page) => {
+      // Dropped, not spliced, when the session no longer starts where the
+      // page was asked for: a fresh window arrived meanwhile.
+      const prepend = (current: ManagedSession[]) => current.map((entry) =>
+        sessionKey(entry) === key ? prependTranscriptPage(entry, page, first.id) ?? entry : entry)
+      sessionsRef.current = prepend(sessionsRef.current)
+      setSessions(prepend)
+      settle()
+    }, async (caught: unknown) => {
+      if (!(caught instanceof SubmissionError && caught.statusCode === 409)) {
+        settle('failed')
+        return
+      }
+      // The transcript changed where the page would have joined it -- it was
+      // rebuilt from its log -- so a fresh window is read instead.
+      try {
+        const fresh = await getSession(session.computerId, session.id, undefined, { passive: true })
+        setSessions((current) => upsertSession(current, fresh))
+        settle()
+      } catch {
+        settle('failed')
+      }
+    })
+  }, [upsertSession])
   const currentSessionResponse = useCallback((incoming: ManagedSession) =>
     projectSessionResponse(
       incoming,
@@ -4951,7 +5091,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     // Whatever the transcript has already logged is hidden at once, so the
     // message never shows twice; the effect above retires the rest.
     () => selected
-      ? unloggedPendingEchoes(pendingEchoes[sessionKey(selected)] || [], selected.messages)
+      ? unloggedPendingEchoes(
+        pendingEchoes[sessionKey(selected)] || [],
+        selected.messages,
+        selected.messagesStart,
+      )
       : [],
     [pendingEchoes, selected],
   )
@@ -5368,12 +5512,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // keystroke runs. Held against the messages so typing does not re-scan a
   // long session for something that has not changed.
   const currentTool = useMemo(
-    () =>
-      selected?.messages.findLast(
-        (message) =>
-          message.role === 'activity' && message.activityStatus === 'running',
-      ),
-    [selected?.messages],
+    () => {
+      const running = (message: ChatMessage) =>
+        message.role === 'activity' && message.activityStatus === 'running'
+      // Rows carried from before the window come before every row held.
+      return selected?.messages.findLast(running) ?? selected?.carriedMessages?.findLast(running)
+    },
+    [selected?.messages, selected?.carriedMessages],
   )
   const hasRunningTool = currentTool?.activityStatus === 'running'
   const pendingActionId =
@@ -7535,7 +7680,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       // Asks to be sent what changed in a session rather than all of it. Its
       // patches only apply to what this socket was itself sent, so every new
       // socket starts from whole sessions; an older hub ignores the request.
-      const current = new WebSocket(`${protocol}//${window.location.host}/api/events?patches=1`)
+      // A window, too: each session arrives as its latest messages, so a long
+      // one is never sent whole to a page that may not even show it.
+      const current = new WebSocket(
+        `${protocol}//${window.location.host}/api/events?patches=1&window=${TRANSCRIPT_WINDOW}`,
+      )
       socket = current
       eventSocketRef.current = current
       const patches = new SessionPatchReceiver((request) => {
@@ -10839,7 +10988,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         selected.executionMode === 'tmux' &&
         !queuedInstead
       ) {
-        const echo = createPendingEcho(submission.id, content, selected.messages, Date.now())
+        const echo = createPendingEcho(
+          submission.id, content, selected.messages, Date.now(), selected.messagesStart,
+        )
         setPendingEchoes((current) => ({
           ...current,
           [liveKey]: [...(current[liveKey] || []), echo],
@@ -13950,8 +14101,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             <PauseFollowingContext.Provider value={pauseFollowing}>
               <ConversationMessages
                 activityRows={activityRows[sessionKey(selected)]}
+                carriedMessages={selected.carriedMessages}
                 computerId={selected.computerId}
                 currentToolId={currentTool?.id}
+                earlierFailed={earlierLoads[sessionKey(selected)] === 'failed'}
+                loadingEarlier={earlierLoads[sessionKey(selected)] === 'loading'}
+                messagesStart={selected.messagesStart}
+                onLoadEarlier={loadEarlierMessages}
                 onShowAll={expandSelectedTranscript}
                 onToggleActivity={toggleSelectedActivity}
                 sessionId={selected.id}
@@ -14211,6 +14367,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             onStartRecording={() => void startRecording()}
             onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
             onOpenRuntime={() => setRuntimeOpen(true)}
+            loadingEarlierMessages={earlierLoads[sessionKey(selected)] === 'loading'}
+            onLoadEarlierMessages={loadEarlierMessages}
             onRecallSentMessage={(id) => { navigateMessageHistory(-1, true, id) }}
             onUseSentMessage={() => {
               if (!selectedKey || !composerDraftsRef.current[selectedKey]) return false

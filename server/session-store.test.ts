@@ -2321,3 +2321,59 @@ describe('SessionStore', () => {
     expect(existsSync(directory)).toBe(false)
   })
 })
+
+describe('SessionStore transcript windows', () => {
+  const at = '2026-11-24T00:00:00.000Z'
+  const line = (index: number): ChatMessage => ({
+    id: `m${index}`, role: 'assistant', content: `line ${index}`, createdAt: at,
+  })
+  const ids = (messages: readonly ChatMessage[] | undefined) => messages?.map((message) => message.id)
+
+  it('reads the latest window without copying the rest of the transcript', async () => {
+    const { store } = await createStore()
+    const messages = Array.from({ length: 1_000 }, (_, index) => line(index))
+    messages[10] = { ...messages[10], role: 'activity', activityStatus: 'running' }
+    await store.create({ id: 'long', cwd: '/project', title: 'Long', updatedAt: at, status: 'idle', messages })
+    const copied: number[] = []
+    const clone = globalThis.structuredClone
+    vi.spyOn(globalThis, 'structuredClone').mockImplementation((value, options) => {
+      const held = value as { messages?: unknown[]; archivedMessages?: unknown[] } | unknown[]
+      copied.push(Array.isArray(held)
+        ? held.length
+        : (held?.messages?.length ?? 0) + (held?.archivedMessages?.length ?? 0))
+      return clone(value, options)
+    })
+
+    const window = store.get('long', { window: 50 })!
+    const read = await store.readAfterWrites('long', { window: 50 })
+
+    expect(window).toMatchObject({ messagesStart: 950, messagesTotal: 1_000 })
+    expect(ids(window.messages)).toEqual(ids(messages.slice(950)))
+    expect(ids(window.carriedMessages)).toEqual(['m10'])
+    expect(read).toEqual(window)
+    expect(Math.max(...copied)).toBeLessThanOrEqual(50)
+    // A copy all the same: what a reader does with it changes nothing kept.
+    window.messages[0].content = 'changed'
+    expect(store.get('long', { window: 50 })!.messages[0].content).toBe('line 950')
+    expect(store.get('long')!.messages).toHaveLength(1_000)
+  })
+
+  it('pages older messages across recovered history, only where the boundary still is', async () => {
+    const { store } = await createStore()
+    await store.create({
+      id: 'before', cwd: '/project', title: 'Recovered', updatedAt: at, status: 'idle',
+      messages: [line(0), line(1), line(2)],
+    }, { backend: 'sdk', managedOpen: true })
+    await store.replaceWithRecoveredSession('before', 'after', 'provider-error', 1, true, 'Seed')
+    await store.replaceTranscript('after', [line(3), line(4)], 'idle')
+    const whole = store.get('after')!.messages
+    const last = whole.length - 1
+
+    expect(store.readMessages('after', { before: last, beforeId: whole[last].id, limit: 3 })).toEqual({
+      messages: whole.slice(last - 3, last), messagesStart: last - 3, messagesTotal: whole.length,
+    })
+    expect(() => store.readMessages('after', { before: last, beforeId: 'm0', limit: 3 }))
+      .toThrow(expect.objectContaining({ statusCode: 409 }))
+    expect(store.readMessages('missing', { before: 1, beforeId: 'm1', limit: 3 })).toBeUndefined()
+  })
+})

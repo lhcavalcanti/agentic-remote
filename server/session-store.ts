@@ -23,6 +23,10 @@ import { resolveDataDirectory } from './paths.js'
 import { canArchiveSession, mergeSessionRetention, sessionRetentionSchema } from './session-retention.js'
 import { closedSessionContext, isClosedSessionContext } from '../shared/closed-sessions.js'
 import {
+  pageTranscript, transcriptMoved, windowTranscript,
+  type SessionReadOptions, type TranscriptPage, type TranscriptPageQuery, type TranscriptReader,
+} from '../shared/transcript-window.js'
+import {
   launchIdentitySchema, promptAcceptanceReceiptSchema, terminationAcknowledgementSchema,
   type LaunchReconciliation, type PromptAcceptanceReceipt, type TerminationAcknowledgement,
 } from '../shared/launch-identity.js'
@@ -683,6 +687,26 @@ function cloneSession(session: StoredSession): SessionDetail {
   }
 }
 
+/** A stored session's whole transcript, recovered history first, by absolute index. */
+function storedTranscript(session: Readonly<StoredSession>): TranscriptReader {
+  const archived = session.archivedMessages ?? []
+  return {
+    length: archived.length + session.messages.length,
+    at: (index) => index < archived.length ? archived[index] : session.messages[index - archived.length],
+  }
+}
+
+/** `cloneSession` of only the latest messages: nothing before them is copied. */
+function cloneSessionWindow(session: StoredSession, size: number): SessionDetail {
+  const window = windowTranscript(storedTranscript(session), size)
+  return {
+    ...cloneSession({ ...session, archivedMessages: undefined, messages: window.messages }),
+    messagesStart: window.messagesStart,
+    messagesTotal: window.messagesTotal,
+    carriedMessages: structuredClone(window.carriedMessages),
+  }
+}
+
 export class SessionStore {
   private readonly directory: string
   private readonly statePath: string
@@ -1084,12 +1108,30 @@ export class SessionStore {
     return this.state.sessions[id]?.title
   }
 
-  get(id: string): SessionDetail | undefined {
+  /**
+   * A copy of a session. With `window`, only its latest messages are copied,
+   * and the copy says where they sit in the whole transcript.
+   */
+  get(id: string, options: SessionReadOptions = {}): SessionDetail | undefined {
     if (!Object.hasOwn(this.state.sessions, id) || this.isRetiredSession(id)) {
       return undefined
     }
     const session = this.state.sessions[id]
-    return session ? cloneSession(session) : undefined
+    if (!session) return undefined
+    return options.window === undefined ? cloneSession(session) : cloneSessionWindow(session, options.window)
+  }
+
+  /**
+   * The messages before a browser's first one, copying only those. A boundary
+   * that is no longer where the browser holds it is refused (409); a session
+   * that is not here reads as undefined.
+   */
+  readMessages(id: string, query: TranscriptPageQuery): TranscriptPage | undefined {
+    return this.inspect(id, (session) => {
+      const page = pageTranscript(storedTranscript(session), query)
+      if (!page) throw transcriptMoved()
+      return { ...page, messages: structuredClone(page.messages) }
+    })
   }
 
   /** Whether `get` would find the session, without copying its history. */
@@ -1150,12 +1192,12 @@ export class SessionStore {
   }
 
   /** Queue a read behind admitted mutations before making a provider-side decision. */
-  async readAfterWrites(sessionId: string): Promise<SessionDetail> {
+  async readAfterWrites(sessionId: string, options: SessionReadOptions = {}): Promise<SessionDetail> {
     return this.change((state) => {
       if (!state.sessions[sessionId] || this.retiredIds(state).has(sessionId)) {
         throw new Error(`Session ${sessionId} does not exist`)
       }
-      return () => this.requireSession(sessionId)
+      return () => this.requireSession(sessionId, options)
     })
   }
 
@@ -3659,8 +3701,8 @@ export class SessionStore {
     return message
   }
 
-  private requireSession(sessionId: string): SessionDetail {
-    const session = this.get(sessionId)
+  private requireSession(sessionId: string, options: SessionReadOptions = {}): SessionDetail {
+    const session = this.get(sessionId, options)
     if (!session) {
       throw new Error(`Session ${sessionId} does not exist`)
     }

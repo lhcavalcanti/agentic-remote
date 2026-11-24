@@ -13,6 +13,7 @@ import {
   getActivityDetail,
   getSession,
   getSessionKnowledgeRoot,
+  readSessionMessages,
   getRuntimeOptions,
   HUB_SNAPSHOT_TIMEOUT_MS,
   listBackgroundTasks,
@@ -115,9 +116,31 @@ describe('API request headers', () => {
       { passive: true },
     )).resolves.toEqual({ id: 'session' })
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/computers/computer/sessions/session?passive=1',
+      '/api/computers/computer/sessions/session?passive=1&window=500',
       expect.objectContaining({ cache: 'no-store' }),
     )
+  })
+
+  it('asks for a window of each transcript, and pages what came before it', async () => {
+    const fetchMock = vi.fn(async (path: string) => Response.json(path.includes('/messages')
+      ? { messages: [], messagesStart: 0, messagesTotal: 3 }
+      : { session: { id: 'session' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await getSession('computer', 'session')
+    await expect(readSessionMessages('computer', 'session', { before: 2, beforeId: 'm/2', limit: 500 }))
+      .resolves.toEqual({ messages: [], messagesStart: 0, messagesTotal: 3 })
+    await sendMessage('computer', 'session', { content: 'hi' }).catch(() => undefined)
+
+    const [[opened, openInit], [paged, pageInit], [, sendInit]] = fetchMock.mock.calls as unknown as [string, RequestInit][]
+    expect(opened).toBe('/api/computers/computer/sessions/session?window=500')
+    expect(paged).toBe('/api/computers/computer/sessions/session/messages?before=2&beforeId=m%2F2&limit=500')
+    expect(pageInit).toMatchObject({ cache: 'no-store' })
+    // Every hub request says how much of a transcript the browser holds, so a
+    // change answers with a window too.
+    for (const init of [openInit, pageInit, sendInit]) {
+      expect(new Headers(init.headers).get('x-transcript-window')).toBe('500')
+    }
   })
 
   it('requests no-store Oracle voice capabilities', async () => {

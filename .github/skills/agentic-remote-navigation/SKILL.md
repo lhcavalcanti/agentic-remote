@@ -235,7 +235,11 @@ Do not weaken these without an explicit product decision.
   `checked*` test helpers, which feed them in several chunkings and compare
   every prefix.
 - `SessionStore.get` copies the whole transcript; `/tasks`, the poll, and
-  provider routing use `has` or `inspect` instead.
+  provider routing use `has` or `inspect` instead. `get(id, { window })` and
+  `readMessages` copy only the rows they return: the browser reads a window of
+  each transcript (`shared/transcript-window.ts`) and pages earlier rows, and
+  its event socket (`?patches=1&window=500`) is never sent a whole long
+  session. Server-side readers still read whole transcripts.
 - `SessionStore.persist` writes compact JSON and coalesces writes queued behind
   an in-flight write; the snapshot is taken when the write starts, so every
   caller's mutation is still durable when its promise resolves.

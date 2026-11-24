@@ -38,6 +38,8 @@ import {
 } from './file-upload-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import type { SessionService } from './session-service.js'
+import { pageWholeSession, windowSession } from '../shared/transcript-window.js'
+import { sessionReadOptions, transcriptPageQuerySchema } from './transcript-window-query.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
 import { isSessionResourceRoute, readSessionSkills, readSessionMcpServers, resourceRequestHandler } from './session-resources.js'
 import {
@@ -691,16 +693,35 @@ export async function registerNodeRoutes(
       node.get<{ Params: { sessionId: string }; Querystring: { passive?: string } }>(
         '/sessions/:sessionId',
         async (request) => {
+          // `?window=` asks for only the latest messages; without it the whole
+          // transcript is read, as every hub before windows expects.
+          const options = sessionReadOptions(request.query)
+          const asked = options ? [options] : []
           if (request.query.passive !== '1') {
-            return { session: await service.openSession(request.params.sessionId) }
+            return {
+              session: windowSession(
+                await service.openSession(request.params.sessionId, ...asked),
+                options?.window,
+              ),
+            }
           }
           // Read as recorded, never opened: the hub's Oracle reads sessions
           // this way so that asking about one cannot change it.
-          const session = service.getSession(request.params.sessionId)
+          const session = service.getSession(request.params.sessionId, ...asked)
           if (!session) {
             throw Object.assign(new Error('Session not found'), { statusCode: 404 })
           }
-          return { session }
+          return { session: windowSession(session, options?.window) }
+        },
+      )
+
+      node.get<{ Params: { sessionId: string } }>(
+        '/sessions/:sessionId/messages',
+        async (request) => {
+          const query = transcriptPageQuerySchema.parse(request.query)
+          return service.readMessages
+            ? service.readMessages(request.params.sessionId, query)
+            : pageWholeSession(service.getSession(request.params.sessionId), query)
         },
       )
 

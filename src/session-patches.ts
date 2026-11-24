@@ -8,12 +8,19 @@ import type {
 interface Base {
   version: number
   messages: ChatMessage[]
+  /** For a windowed session: where `messages` starts, and the rows it carries from before. */
+  start?: number
+  carried?: ChatMessage[]
 }
 
 /**
  * Rebuilds whole sessions from the patches one event socket is sent. A patch
  * that does not apply to what this socket holds is dropped, and the session
  * is asked for whole again; nothing is guessed. A new socket starts empty.
+ *
+ * A windowed session -- one sent with `messagesStart` -- holds only its latest
+ * messages. Patches count from the start of the whole transcript, so one that
+ * keeps fewer messages than come before the window cannot apply either.
  */
 export class SessionPatchReceiver {
   private readonly bases = new Map<string, Base>()
@@ -33,7 +40,10 @@ export class SessionPatchReceiver {
       if (patchVersion === undefined) {
         this.bases.delete(key)
       } else {
-        this.bases.set(key, { version: patchVersion, messages: event.session.messages })
+        const { messages, messagesStart, carriedMessages } = event.session
+        this.bases.set(key, messagesStart === undefined
+          ? { version: patchVersion, messages }
+          : { version: patchVersion, messages, start: messagesStart, carried: carriedMessages ?? [] })
         this.awaiting.delete(key)
       }
       return upserted
@@ -43,8 +53,9 @@ export class SessionPatchReceiver {
       const key = `${computerId}:${sessionId}`
       const base = this.bases.get(key)
       const { from, to, keep, count, messages } = event.patch
+      const start = base?.start ?? 0
       if (
-        !base || base.version !== from || keep > base.messages.length ||
+        !base || base.version !== from || keep < start || keep > start + base.messages.length ||
         keep + messages.length !== count
       ) {
         this.bases.delete(key)
@@ -56,11 +67,22 @@ export class SessionPatchReceiver {
       }
       // Unchanged messages keep their identity, so what renders them can tell
       // they did not change.
-      const next = keep === base.messages.length && !messages.length
+      const next = keep === start + base.messages.length && !messages.length
         ? base.messages
-        : [...base.messages.slice(0, keep), ...messages]
-      this.bases.set(key, { version: to, messages: next })
-      return { type: 'session.upserted', session: { ...event.session, messages: next } }
+        : [...base.messages.slice(0, keep - start), ...messages]
+      this.bases.set(key, { ...base, version: to, messages: next })
+      return {
+        type: 'session.upserted',
+        session: base.start === undefined
+          ? { ...event.session, messages: next }
+          : {
+              ...event.session,
+              messages: next,
+              messagesStart: base.start,
+              messagesTotal: count,
+              carriedMessages: base.carried ?? [],
+            },
+      }
     }
     if (event.type === 'session.removed') {
       const key = `${event.computerId}:${event.sessionId}`

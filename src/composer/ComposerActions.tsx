@@ -46,6 +46,8 @@ export function ComposerActions({
   providerCapability,
   onUseSentMessage,
   phoneEnterCreatesNewline,
+  loadingEarlierMessages,
+  onLoadEarlierMessages,
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'foregroundTurnActive' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
@@ -53,7 +55,8 @@ export function ComposerActions({
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
   'recordingDuration' | 'compactTokens' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
-  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage' | 'phoneEnterCreatesNewline'
+  'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage' | 'phoneEnterCreatesNewline' |
+  'loadingEarlierMessages' | 'onLoadEarlierMessages'
 >) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyChosen, setHistoryChosen] = useState(false)
@@ -231,7 +234,10 @@ export function ComposerActions({
     </div>
     {historyOpen ? (
       <SentMessages
+        earlier={selected.messagesStart ?? 0}
+        loadingEarlier={loadingEarlierMessages}
         messages={selected.messages}
+        onLoadEarlier={onLoadEarlierMessages}
         receipts={selected.promptReceipts}
         sessionState={selected}
         onCancel={() => {

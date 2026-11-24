@@ -39,6 +39,8 @@ import type { ManagerStore } from './manager-store.js'
 import { sessionProvenanceProjection } from './session-provenance.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
+import { sessionReadOptions, transcriptPageQuerySchema, transcriptWindowParam } from './transcript-window-query.js'
+import { windowSession } from '../shared/transcript-window.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
 import {
   registerOracleVoiceRoutes,
@@ -422,6 +424,25 @@ export async function registerHubRoutes(
 ): Promise<void> {
   const projection = sessionProvenanceProjection(provenance, scheduler)
   app.addHook('preSerialization', async (_request, _reply, payload) => projection.reply(payload))
+  // A browser that holds a window of each transcript says so on every request,
+  // and the session a change answers with is cut to that window, rather than
+  // sending a long conversation whole for every message sent in it. A listing
+  // that carries a remote session's cached detail is cut the same way; a
+  // summary, which never read its transcript, stays one.
+  app.addHook('preSerialization', async (request, _reply, payload) => {
+    const window = transcriptWindowParam(request.headers['x-transcript-window'])
+    if (window === undefined || !payload || typeof payload !== 'object') return payload
+    const isSession = (value: unknown): value is ManagedSession =>
+      Boolean(value) && typeof (value as ManagedSession).computerId === 'string' &&
+      Array.isArray((value as ManagedSession).messages)
+    const response = payload as { session?: unknown; sessions?: unknown }
+    if (isSession(response.session)) response.session = windowSession(response.session, window)
+    if (Array.isArray(response.sessions) && response.sessions.some((entry) => isSession(entry) && entry.messages.length)) {
+      response.sessions = response.sessions.map((entry: unknown) =>
+        isSession(entry) && entry.messages.length ? windowSession(entry, window) : entry)
+    }
+    return payload
+  })
   const sessionForClient = (session: ManagedSession): ManagedSession => {
     const result = { ...session }
     delete result.suppressOrdinaryNotifications
@@ -704,20 +725,35 @@ export async function registerHubRoutes(
   app.get<{ Params: SessionParams; Querystring: { passive?: string } }>(
     '/api/computers/:computerId/sessions/:sessionId',
     async (request) => {
+      // `?window=` asks for only the latest messages, as the browser does;
+      // without it the whole transcript is read, as before.
+      const options = sessionReadOptions(request.query)
+      const asked = options ? [options] : []
       const session = request.query.passive === '1'
         ? await manager.readSession(
           request.params.computerId,
           request.params.sessionId,
+          ...asked,
         )
         : await manager.getSession(
           request.params.computerId,
           request.params.sessionId,
+          ...asked,
         )
       if (request.query.passive !== '1') {
         await markSessionNotificationsRead(request.params.computerId, request.params.sessionId)
       }
       return { session }
     },
+  )
+
+  app.get<{ Params: SessionParams }>(
+    '/api/computers/:computerId/sessions/:sessionId/messages',
+    async (request) => manager.readMessages(
+      request.params.computerId,
+      request.params.sessionId,
+      transcriptPageQuerySchema.parse(request.query),
+    ),
   )
 
   app.get<{
@@ -1288,6 +1324,10 @@ export async function registerHubRoutes(
     const target: PatchSocket = socket
     if (query?.patches === '1') {
       target.patchVersions = new Map()
+      // `&window=n` asks for a session's latest messages rather than all of
+      // them; anything that is not a window size leaves the socket as it was.
+      const window = transcriptWindowParam(query.window)
+      if (window !== undefined) target.transcriptWindow = window
       socket.on('message', (data: Buffer, binary: boolean) => {
         // A resync request is one of the two messages a browser sends here.
         // Anything else, or anything too large to be one, is ignored rather

@@ -125,6 +125,34 @@ socket without the parameter, is the whole session. A patch that does not apply
 to the browser's copy is dropped and the browser sends one
 `{type: 'session.resync', computerId, sessionId}`; the hub answers with the
 latest publication in full. Node→hub links still carry whole sessions.
+
+A patching socket that adds `&window=n` (the browser asks for 500) is sent a
+window in place of each whole session: the latest `n` messages with
+`messagesStart`, `messagesTotal`, and `carriedMessages` (running activities and
+the activity rows the window's rows are grouped under, from before it). Patches
+to it count `keep` and `count` from the start of the whole transcript, and are
+sent only while `keep` lies within what the socket holds and the new messages
+fit in a window. Anything else — an old activity finishing far back, a burst
+longer than a window, a resync — is a fresh window, which also carries the rows
+before it that changed in place since the publication the socket held (up to
+100), so a browser holding older rows can update them. No frame to such a socket
+grows with the transcript; a socket without the parameter is unchanged.
+
+Session reads are windowed the same way on request:
+`GET …/sessions/:sessionId?window=n` (with or without `passive=1`) answers with
+a window, and `GET …/sessions/:sessionId/messages?before=&beforeId=&limit=`
+answers with the messages before index `before`, but only while the message
+there is still `beforeId`; otherwise `409`. A request with
+`X-Transcript-Window: n` has the session in any answer cut to a window, and so
+every session in a listing that carries a transcript (a remote session's cached
+detail); a summary stays a summary. A roster summary that carries cached
+messages reaches a windowed socket as a window, and one that carries none as a
+summary until its transcript is read. The
+node API mirrors both reads and the hub forwards their parameters. A node from
+before windows ignores `window` and answers whole, which the hub windows
+itself; it has no page route (`404`), so the hub reads that session whole and
+pages it. Readers that do not ask — Oracle, Dreamer, close and Recently closed,
+the queue, side questions — still read whole transcripts.
 Every event socket also accepts `{type: 'presence', oracleVisible}` (see
 Notifications in the app spec); each message type is read only by its own
 handler.

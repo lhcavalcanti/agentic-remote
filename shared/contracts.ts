@@ -510,6 +510,20 @@ export interface SessionSummary {
 
 export interface SessionDetail extends SessionSummary {
   messages: ChatMessage[]
+  /**
+   * Set when `messages` is only the latest part of the transcript, as a read
+   * or event socket that asked for a window is sent: the absolute index of
+   * the first of them. Absent, `messages` is the whole transcript.
+   */
+  messagesStart?: number
+  /** How many messages the whole transcript has, with `messagesStart`. */
+  messagesTotal?: number
+  /**
+   * Rows from before `messagesStart` the conversation still draws, with a
+   * window: running activities, and the activity rows the window's activity
+   * is grouped under.
+   */
+  carriedMessages?: ChatMessage[]
   pendingPermission?: PendingPermission
   pendingUserInput?: PendingUserInput
 }
@@ -700,8 +714,11 @@ export interface SessionMessagesPatch {
 /**
  * The browser event stream. A socket opened with `?patches=1` is sent a
  * session it already holds as `session.patched`, and every whole session
- * with the `patchVersion` patches build on. Any other socket is sent whole
- * sessions only, exactly as before.
+ * with the `patchVersion` patches build on. One that adds `&window=n` is sent
+ * a window of each session in place of the whole one (`messagesStart`,
+ * `messagesTotal`, `carriedMessages`), and patches that count from the start
+ * of the whole transcript. Any other socket is sent whole sessions only,
+ * exactly as before.
  */
 export type HubWireEvent =
   | Exclude<HubEvent, { type: 'session.upserted' }>

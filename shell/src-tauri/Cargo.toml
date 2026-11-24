@@ -1,6 +1,6 @@
 [package]
 name = "agentic-remote-shell"
-version = "2.2.0"
+version = "2.3.0"
 description = "Native shell for supervising Agentic Remote sessions"
 edition = "2021"
 rust-version = "1.77.2"

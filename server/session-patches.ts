@@ -208,7 +208,9 @@ export class SessionPublications {
       ? {
           version,
           session: { ...event.session, messages: event.session.messages.map((message) => ({ ...message })) },
-          ...(received.summary && (!previous || previous.unread) ? { unread: true as const } : {}),
+          ...(received.summary && !received.session.messages.length && (!previous || previous.unread)
+            ? { unread: true as const }
+            : {}),
         }
       : undefined
     if (publication) {

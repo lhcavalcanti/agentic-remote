@@ -143,7 +143,11 @@ Session reads are windowed the same way on request:
 a window, and `GET …/sessions/:sessionId/messages?before=&beforeId=&limit=`
 answers with the messages before index `before`, but only while the message
 there is still `beforeId`; otherwise `409`. A request with
-`X-Transcript-Window: n` has the session in any answer cut to a window. The
+`X-Transcript-Window: n` has the session in any answer cut to a window, and so
+every session in a listing that carries a transcript (a remote session's cached
+detail); a summary stays a summary. A roster summary that carries cached
+messages reaches a windowed socket as a window, and one that carries none as a
+summary until its transcript is read. The
 node API mirrors both reads and the hub forwards their parameters. A node from
 before windows ignores `window` and answers whole, which the hub windows
 itself; it has no page route (`404`), so the hub reads that session whole and

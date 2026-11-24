@@ -1239,8 +1239,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   follows again.
 - A long session MUST open without its whole transcript. The browser reads a
   session with `?window=500`, says `X-Transcript-Window: 500` on every hub
-  request so a change answers with a window too, and opens its event socket
-  with `?patches=1&window=500`. It holds those messages with `messagesStart`
+  request so a change or a listing answers with windows too, and opens its
+  event socket with `?patches=1&window=500`. It holds those messages with `messagesStart`
   (the absolute index of the first) and `messagesTotal`, plus
   `carriedMessages`: rows from before them that the timeline still draws —
   running activities and the activity rows its rows are grouped under. It

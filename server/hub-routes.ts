@@ -426,13 +426,20 @@ export async function registerHubRoutes(
   app.addHook('preSerialization', async (_request, _reply, payload) => projection.reply(payload))
   // A browser that holds a window of each transcript says so on every request,
   // and the session a change answers with is cut to that window, rather than
-  // sending a long conversation whole for every message sent in it.
+  // sending a long conversation whole for every message sent in it. A listing
+  // that carries a remote session's cached detail is cut the same way; a
+  // summary, which never read its transcript, stays one.
   app.addHook('preSerialization', async (request, _reply, payload) => {
     const window = transcriptWindowParam(request.headers['x-transcript-window'])
     if (window === undefined || !payload || typeof payload !== 'object') return payload
-    const response = payload as { session?: ManagedSession }
-    if (typeof response.session?.computerId === 'string' && Array.isArray(response.session.messages)) {
-      response.session = windowSession(response.session, window)
+    const isSession = (value: unknown): value is ManagedSession =>
+      Boolean(value) && typeof (value as ManagedSession).computerId === 'string' &&
+      Array.isArray((value as ManagedSession).messages)
+    const response = payload as { session?: unknown; sessions?: unknown }
+    if (isSession(response.session)) response.session = windowSession(response.session, window)
+    if (Array.isArray(response.sessions) && response.sessions.some((entry) => isSession(entry) && entry.messages.length)) {
+      response.sessions = response.sessions.map((entry: unknown) =>
+        isSession(entry) && entry.messages.length ? windowSession(entry, window) : entry)
     }
     return payload
   })

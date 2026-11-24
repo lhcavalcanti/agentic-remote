@@ -458,6 +458,17 @@ describe('windowed session publications', () => {
     expect(refreshed).toBeGreaterThan(1_000)
   })
 
+  it('sends a roster summary that carries a cached transcript as a window', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(true, 3)
+    publications.add(browser.socket)
+    publications.broadcast({ type: 'session.upserted', summary: true, session: session('a', lines(1_000)) })
+    expect(frames(browser)[0]).toMatchObject({
+      type: 'session.upserted', patchVersion: 1, session: { messagesStart: 997, messagesTotal: 1_000 },
+    })
+    expect(browser.sent[0].length).toBeLessThan(1_000)
+  })
+
   it('keeps the transcript a windowed socket holds while only roster summaries arrive', () => {
     const publications = new SessionPublications()
     const browser = new Browser(true, 3)

@@ -200,6 +200,23 @@ describe('/api/events session patches', () => {
     }
   })
 
+  it('windows the transcripts a listing carries for a browser that holds windows', async () => {
+    const { app, manager } = await fixture()
+    const long = session(['a', 'b', 'c', 'd'])
+    const summary = { ...session([]), id: 'two' }
+    manager.listSessionsWithAuthority.mockResolvedValue({ sessions: [long, summary], answeredComputerIds: ['hub'] } as never)
+    const windowed = await app.inject({
+      method: 'GET', url: '/api/sessions', headers: { ...trusted, 'x-transcript-window': '2' },
+    })
+    expect(windowed.json().sessions).toEqual([
+      { ...long, messages: long.messages.slice(2), messagesStart: 2, messagesTotal: 4, carriedMessages: [] },
+      // A summary never read its transcript, and stays one.
+      summary,
+    ])
+    const whole = await app.inject({ method: 'GET', url: '/api/sessions', headers: trusted })
+    expect(whole.json().sessions).toEqual([long, summary])
+  })
+
   it('still refuses an untrusted origin that asks for patches', async () => {
     const { app } = await fixture()
     await expect(app.injectWS('/api/events?patches=1', {

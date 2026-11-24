@@ -157,6 +157,37 @@ Every event socket also accepts `{type: 'presence', oracleVisible}` (see
 Notifications in the app spec); each message type is read only by its own
 handler.
 
+Background task lists are summarized the same way, on request. A summary
+(`summarizeBackgroundTask` in `shared/background-tasks.ts`) keeps what a row,
+the counts and the stop actions use; a live task also keeps how it runs and
+the last 300 characters of its command and progress text, cut text starting
+with "…". The prompt, result, response, error, and a finished task's command
+and progress are left out, and a list of summaries says `summary: true`.
+`GET …/sessions/:sessionId/tasks?summary=1` (and `…/tasks/:taskId/cancel?summary=1`)
+answers with summaries, and `GET …/sessions/:sessionId/tasks/:taskId` with one
+task whole, which the owning computer reads from the list it last published
+rather than asking the runtime again (`404` once the task is not listed). The
+node API mirrors both; the hub forwards them, summarizes a whole list from a
+node from before summaries itself, and finds one task in such a node's whole
+list when it has no route for one (`404`). Requests without `?summary=1`, and
+readers on the hub (Oracle, the scheduler, cancellation), still get whole
+tasks.
+
+A socket that adds `tasks=changes` (with or without `patches=1`) is sent each
+session's list once as summaries with a `patchVersion`, then
+`session.tasks.patched` with `{from, to, count, tasks, removed}`: the
+summaries of the tasks that changed and the ids of those no longer listed. A
+task counts as changed when anything in it did, compared by a fingerprint of
+the whole task, so a reader who opened it reads it again; when nothing changed
+nothing is sent, and when a change would be no smaller than the list, the
+list is sent whole again. A change that does not apply to the browser's copy,
+or whose `count` does not add up, is dropped and the browser sends one
+`{type: 'session.tasks.resync', computerId, sessionId}`, answered with the
+latest list. Publications are kept only while such a socket is connected and
+forgotten with their session or computer. Every other socket is sent the
+event as before: the whole list of whole tasks. Node→hub links still carry
+whole lists.
+
 Each node advertises provider capabilities. Legacy nodes advertise Copilot only,
 so a hub cannot accidentally create a Claude session on a node that has not
 been upgraded and authenticated.

@@ -5079,6 +5079,14 @@ button {
   color: var(--muted-strong);
 }
 
+/* Said while a summarized task is read whole, or when it could not be. */
+.background-task__detail-note {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .background-task__metadata {
   display: flex;
   flex-wrap: wrap;

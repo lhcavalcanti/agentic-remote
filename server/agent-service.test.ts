@@ -2411,6 +2411,61 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('reads one background task whole as last listed, without asking the runtime again', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
+    directories.push(directory)
+    const client = new FakeCopilotClient()
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      client,
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory, false)
+    client.session.backgroundTasks.push({
+      type: 'agent',
+      id: 'task-1',
+      description: 'Inspect the repository',
+      status: 'running',
+      startedAt: '2026-08-31T18:00:00.000Z',
+      agentType: 'explore',
+      prompt: 'Inspect every file '.repeat(400),
+      executionMode: 'background',
+    })
+    client.session.taskProgress.set('task-1', {
+      type: 'agent',
+      recentActivity: [{ message: '▸ view', timestamp: '2026-08-31T18:00:01.000Z' }],
+    })
+    const listed = await service.listBackgroundTasks(created.id)
+    const asked = vi.spyOn(client.session.rpc.tasks, 'list')
+    const progress = vi.spyOn(client.session.rpc.tasks, 'getProgress')
+
+    const task = await service.readBackgroundTask(created.id, 'task-1')
+    expect(task).toEqual(listed.tasks[0])
+    expect(task.prompt).toHaveLength('Inspect every file '.repeat(400).length)
+    // Opening a task while it changes must not set the runtime polling.
+    expect(asked).not.toHaveBeenCalled()
+    expect(progress).not.toHaveBeenCalled()
+    // A fresh copy each time.
+    task.progress!.recentActivity!.push({ message: 'altered', timestamp: '2026-08-31T18:00:02.000Z' })
+    expect((await service.readBackgroundTask(created.id, 'task-1')).progress?.recentActivity).toHaveLength(1)
+
+    // A task the last list did not have yet is listed afresh.
+    client.session.backgroundTasks.push({
+      type: 'shell',
+      id: 'shell-2',
+      description: 'Run the build',
+      status: 'running',
+      startedAt: '2026-08-31T18:01:00.000Z',
+    })
+    await expect(service.readBackgroundTask(created.id, 'shell-2')).resolves.toMatchObject({ id: 'shell-2' })
+    expect(asked).toHaveBeenCalledOnce()
+    await expect(service.readBackgroundTask(created.id, 'missing')).rejects.toThrow('Background task not found')
+    await expect(service.readBackgroundTask('missing-session', 'task-1')).rejects.toThrow('Session not found')
+    await service.stop()
+  })
+
   it('ignores SDK client-owned tasks and progress when listing background tasks', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-tasks-'))
     directories.push(directory)

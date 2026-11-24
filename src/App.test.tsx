@@ -74,6 +74,7 @@ import {
   SessionKnowledgeRequestError,
   getRuntimeOptions,
   listBackgroundTasks,
+  readBackgroundTask,
   listCommands,
   listComputers,
   fetchSessionOrder,
@@ -278,6 +279,7 @@ vi.mock('./api', async (importOriginal) => ({
   saveSettingsChanges: vi.fn(),
   importSettingsProfile: vi.fn(),
   listBackgroundTasks: vi.fn(),
+  readBackgroundTask: vi.fn(),
   renameSession: vi.fn(),
   removeQueuedPrompt: vi.fn(),
   reorderQueuedPrompts: vi.fn(),
@@ -20633,6 +20635,54 @@ describe('App', () => {
     expect(document.querySelector('.session-item')).toHaveClass(
       'session-item--background-running',
     )
+  })
+
+  it('takes task changes from the socket and reads an opened task whole', async () => {
+    const summary = {
+      id: 'task-checks',
+      type: 'shell' as const,
+      description: 'Run checks',
+      status: 'running' as const,
+      executionMode: 'background' as const,
+      startedAt: '2026-08-31T18:00:00.000Z',
+      command: '…pnpm check',
+      canCancel: false,
+    }
+    vi.mocked(listBackgroundTasks).mockResolvedValue({
+      tasks: [summary], runningCount: 1, supported: true, summary: true,
+    })
+    vi.mocked(readBackgroundTask).mockResolvedValue({ ...summary, command: 'pnpm lint && pnpm check' })
+    vi.mocked(listComputers).mockResolvedValue([taskComputer])
+    vi.mocked(getSession).mockResolvedValue({ ...session, executionMode: 'sdk' })
+    render(<App />)
+
+    expect(MockWebSocket.instances[0]?.url).toContain('/api/events?patches=1&window=500&tasks=changes')
+    fireEvent.click(await screen.findByRole('button', { name: '1 background task running' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Running shell: Run checks' }))
+    expect(await screen.findByText('pnpm lint && pnpm check')).toBeInTheDocument()
+    expect(readBackgroundTask).toHaveBeenCalledWith('computer-1', 'session-1', 'task-checks')
+
+    const send = (event: unknown) => act(() => {
+      MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent)
+    })
+    send({
+      type: 'session.tasks.updated', computerId: 'computer-1', sessionId: 'session-1',
+      tasks: [summary], runningCount: 1, supported: true, summary: true, patchVersion: 1,
+    })
+    vi.mocked(readBackgroundTask).mockResolvedValue({
+      ...summary, status: 'completed', completedAt: '2026-08-31T18:03:00.000Z',
+      command: 'pnpm lint && pnpm check', result: 'All checks passed',
+    })
+    send({
+      type: 'session.tasks.patched', computerId: 'computer-1', sessionId: 'session-1', runningCount: 0, supported: true,
+      patch: {
+        from: 1, to: 2, count: 1, removed: [],
+        tasks: [{ ...summary, status: 'completed', completedAt: '2026-08-31T18:03:00.000Z' }],
+      },
+    })
+    expect(await screen.findByRole('button', { name: 'Completed shell: Run checks' })).toHaveAttribute('aria-expanded', 'true')
+    expect(await screen.findByText('All checks passed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '0 background tasks running' })).toBeInTheDocument()
   })
 
   it('offers Queue while an SDK background agent runs', async () => {

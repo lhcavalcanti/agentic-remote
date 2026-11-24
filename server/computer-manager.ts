@@ -8,6 +8,7 @@ import type {
   AddComputerInput,
   AgentProvider,
   AudioTranscription,
+  BackgroundTask,
   BackgroundTaskSnapshot,
   ConfigureRuntimeInput,
   ComputerSummary,
@@ -50,6 +51,8 @@ import { activityDetailsUnavailable, updateComputerForActivityDetails } from './
 import { updateComputerForScheduleWorktrees, type ScheduleWorktreeInput } from '../shared/schedule-worktrees.js'
 import type { ScheduleWorktreeService } from './schedule-worktrees.js'
 import type { SessionService } from './session-service.js'
+import { summarizeBackgroundTasks } from '../shared/background-tasks.js'
+import { listedBackgroundTask, readBackgroundTaskFrom } from './background-task-tracker.js'
 import {
   pageWholeSession, windowSession,
   type SessionReadOptions, type TranscriptPage, type TranscriptPageQuery,
@@ -1155,15 +1158,46 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return this.requireClient(computerId).readActivityDetail(sessionId, toolCallId)
   }
 
+  /**
+   * A session's tasks. With `summary`, as a browser asks, they are summaries;
+   * a node from before summaries answers whole and is summarized here.
+   * Readers on the hub, such as Oracle and the scheduler, read them whole.
+   */
   async listBackgroundTasks(
     computerId: string,
     sessionId: string,
+    options: { summary?: boolean } = {},
   ): Promise<BackgroundTaskSnapshot> {
     this.requireComputer(computerId)
     this.remoteResyncs.get(computerId)?.taskEvents.add(sessionId)
-    return computerId === this.identity.info.id
-      ? this.localService.listBackgroundTasks(sessionId)
-      : this.requireClient(computerId).listBackgroundTasks(sessionId)
+    if (computerId === this.identity.info.id) {
+      const snapshot = await this.localService.listBackgroundTasks(sessionId)
+      return options.summary ? summarizeBackgroundTasks(snapshot) : snapshot
+    }
+    const client = this.requireClient(computerId)
+    return options.summary
+      ? summarizeBackgroundTasks(await client.listBackgroundTasks(sessionId, { summary: true }))
+      : client.listBackgroundTasks(sessionId)
+  }
+
+  /** One task whole, read on the computer that owns its session. */
+  async readBackgroundTask(
+    computerId: string,
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTask> {
+    this.requireComputer(computerId)
+    if (computerId === this.identity.info.id) {
+      return readBackgroundTaskFrom(this.localService, sessionId, taskId)
+    }
+    const client = this.requireClient(computerId)
+    try {
+      return await client.readBackgroundTask(sessionId, taskId)
+    } catch (error) {
+      // A node from before task details has no route for one; its list has it whole.
+      if (!(error instanceof RemoteNodeRequestError) || error.statusCode !== 404) throw error
+      return listedBackgroundTask(await client.listBackgroundTasks(sessionId), taskId)
+    }
   }
 
   async cancelBackgroundTask(

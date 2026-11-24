@@ -95,7 +95,7 @@ import {
   type CopilotTaskProgress,
   type CopilotTasksApi,
 } from './background-task-adapter.js'
-import { BackgroundTaskTracker } from './background-task-tracker.js'
+import { BackgroundTaskTracker, listedBackgroundTask } from './background-task-tracker.js'
 import {
   assertSessionNotRetained,
   isRetainedRefusal,
@@ -8036,6 +8036,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return this.replaceBackgroundTasks(sessionId, [], true)
     }
     return this.syncBackgroundTasks(sessionId, await this.ensureLoaded(sessionId))
+  }
+
+  /**
+   * One task whole, as the list last published it. Asked as a browser opens a
+   * task and again each time it changes, so it reads what is already known
+   * rather than asking the runtime for every task again; a task not listed yet
+   * is looked for in a fresh list.
+   */
+  async readBackgroundTask(
+    sessionId: string,
+    taskId: string,
+  ): Promise<BackgroundTask> {
+    if (!this.store.has(sessionId)) {
+      throw new Error('Session not found')
+    }
+    return this.backgroundTaskTracker.task(sessionId, taskId) ??
+      listedBackgroundTask(await this.listBackgroundTasks(sessionId), taskId)
   }
 
   async cancelBackgroundTask(

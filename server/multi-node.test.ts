@@ -30,6 +30,7 @@ import type {
   SideQuestionExchange,
 } from '../shared/contracts.js'
 import { SessionPatchReceiver } from '../src/session-patches.js'
+import { summarizeBackgroundTasks } from '../shared/background-tasks.js'
 import type { SessionEvent } from '@github/copilot-sdk'
 import {
   ORACLE_VOICE_PROTOCOL,
@@ -590,6 +591,15 @@ class FakeSessionService extends EventEmitter implements SessionService {
     const detail = activityDetailFromEvents(this.activityEvents.get(sessionId) ?? [], toolCallId)
     if (!detail) throw activityNotInLog()
     return detail
+  }
+
+  async readBackgroundTask(sessionId: string, taskId: string): Promise<BackgroundTask> {
+    if (!this.sessions.has(sessionId)) {
+      throw new Error('Session not found')
+    }
+    const task = this.backgroundTaskSnapshots.get(sessionId)?.tasks.find((entry) => entry.id === taskId)
+    if (!task) throw new Error('Background task not found')
+    return structuredClone(task)
   }
 
   async cancelBackgroundTask(
@@ -1877,6 +1887,102 @@ describe('multi-node hub', () => {
       })
       expect(direct.statusCode).toBe(400)
       expect(remoteRead).not.toHaveBeenCalled()
+    } finally {
+      await Promise.all([hub.app.close(), remote.app.close()])
+    }
+  })
+
+  it('lists task summaries when asked and reads one task whole, on the hub and through a node', async () => {
+    const running = (id: string): BackgroundTask => ({
+      id, type: 'shell', description: 'Run the checks', status: 'running',
+      startedAt: '2026-11-24T12:00:00.000Z', executionMode: 'background', attachmentMode: 'detached',
+      canCancel: true, command: 'pnpm vitest run '.repeat(100),
+      progress: { type: 'shell', recentOutput: 'PASS '.repeat(2_000) },
+    })
+    const finished: BackgroundTask = {
+      id: 'review', type: 'agent', description: 'Review the change', status: 'completed',
+      startedAt: '2026-11-24T11:00:00.000Z', completedAt: '2026-11-24T11:30:00.000Z',
+      agentType: 'code-review', prompt: 'Review the change '.repeat(500), result: 'Looks good', canCancel: false,
+    }
+    const snapshot = (id: string): BackgroundTaskSnapshot => ({ tasks: [running(id), finished], runningCount: 1, supported: true })
+    const localService = new FakeSessionService(session('local-session', 'Local'))
+    localService.backgroundTaskSnapshots.set('local-session', snapshot('local-task'))
+    const remoteService = new FakeSessionService(session('remote-session', 'Remote'))
+    remoteService.backgroundTaskSnapshots.set('remote-session', snapshot('remote-task'))
+    const remoteRead = vi.spyOn(remoteService, 'readBackgroundTask')
+    const remoteList = vi.spyOn(remoteService, 'listBackgroundTasks')
+    const hub = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-task-detail-hub'),
+      logger: false,
+      role: 'hub',
+      service: localService,
+    })
+    const remote = await buildApp({
+      dataDirectory: await temporaryDirectory('agentic-remote-task-detail-node'),
+      logger: false,
+      role: 'node',
+      service: remoteService,
+    })
+    try {
+      await remote.app.listen({ host: '127.0.0.1', port: 0 })
+      const address = remote.app.server.address() as AddressInfo
+      expect((await hub.app.inject({
+        method: 'POST',
+        url: '/api/computers',
+        payload: { baseUrl: `http://127.0.0.1:${address.port}`, token: remote.identity.token, name: 'worker-node' },
+      })).statusCode).toBe(201)
+      const hubId = hub.identity.info.id
+      const remoteId = remote.identity.info.id
+      await waitForOnline(hub.app, remoteId)
+      const get = (url: string) => hub.app.inject({ method: 'GET', url })
+
+      for (const [computerId, sessionId, taskId] of [
+        [hubId, 'local-session', 'local-task'],
+        [remoteId, 'remote-session', 'remote-task'],
+      ] as const) {
+        const tasks = `/api/computers/${computerId}/sessions/${sessionId}/tasks`
+        // Whole without asking, as every reader from before summaries expects.
+        expect((await get(tasks)).json()).toEqual(snapshot(taskId))
+        const summarized = await get(`${tasks}?summary=1`)
+        expect(summarized.statusCode, summarized.body).toBe(200)
+        expect(summarized.json()).toEqual(summarizeBackgroundTasks(snapshot(taskId)))
+        expect(summarized.json().tasks[1]).not.toHaveProperty('prompt')
+
+        remoteRead.mockClear()
+        remoteList.mockClear()
+        const detail = await get(`${tasks}/${taskId}`)
+        expect(detail.statusCode, detail.body).toBe(200)
+        expect(detail.headers['cache-control']).toBe('no-store')
+        expect(detail.json()).toEqual(running(taskId))
+        expect((await get(`${tasks}/review`)).json()).toEqual(finished)
+        if (computerId === remoteId) {
+          // The node reads the one task; the hub does not fetch its whole list.
+          expect(remoteRead).toHaveBeenCalledWith('remote-session', 'remote-task')
+          expect(remoteList).not.toHaveBeenCalled()
+        }
+        const missing = await get(`${tasks}/missing`)
+        expect(missing.statusCode).toBe(404)
+        expect(missing.json().error).toBe('Background task not found')
+      }
+
+      // The node summarizes its own list when the hub asks.
+      const direct = await remote.app.inject({
+        method: 'GET',
+        url: '/node-api/sessions/remote-session/tasks?summary=1',
+        headers: { authorization: `Bearer ${remote.identity.token}` },
+      })
+      expect(direct.json()).toEqual(summarizeBackgroundTasks(snapshot('remote-task')))
+
+      const cancelled = await hub.app.inject({
+        method: 'POST',
+        url: `/api/computers/${remoteId}/sessions/remote-session/tasks/remote-task/cancel?summary=1`,
+        payload: {},
+      })
+      expect(cancelled.statusCode, cancelled.body).toBe(200)
+      expect(cancelled.json()).toMatchObject({
+        summary: true, runningCount: 0, tasks: [{ id: 'remote-task', status: 'cancelled' }, { id: 'review' }],
+      })
+      expect(cancelled.json().tasks[0]).not.toHaveProperty('command')
     } finally {
       await Promise.all([hub.app.close(), remote.app.close()])
     }
@@ -3591,6 +3697,31 @@ describe('remote snapshot consistency', () => {
     expect(ids(page.messages)).toEqual(['m2', 'm3', 'm4', 'm5', 'm6'])
     await expect(manager.readMessages(computer.id, 'long', { before: 7, beforeId: 'm3', limit: 5 }))
       .rejects.toMatchObject({ statusCode: 409 })
+    manager.stop()
+  })
+
+  it('summarizes the list of a node from before summaries, and reads one of its tasks from that list', async () => {
+    const { manager, client, computer } = await remoteSnapshotFixture()
+    const whole: BackgroundTaskSnapshot = {
+      ...taskSnapshot(true),
+      tasks: [{ ...taskSnapshot(true).tasks[0], command: 'pnpm build '.repeat(200), prompt: 'Build it' }],
+    }
+    // An older node ignores ?summary=1 and has no route for one task.
+    vi.spyOn(client, 'listBackgroundTasks').mockImplementation(async () => structuredClone(whole))
+    const read = vi.spyOn(client, 'readBackgroundTask').mockRejectedValue(new RemoteNodeRequestError('Not Found', 404))
+
+    expect(await manager.listBackgroundTasks(computer.id, 'kept', { summary: true }))
+      .toEqual(summarizeBackgroundTasks(whole))
+    expect(client.listBackgroundTasks).toHaveBeenCalledWith('kept', { summary: true })
+    // Server-side readers, such as Oracle and the scheduler, still read whole tasks.
+    expect(await manager.listBackgroundTasks(computer.id, 'kept')).toEqual(whole)
+    expect(await manager.readBackgroundTask(computer.id, 'kept', 'review-task')).toEqual(whole.tasks[0])
+    expect(read).toHaveBeenCalledWith('kept', 'review-task')
+    await expect(manager.readBackgroundTask(computer.id, 'kept', 'missing'))
+      .rejects.toMatchObject({ message: 'Background task not found', statusCode: 404 })
+    // Only a missing route falls back; an unreachable node is reported as it is.
+    read.mockRejectedValue(new RemoteNodeRequestError('Workshop is unavailable.', 503))
+    await expect(manager.readBackgroundTask(computer.id, 'kept', 'review-task')).rejects.toMatchObject({ statusCode: 503 })
     manager.stop()
   })
 

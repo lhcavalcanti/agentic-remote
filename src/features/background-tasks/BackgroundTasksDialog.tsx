@@ -169,18 +169,79 @@ function RecentActivity({ lines }: { lines: BackgroundTaskProgressLine[] }) {
   )
 }
 
+/** Reads one task whole for the sheet. */
+type TaskReader = (taskId: string) => Promise<BackgroundTask>
+
+/**
+ * The whole of a task its list carries as a summary: read as it opens, and
+ * again each time the list says it changed. One read at a time, and every
+ * answer is shown, so a task changing faster than it can be read still shows.
+ */
+function useWholeTask(task: BackgroundTask, read: TaskReader | undefined) {
+  const [state, setState] = useState<{ whole?: BackgroundTask; failed?: boolean }>({})
+  const reader = useRef(read)
+  const flight = useRef({ busy: false, stale: false, mounted: false })
+  useLayoutEffect(() => {
+    reader.current = read
+  })
+  useEffect(() => {
+    const status = flight.current
+    status.mounted = true
+    return () => {
+      status.mounted = false
+    }
+  }, [])
+  const reading = read !== undefined
+  useEffect(() => {
+    const status = flight.current
+    if (!reading) return
+    if (status.busy) {
+      status.stale = true
+      return
+    }
+    status.busy = true
+    void (async () => {
+      do {
+        status.stale = false
+        const current = reader.current
+        if (!current) break
+        try {
+          const whole = await current(task.id)
+          if (status.mounted) setState({ whole })
+        } catch {
+          if (status.mounted) setState((previous) => ({ ...previous, failed: true }))
+        }
+      } while (status.stale && status.mounted)
+      status.busy = false
+    })()
+  }, [reading, task])
+  return reading ? state : {}
+}
+
 function BackgroundTaskDetails({
   id,
-  task,
+  task: listed,
   stopReason,
+  read,
 }: {
   id: string
   task: BackgroundTask
   stopReason?: string
+  /** Set when the list carries summaries: reads the task whole. */
+  read?: TaskReader
 }) {
+  const { whole, failed } = useWholeTask(listed, read)
+  const task = whole ?? listed
   const progress = task.progress
   return (
     <div className="background-task__panel" id={id}>
+      {read && !whole ? (
+        <p className="background-task__detail-note">
+          {failed
+            ? 'Full details could not be loaded; this is what the list has.'
+            : 'Loading full details…'}
+        </p>
+      ) : null}
       {task.type === 'agent' ? (
         <p className="background-task__source">
           {task.agentType || 'Background agent'}
@@ -271,6 +332,7 @@ function BackgroundTaskRow({
   onToggle,
   onCancel,
   onAskToStop,
+  read,
 }: {
   task: BackgroundTask
   now: number
@@ -282,6 +344,7 @@ function BackgroundTaskRow({
   onToggle: (taskId: string) => void
   onCancel: (taskId: string) => void
   onAskToStop: (task: BackgroundTask) => void
+  read?: TaskReader
 }) {
   const panelId = useId()
   const elapsedId = useId()
@@ -389,7 +452,7 @@ function BackgroundTaskRow({
         ) : null}
       </div>
       {expanded ? (
-        <BackgroundTaskDetails id={panelId} stopReason={stopReason} task={task} />
+        <BackgroundTaskDetails id={panelId} read={read} stopReason={stopReason} task={task} />
       ) : null}
     </li>
   )
@@ -401,12 +464,14 @@ function BackgroundTaskList({
   stopActionsDisabled,
   onCancel,
   onAskToStop,
+  read,
 }: {
   tasks: BackgroundTask[]
   cancellingTaskId?: string
   stopActionsDisabled: boolean
   onCancel: (taskId: string) => void
   onAskToStop: (task: BackgroundTask) => void
+  read?: TaskReader
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
   const toggle = useCallback((taskId: string) => {
@@ -443,6 +508,7 @@ function BackgroundTaskList({
             onAskToStop={onAskToStop}
             onCancel={onCancel}
             onToggle={toggle}
+            read={read}
             stopDisabled={stopActionsDisabled}
             stopReason={
               !stopNote && taskIsActive(task) && !task.canCancel
@@ -469,6 +535,7 @@ export function BackgroundTasksDialog({
   onRefresh,
   onCancel,
   onAskToStop,
+  readTask,
 }: {
   open: boolean
   /** The session the tasks belong to; which rows are open is kept per session. */
@@ -482,6 +549,8 @@ export function BackgroundTasksDialog({
   onRefresh: () => void
   onCancel: (taskId: string) => void
   onAskToStop: (task: BackgroundTask) => void
+  /** Reads a task whole, for an opened row of a list of summaries. */
+  readTask?: TaskReader
 }) {
   if (!open) {
     return null
@@ -524,6 +593,7 @@ export function BackgroundTasksDialog({
           key={ownerKey}
           onAskToStop={onAskToStop}
           onCancel={onCancel}
+          read={snapshot.summary ? readTask : undefined}
           stopActionsDisabled={stopActionsDisabled}
           tasks={snapshot.tasks}
         />

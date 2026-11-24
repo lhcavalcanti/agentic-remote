@@ -336,6 +336,33 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Background task reads and cancellation MUST remain scoped to the owning
   computer and session. Task state MUST resynchronize after a reconnect
   instead of relying on a transient event count.
+- The browser MUST hold task summaries rather than whole tasks, so what it is
+  sent scales with what changed. It reads lists with
+  `GET …/sessions/:sessionId/tasks?summary=1` (and cancels with
+  `?summary=1`), and adds `&tasks=changes` to its event socket. A summary
+  keeps a task's id, kind, title (first 300 characters), status, times,
+  active time, whether it can be stopped, and agent type; a queued or running
+  task also keeps how it runs and its process id, plus the last 300
+  characters of its command and of each progress text, and its latest
+  activity (at most the 5 lines the sheet first shows, within 300
+  characters). Cut text starts with "…". A summarized list says `summary:
+  true`. The prompt, result, response, error, and a finished task's command
+  and progress are left out.
+- Opening a task's row in a list of summaries MUST read that task whole
+  through `GET /api/computers/:computerId/sessions/:sessionId/tasks/:taskId`,
+  showing what the list has until it arrives, and MUST read it again whenever
+  the list says that task changed, one read at a time. The owning computer
+  answers from the list it last published, without asking the runtime again,
+  and `404` once the task is no longer listed; the sheet then keeps the
+  summary and says so.
+- A socket with `tasks=changes` MUST be sent each session's list once as
+  summaries with a version, then only the tasks that changed (anything in
+  them, so an opened task is read again) and the ids of those removed, or the
+  whole list when that is no larger. A change that does not apply MUST be
+  dropped and the list asked for again. Every other socket, and every request
+  without `?summary=1`, MUST keep receiving whole lists of whole tasks, so a
+  browser from before summaries keeps working. Readers on the hub, such as
+  Oracle and the scheduler, MUST keep reading whole tasks.
 - Every queued or running task MUST offer an action on its row. When the
   owning runtime provides a live cancellation handle, it is a confirmed Stop
   task. When it does not, it is Ask to stop, which adds a request naming the

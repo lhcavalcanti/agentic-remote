@@ -16,6 +16,30 @@ function isAppleTouchIconProbe(url: string): boolean {
   return /^apple-touch-icon(?:-\d+x\d+)?(?:-precomposed)?\.png$/i.test(name)
 }
 
+function isApiPath(url: string): boolean {
+  return url.startsWith('/api/') || url.startsWith('/node-api/')
+}
+
+/**
+ * An `Accept-Encoding` header restated as explicit weights for the built
+ * encodings. @fastify/static reads `*` as gzip, which would send gzip for
+ * `gzip;q=0, *`; in RFC 9110 `*` only covers codings the header does not name.
+ */
+function builtEncodings(header: string): string {
+  const named = new Map<string, number>()
+  let any = 0
+  for (const entry of header.split(',')) {
+    const [coding = '', ...parameters] = entry.split(';').map((part) => part.trim())
+    const name = coding.toLowerCase() === 'x-gzip' ? 'gzip' : coding.toLowerCase()
+    const weight = parameters.find((parameter) => /^q\s*=/i.test(parameter))
+    const parsed = weight === undefined ? 1 : Number(weight.slice(weight.indexOf('=') + 1).trim())
+    const quality = Number.isFinite(parsed) ? Math.min(Math.max(parsed, 0), 1) : 0
+    if (name === '*') any = quality
+    else if (name) named.set(name, Math.max(named.get(name) ?? 0, quality))
+  }
+  return ['br', 'gzip'].map((coding) => `${coding};q=${named.get(coding) ?? any}`).join(', ')
+}
+
 /**
  * Serves the built client from `root`, falling back to `index.html` for client
  * routes. API paths, missing assets, and legacy icon probes get a JSON 404.
@@ -24,6 +48,12 @@ function isAppleTouchIconProbe(url: string): boolean {
  * on `Accept-Encoding`; they have no URLs of their own.
  */
 export async function registerStaticFiles(app: FastifyInstance, root: string): Promise<void> {
+  app.addHook('onRequest', async (request) => {
+    const accepted = request.headers['accept-encoding']
+    if (accepted !== undefined && !isApiPath(request.url)) {
+      request.headers['accept-encoding'] = builtEncodings(accepted)
+    }
+  })
   await app.register(fastifyStatic, {
     root,
     wildcard: false,
@@ -37,8 +67,7 @@ export async function registerStaticFiles(app: FastifyInstance, root: string): P
   })
   app.setNotFoundHandler((request, reply) => {
     if (
-      request.url.startsWith('/api/') ||
-      request.url.startsWith('/node-api/') ||
+      isApiPath(request.url) ||
       request.url.startsWith('/assets/') ||
       isAppleTouchIconProbe(request.url)
     ) {

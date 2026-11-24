@@ -49,6 +49,10 @@ describe('static files', () => {
     const cases: Array<[string | undefined, string | undefined, (body: Buffer) => Buffer]> = [
       ['gzip, deflate, br', 'br', brotliDecompressSync],
       ['gzip;q=1, br;q=0', 'gzip', gunzipSync],
+      ['x-gzip', 'gzip', gunzipSync],
+      // An explicit exclusion outranks `*`, which accepts only codings not listed.
+      ['gzip;q=0, *;q=1', 'br', brotliDecompressSync],
+      ['br;q=0, gzip;q=0, *', undefined, (body) => body],
       [undefined, undefined, (body) => body],
     ]
     for (const [acceptEncoding, encoding, decode] of cases) {
@@ -80,7 +84,7 @@ describe('static files', () => {
         expect(response.headers.vary, url).toMatch(/accept-encoding/i)
       }
     }
-    const fallback = await get('/sessions/example', { 'accept-encoding': 'br' })
+    const fallback = await get('/sessions/example', { 'accept-encoding': 'gzip;q=0, *' })
     expect(fallback.headers['content-type']).toBe('text/html; charset=utf-8')
     expect(fallback.headers['content-encoding']).toBe('br')
     expect(brotliDecompressSync(fallback.rawPayload).toString()).toBe(shell)

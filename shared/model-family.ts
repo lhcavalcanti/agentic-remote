@@ -18,3 +18,34 @@ export function modelFamily(modelId: string, displayName?: string): ModelFamily 
   }
   return 'generic'
 }
+
+const vendorPrefix = /^(?:claude|anthropic|gpt|openai)[-_\s]+/i
+
+/**
+ * The model's own name, for a narrow row where the family glyph already says
+ * whose it is: claude-opus-5.5 is Opus 5.5 and gpt-6.2-sol is 6.2 Sol. An
+ * unrecognized model, or one that is only a version once its vendor is gone,
+ * keeps its ID.
+ */
+export function shortModelName(modelId: string): string {
+  const id = modelId.trim()
+  if (modelFamily(id) === 'generic') return id
+  const words = (id.split('/').pop() ?? id)
+    .replace(/\[(\d+)m\]$/i, '-$1M')
+    .replace(/[-_]\d{8}$/, '')
+    .replace(vendorPrefix, '')
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+  if (!words.some((word) => /^[a-z]+$/i.test(word))) return id
+  const named: string[] = []
+  for (const word of words) {
+    const previous = named.at(-1)
+    // Anthropic spells versions with hyphens: claude-opus-4-1 is Opus 4.1.
+    if (/^\d+$/.test(word) && previous && /^\d+$/.test(previous)) {
+      named[named.length - 1] = `${previous}.${word}`
+    } else {
+      named.push(/^[a-z]+$/i.test(word) ? word[0].toUpperCase() + word.slice(1) : word)
+    }
+  }
+  return named.join(' ')
+}

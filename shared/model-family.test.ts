@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { modelFamily, type ModelFamily } from './model-family.js'
+import { modelFamily, shortModelName, type ModelFamily } from './model-family.js'
 
 // Model IDs found in fixtures, tests and docs. Provider catalogs are discovered,
 // not embedded; these examples are classification coverage, not an offer list.
@@ -78,4 +78,27 @@ describe('modelFamily', () => {
     expect(modelFamily('fixture-gpt-99', 'Claude fixture')).toBe('openai')
     expect(modelFamily('', 'Claude fixture')).toBe('anthropic')
   })
+})
+
+describe('shortModelName', () => {
+  it.each([
+    ['claude-opus-5.5', 'Opus 5.5'],
+    ['gpt-6.2-sol', '6.2 Sol'],
+    ['gpt-5.6-sol-fast', '5.6 Sol Fast'],
+    ['GPT-6.1 Sol', '6.1 Sol'],
+    ['claude-sonnet-4-5-20250929', 'Sonnet 4.5'],
+    ['claude-3-5-haiku', '3.5 Haiku'],
+    ['sonnet[1m]', 'Sonnet 1M'],
+    ['openai/gpt-5.3-codex', '5.3 Codex'],
+    ['o4-mini', 'o4 Mini'],
+    ['gemini-3-pro', 'Gemini 3 Pro'],
+    ['grok-4.7', 'Grok 4.7'],
+  ] as const)('names %j by its model as %j', (id, name) => {
+    expect(shortModelName(id)).toBe(name)
+  })
+
+  it.each(['gpt-5.4', 'gpt-6', 'fixture-model', 'mai-code-2', '', ' default '])(
+    'keeps %j when no model name is left without its vendor', (id) => {
+      expect(shortModelName(id)).toBe(id.trim())
+    })
 })

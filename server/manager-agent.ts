@@ -44,6 +44,7 @@ import type { DreamerProgressView } from './dreamer-service.js'
 import {
   buildTurnContext,
   managerPrompt,
+  MANAGER_SCHEDULER_SYSTEM_PROMPT,
   MANAGER_SYSTEM_PROMPT,
   MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT,
   recoveryBrief,
@@ -2124,9 +2125,11 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
       workingDirectory: `${this.store.directory}/workspace`,
       systemMessage: {
         mode: 'append',
-        content: this.structuredMemory?.mode === 'on'
-          ? `${MANAGER_SYSTEM_PROMPT}\n\n${MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT}`
-          : MANAGER_SYSTEM_PROMPT,
+        content: [
+          MANAGER_SYSTEM_PROMPT,
+          ...(this.scheduler ? [MANAGER_SCHEDULER_SYSTEM_PROMPT] : []),
+          ...(this.structuredMemory?.mode === 'on' ? [MANAGER_STRUCTURED_MEMORY_SYSTEM_PROMPT] : []),
+        ].join('\n\n'),
       },
       tools: this.tools,
       availableTools: this.tools.map((tool) => tool.name),

@@ -28,6 +28,6 @@ Session rows and the conversation header share that navigation. Scheduled rows r
 
 ## Runtime subagents
 
-The existing runtime adapter already handles `subagent.started`, `subagent.completed`, and `subagent.failed` events and normalizes SDK task API agent records. The chip counts only distinct running `type: 'agent'` records from a supported `BackgroundTaskSnapshot`, including synchronous subagents. It does not infer a count from total background work, shell tasks, model family, transcript text, or activity groups.
+The existing runtime adapter already handles `subagent.started`, `subagent.completed`, and `subagent.failed` events and normalizes SDK task API agent records. The subagent count covers only distinct running `type: 'agent'` records from a supported `BackgroundTaskSnapshot`, including synchronous subagents. It does not infer a count from total background work, shell tasks, model family, transcript text, or activity groups.
 
-The chip sits beside background work and opens the existing task panel. It is hidden when no supported running subagents have been reported. No new runtime field, polling loop, server route, or persisted counter is introduced.
+The count is part of the status line's single background-work item, "N tasks · M subagents", which opens the task sheet; it is left out while no supported running subagents have been reported. A synchronous subagent, which the runtime's background count leaves out, is added to N, so subagents are always among the tasks. No new runtime field, polling loop, server route, or persisted counter is introduced.

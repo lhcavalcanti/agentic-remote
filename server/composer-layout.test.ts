@@ -37,6 +37,18 @@ function composerPointerBlock(css: string): string {
   throw new Error('missing pointer media block containing the composer query')
 }
 
+// Other features have coarse-pointer blocks of their own; read the one that
+// styles the composer hint.
+function coarsePointerBlock(css: string, selector: string): string {
+  for (const match of css.matchAll(/@media \(pointer: coarse\)/g)) {
+    const block = atRule(css.slice(match.index), /^@media \(pointer: coarse\)/)
+    if (block.includes(selector)) {
+      return block
+    }
+  }
+  throw new Error(`missing coarse pointer block containing ${selector}`)
+}
+
 function pointerLayout(css: string): string {
   const pointer = composerPointerBlock(css)
   return atRule(pointer, /@container composer \(min-width: 620px\)/)
@@ -117,7 +129,7 @@ describe('desktop composer layout', () => {
   // breakpoint. Switching the hint on width alone told it the opposite.
   it('reads the Enter hint the same way the composer decides', async () => {
     const css = await stylesheet()
-    const coarse = atRule(css, /@media \(pointer: coarse\)/)
+    const coarse = coarsePointerBlock(css, '.composer-hint__desktop')
 
     expect(declaration(coarse, '.composer-hint__desktop', 'display')).toBe(
       'none',

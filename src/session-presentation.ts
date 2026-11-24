@@ -78,7 +78,6 @@ type SessionState =
   | 'waiting'
   | 'unconfirmed'
   | 'error'
-  | 'suspended'
   | 'tasks'
   | 'recovering'
   | 'running'
@@ -99,7 +98,6 @@ const stateLabels: Record<SessionState, string> = {
   waiting: 'Waiting',
   unconfirmed: 'Check delivery',
   error: 'Error',
-  suspended: 'Suspended',
   tasks: 'Tasks',
   recovering: 'Recovering',
   running: 'Working',
@@ -129,13 +127,11 @@ export function sessionPresentation(
           ? 'unconfirmed'
           : session.status === 'error' || session.failedPrompt || session.interruption
             ? 'error'
-            : session.suspended
-              ? 'suspended'
-              : session.status === 'running'
-                ? 'running'
-                : (snapshot?.runningCount || 0) > 0
-                  ? 'tasks'
-                  : 'idle'
+            : session.status === 'running'
+              ? 'running'
+              : (snapshot?.runningCount || 0) > 0
+                ? 'tasks'
+                : 'idle'
   const needsAttention = ['question', 'permission', 'waiting', 'unconfirmed', 'error'].includes(
     state,
   )
@@ -190,8 +186,7 @@ const attentionRank: Record<SessionState, number> = {
   recovering: 4,
   running: 4,
   idle: 5,
-  suspended: 6,
-  offline: 7,
+  offline: 6,
 }
 
 function recentFirst(left: ManagedSession, right: ManagedSession): number {

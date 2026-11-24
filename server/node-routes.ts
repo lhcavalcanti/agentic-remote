@@ -30,6 +30,7 @@ import {
   SIDE_QUESTION_MAX_LENGTH,
 } from './side-question.js'
 import type { ServerEvent } from '../shared/contracts.js'
+import { activityDetailsUnavailable, toolCallIdSchema } from './activity-details.js'
 import {
   FileUploadError,
   MAX_SESSION_FILE_BYTES,
@@ -621,6 +622,7 @@ export async function registerNodeRoutes(
 
       node.get<{ Querystring: { root?: string; path?: string } }>(
         '/knowledge/file',
+        { config: { compress: false } },
         async (request) => {
           const query = knowledgeFileQuerySchema.parse(request.query)
           const file = await service.readKnowledgeFile(
@@ -669,7 +671,7 @@ export async function registerNodeRoutes(
       node.get<{
         Params: { sessionId: string }
         Querystring: { path: string }
-      }>('/sessions/:sessionId/workspace/file', async (request) => {
+      }>('/sessions/:sessionId/workspace/file', { config: { compress: false } }, async (request) => {
         const query = workspaceFileQuerySchema.parse(request.query)
         return service.readWorkspaceFile(request.params.sessionId, query.path)
       })
@@ -841,20 +843,6 @@ export async function registerNodeRoutes(
       )
 
       node.post<{ Params: { sessionId: string } }>(
-        '/sessions/:sessionId/suspend',
-        async (request) => ({
-          session: await service.suspendSession(request.params.sessionId),
-        }),
-      )
-
-      node.post<{ Params: { sessionId: string } }>(
-        '/sessions/:sessionId/resume',
-        async (request) => ({
-          session: await service.resumeSession(request.params.sessionId),
-        }),
-      )
-
-      node.post<{ Params: { sessionId: string } }>(
         '/sessions/:sessionId/tmux',
         async (request) => ({
           session: await service.moveToTerminal(request.params.sessionId),
@@ -1001,6 +989,15 @@ export async function registerNodeRoutes(
         '/sessions/:sessionId/tasks',
         async (request) =>
           service.listBackgroundTasks(request.params.sessionId),
+      )
+
+      node.get<{ Params: { sessionId: string; toolCallId: string } }>(
+        '/sessions/:sessionId/activities/:toolCallId',
+        async (request) => {
+          const toolCallId = toolCallIdSchema.parse(request.params.toolCallId)
+          if (!service.readActivityDetail) throw activityDetailsUnavailable()
+          return service.readActivityDetail(request.params.sessionId, toolCallId)
+        },
       )
 
       node.post<{

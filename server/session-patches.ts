@@ -24,13 +24,32 @@ function sessionKey(computerId: string, sessionId: string): string {
   return `${computerId}:${sessionId}`
 }
 
-/** Messages hold only primitive fields, so a shallow comparison is exact. */
+/**
+ * Message fields are primitives or, like `taskCompletion`, plain objects of
+ * primitives. A transcript rebuilt from the event log makes those objects
+ * afresh, so they are compared by their fields rather than by identity;
+ * otherwise every message after the first one breaks the shared prefix and the
+ * whole rest of the transcript is resent on every change.
+ */
+function sameField(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (
+    left === null || right === null ||
+    typeof left !== 'object' || typeof right !== 'object' ||
+    Array.isArray(left) || Array.isArray(right)
+  ) return false
+  const leftKeys = Object.keys(left)
+  if (leftKeys.length !== Object.keys(right).length) return false
+  return leftKeys.every((key) =>
+    (left as Record<string, unknown>)[key] === (right as Record<string, unknown>)[key])
+}
+
 function sameMessage(left: ChatMessage, right: ChatMessage): boolean {
   if (left === right) return true
   const leftKeys = Object.keys(left) as (keyof ChatMessage)[]
   if (leftKeys.length !== Object.keys(right).length) return false
   for (const key of leftKeys) {
-    if (left[key] !== right[key]) return false
+    if (!sameField(left[key], right[key])) return false
   }
   return true
 }

@@ -79,9 +79,12 @@ export interface TerminalSendOptions {
    * must find the turn over with no background agent, and a pane captured
    * after it must show a live prompt with nothing open over it, a footer
    * naming no other work and no background agents, and a busy row only while
-   * a shell is running. Whatever stands in the way before the paste, a draft,
-   * dialog or full-screen view included, is refused quietly: nothing was
-   * typed, so the queued prompt waits at the head of its queue.
+   * a shell is running; the terminal's owner is checked again after each
+   * reading. Whatever stands in the way before the paste, a draft, dialog or
+   * full-screen view included, is refused quietly: nothing was typed, so the
+   * queued prompt waits at the head of its queue. With replaceExistingInput, a
+   * draft is cleared instead, beside that wait only while the same evidence
+   * holds before and after the clear and before the paste.
    */
   backgroundShellsOnly?: { eventLog: () => Promise<BackgroundShellsEvidence> }
   /**
@@ -133,18 +136,6 @@ export interface TerminalSessionController {
   restart?(sessionId: string, cwd: string): Promise<boolean>
   /** True only when a previously identified owner is confirmed gone. */
   ownerStopped?(sessionId: string): Promise<boolean>
-  /** Ends the window running a session without forgetting the session. */
-  /**
-   * Ends the session's runtime.
-   *
-   * `confirm` runs immediately before anything is killed, and inside whatever
-   * serialization the controller uses, so a caller can refuse a teardown that
-   * stopped being safe while the owner was being looked up.
-   */
-  stop?(
-    sessionId: string,
-    confirm?: () => void | Promise<void>,
-  ): Promise<boolean>
   pendingPermission?(sessionId: string): Promise<PendingPermission | undefined>
   replyPermission?(
     sessionId: string,
@@ -354,6 +345,12 @@ const FORM_VIEWPORT_BASE_TIMEOUT_MS = 15_000
 const FORM_VIEWPORT_ADDITIONAL_FIELD_TIMEOUT_MS = 2_500
 const MAX_FORM_VIEWPORT_TIMEOUT_MS = 60_000
 const REPLACEMENT_COMPOSER_TIMEOUT_MS = 30_000
+// A loaded Copilot can take many seconds to draw a paste in its prompt, and
+// Enter waits until it has: pressed sooner, it sends whatever the prompt held.
+// The hub gives a node 210 s to answer a session request.
+const PASTE_CONFIRMATION_TIMEOUT_MS = 30_000
+// Polling slows down, and a confirmation is logged as slow, after this long.
+const SLOW_PASTE_CONFIRMATION_MS = 5_000
 // Copilot holds its session until it has finished shutting down, a second or
 // two after it is hung up on, and a Copilot started on a session still held
 // asks whether to resume one "in use by another CLI or application".
@@ -445,6 +442,7 @@ export class TmuxTerminalSessionController
   }
   private readonly replacementComposerTimeoutMs =
     REPLACEMENT_COMPOSER_TIMEOUT_MS
+  private readonly pasteConfirmationTimeoutMs = PASTE_CONFIRMATION_TIMEOUT_MS
   private readonly startupTimeoutMs = TERMINAL_STARTUP_TIMEOUT_MS
   private readonly settledOwnerAgeMs = SETTLED_OWNER_AGE_MS
   /** When Stop last sent each session Ctrl+C. */
@@ -833,101 +831,20 @@ export class TmuxTerminalSessionController
     })
   }
 
-  async stop(
-    sessionId: string,
-    confirm?: () => void | Promise<void>,
-  ): Promise<boolean> {
-    return this.serialize(sessionId, async () => {
-      const owner = await this.boundOwner(sessionId)
-      if (!owner) {
-        this.inputReadySessions.delete(sessionId)
-        this.automaticStartupSessions.delete(sessionId)
-        // Already gone: the caller wanted nothing running for this session,
-        // and nothing is.
-        //
-        // Discovery answers with nothing when it fails as well as when there
-        // is nothing, and taking a failed look for proof recorded a session as
-        // suspended while its terminal was still running. tmux is asked
-        // directly, and only a server that is not there, or a pane list that
-        // holds nothing for this session, settles it.
-        return this.noPaneRemains()
-      }
-      // Confirmation is the last thing awaited. Anything after it -- even
-      // looking the owner up again -- is another moment in which somebody at
-      // the terminal can start a turn or detach a task, and the pane would
-      // then go down on the strength of a check that is already out of date.
-      await confirm?.()
-      // The pane is named by its id, and tmux is asked to compare the process
-      // itself before killing it, in one command. Reading the pid here and
-      // killing on the strength of it would put the same gap back: a pane
-      // respawned in between keeps its id, and the kill would take whatever
-      // is running in it now.
-      //
-      // Killing the window rather than the pane would take any pane beside
-      // it, which belongs to whoever split it there.
-      // The pane's root is what tmux can compare, but it is not always the
-      // session: Copilot can run beneath a persistent shell, exit while
-      // confirmation is running, and leave that same shell starting something
-      // else. The root would still match and the kill would take work that has
-      // nothing to do with this session.
-      //
-      // Ended by signalling the process that is the session, not by naming a
-      // pane. No arrangement of tmux commands is atomic here -- a target is
-      // expanded before the condition runs, and the condition finishes before
-      // the consequent begins -- so any of them can act on a pane that has
-      // been respawned or handed to something else in between.
-      //
-      // A signal has no such gap. The kernel either delivers it to that exact
-      // process or reports that it is gone, and nothing else can inherit its
-      // identity. A pane whose root this was ends with it; one that was only
-      // hosting it carries on, which is somebody's shell and not ours to
-      // close.
-      try {
-        process.kill(owner.pid, 'SIGTERM')
-      } catch (error) {
-        // Already gone, which is the outcome being asked for.
-        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-          throw error
-        }
-      }
-      // The pane is torn down asynchronously, and a resume that raced it would
-      // find the old window and take it for the new one.
-      //
-      // This also answers a kill that tmux declined because the pane had
-      // changed hands: the owner is still there, the wait runs out, and the
-      // caller is told the window could not be closed rather than being told
-      // that somebody else's work was ended.
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        if (await this.paneStopped(owner)) {
-          this.inputReadySessions.delete(sessionId)
-          this.automaticStartupSessions.delete(sessionId)
-          this.processPaneRoots.forget(sessionId)
-          return true
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100))
-      }
-      return false
-    })
-  }
-
   /**
    * Whether this exact pane and this exact process are both gone.
    *
-   * Asked of the two identities that were resolved before the teardown, not of
-   * the world in general. Process discovery answers with nothing when it fails
-   * as well as when there is nothing, and a surviving process that has become
-   * detached from its pane's ancestry drops out of it too -- either way a
-   * suspension was recorded while the runtime was still going, and a resume
-   * then started a second owner for the same session.
+   * Asked of the identities that were resolved before, not of the world in
+   * general. Process discovery answers with nothing when it fails as well as
+   * when there is nothing, and a surviving process that has become detached
+   * from its pane's ancestry drops out of it too.
    */
   private async paneStopped(owner: {
     pid: number
     target: string
   }): Promise<boolean> {
     // The process first, and always. A pane that has gone says nothing about a
-    // process that outlived it or was moved out of it, and reporting that as
-    // stopped recorded a suspension over a runtime that was still going --
-    // after which a resume started a second owner for the same session.
+    // process that outlived it or was moved out of it.
     if (processIsAlive(owner.pid)) {
       return false
     }
@@ -1837,11 +1754,23 @@ export class TmuxTerminalSessionController
     return this.sendInternal(sessionId, content, false, true)
   }
 
+  /** Whether the session's terminal is still owned as `owner` records. */
+  private async sameOwner(sessionId: string, owner: TerminalOwner): Promise<boolean> {
+    const current = await this.owner(sessionId, owner.target, true)
+    return Boolean(
+      current &&
+        current.pid === owner.pid &&
+        current.rootPid === owner.rootPid &&
+        current.target === owner.target,
+    )
+  }
+
   private async clearComposerForReplacement(
     sessionId: string,
     owner: TerminalOwner,
     pane: string,
     confirm?: () => void,
+    backgroundShellsOnly?: TerminalSendOptions['backgroundShellsOnly'],
   ): Promise<string> {
     const readable = composerText(pane)
     if (readable === undefined) {
@@ -1855,7 +1784,9 @@ export class TmuxTerminalSessionController
       parseTerminalPermission(pane) ||
       parseTerminalUserInput(pane) ||
       parseTerminalFormPrompt(pane) ||
-      isTerminalAgentWorking(pane)
+      // Beside background shells, the busy row is weighed below, on a pane
+      // captured after the event log.
+      (isTerminalAgentWorking(pane) && !backgroundShellsOnly)
     ) {
       throw new TerminalDraftConflictError('changed-before-clear')
     }
@@ -1868,15 +1799,22 @@ export class TmuxTerminalSessionController
     ) {
       throw new TerminalDraftConflictError('owner-changed-before-clear')
     }
-    const currentPane = await capturePane(owner.target)
+    const { pane: currentPane, besideShells } = await captureForReplacement(
+      owner.target,
+      backgroundShellsOnly,
+    )
+    // The event log was read since the owner was checked.
+    if (besideShells && !(await this.sameOwner(sessionId, owner))) {
+      throw new TerminalDraftConflictError('owner-changed-before-clear')
+    }
     if (
       composerText(currentPane) === undefined ||
-      !terminalInputReady(currentPane) ||
+      !terminalInputReady(currentPane, besideShells) ||
       isTerminalOverlay(currentPane) ||
       parseTerminalPermission(currentPane) ||
       parseTerminalUserInput(currentPane) ||
       parseTerminalFormPrompt(currentPane) ||
-      isTerminalAgentWorking(currentPane)
+      (!besideShells && isTerminalAgentWorking(currentPane))
     ) {
       throw new TerminalDraftConflictError('changed-before-clear')
     }
@@ -1903,12 +1841,13 @@ export class TmuxTerminalSessionController
     let previousEmpty: string | undefined
     for (let attempt = 0; attempt < 20; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50))
-      const clearedPane = await capturePane(owner.target, 2_000)
+      const { pane: clearedPane, besideShells: clearedBesideShells } =
+        await captureForReplacement(owner.target, backgroundShellsOnly, 2_000)
       const text = composerText(clearedPane)
       if (
         text !== undefined &&
-        terminalInputReady(clearedPane) &&
-        !composerHoldsText(clearedPane)
+        !composerHoldsText(clearedPane) &&
+        terminalInputReady(clearedPane, clearedBesideShells)
       ) {
         if (text === previousEmpty) {
           const finalOwner = await this.owner(sessionId, owner.target, true)
@@ -2246,23 +2185,36 @@ export class TmuxTerminalSessionController
             currentOwner,
             paneBeforePaste,
             options.confirm,
+            options.backgroundShellsOnly,
           )
         }
         if (options.replaceExistingInput) {
           // With nothing cleared, the send keeps the working tolerance the
           // first readiness check granted; a cleared composer must be idle.
-          const toleratesWorking = allowWorking && !existingInput
+          // Beside background shells, only their wait is borne, on a pane
+          // captured after the event log said it is all that is left.
           const ownerBeforePaste = await this.owner(
             sessionId,
             currentOwner.target,
             true,
           )
-          paneBeforePaste = await capturePane(currentOwner.target)
+          const reading = await captureForReplacement(
+            currentOwner.target,
+            options.backgroundShellsOnly,
+          )
+          paneBeforePaste = reading.pane
+          // The event log was read since the owner was checked.
+          const ownerKept = !reading.besideShells ||
+            (await this.sameOwner(sessionId, currentOwner))
+          const toleratesWorking = options.backgroundShellsOnly
+            ? reading.besideShells
+            : allowWorking && !existingInput
           if (
             !ownerBeforePaste ||
             ownerBeforePaste.pid !== currentOwner.pid ||
             ownerBeforePaste.rootPid !== currentOwner.rootPid ||
             ownerBeforePaste.target !== currentOwner.target ||
+            !ownerKept ||
             composerText(paneBeforePaste) === undefined ||
             !terminalInputReady(paneBeforePaste, toleratesWorking) ||
             composerHoldsText(paneBeforePaste) ||
@@ -2274,8 +2226,7 @@ export class TmuxTerminalSessionController
           ) {
             throw new TerminalDraftConflictError('new-text')
           }
-        }
-        if (options.backgroundShellsOnly) {
+        } else if (options.backgroundShellsOnly) {
           // Checked last, right before the paste, on a pane captured once the
           // event log has been read: nothing opened over the prompt while the
           // log was read goes unseen.
@@ -2286,6 +2237,12 @@ export class TmuxTerminalSessionController
           if (!pane || composerHoldsText(pane)) {
             throw queuedDeliveryRefusal(
               new Error('The terminal prompt is no longer free for queued delivery; nothing was sent'),
+            )
+          }
+          // The event log was read since the owner was checked.
+          if (!(await this.sameOwner(sessionId, currentOwner))) {
+            throw queuedDeliveryRefusal(
+              new Error('The terminal owner changed before queued delivery; nothing was sent'),
             )
           }
           paneBeforePaste = pane
@@ -2307,7 +2264,8 @@ export class TmuxTerminalSessionController
           ])
           pasteAcknowledged = true
           return await this.finishSend(
-            owner.target,
+            sessionId,
+            currentOwner,
             content,
             confirmation,
             paneBeforePaste,
@@ -2346,7 +2304,8 @@ export class TmuxTerminalSessionController
   }
 
   private async finishSend(
-    target: string,
+    sessionId: string,
+    owner: TerminalOwner,
     content: string,
     confirmation: string,
     paneBeforePaste: string,
@@ -2354,25 +2313,25 @@ export class TmuxTerminalSessionController
     idleOnly = false,
     backgroundShellsOnly?: TerminalSendOptions['backgroundShellsOnly'],
   ): Promise<boolean> {
-      if (
-        !(await waitForComposerPaste(
-          target,
-          paneBeforePaste,
-          confirmation,
-          content,
-        )) &&
-        !(await waitForComposerPaste(
-          target,
-          paneBeforePaste,
-          confirmation,
-          content,
-          20,
-        ))
-      ) {
+      const target = owner.target
+      const paste = await waitForComposerPaste(
+        target,
+        paneBeforePaste,
+        confirmation,
+        content,
+        this.pasteConfirmationTimeoutMs,
+      )
+      // Only how long it took and whether the prompt could be read, never
+      // what it holds.
+      const readable = `composer readable: ${paste.composerReadable ? 'yes' : 'no'}`
+      if (!paste.confirmed) {
+        console.warn(
+          `Copilot did not show a paste in session ${sessionId} within ${paste.elapsedMs} ms (${readable}); Enter was not pressed`,
+        )
         // The prompt never showed the message, so pressing Enter would send
         // whatever it does hold and still be reported as delivered.
         //
-        // Both waits failed. Never clear the composer or repeat the paste:
+        // The deadline passed. Never clear the composer or repeat the paste:
         // Reading the composer and then clearing it cannot be made one act:
         // whatever is read, a person at the terminal can type between the
         // reading and the keystroke, and Ctrl+U takes the whole composer.
@@ -2393,6 +2352,11 @@ export class TmuxTerminalSessionController
           // Every failure after the buffer was accepted is uncertain in the
           // same way, and matching on the message recognised only this one.
           { statusCode: 409, uncertainDelivery: true },
+        )
+      }
+      if (paste.elapsedMs > SLOW_PASTE_CONFIRMATION_MS) {
+        console.warn(
+          `Copilot took ${paste.elapsedMs} ms to show a paste in session ${sessionId} (${readable})`,
         )
       }
       let paneTty = ''
@@ -2431,6 +2395,11 @@ export class TmuxTerminalSessionController
             throw new Error('The terminal changed before queued submission')
           }
         }
+        // The paste may have been awaited for many seconds, and the event
+        // log read since: Enter goes only to the owner the paste was typed in.
+        if (!(await this.sameOwner(sessionId, owner))) {
+          throw new Error('The terminal owner changed before the message was submitted')
+        }
         await execFileAsync(
           'tmux',
           enqueue
@@ -2458,47 +2427,6 @@ export class TmuxTerminalSessionController
     fresh = false,
   ): Promise<string | undefined> {
     return (await this.owner(sessionId, undefined, fresh))?.target
-  }
-
-  /**
-   * Whether tmux itself says nothing is left running this session.
-   *
-   * Process discovery returning nothing is not the same as nothing running:
-   * it answers with nothing when it cannot look. This asks the one thing that
-   * can say for certain, and refuses when even that cannot be reached.
-   */
-  private async noPaneRemains(): Promise<boolean> {
-    let listed = ''
-    try {
-      listed = (
-        await execFileAsync('tmux', [
-          'list-panes',
-          '-a',
-          '-F',
-          '#{pane_pid}',
-        ])
-      ).stdout
-    } catch (error) {
-      // A stopped server means no pane; a missing socket alone does not.
-      return noTmuxServer(error)
-    }
-    if (!listed.trim()) {
-      return true
-    }
-    // Panes exist, so the question is whether one of them is this session's.
-    // Process discovery answers with nothing when it cannot look, and asking
-    // it again here read that as absence: no owner found, so reported stopped,
-    // while the pane was still running. The pane list is asked instead, and it
-    // has already been read successfully above.
-    // Panes are running, and the only thing that could say this session is not
-    // among them is process discovery -- which can succeed in part, finding one
-    // session while a transient failure hides another. A list that is missing
-    // this session is therefore not proof, so nothing here settles it.
-    //
-    // Refusing costs a suspension that has to be asked for again. Accepting
-    // recorded a session as suspended while its terminal carried on, and a
-    // resume then started a second owner for it.
-    return false
   }
 
   private async owner(
@@ -3619,6 +3547,18 @@ export function terminalMayBeWaitingForBackgroundShells(pane: string): boolean {
 }
 
 /**
+ * The same, but with the prompt holding readable text, as a paste Copilot drew
+ * too late to be sent leaves it. Only the event log can say the wait is the
+ * shells', and so whether that draft may be cleared to replace it.
+ */
+export function terminalDraftMayBeBesideBackgroundShells(pane: string): boolean {
+  return idleButForBackgroundShells(pane) === 'shells' &&
+    terminalInputReady(pane, true) &&
+    composerText(pane) !== undefined &&
+    composerHoldsText(pane)
+}
+
+/**
  * The pane, when queued text may still go in beside background shells: the
  * event log finds the turn over with no background agent, and then a pane
  * captured after that reading shows a live prompt with nothing open over it,
@@ -3639,6 +3579,27 @@ async function backgroundShellsAllow(
   if (!terminalInputReady(pane, true)) return undefined
   const reading = idleButForBackgroundShells(pane)
   return reading === 'idle' || (reading === 'shells' && log.shellsRunning) ? pane : undefined
+}
+
+/**
+ * Reads the pane for a replacement to act on, and whether its busy row is only
+ * Copilot's wait for background shells by the evidence. Only a busy pane has
+ * the log read, and then, as backgroundShellsAllow does, the pane is captured
+ * again after it and that later capture is returned. When the evidence fails,
+ * the first capture comes back, busy and with besideShells false, so the
+ * caller refuses it.
+ */
+async function captureForReplacement(
+  target: string,
+  backgroundShellsOnly: TerminalSendOptions['backgroundShellsOnly'],
+  timeout?: number,
+): Promise<{ pane: string; besideShells: boolean }> {
+  const pane = await capturePane(target, timeout)
+  if (!backgroundShellsOnly || !isTerminalAgentWorking(pane)) {
+    return { pane, besideShells: false }
+  }
+  const after = await backgroundShellsAllow(() => capturePane(target, timeout), backgroundShellsOnly)
+  return after === undefined ? { pane, besideShells: false } : { pane: after, besideShells: true }
 }
 
 function isKnownTerminalFooterRow(
@@ -5437,30 +5398,41 @@ export function composerTookPaste(
     wanted.endsWith(plainAfter)
 }
 
+/**
+ * Waits until the composer shows the paste the same way in two captures in a
+ * row, or until `timeoutMs` has passed, and says how long that took and
+ * whether the last capture had a readable composer.
+ */
 async function waitForComposerPaste(
   target: string,
   paneBefore: string,
   expected: string,
   pasted: string,
-  attempts = 40,
-): Promise<boolean> {
+  timeoutMs: number,
+): Promise<{ confirmed: boolean; elapsedMs: number; composerReadable: boolean }> {
+  const started = Date.now()
   let previousMatch: string | undefined
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  for (;;) {
     const pane = await capturePane(target)
+    const drawn = composerText(pane)
     if (
       composerTookPaste(paneBefore, pane, expected, pasted)
     ) {
-      const rendered = composerText(pane) ?? pane
+      const rendered = drawn ?? pane
       if (rendered === previousMatch) {
-        return true
+        return { confirmed: true, elapsedMs: Date.now() - started, composerReadable: drawn !== undefined }
       }
       previousMatch = rendered
     } else {
       previousMatch = undefined
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    const elapsedMs = Date.now() - started
+    if (elapsedMs >= timeoutMs) {
+      return { confirmed: false, elapsedMs, composerReadable: drawn !== undefined }
+    }
+    const interval = elapsedMs < SLOW_PASTE_CONFIRMATION_MS ? 50 : 100
+    await new Promise((resolve) => setTimeout(resolve, Math.min(interval, timeoutMs - elapsedMs)))
   }
-  return false
 }
 
 /** Whether a tmux command failed because there is no server left to ask. */
@@ -5489,9 +5461,8 @@ async function tmuxTargetForPid(
     }
     // Killing the last pane in the last session ends tmux itself, and the
     // next lookup then fails rather than reporting nothing. That is the
-    // ordinary way a suspension finishes, so it reads as absence: raising here
-    // reported failure for work that had already succeeded, leaving the
-    // session never recorded as suspended.
+    // ordinary way the last session goes, so it reads as absence: raising here
+    // reported failure for work that had already succeeded.
     if (await noTmuxServer(error)) {
       return undefined
     }

@@ -82,10 +82,6 @@ export interface ManagerToolHost {
   replyUserInput(computerId: string, sessionId: string, requestId: string, input: UserInputReplyInput): Promise<ManagedSession>
   /** Opens a closed session again, so it can be steered. */
   reopenSession(computerId: string, sessionId: string): Promise<ManagedSession>
-  /** Suspends a session through its owning computer, which refuses one that is not idle. */
-  suspendSession(computerId: string, sessionId: string): Promise<ManagedSession>
-  /** Resumes a suspended session, so it can be steered. */
-  resumeSession(computerId: string, sessionId: string): Promise<ManagedSession>
   cancel(computerId: string, sessionId: string): Promise<void>
   /**
    * Asks you, in the app, to confirm closing a session. Nothing is closed
@@ -497,8 +493,8 @@ export function createManagerTools(
     } catch {
       return 'its background tasks could not be read'
     }
-    // As suspending a session does: an empty list from a runtime that could
-    // not be asked is not the same as nothing running.
+    // An empty list from a runtime that could not be asked is not the same
+    // as nothing running.
     if (!background.supported) return 'its background tasks could not be read'
     const active = background.tasks.filter((task) => task.status === 'running' || task.status === 'queued').length
     if (active > 0) return `it has ${active} background task${active === 1 ? '' : 's'} running or queued`
@@ -522,28 +518,6 @@ export function createManagerTools(
     return (host.autonomousClosesThisTurn?.() ?? AUTONOMOUS_CLOSE_LIMIT) >= AUTONOMOUS_CLOSE_LIMIT
       ? `Oracle already closed ${AUTONOMOUS_CLOSE_LIMIT} sessions without asking this turn`
       : undefined
-  }
-
-  /**
-   * Suspends or resumes a session through its owning computer, as the app's
-   * Pause and Resume do. A refusal comes back with the computer's reason, so
-   * Oracle can tell the user.
-   */
-  async function changeSuspension(session: ManagedSession, change: 'suspend' | 'resume'): Promise<void> {
-    const owner = host.findComputer(session.computerId)
-    // The app offers neither while the computer is offline, where a request could only fail or time out.
-    if (owner && !owner.online) {
-      throw new ToolFailure(
-        `${owner.name} is offline, so ${link(session)} cannot be ${change === 'suspend' ? 'suspended' : 'resumed'} until it reconnects. Tell the user.`,
-      )
-    }
-    try {
-      if (change === 'suspend') await host.suspendSession(session.computerId, session.id)
-      else await host.resumeSession(session.computerId, session.id)
-    } catch (error) {
-      const reason = errorMessage(error).trim().replace(/\.$/, '')
-      throw new ToolFailure(`Could not ${change} ${link(session)}: ${reason}. Tell the user why.`)
-    }
   }
 
   async function resolveSession(
@@ -640,12 +614,12 @@ export function createManagerTools(
           managerToolMutability(name) !== 'read' &&
           !TASK_EXECUTION_MUTATION_TOOLS.has(name)
         ) {
-          return failure('This task turn may execute its durable task, but unrelated session settings, naming, suspend and resume, closure, proactive outcomes, and memory mutations are not allowed.')
+          return failure('This task turn may execute its durable task, but unrelated session settings, naming, reopening, closure, proactive outcomes, and memory mutations are not allowed.')
         }
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
         if (options.actsOnSessions && host.answerOnly()) {
-          return failure('The user asked this in Ask mode, so no session may be started, messaged, renamed, suspended, resumed, stopped, or closed. Answer from what you can read and ask instead; switching Oracle to Delegate lets you do it.')
+          return failure('The user asked this in Ask mode, so no session may be started, messaged, renamed, reopened, stopped, or closed. Answer from what you can read and ask instead; switching Oracle to Delegate lets you do it.')
         }
         const parsed = schema.safeParse(args ?? {})
         if (!parsed.success) {
@@ -1482,7 +1456,7 @@ export function createManagerTools(
     ),
     define(
       'send_to_session',
-      'Send a message or follow-up instruction to any session. A closed session is reopened and a suspended one resumed first; a folder-trust prompt is answered. If it is busy the message steers the work it is doing, and waits in its queue only if the session cannot take it.',
+      'Send a message or follow-up instruction to any session. A closed session is reopened first; a folder-trust prompt is answered. If it is busy the message steers the work it is doing, and waits in its queue only if the session cannot take it.',
       z.object({
         sessionId: sessionIdField,
         computer: computerField.optional(),
@@ -1496,9 +1470,6 @@ export function createManagerTools(
         if (session.isOpen === false) {
           session = { ...session, ...(await host.reopenSession(session.computerId, session.id)), title: session.title }
           onActivity({ tool: 'send_to_session', content: `Reopened "${session.title}"`, sessionRefs: [ref(session)] })
-        } else if (session.suspended) {
-          session = { ...session, ...(await host.resumeSession(session.computerId, session.id)), title: session.title }
-          onActivity({ tool: 'send_to_session', content: `Resumed "${session.title}"`, sessionRefs: [ref(session)] })
         }
         // Claude sessions have no way to take a message mid-turn, so theirs is queued as before.
         const busy = session.status === 'running' && (session.provider ?? 'copilot') === 'copilot'
@@ -1643,32 +1614,6 @@ export function createManagerTools(
         await launcher.cancel(session)
         onActivity({ tool: 'cancel_session', content: `Stopped "${session.title}"`, sessionRefs: [ref(session)] })
         return `Stopped the current turn of ${link(session)}.`
-      },
-      { actsOnSessions: true }
-    ),
-    define(
-      'suspend_session',
-      "Suspend a session when the user asks, as the app's Pause does: its runtime stops, and its id, history, and place in the list are kept. Only an idle session with no running background tasks can be suspended; otherwise its computer refuses and the result says why. resume_session, or send_to_session, brings it back.",
-      z.object({ sessionId: sessionIdField, computer: computerField.optional() }),
-      async ({ sessionId, computer }) => {
-        const session = await resolveSession(sessionId, computer)
-        if (session.suspended) return `${link(session)} is already suspended; nothing changed.`
-        await changeSuspension(session, 'suspend')
-        onActivity({ tool: 'suspend_session', content: `Suspended "${session.title}"`, sessionRefs: [ref(session)] })
-        return `Suspended ${link(session)}. Its runtime stopped and its history is kept; resume_session or send_to_session brings it back.`
-      },
-      { actsOnSessions: true }
-    ),
-    define(
-      'resume_session',
-      "Resume a suspended session, as the app's Resume does, so it can work again. send_to_session resumes one itself before messaging it, so use this when the user only wants it back.",
-      z.object({ sessionId: sessionIdField, computer: computerField.optional() }),
-      async ({ sessionId, computer }) => {
-        const session = await resolveSession(sessionId, computer)
-        if (!session.suspended) return `${link(session)} is not suspended; nothing changed.`
-        await changeSuspension(session, 'resume')
-        onActivity({ tool: 'resume_session', content: `Resumed "${session.title}"`, sessionRefs: [ref(session)] })
-        return `Resumed ${link(session)}; it can take messages again.`
       },
       { actsOnSessions: true }
     ),

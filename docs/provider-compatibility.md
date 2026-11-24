@@ -25,6 +25,7 @@ history is not transferred between providers.
 | Immediate follow-up steering | SDK `immediate` delivery and tmux CLI steering | Agent SDK abort/new-turn only | Copilot-only |
 | Cancel | SDK abort or terminal interrupt | Agent SDK abort controller | Compatible |
 | Background task monitoring | Experimental SDK task RPC; tmux `/tasks` event projection includes detached shells | Not exposed | Copilot-only |
+| Tool call details | Whole arguments, output and error read from the session's event log on request | Not available; no Copilot event log | Copilot-only |
 | Slash commands | Copilot command catalog plus web commands | Web commands only | Provider-specific |
 | Skills inspection | Existing SDK session metadata, or explicitly labelled folder discovery | Reported active-session skills and in-memory last-known metadata | Read-only; availability and scope are explicit |
 | MCP inspection | Existing SDK session status, or explicitly labelled configured servers | Active query status and in-memory last-known metadata | Read-only; no configuration or credential exposure |
@@ -76,6 +77,9 @@ history is not transferred between providers.
   query. Refreshing does not restart or reconfigure existing sessions.
 - Copilot supplies its native slash-command catalog. Claude exposes only the
   Agentic Remote web commands that have provider-neutral implementations.
+  A tmux session lists its folder's catalog, refreshed in the background once
+  it is a minute old, so a newly installed skill can take one more request to
+  appear there.
 - The session menu provides **Skills** and **MCP servers**. `/skill`, `/skills`,
   and `/mcp` open these read-only views; optional trailing text filters the list
   locally. They do not invoke a provider command, send a prompt, or change MCP
@@ -83,7 +87,7 @@ history is not transferred between providers.
   servers, perform MCP OAuth onboarding, edit provider configuration, render
   MCP Apps, or emulate the Copilot CLI TUI.
 - Resource inspection never creates or resumes a provider session merely to
-  read metadata. Copilot terminal, suspended, and unloaded sessions use
+  read metadata. Copilot terminal and unloaded sessions use
   server-scoped folder discovery when available. This shows configured defaults,
   not ephemeral terminal overrides or live MCP connections.
 - Claude metadata comes from an already-active query and its reported skill

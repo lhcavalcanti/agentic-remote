@@ -53,8 +53,7 @@ create, detach, and delete over protocol 3 with the existing GitHub CLI login.
 The independently installed CLI can report a newer executable version while
 launching an older headless runtime that lacks `session.detach`; therefore
 destructive deletion does not depend on detach, while ownership-preserving
-suspend and SDK-to-tmux transitions still fail closed when detach is
-unsupported. Startup diagnostics expose only runtime version, protocol version,
+SDK-to-tmux transitions still fail closed when detach is unsupported. Startup diagnostics expose only runtime version, protocol version,
 authenticated state, and authentication type.
 
 ### Coordinate with existing work
@@ -200,7 +199,7 @@ An advertised command or a mocked success is not evidence of full CLI parity.
 | Contract | Minimum cases |
 | --- | --- |
 | Ownership and discovery | Copilot SDK, Copilot tmux, and Claude; local and paired-node routing; no second owner attached to a live terminal session. |
-| Creation and lifecycle | Create, resume, suspend, restart, rename, clear/replacement, delete, shutdown, and host recovery; preserve identity, cwd, runtime settings, and retired IDs. |
+| Creation and lifecycle | Create, resume, restart, rename, clear/replacement, delete, shutdown, and host recovery; preserve identity, cwd, runtime settings, and retired IDs. |
 | Delivery | Immediate send, steering when supported, editable FIFO, native queued commands, duplicate submissions, and uncertain delivery without automatic resend. |
 | Permissions and questions | Allow-all on/off, permission cards, structured/multi-step questions, cancellation, stale replies, settlement-write failures, and restart with a lost SDK callback. |
 | Runtime and CLI surfaces | Model/effort/context/mode; text/prompt/picker command results; unavailable commands; background tasks and post-reconnect resynchronization. |

@@ -16,6 +16,8 @@ export async function getHubHealth(signal?: AbortSignal): Promise<HubHealth> {
   return request('/api/diagnostics/health', { signal, cache: 'no-store' })
 }
 import type {
+  ActivityDetail,
+  ActivityDetailText,
   AddComputerInput,
   AgentProvider,
   AudioTranscription,
@@ -392,17 +394,6 @@ export async function importSettingsProfile(
 export async function fetchSessionOrder(): Promise<SessionOrderSnapshot> {
   const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
     '/api/session-order',
-  )
-  return response.sessionOrder
-}
-
-/** Saves the hub-owned session-list visibility shared by every browser. */
-export async function saveSessionVisibility(
-  showSuspended: boolean,
-): Promise<SessionOrderSnapshot> {
-  const response = await request<{ sessionOrder: SessionOrderSnapshot }>(
-    '/api/session-order',
-    { method: 'PUT', body: JSON.stringify({ showSuspended }) },
   )
   return response.sessionOrder
 }
@@ -966,34 +957,6 @@ export async function configureRetention(
   return response.session
 }
 
-export async function suspendSession(
-  computerId: string,
-  sessionId: string,
-): Promise<ManagedSession> {
-  const response = await request<{ session: ManagedSession }>(
-    `${sessionPath(computerId, sessionId)}/suspend`,
-    {
-      method: 'POST',
-      body: '{}',
-    },
-  )
-  return response.session
-}
-
-export async function resumeSession(
-  computerId: string,
-  sessionId: string,
-): Promise<ManagedSession> {
-  const response = await request<{ session: ManagedSession }>(
-    `${sessionPath(computerId, sessionId)}/resume`,
-    {
-      method: 'POST',
-      body: '{}',
-    },
-  )
-  return response.session
-}
-
 export async function restartSession(
   computerId: string,
   sessionId: string,
@@ -1133,6 +1096,51 @@ export async function listBackgroundTasks(
   return request<BackgroundTaskSnapshot>(
     `${sessionPath(computerId, sessionId)}/tasks`,
   )
+}
+
+const activityKinds = new Set(['tool', 'skill', 'agent'])
+const activityDetailStatuses = new Set(['running', 'completed', 'failed'])
+const activityArgumentFormats = new Set(['command', 'json', 'text'])
+
+function isActivityText(value: unknown): value is ActivityDetailText {
+  return isRecord(value) &&
+    typeof value.text === 'string' &&
+    typeof value.truncated === 'boolean' &&
+    value.originalBytes !== undefined &&
+    optionalCount(value.originalBytes)
+}
+
+function isActivityDetail(value: unknown): value is ActivityDetail {
+  if (!isRecord(value)) return false
+  const { arguments: args, result, error } = value
+  return typeof value.toolCallId === 'string' &&
+    typeof value.toolName === 'string' &&
+    activityKinds.has(value.kind as string) &&
+    activityDetailStatuses.has(value.status as string) &&
+    [value.mcpServerName, value.mcpToolName, value.startedAt, value.completedAt].every(optionalText) &&
+    optionalCount(value.durationMs) &&
+    (args === undefined || (isActivityText(args) && activityArgumentFormats.has(Reflect.get(args, 'format')))) &&
+    (result === undefined || isActivityText(result)) &&
+    (error === undefined || isActivityText(error))
+}
+
+/**
+ * A tool call's complete detail, read on request from its owning computer's
+ * session log. Every text in it is shown as plain text.
+ */
+export async function getActivityDetail(
+  computerId: string,
+  sessionId: string,
+  toolCallId: string,
+): Promise<ActivityDetail> {
+  const detail = await request<unknown>(
+    `${sessionPath(computerId, sessionId)}/activities/${encodeURIComponent(toolCallId)}`,
+    { cache: 'no-store' },
+  )
+  if (!isActivityDetail(detail)) {
+    throw new Error('The computer returned tool call details this app cannot show.')
+  }
+  return detail
 }
 
 export async function cancelBackgroundTask(

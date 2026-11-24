@@ -51,7 +51,6 @@ export interface ManagerProactiveInboxObservation {
   queuedCount: number
   hasPendingRequest: boolean
   isOpen: boolean
-  suspended: boolean
   recovering: boolean
 }
 
@@ -192,6 +191,12 @@ interface PersistedCursor {
   queuedCount: number
   hasPendingRequest: boolean
   isOpen: boolean
+  /**
+   * Whether the session was suspended when last seen. Sessions can no longer
+   * be suspended, so this is only ever written false; it stays because a
+   * release from before reads exactly these fields, and an older file's true
+   * still holds back a completion until the session is seen again.
+   */
   suspended: boolean
   recovering: boolean
   observedAt: string
@@ -725,7 +730,6 @@ function validateObservation(
     'queuedCount',
     'hasPendingRequest',
     'isOpen',
-    'suspended',
     'recovering',
   ] as const
   if (!isRecord(value) || !hasExactKeys(value, keys)) {
@@ -743,7 +747,6 @@ function validateObservation(
     !isSafeCounter(value.queuedCount) ||
     typeof value.hasPendingRequest !== 'boolean' ||
     typeof value.isOpen !== 'boolean' ||
-    typeof value.suspended !== 'boolean' ||
     typeof value.recovering !== 'boolean'
   ) {
     throw new ManagerProactiveInboxValidationError(
@@ -1142,7 +1145,7 @@ export class ManagerProactiveInbox {
           queuedCount: observation.queuedCount,
           hasPendingRequest: observation.hasPendingRequest,
           isOpen: observation.isOpen,
-          suspended: observation.suspended,
+          suspended: false,
           recovering: observation.recovering,
           observedAt,
         })
@@ -1170,13 +1173,11 @@ export class ManagerProactiveInbox {
       let admitted: PersistedEvent | undefined
       const completionAllowed =
         observation.isOpen &&
-        !observation.suspended &&
         !observation.recovering &&
         !observation.hasPendingRequest &&
         observation.queuedCount === 0
       const blocked =
         observation.isOpen &&
-        !observation.suspended &&
         !observation.recovering &&
         (
           observation.status === 'waiting' ||
@@ -1226,7 +1227,7 @@ export class ManagerProactiveInbox {
       current.queuedCount = observation.queuedCount
       current.hasPendingRequest = observation.hasPendingRequest
       current.isOpen = observation.isOpen
-      current.suspended = observation.suspended
+      current.suspended = false
       current.recovering = observation.recovering
       current.observedAt = observedAt
 

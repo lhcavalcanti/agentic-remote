@@ -288,13 +288,19 @@ agentic-remote uninstall
 `rollback` activates the previous release. Application data is preserved under
 `~/.agentic-remote/`.
 
+Release 2.0 removes suspended sessions; Close and Reopen cover them. When each
+computer first starts on it, every session an older release suspended becomes
+a closed session that keeps the messages still waiting for it, so it is listed
+under **Recently closed** and can be reopened for 14 days. Rolling back to 1.x
+reads these records as the closed sessions that release already supports.
+
 `doctor` is read-only and works with the service down. It checks the installed service, local health, provider tools, configured transcription/voice assets, origins, and recent startup phases. `--tunnel ID` (or `AGENTIC_REMOTE_DEVTUNNEL_ID` in the shell or service environment file, preserved by setup/update) also checks Dev Tunnel login and both tunnel and port ACLs: empty or deny-only ACLs pass; any allow entry, unknown JSON, or missing `devtunnel` binary fails closed. Tunnel checks skip only when no tunnel is selected. The origin check warns unless the allowlist includes the selected tunnel's HTTPS hostname, configured port, and region (when included in its ID); another tunnel's origin does not satisfy it. It reports the login provider without requiring a particular one and never changes ACLs. `--json` emits `{check, status, detail}` records; exit status is 1 if any check fails, otherwise 0. No package manager is executed: the pinned pnpm version must already be locally resolvable through its installation metadata or Corepack cache.
 
 ### Feature flags
 
 Hub features default off: `notificationCenter` (`AGENTIC_REMOTE_FEATURE_NOTIFICATION_CENTER`), `hostMonitor` (`AGENTIC_REMOTE_FEATURE_HOST_MONITOR`), and `scheduler` (`AGENTIC_REMOTE_FEATURE_SCHEDULER`). Set a variable only to `on` or `off` in the service environment file (case-insensitive; surrounding whitespace is ignored). Any other value stops hub startup and names the variable. Restart the hub after changing flags. `setup` and `update` preserve every `AGENTIC_REMOTE_FEATURE_*` variable; an exported value overrides the saved value during setup.
 
-App settings → Interface → **Preview features** holds the Desktop rail, Notification panel, Host monitor, and Scheduler client opt-ins, all off by default and synced across devices on this hub. A preview cannot enable a server feature: dependent toggles show **Turned off on this hub** while their hub flag is off. The refreshed composer, category-based settings navigation, Health card, and Skills settings are standard behavior and need no opt-in.
+App settings → Interface → **Preview features** holds the Desktop rail, Notification panel, Host monitor, and Scheduler client opt-ins, all off by default and synced across devices on this hub. A preview cannot enable a server feature: while its hub flag is off, a dependent toggle shows **Turned off on this hub** and names the variable to set to `on` before restarting the hub. The refreshed composer, category-based settings navigation, Health card, and Skills settings are standard behavior and need no opt-in.
 
 The scheduler flag enables the hub-only durable schedule/run store, dispatcher, `/api/schedules` API, and the runner that starts scheduled sessions on the target computer. Oracle's schedule tools only propose changes; each one runs after you approve that exact proposal. Scheduled sessions ask for permissions and folder trust by default, and Allow-all needs explicit confirmation. The Scheduler view is the separate `schedulerView` preview. See [Scheduler](docs/design/scheduler.md) for the runner, recovery/stop guarantees, notifications, and API contract.
 
@@ -468,9 +474,9 @@ badges **Oracle**.
 - **Ask | Delegate**: in **Ask**, Oracle reads your sessions and asks them side
   questions but never starts, messages, or stops one (`/oracle <question>` in
   a session asks the same way). **Delegate** lets it start and steer sessions.
-- In **Delegate** it steers any session: it messages them, reopening closed or
-  suspended ones, and answers their permission prompts (including folder trust)
-  and questions so they carry on without you.
+- In **Delegate** it steers any session: it messages them, reopening closed
+  ones, and answers their permission prompts (including folder trust) and
+  questions so they carry on without you.
 - Messages sent while it is busy wait in a queue where you can see, edit in
   place, and remove them.
 - The microphone dictates to Oracle; the words land in its message bar.

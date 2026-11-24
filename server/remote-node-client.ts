@@ -11,6 +11,7 @@ import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import type {
+  ActivityDetail,
   AgentProvider,
   AudioTranscription,
   CreateSessionInput,
@@ -675,28 +676,6 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.session
   }
 
-  async suspendSession(sessionId: string): Promise<SessionDetail> {
-    const response = await this.request<{ session: SessionDetail }>(
-      `/node-api/sessions/${encodeURIComponent(sessionId)}/suspend`,
-      {
-        method: 'POST',
-        body: '{}',
-      },
-    )
-    return response.session
-  }
-
-  async resumeSession(sessionId: string): Promise<SessionDetail> {
-    const response = await this.request<{ session: SessionDetail }>(
-      `/node-api/sessions/${encodeURIComponent(sessionId)}/resume`,
-      {
-        method: 'POST',
-        body: '{}',
-      },
-    )
-    return response.session
-  }
-
   async restartSession(sessionId: string): Promise<SessionDetail> {
     const response = await this.request<{ session: SessionDetail }>(
       `/node-api/sessions/${encodeURIComponent(sessionId)}/restart`,
@@ -854,6 +833,15 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     )
   }
 
+  async readActivityDetail(
+    sessionId: string,
+    toolCallId: string,
+  ): Promise<ActivityDetail> {
+    return this.request<ActivityDetail>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/activities/${encodeURIComponent(toolCallId)}`,
+    )
+  }
+
   async cancelBackgroundTask(
     sessionId: string,
     taskId: string,
@@ -980,7 +968,7 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     if (session && init.method && init.method !== 'GET' && this.stoppingLaunches.has(decodeURIComponent(session[1]))) {
       // Stop intent remains authoritative even if the request/response was lost.
       // Only reads, metadata-only rename, and further teardown may cross it.
-      const teardown = ['cancel', 'cancel-with-ack', 'close', 'suspend'].includes(session[2] || '')
+      const teardown = ['cancel', 'cancel-with-ack', 'close'].includes(session[2] || '')
       const metadataOrDelete = !session[2] && ['PATCH', 'DELETE'].includes(init.method)
       if (!teardown && !metadataOrDelete) {
         throw new RemoteNodeRequestError('The launch is stopping; no work may dispatch until cancellation is resolved.', 409, undefined, false)

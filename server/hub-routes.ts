@@ -22,6 +22,7 @@ import {
   rebaseKnowledgeRelativePath,
 } from '../shared/knowledge-path.js'
 import { ComputerManager } from './computer-manager.js'
+import { toolCallIdSchema } from './activity-details.js'
 import { KnowledgeStore } from './knowledge-store.js'
 import { noteRefusalReason } from './refusal-metrics.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
@@ -55,14 +56,8 @@ const sessionOrderKeys = z.array(z.string().trim().min(1).max(300)).max(2000)
 const sessionOrderLaneSchema = z.object({ order: sessionOrderKeys })
 
 const sessionOrderPreferencesSchema = z
-  .object({
-    showSuspended: z.boolean().optional(),
-    showHidden: z.boolean().optional(),
-  })
-  .refine(
-    (input) => input.showSuspended !== undefined || input.showHidden !== undefined,
-    'Choose suspended or hidden session visibility',
-  )
+  .object({ showHidden: z.boolean().optional() })
+  .refine((input) => input.showHidden !== undefined, 'Choose hidden session visibility')
 
 const sessionOrderEntryParamsSchema = z.object({
   computerId: z.string().min(1).max(200),
@@ -661,6 +656,7 @@ export async function registerHubRoutes(
 
   app.get<{ Params: { rootId: string }; Querystring: { path?: string } }>(
     '/api/knowledge/roots/:rootId/file',
+    { config: { compress: false } },
     async (request, reply) => {
       const root = knowledge.getRoot(request.params.rootId)
       if (!root) {
@@ -744,6 +740,7 @@ export async function registerHubRoutes(
     Querystring: { path: string }
   }>(
     '/api/computers/:computerId/sessions/:sessionId/workspace/file',
+    { config: { compress: false } },
     async (request) => {
       const query = workspaceFileQuerySchema.parse(request.query)
       return manager.readWorkspaceFile(
@@ -1023,26 +1020,6 @@ export async function registerHubRoutes(
   )
 
   app.post<{ Params: SessionParams }>(
-    '/api/computers/:computerId/sessions/:sessionId/suspend',
-    async (request) => ({
-      session: await manager.suspendSession(
-        request.params.computerId,
-        request.params.sessionId,
-      ),
-    }),
-  )
-
-  app.post<{ Params: SessionParams }>(
-    '/api/computers/:computerId/sessions/:sessionId/resume',
-    async (request) => ({
-      session: await manager.resumeSession(
-        request.params.computerId,
-        request.params.sessionId,
-      ),
-    }),
-  )
-
-  app.post<{ Params: SessionParams }>(
     '/api/computers/:computerId/sessions/:sessionId/restart',
     async (request) => ({
       session: await manager.restartSession(
@@ -1218,6 +1195,20 @@ export async function registerHubRoutes(
         request.params.computerId,
         request.params.sessionId,
       ),
+  )
+
+  app.get<{ Params: SessionParams & { toolCallId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/activities/:toolCallId',
+    async (request, reply) => {
+      const toolCallId = toolCallIdSchema.parse(request.params.toolCallId)
+      // Tool output can carry anything a command printed; keep it out of caches.
+      reply.header('cache-control', 'no-store')
+      return manager.readActivityDetail(
+        request.params.computerId,
+        request.params.sessionId,
+        toolCallId,
+      )
+    },
   )
 
   app.post<{

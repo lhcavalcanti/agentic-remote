@@ -11,7 +11,6 @@ function SortableQueuedPrompt({
   index,
   editing,
   busy,
-  suspended,
   retained,
   steering,
   onEdit,
@@ -21,7 +20,6 @@ function SortableQueuedPrompt({
   index: number
   editing: boolean
   busy: boolean
-  suspended: boolean
   retained: boolean
   steering: boolean
   onEdit: () => void
@@ -53,7 +51,7 @@ function SortableQueuedPrompt({
       >
         <GripVertical size={13} />
       </span>
-      <span>
+      <span className="queued-prompt__text">
         {steering && (
           <strong
             className="queued-prompt__steer"
@@ -67,12 +65,9 @@ function SortableQueuedPrompt({
       <button
         aria-label={`Edit queued prompt ${index + 1}`}
         className={`icon-button${editing ? ' icon-button--active' : ''}`}
-        // The composer is closed while a session is put down, so opening a
-        // message for rewriting there gave a banner over a box that could not
-        // be typed in.
-        disabled={busy || suspended || retained}
+        disabled={busy || retained}
         onClick={onEdit}
-        title={retainedTitle ?? (suspended ? 'Resume this session to rewrite it' : undefined)}
+        title={retainedTitle}
         type="button"
       >
         <Pencil size={14} />
@@ -150,7 +145,6 @@ export function QueuedPromptList({
                 key={prompt.id}
                 onEdit={() => onEditQueuedPrompt(prompt)}
                 onRemove={() => onRemoveQueuedPrompt(prompt.id)}
-                suspended={selected.suspended === true}
                 retained={selectedRetained}
                 prompt={prompt}
                 steering={index === 0 && selectedQueueHeadIsSteering}

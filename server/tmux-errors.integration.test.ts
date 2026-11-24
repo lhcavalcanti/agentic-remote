@@ -28,7 +28,7 @@ const headers = { host: 'localhost' }
 afterEach(() => vi.unstubAllEnvs())
 
 it.skipIf(process.platform !== 'linux')(
-  'refuses hub suspend and delete after unlinking an owned live tmux server socket',
+  'refuses hub delete after unlinking an owned live tmux server socket',
   async () => {
     const directory = await mkdtemp('.tmux-socket-evidence-')
     // A proc alias keeps sun_path below Linux's length limit in deep worktrees.
@@ -138,29 +138,23 @@ it.skipIf(process.platform !== 'linux')(
       await expect(stopActiveCopilotSession(sessionId)).rejects.toThrow(
         'No such file or directory',
       )
-      await expect(controller.stop(sessionId)).rejects.toThrow(
-        'No such file or directory',
-      )
 
-      const sessionUrl = `/api/computers/${computerId}/sessions/${sessionId}`
-      for (const request of [
-        { method: 'POST', url: `${sessionUrl}/suspend` },
-        { method: 'DELETE', url: sessionUrl },
-      ] as const) {
-        const response = await hub.app.inject({ ...request, headers })
-        expect(response.statusCode).toBe(500)
-        expect(response.json().message).toContain('No such file or directory')
-        expect(response.json().message).toContain(socket)
-        expect(hub.store.get(sessionId)).toEqual(before)
-        expect(await readFile(`${directory}/state.json`, 'utf8')).toBe(persisted)
-        expect(await readFile(sessionLog(directory, sessionId), 'utf8')).toBe('')
-        expect(
-          (await hub.app.inject({ url: '/api/sessions', headers })).json(),
-        ).toEqual(listed.json())
-        expect(await readFile(`/proc/${panePid}/cmdline`, 'utf8')).toContain(script)
-        expect(await readFile(`/proc/${server.pid}/comm`, 'utf8')).toContain('tmux')
-      }
-      expect(hub.terminalStop).toHaveBeenCalledWith(sessionId, expect.any(Function))
+      const response = await hub.app.inject({
+        method: 'DELETE',
+        url: `/api/computers/${computerId}/sessions/${sessionId}`,
+        headers,
+      })
+      expect(response.statusCode).toBe(500)
+      expect(response.json().message).toContain('No such file or directory')
+      expect(response.json().message).toContain(socket)
+      expect(hub.store.get(sessionId)).toEqual(before)
+      expect(await readFile(`${directory}/state.json`, 'utf8')).toBe(persisted)
+      expect(await readFile(sessionLog(directory, sessionId), 'utf8')).toBe('')
+      expect(
+        (await hub.app.inject({ url: '/api/sessions', headers })).json(),
+      ).toEqual(listed.json())
+      expect(await readFile(`/proc/${panePid}/cmdline`, 'utf8')).toContain(script)
+      expect(await readFile(`/proc/${server.pid}/comm`, 'utf8')).toContain('tmux')
       expect(hub.activeStopper).toHaveBeenCalledExactlyOnceWith(sessionId)
       expect(hub.client.createSession).not.toHaveBeenCalled()
       expect(hub.client.resumeSession).not.toHaveBeenCalled()
@@ -197,19 +191,6 @@ it.skipIf(process.platform !== 'linux')(
       await expect(findActiveCopilotProcesses()).resolves.toEqual([])
       await seedSession(hub.store, directory, sessionId)
       const sessionUrl = `/api/computers/${computerId}/sessions/${sessionId}`
-      const suspended = await hub.app.inject({
-        method: 'POST',
-        url: `${sessionUrl}/suspend`,
-        headers,
-      })
-      expect(suspended.statusCode).toBe(200)
-      expect(suspended.json().session).toMatchObject({
-        id: sessionId,
-        computerId,
-        suspended: true,
-        isOpen: true,
-      })
-      expect(hub.store.get(sessionId)?.suspended).toBe(true)
       const deleted = await hub.app.inject({
         method: 'DELETE',
         url: sessionUrl,
@@ -258,7 +239,6 @@ async function createHub(
   const store = new SessionStore(directory)
   await store.initialize()
   const activeStopper = vi.fn(stopActiveCopilotSession)
-  const terminalStop = vi.spyOn(controller, 'stop')
   const service = new AgentService(
     store,
     client,
@@ -273,13 +253,12 @@ async function createHub(
   const localService = {
     providers: service.providers.bind(service),
     listSessions: service.listSessions.bind(service),
-    suspendSession: service.suspendSession.bind(service),
     deleteSession: service.deleteSession.bind(service),
     on: service.on.bind(service),
     off: service.off.bind(service),
   } satisfies Pick<
     SessionService,
-    'providers' | 'listSessions' | 'suspendSession' | 'deleteSession' | 'on' | 'off'
+    'providers' | 'listSessions' | 'deleteSession' | 'on' | 'off'
   >
   const manager = new ComputerManager(
     localService as SessionService,
@@ -301,7 +280,7 @@ async function createHub(
     expect(computers.json().computers).toEqual([
       expect.objectContaining({ id: computerId, isLocal: true, online: true }),
     ])
-    return { app, store, client, terminalStop, activeStopper, close }
+    return { app, store, client, activeStopper, close }
   } catch (error) {
     await close()
     throw error

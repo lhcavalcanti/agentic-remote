@@ -462,7 +462,7 @@ describe('Persisted native queue startup', () => {
     expect(runtime.creates).not.toHaveBeenCalled()
   }, 15_000)
 
-  it.each(['closed', 'unmanaged', 'suspended', 'deleted', 'uncertain recovery', 'pending claim'])(
+  it.each(['closed', 'unmanaged', 'deleted', 'uncertain recovery', 'pending claim'])(
     'does not automatically dispatch an initially %s queue',
     async (state) => {
       const native = await fixture()
@@ -472,8 +472,7 @@ describe('Persisted native queue startup', () => {
           await store.update(native.id, (session) => {
             Object.assign(session, { managedOpen: false })
           })
-        } else if (state === 'suspended') await store.setSuspended(native.id, true)
-        else if (state === 'deleted') await store.remove(native.id)
+        } else if (state === 'deleted') await store.remove(native.id)
         else if (state === 'uncertain recovery') {
           await store.update(native.id, (session) => {
             session.failedPrompt = { content: 'Uncertain prior work', failedAt: new Date().toISOString(), uncertain: true }
@@ -507,11 +506,69 @@ describe('Persisted native queue startup', () => {
     expect((await native.receipt()).submits).toEqual([])
     expect((await native.persisted()).queuedPrompts).toHaveLength(1)
     expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
+    // Only a view the reader has to close is worth telling them about.
+    expect(runtime.service.getSession(native.id)?.queueState?.message).toBe(
+      mode === 'overlay' ? 'Close the full-screen view in the terminal to deliver queued messages.' : undefined,
+    )
     await native.control('idle')
     const delivered = await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)
     expect(delivered.submits).toEqual(['Held for native readiness'])
     expect(runtime.creates).not.toHaveBeenCalled()
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
   }, 15_000)
+
+  it('delivers within 5 seconds of a native prompt returning from a long wait', async () => {
+    const native = await fixture()
+    await native.seed(['Held through a long wait'])
+    await native.control('waiting')
+    const runtime = native.connect()
+    await runtime.service.start()
+    // Each look that finds the prompt still unavailable waits longer before
+    // the next, as hours of background shells would.
+    for (let look = 0; look < 10; look += 1) {
+      runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
+      await runtime.service['drainTerminalQueue'](native.id)
+    }
+    expect(runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt - Date.now())
+      .toBeLessThanOrEqual(5_000)
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect((await native.receipt()).submits).toEqual([])
+
+    await native.control('idle')
+    const delivered = await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 5_000 + retryReadinessTimeout)
+    expect(delivered.submits).toEqual(['Held through a long wait'])
+  }, 20_000)
+
+  it.each([
+    ['empty', ''],
+    ['unreadable', undefined],
+    ['without a prompt', 'Native pane is still loading'],
+  ] as const)('tells the reader once a startup pane stays %s past the grace period', async (_case, pane) => {
+    const native = await fixture()
+    await native.seed(['Held until the pane shows a prompt'])
+    const runtime = native.connect()
+    const capture = runtime.terminal.capture.bind(runtime.terminal)
+    const captures = vi.spyOn(runtime.terminal, 'capture').mockResolvedValue(pane)
+    runtime.service['terminalComposerUnreadableGraceMs'] = 1_500
+    await runtime.service.start()
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+
+    const message = await eventually(
+      async () => runtime.service.getSession(native.id)?.queueState?.message,
+      (shown) => shown !== undefined,
+      retryReadinessTimeout,
+    )
+    expect(message).toBe(
+      'Copilot\'s prompt has not appeared in the terminal. Check the terminal to deliver queued messages.',
+    )
+    expect((await native.receipt()).pastes).toEqual([])
+
+    captures.mockImplementation(capture)
+    const delivered = await eventually(native.receipt, (receipt) => receipt.submits.length === 1, 5_000 + retryReadinessTimeout)
+    expect(delivered.submits).toEqual(['Held until the pane shows a prompt'])
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+  }, 30_000)
 
   it('requires Reopen after a waiting startup queue loses its managed owner', async () => {
     const native = await fixture()
@@ -519,11 +576,8 @@ describe('Persisted native queue startup', () => {
     await native.control('waiting')
     const runtime = native.connect()
     await runtime.service.start()
-    expect(runtime.service.getSession(native.id)?.queueState).toMatchObject({
-      state: 'waiting',
-      message: expect.stringMatching(/retry automatically/i),
-      retryAt: expect.any(String),
-    })
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
 
     await runtime.store.setOpen(native.id, false, true)
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
@@ -559,20 +613,18 @@ describe('Persisted native queue startup', () => {
     await runtime.service.refreshDiscovery()
     expect((await native.receipt()).submits).toEqual([])
 
-    const publishedQueueMessages: string[] = []
+    const publishedQueueMessages: Array<string | undefined> = []
     runtime.service.on('event', (event) => {
-      if (event.type === 'session.upserted' && event.session.id === native.id &&
-          event.session.queueState?.message) {
-        publishedQueueMessages.push(event.session.queueState.message)
+      if (event.type === 'session.upserted' && event.session.id === native.id) {
+        publishedQueueMessages.push(event.session.queueState?.message)
       }
     })
     await runtime.service.refreshDiscovery()
     await Promise.all([...runtime.service['terminalQueueWakeups'].values()])
-    expect(runtime.service.getSession(native.id)?.queueState?.message)
-      .toMatch(/retry automatically/i)
-    expect(publishedQueueMessages).toContain(
-      'Waiting for the terminal composer. Delivery will retry automatically.',
-    )
+    // Clients see Reopen go: the owner is back, and its shells end by themselves.
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(publishedQueueMessages.length).toBeGreaterThan(0)
+    expect(publishedQueueMessages.at(-1)).toBeUndefined()
 
     await native.control('idle')
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
@@ -727,8 +779,9 @@ describe('Persisted native queue startup', () => {
 
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
     expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
-    expect(runtime.service.getSession(native.id)?.queueState?.message)
-      .toMatch(/retry automatically/i)
+    // Waiting for the owner's prompt again, which shows nothing.
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
 
     await native.control('idle')
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
@@ -756,8 +809,9 @@ describe('Persisted native queue startup', () => {
 
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
     expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
-    expect(runtime.service.getSession(native.id)?.queueState?.message)
-      .toMatch(/retry automatically/i)
+    // Waiting for the owner's prompt again, which shows nothing.
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
 
     await native.control('idle')
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
@@ -799,8 +853,9 @@ describe('Persisted native queue startup', () => {
 
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
     expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
-    expect(runtime.service.getSession(native.id)?.queueState?.message)
-      .toMatch(/retry automatically/i)
+    // Waiting for the owner's prompt again, which shows nothing.
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
 
     await native.control('idle')
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
@@ -1027,8 +1082,9 @@ describe('Persisted native queue startup', () => {
 
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
     expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
-    expect(runtime.service.getSession(native.id)?.queueState?.message)
-      .toMatch(/retry automatically/i)
+    // Waiting for the owner's prompt again, which shows nothing.
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
 
     await native.control('idle')
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
@@ -1070,8 +1126,9 @@ describe('Persisted native queue startup', () => {
 
     expect(runtime.store.isManagedOpen(native.id)).toBe(true)
     expect(runtime.service.getSession(native.id)?.interruption).toBeUndefined()
-    expect(runtime.service.getSession(native.id)?.queueState?.message)
-      .toMatch(/retry automatically/i)
+    // Waiting for the owner's prompt again, which shows nothing.
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
 
     await native.control('idle')
     runtime.service['pendingTerminalQueueClaims'].get(native.id)!.retryAt = 0
@@ -1120,8 +1177,9 @@ describe('Persisted native queue startup', () => {
       await native.control('waiting')
       const runtime = native.connect()
       await runtime.service.start()
-      expect(runtime.service.getSession(native.id)?.queueState?.message)
-        .toMatch(/retry automatically/i)
+      // Waiting for the owner's prompt, which shows nothing.
+      expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+      expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
 
       await runtime.store.update(native.id, (session) => {
         if (retained === 'archived') {
@@ -1182,10 +1240,9 @@ describe('Persisted native queue startup', () => {
 
     await runtime.service.start()
 
-    expect(runtime.service.getSession(native.id)?.queueState).toMatchObject({
-      state: 'waiting',
-      message: expect.stringMatching(/retry automatically/i),
-    })
+    // The refusal was Copilot starting work, which ends by itself.
+    expect(runtime.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(runtime.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
     expect(runtime.service['startupTerminalQueues'].has(native.id)).toBe(true)
 
     await runtime.store.setOpen(native.id, false, true)
@@ -1240,18 +1297,20 @@ describe('Persisted native queue startup', () => {
     await native.control('waiting')
     await first.service.start()
     expect(first.service.getSession(native.id)).toMatchObject({
-      queueState: { state: 'waiting' },
       queuedPrompts: contents.map((content) => ({ content })),
     })
+    expect(first.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(first.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
     expect((await native.receipt()).submits).toEqual([])
     await first.service.stop()
 
     const restarted = native.connect()
     await restarted.service.start()
     expect(restarted.service.getSession(native.id)).toMatchObject({
-      queueState: { state: 'waiting' },
       queuedPrompts: contents.map((content) => ({ content })),
     })
+    expect(restarted.service.getSession(native.id)?.queueState).toBeUndefined()
+    expect(restarted.service['pendingTerminalQueueClaims'].has(native.id)).toBe(true)
     expect((await native.receipt()).submits).toEqual([])
 
     await native.control('idle')
@@ -1420,7 +1479,7 @@ describe('Persisted native queue startup', () => {
     expect(runtime.creates).not.toHaveBeenCalled()
   }, 15_000)
 
-  it.each(['stop', 'suspend', 'delete', 'clear'] as const)('respects %s during the startup observation boundary', async (action) => {
+  it.each(['stop', 'delete', 'clear'] as const)('respects %s during the startup observation boundary', async (action) => {
     const native = await fixture()
     await native.seed(['Do not outlive the owner'])
     const runtime = native.connect()
@@ -1435,12 +1494,11 @@ describe('Persisted native queue startup', () => {
     const starting = runtime.service.start()
     await entered.promise
     const changing = action === 'stop' ? runtime.service.stop()
-      : action === 'suspend' ? runtime.service.suspendSession(native.id).then((value) => ({ value }), (error: unknown) => ({ error }))
-        : action === 'delete' ? runtime.service.deleteSession(native.id)
-          : runtime.service.clearConversation(native.id).then((value) => ({ value }), (error: unknown) => ({ error }))
+      : action === 'delete' ? runtime.service.deleteSession(native.id)
+        : runtime.service.clearConversation(native.id).then((value) => ({ value }), (error: unknown) => ({ error }))
     release.finish()
     const [, changed] = await Promise.all([starting, changing])
-    if (action === 'clear' || action === 'suspend') {
+    if (action === 'clear') {
       expect(changed).toMatchObject({ error: { statusCode: 409 } })
       expect((await eventually(native.receipt, (receipt) => receipt.submits.length === 1, retryReadinessTimeout)).pastes)
         .toEqual(['Do not outlive the owner'])
@@ -1650,7 +1708,6 @@ describe('PR162 startup pump composition', () => {
 
   it.each([
     { lifecycle: 'stop', cleanup: 'retry' },
-    { lifecycle: 'suspend', cleanup: 'retry' },
     { lifecycle: 'delete', cleanup: 'retry' },
     { lifecycle: 'closed', cleanup: 'retry' },
     { lifecycle: 'unmanaged', cleanup: 'retry' },
@@ -1665,10 +1722,7 @@ describe('PR162 startup pump composition', () => {
       const { native, runtime, queued, claims } = context
       let changing: Promise<unknown> | undefined
       if (lifecycle === 'stop') changing = runtime.service.stop()
-      else if (lifecycle === 'suspend') {
-        changing = runtime.service.suspendSession(native.id)
-        await vi.waitFor(() => expect(runtime.service['suspendingSessions'].has(native.id)).toBe(true))
-      } else if (lifecycle === 'delete') {
+      else if (lifecycle === 'delete') {
         changing = runtime.service.deleteSession(native.id)
         await vi.waitFor(() => expect(runtime.service['deletingSessions'].has(native.id)).toBe(true))
       } else if (lifecycle === 'closed') await runtime.store.setOpen(native.id, false, true)

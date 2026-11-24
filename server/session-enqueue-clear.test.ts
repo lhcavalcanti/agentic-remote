@@ -146,7 +146,7 @@ async function fixture(provider: 'copilot' | 'claude' | 'native') {
     native = true
     copilot['externalSessionIds'].add(id)
     copilot['sessions'].delete(id)
-    copilot['externalCommandCache'].set(directory, { commands: [], expiresAt: Date.now() + 60_000 })
+    copilot['externalCommandCache'].set(directory, { commands: [], readAt: Date.now() })
     await store.setBackend(id, 'terminal')
   }
   fixtures.push({ directory, service })

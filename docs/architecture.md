@@ -155,6 +155,25 @@ TypeScript Agent SDK, local Claude session persistence, and the owning host's
 existing Claude authentication; Agentic Remote never transports that
 authentication to the hub or another node.
 
+### Tool call details
+
+A transcript row keeps only a preview of a call. Opening it reads the whole
+call from the owning computer: the hub's
+`GET /api/computers/:computerId/sessions/:sessionId/activities/:toolCallId`
+reaches the node's `GET /node-api/sessions/:sessionId/activities/:toolCallId`,
+which finds the call's `tool.execution_start` and `tool.execution_complete` in
+that session's Copilot event log through `readSessionEvents`. It answers the
+tool, its MCP server and tool, status, times, arguments, output and error,
+each cut at 256 KiB, with `404` when the log has no such call and `501` for a
+Claude Agent session or, from the hub, for a node that does not advertise
+`supportsActivityDetails`. A call with no completion is running, unless an
+`abort`, `session.error` or `session.shutdown` came after its start: then it
+is failed, as its transcript row is. The browser keeps a call only once its
+completion is logged. The session is found without copying it, and the
+log read shares any parse already under way. The hub answers with
+`Cache-Control: no-store`; a large call is gzipped once by the response
+compression below, on each hop.
+
 ### Read-only resource requests
 
 Skills/MCP reads carry cancellation through the browser request, hub forwarding,
@@ -181,6 +200,30 @@ mode and suspension state. Event-time invalidation prevents a batched
 change-and-revert from reviving an old catalog. Registration IDs and resource
 observations are not written to stored session or pairing state.
 
+### Response compression
+
+Hub (`/api`) and node (`/node-api`) responses pass through one `onSend` hook:
+JSON of at least 64 KiB is gzipped when the request's `Accept-Encoding` admits
+gzip, and carries `Vary: Accept-Encoding` either way. zlib runs on the libuv
+thread pool at level 4, never on the event loop, so a long transcript crosses
+the tunnel at about a fifth of its size. Smaller JSON, streams, non-JSON types,
+`HEAD`, `204`/`304`, responses that already have a `Content-Encoding` or
+`Cache-Control: no-transform`, and WebSocket upgrades (`/api/events`,
+`/node-api/events`) are sent as they are. So are workspace and Knowledge file
+reads (route `config: { compress: false }`), whose JSON can carry base64 media.
+The hub reaches nodes with `fetch`, which asks for gzip and decodes it, so the
+node-to-hub hop is compressed too. Payloads and routes are unchanged.
+
+### Terminal command catalogs
+
+A tmux session's slash commands are its folder's catalog, which only a
+temporary SDK session can read. `AgentService` keeps one per folder: fresh for
+60 s; then served at once while one background read replaces it; after 10
+minutes a request waits for a new read. Reads are single-flight per folder, a
+failed refresh keeps the previous catalog, and shutdown waits for a running
+read so its temporary session is removed. A known tmux session whose folder
+catalog is fresh is answered without process discovery.
+
 ## Failure behavior
 
 - A failed node request marks that computer offline.
@@ -198,7 +241,7 @@ observations are not written to stored session or pairing state.
 - A service restart reuses existing tmux processes. A full host reboot
   recreates missing tmux windows, with the same Copilot session IDs, for the
   sessions Agentic Remote manages: those it created, moved, reopened,
-  suspended, resumed, reconfigured, restarted, cleared, or recovered, or sent
+  reconfigured, restarted, cleared, or recovered, or sent
   a prompt, command, queued item, or answer. A Copilot process merely
   discovered in some other tmux pane is listed while it runs but is not
   recreated after it exits. Recovery intent recorded by earlier releases'
@@ -440,7 +483,7 @@ Queue wake-ups are coalesced and scheduled only after reply and drain locks
 have been released. A typed stale-reservation rejection requests a fresh pass
 over the committed canonical FIFO; authentication/storage failures stop that
 pass until a new trigger. Completion and durable reply settlement are both
-triggers. Every pass rechecks ownership, pending cards, and stop/suspend/delete
+triggers. Every pass rechecks ownership, pending cards, and stop/close/delete
 state before committing or dispatching work.
 
 `SessionStore.close()` fences new mutations and uploads, drains admitted

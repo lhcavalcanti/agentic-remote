@@ -15,7 +15,6 @@ interface SessionOrderState {
    * appended session would lock every device out of its saved arrangement.
    */
   bootstrapped: boolean
-  showSuspended: boolean
   showHidden: boolean
   /**
    * Sessions left out of the Sessions list. A key is only added while its
@@ -32,7 +31,6 @@ interface SessionOrderState {
 
 /** The shared list visibility a client may change; omitted fields keep their value. */
 export interface SessionVisibility {
-  showSuspended?: boolean
   showHidden?: boolean
 }
 
@@ -78,7 +76,6 @@ export class SessionOrderStore {
     version: STATE_VERSION,
     revision: 0,
     bootstrapped: false,
-    showSuspended: true,
     showHidden: false,
     hidden: [],
     unread: [],
@@ -142,7 +139,8 @@ export class SessionOrderStore {
       version: STATE_VERSION,
       revision: typeof parsed.revision === 'number' && parsed.revision >= 0 ? parsed.revision : 0,
       bootstrapped: parsed.bootstrapped === true,
-      showSuspended: parsed.showSuspended !== false,
+      // A file from when sessions could be suspended also says whether to
+      // show those; that is ignored, and the next write leaves it out.
       // A file from before sessions could be hidden has neither field.
       showHidden: parsed.showHidden === true,
       hidden: laneFrom(parsed.hidden) ?? [],
@@ -156,7 +154,6 @@ export class SessionOrderStore {
     return {
       revision: this.state.revision,
       bootstrapped: this.state.bootstrapped,
-      showSuspended: this.state.showSuspended,
       showHidden: this.state.showHidden,
       hidden: [...this.state.hidden],
       unread: [...this.state.unread],
@@ -169,22 +166,12 @@ export class SessionOrderStore {
     return this.state.bootstrapped
   }
 
-  /** Shares suspended- and hidden-session visibility across every browser on this hub. */
+  /** Shares hidden-session visibility across every browser on this hub. */
   async setVisibility(visibility: SessionVisibility): Promise<SessionOrderSnapshot> {
     return this.commit((_order, state) => {
-      let changed = false
-      if (
-        visibility.showSuspended !== undefined &&
-        state.showSuspended !== visibility.showSuspended
-      ) {
-        state.showSuspended = visibility.showSuspended
-        changed = true
-      }
-      if (visibility.showHidden !== undefined && state.showHidden !== visibility.showHidden) {
-        state.showHidden = visibility.showHidden
-        changed = true
-      }
-      return changed
+      if (visibility.showHidden === undefined || state.showHidden === visibility.showHidden) return false
+      state.showHidden = visibility.showHidden
+      return true
     })
   }
 
@@ -492,7 +479,6 @@ export class SessionOrderStore {
         version: STATE_VERSION,
         revision: previous.revision + 1,
         bootstrapped: staged.bootstrapped,
-        showSuspended: staged.showSuspended,
         showHidden: staged.showHidden,
         hidden: staged.hidden,
         unread: staged.unread,

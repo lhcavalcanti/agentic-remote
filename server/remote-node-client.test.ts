@@ -444,7 +444,6 @@ describe('paired-node redirect isolation', () => {
       () => remote.createSession({ cwd: '/fixture', provider: 'copilot', terminalBacked: true }),
       () => remote.activateSession('fixture'),
       () => remote.clearConversation('fixture'),
-      () => remote.resumeSession('fixture'),
       () => remote.restartSession('fixture'),
       () => remote.moveToTerminal('fixture'),
       () => remote.sendMessage('fixture', { content: 'Startup admission' }),

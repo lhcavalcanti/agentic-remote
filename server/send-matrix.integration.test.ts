@@ -103,7 +103,8 @@ const backgroundShellsTypingFooter = ' ● Waitin… · 136 B ctrl+c interrupt �
 
 type PaneState = 'idle' | 'working' | 'busy' | 'background' | 'shells' | keyof typeof dialogs
 
-interface Row { pane: PaneState; status: SessionStatus }
+// `logged` is what Copilot's event log says when it differs from the app.
+interface Row { pane: PaneState; status: SessionStatus; logged?: SessionStatus }
 
 // The app status is what the browser sees and feeds to the send policy.
 const rows = {
@@ -112,6 +113,11 @@ const rows = {
   // #433: the agent started before the app saw it, so the policy still asks
   // for draft replacement while the pane is working.
   'working, app still idle': { pane: 'working', status: 'idle' },
+  // The turn ended with shells it started still running, so Copilot keeps
+  // its busy row beside the prompt (#639).
+  'background shells': { pane: 'shells', status: 'idle' },
+  // The same row, while the log has a turn open the app has not seen.
+  'background shells, turn open': { pane: 'shells', status: 'idle', logged: 'running' },
   question: { pane: 'question', status: 'waiting' },
   permission: { pane: 'permission', status: 'waiting' },
   form: { pane: 'form', status: 'waiting' },
@@ -195,6 +201,12 @@ const table: Array<[RowName, Draft, 'Send' | 'Queue', Expected]> = [
   ['working, app still idle', 'terminal-typed', 'Send', refused(CLEAR_REFUSED)],
   ['working, app still idle', 'terminal-typed', 'Queue', queued],
 
+  // A message whose paste Copilot drew too late is left in the prompt; Send
+  // replaces it while the event log has only the shells left running.
+  ['background shells', 'none', 'Send', sent],
+  ['background shells', 'terminal-typed', 'Send', replaced],
+  ['background shells, turn open', 'terminal-typed', 'Send', refused(CLEAR_REFUSED)],
+
   // Dialog and overlay Queue cells are refused today; see the todos below.
   ...(['question', 'permission', 'form', 'overlay'] as const).flatMap((row) =>
     (['none', 'app-only', 'terminal-typed'] as const).flatMap((draft) =>
@@ -255,7 +267,7 @@ let directory = ''
 const services: AgentService[] = []
 const tmuxSessions: string[] = []
 
-async function terminal(pane: PaneState, status: SessionStatus, draft: string) {
+async function terminal(pane: PaneState, status: SessionStatus, draft: string, logged = status) {
   const id = randomUUID()
   const cell = path.join(directory, id)
   const workspace = path.join(cell, 'workspace')
@@ -348,7 +360,7 @@ draw()
           { type: 'assistant.turn_end', id: 'turn-end', parentId: 'turn', timestamp: '2026-10-20T00:00:03.000Z', data: {} },
         ]
       : []),
-    ...(status === 'idle'
+    ...(logged === 'idle'
       ? [{ type: 'session.idle', id: 'idle', parentId: 'turn', timestamp: '2026-10-20T00:00:02.000Z', data: {} }]
       : []),
   ].map((event) => JSON.stringify(event)).join('\n') + '\n')
@@ -462,9 +474,10 @@ describe('send matrix with the app’s real send options', () => {
   })
 
   it.each(table)('%s pane · %s draft · %s', async (rowName, draft, action, expected) => {
-    const { pane, status } = rows[rowName]
+    const row: Row = rows[rowName]
+    const { pane, status } = row
     const terminalDraft = draft === 'terminal-typed' ? typed : ''
-    const fixture = await terminal(pane, status, terminalDraft)
+    const fixture = await terminal(pane, status, terminalDraft, row.logged)
 
     const attempt = sendLikeTheApp(fixture, status, action === 'Queue')
 

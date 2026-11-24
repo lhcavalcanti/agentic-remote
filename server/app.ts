@@ -41,6 +41,7 @@ import {
 import { KnowledgeStore } from './knowledge-store.js'
 import { NodeIdentityStore } from './node-identity.js'
 import { registerNodeRoutes } from './node-routes.js'
+import { registerResponseCompression } from './response-compression.js'
 import { resolveDataDirectory } from './paths.js'
 import { PushNotificationService } from './push-notification-service.js'
 import { NotificationStore } from './notification-store.js'
@@ -205,6 +206,7 @@ export async function buildApp(
     }
   }
   const app = Fastify({ logger: options.logger ?? true })
+  registerResponseCompression(app)
   if (hubFlags) app.log.info({ hubFlags }, 'Hub feature flags')
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
   const startupPhases = options.startupPhases ?? silentStartupPhases

@@ -1238,13 +1238,6 @@ async function fixture(ids = ['pending'], backend: 'terminal' | 'sdk' = 'termina
     send: vi.fn(async () => true),
     capture: vi.fn<NonNullable<TerminalSessionController['capture']>>(async () => undefined),
     cancel: vi.fn(async () => true),
-    stop: vi.fn<NonNullable<TerminalSessionController['stop']>>(async (id, beforeStop) => {
-      const error = ownership.probeErrors.get(id)
-      if (error) throw error
-      await beforeStop?.()
-      ownership.owners.delete(id)
-      return true
-    }),
   }
   const stopper = vi.fn(async (id: string) => {
     const error = ownership.probeErrors.get(id)
@@ -1928,29 +1921,6 @@ describe('PR167 reviewed-parent composition', () => {
     expect(f.terminal.send).toHaveBeenCalledExactlyOnceWith('pending', 'Retain through failed Clear', false)
   })
 
-  it('keeps original startup intent when suspension is refused during a deferred queue wake', async () => {
-    const f = await fixture()
-    await f.store.enqueuePrompt('pending', prompt('Keep original startup intent'))
-    await f.service.start()
-    const entered = gate(undefined)
-    const release = gate(undefined)
-    const read = f.store.readAfterWrites.bind(f.store)
-    vi.spyOn(f.store, 'readAfterWrites').mockImplementationOnce(async (...args) => {
-      entered.finish(undefined)
-      await release.pending
-      return read(...args)
-    })
-    const suspension = expect(f.service.suspendSession('pending')).rejects.toMatchObject({ statusCode: 409 })
-    await entered.pending
-    expect(f.service['suspendingSessions'].has('pending')).toBe(true)
-    await f.drainNow()
-    release.finish(undefined)
-    await suspension
-    expect(f.service['startupTerminalQueues'].has('pending')).toBe(true)
-    expect(f.store.get('pending')?.suspended).not.toBe(true)
-    expect(f.terminal.send).not.toHaveBeenCalled()
-  })
-
   it('does not turn dropped uncertain startup demand into permission to create a missing owner', async () => {
     const f = await fixture()
     await f.store.enqueuePrompt('pending', prompt('Held behind uncertain recovery'))
@@ -2315,7 +2285,7 @@ describe('Deferred terminal ownership recovery', () => {
     expect(f.terminal.create.mock.calls.map(([id]) => id)).toEqual(['healthy', 'pending'])
   })
 
-  it.each(['stop', 'delete', 'suspend'] as const)(
+  it.each(['stop', 'delete'] as const)(
     'orders %s behind a failed pending probe without launching a runtime',
     async (operation) => {
       const f = await fixture()
@@ -2326,14 +2296,9 @@ describe('Deferred terminal ownership recovery', () => {
       await probe.entered
       const changing = operation === 'stop'
         ? f.service.stop()
-        : operation === 'delete'
-          ? f.service.deleteSession('pending')
-          : f.service.suspendSession('pending')
-      const changed = operation === 'suspend'
-        ? expect(changing).rejects.toThrow(/discovery/)
-        : expect(changing).resolves.toBeUndefined()
+        : f.service.deleteSession('pending')
+      const changed = expect(changing).resolves.toBeUndefined()
       expect(f.stopper).not.toHaveBeenCalled()
-      expect(f.terminal.stop).not.toHaveBeenCalled()
       probe.fail(new Error('Probe became unreadable'))
       await Promise.all([refreshing, changed])
       expect(f.terminal.create).not.toHaveBeenCalled()
@@ -2344,15 +2309,6 @@ describe('Deferred terminal ownership recovery', () => {
         expect(f.terminal.create).not.toHaveBeenCalled()
       } else {
         expect((await f.persisted()).sessions.pending.managedOpen).toBe(true)
-        if (operation === 'suspend') {
-          expect(f.store.get('pending')?.suspended).not.toBe(true)
-          await f.service.refreshDiscovery()
-          await expect(f.service.suspendSession('pending')).resolves.toMatchObject({
-            suspended: true, isOpen: true,
-          })
-          await f.service.refreshDiscovery()
-          expect(f.terminal.create).toHaveBeenCalledOnce()
-        }
       }
     },
   )
@@ -2398,7 +2354,7 @@ describe('Deferred terminal ownership recovery', () => {
     )
   })
 
-  it.each(['closed', 'suspended', 'deleted'] as const)(
+  it.each(['closed', 'deleted'] as const)(
     'rechecks %s eligibility after a pending ownership probe',
     async (change) => {
       const f = await fixture()
@@ -2408,7 +2364,6 @@ describe('Deferred terminal ownership recovery', () => {
       const refreshing = f.service.refreshDiscovery()
       await probe.entered
       if (change === 'closed') await f.store.setOpen('pending', false, true)
-      else if (change === 'suspended') await f.store.setSuspended('pending', true)
       else await f.store.remove('pending')
       probe.finish(false)
       await refreshing
@@ -2416,9 +2371,6 @@ describe('Deferred terminal ownership recovery', () => {
 
       expect(f.terminal.create).not.toHaveBeenCalled()
       expect(f.store.shouldRecoverTerminalSession('pending')).toBe(false)
-      if (change === 'suspended') {
-        expect(f.store.get('pending')).toMatchObject({ suspended: true, isOpen: true })
-      }
     },
   )
 
@@ -2798,7 +2750,6 @@ describe('Session retention safety', () => {
     ['configure runtime', (f: Awaited<ReturnType<typeof fixture>>) => f.service.configureRuntime('pending', { model: 'fixture-model' } as never)],
     ['clear', (f: Awaited<ReturnType<typeof fixture>>) => f.service.clearConversation('pending')],
     ['recover', (f: Awaited<ReturnType<typeof fixture>>) => f.service.recoverConversation('pending', 'manual')],
-    ['suspend', (f: Awaited<ReturnType<typeof fixture>>) => f.service.suspendSession('pending')],
   ])('refuses to %s an archived session instead of attaching a hidden owner', async (_name, act) => {
     const f = await fixture(['pending'], 'sdk')
     f.ownership.aggregateError = undefined
@@ -2812,7 +2763,6 @@ describe('Session retention safety', () => {
     expect(f.client.createSession).not.toHaveBeenCalled()
     expect(f.terminal.create).not.toHaveBeenCalled()
     expect(f.store.get('pending')).toMatchObject({ isOpen: false, archivedAt: timestamp })
-    expect(f.store.get('pending')?.suspended).not.toBe(true)
   })
 
   it('publishes discovery changes only for open or newly archived and interrupted records', async () => {
@@ -2834,21 +2784,6 @@ describe('Session retention safety', () => {
     expect(upserted).not.toContain('cli-only')
     expect(f.store.get('pending')?.archivedAt).toBeDefined()
     expect(upserted).toContain('pending')
-  })
-
-  it('refuses to resume an archived suspended terminal without reopening it', async () => {
-    const f = await fixture()
-    f.ownership.aggregateError = undefined
-    await f.service.start()
-    f.terminal.create.mockClear()
-    await f.store.setSuspended('pending', true)
-    await f.store.update('pending', (session) => {
-      session.isOpen = false
-      session.archivedAt = timestamp
-    })
-    await expect(f.service.resumeSession('pending')).rejects.toMatchObject({ statusCode: 409 })
-    expect(f.terminal.create).not.toHaveBeenCalled()
-    expect(f.store.get('pending')).toMatchObject({ isOpen: false, suspended: true, archivedAt: timestamp })
   })
 
   it('refuses to restart an interrupted SDK session until it is reopened', async () => {

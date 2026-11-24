@@ -1,4 +1,4 @@
-import { readdir, readFile, readlink, realpath } from 'node:fs/promises'
+import { lstat, readdir, readFile, readlink, realpath, stat } from 'node:fs/promises'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as activeSessions from './active-sessions.js'
 import { TmuxTerminalSessionController } from './terminal-session.js'
@@ -12,6 +12,7 @@ vi.mock('node:child_process', () => ({
   }),
 }))
 vi.mock('node:fs/promises', () => ({
+  lstat: vi.fn(),
   readdir: vi.fn(),
   readFile: vi.fn(),
   readlink: vi.fn(),
@@ -86,6 +87,33 @@ function server(name = socket, state = 'S'): void {
   links.set('/proc/123/ns/mnt', 'mnt:[1]')
 }
 
+/** A server in a container's or sandbox's mount namespace, listening at `name` as it sees it. */
+function containedServer(name: string): void {
+  server(name)
+  links.set('/proc/123/ns/mnt', 'mnt:[2]')
+}
+
+/**
+ * Directories by the path each is reached by -- ours directly, a contained
+ * server's through its root -- as [device, inode], a symbolic link, or denied.
+ */
+function places(entries: Record<string, [device: number, inode: number] | 'link' | 'denied'>): void {
+  const lookup = async (file: unknown) => {
+    const entry = entries[String(file)]
+    if (!entry) {
+      throw errno('ENOENT')
+    }
+    if (entry === 'denied') {
+      throw errno('EACCES')
+    }
+    return entry === 'link'
+      ? { isDirectory: () => false, dev: 0n, ino: 0n }
+      : { isDirectory: () => true, dev: BigInt(entry[0]), ino: BigInt(entry[1]) }
+  }
+  vi.mocked(stat).mockImplementation(lookup as never)
+  vi.mocked(lstat).mockImplementation(lookup as never)
+}
+
 describe('tmux absence evidence', () => {
   it.each([
     missing(),
@@ -127,10 +155,54 @@ describe('tmux absence evidence', () => {
     expect(await noTmuxServer(missing())).toBe(false)
   })
 
-  it('does not compare pathnames from a different mount namespace', async () => {
-    server('/owned/other')
-    links.set('/proc/123/ns/mnt', 'mnt:[2]')
-    expect(await noTmuxServer(missing())).toBe(false)
+  describe('beside a server in another mount namespace', () => {
+    it('places its socket as that server sees it, not by pathname', async () => {
+      // The same pathname is the container's own directory.
+      containedServer(socket)
+      places({
+        '/owned/tmux-1000': [1, 10],
+        '/proc/123/root': [2, 1],
+        '/proc/123/root/owned': [2, 2],
+        '/proc/123/root/owned/tmux-1000': [2, 3],
+      })
+      expect(await noTmuxServer(missing())).toBe(true)
+    })
+
+    it('refuses one listening in our socket directory, shared under another path', async () => {
+      containedServer('/shared/work project')
+      places({ '/owned/tmux-1000': [1, 10], '/proc/123/root': [2, 1], '/proc/123/root/shared': [1, 10] })
+      expect(await noTmuxServer(missing())).toBe(false)
+    })
+
+    it('accepts one proven to use another socket in that directory', async () => {
+      containedServer('/shared/other')
+      places({ '/owned/tmux-1000': [1, 10], '/proc/123/root': [2, 1], '/proc/123/root/shared': [1, 10] })
+      expect(await noTmuxServer(missing())).toBe(true)
+    })
+
+    it('refuses rather than follow a symbolic link toward its socket', async () => {
+      containedServer('/link/work project')
+      places({ '/owned/tmux-1000': [1, 10], '/proc/123/root': [2, 1], '/proc/123/root/link': 'link' })
+      expect(await noTmuxServer(missing())).toBe(false)
+    })
+
+    it('refuses when its socket directory is gone', async () => {
+      containedServer('/removed/work project')
+      places({ '/owned/tmux-1000': [1, 10], '/proc/123/root': [2, 1] })
+      expect(await noTmuxServer(missing())).toBe(false)
+    })
+
+    it('refuses when its root cannot be inspected', async () => {
+      containedServer('/shared/other')
+      places({ '/owned/tmux-1000': [1, 10], '/proc/123/root': 'denied', '/proc/123/root/shared': [2, 2] })
+      expect(await noTmuxServer(missing())).toBe(false)
+    })
+
+    it('still refuses a relative socket name', async () => {
+      containedServer('relative/work project')
+      places({ '/owned/tmux-1000': [1, 10], '/proc/123/root': [2, 1], '/proc/123/root/relative': [2, 2] })
+      expect(await noTmuxServer(missing())).toBe(false)
+    })
   })
 
   it('rechecks sockets after inspecting processes', async () => {
@@ -208,6 +280,23 @@ describe('tmux absence evidence', () => {
       }
       return links.get(String(file)) ?? ''
     })
+    expect(await noTmuxServer(missing())).toBe(false)
+  })
+
+  it('reads past a client connection the server closes during the check', async () => {
+    const other = '/owned/tmux-1000/other'
+    files.set('/proc/net/unix', header + listener(other))
+    server(other)
+    // Descriptor 7 was listed, then closed before it could be read.
+    directories.set('/proc/123/fd', ['6', '7'])
+    expect(await noTmuxServer(missing())).toBe(true)
+  })
+
+  it('refuses a server whose listener closes during the check', async () => {
+    const other = '/owned/tmux-1000/other'
+    files.set('/proc/net/unix', header + listener(other))
+    server(other)
+    links.delete('/proc/123/fd/6')
     expect(await noTmuxServer(missing())).toBe(false)
   })
 
@@ -301,6 +390,17 @@ describe('tmux absence callers', () => {
     await expect(activeSessions.findActiveCopilotProcesses()).resolves.toEqual([])
   })
 
+  it('allows discovery on a cold machine beside a container running tmux', async () => {
+    containedServer('/tmp/tmux-0/default')
+    places({
+      '/owned/tmux-1000': [1, 10],
+      '/proc/123/root': [2, 1],
+      '/proc/123/root/tmp': [2, 2],
+      '/proc/123/root/tmp/tmux-0': [2, 3],
+    })
+    await expect(activeSessions.findActiveCopilotProcesses()).resolves.toEqual([])
+  })
+
   it('keeps a missing executable an availability condition', async () => {
     execute.mockImplementation(async (command) => {
       if (command === 'ps') {
@@ -327,26 +427,6 @@ describe('tmux absence callers', () => {
     )
     expect(execute).toHaveBeenCalledTimes(1)
     expect(execute.mock.calls[0][1][0]).toBe('list-sessions')
-  })
-
-  it('refuses terminal stop before confirming any teardown', async () => {
-    files.set('/proc/net/unix', header + listener())
-    const controller = new TmuxTerminalSessionController()
-    const confirm = vi.fn()
-    await expect(controller.stop('owned-session', confirm)).rejects.toThrow(
-      'No such file or directory',
-    )
-    expect(confirm).not.toHaveBeenCalled()
-  })
-
-  it('does not accept a lost socket as proof that no panes remain', async () => {
-    execute.mockResolvedValue({ stdout: '', stderr: '' })
-    const controller = new TmuxTerminalSessionController()
-    expect(await controller.has('owned-session')).toBe(false)
-    execute.mockRejectedValue(missing())
-    files.set('/proc/net/unix', header + listener())
-
-    await expect(controller.stop('owned-session')).resolves.toBe(false)
   })
 
   it('propagates lost socket failures when looking up a known pane owner', async () => {

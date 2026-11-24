@@ -132,7 +132,6 @@ describe('ManagerProactiveInbox', () => {
       queuedCount: 0,
       hasPendingRequest: false,
       isOpen: true,
-      suspended: false,
       recovering: false,
       ...overrides,
     }
@@ -411,26 +410,20 @@ describe('ManagerProactiveInbox', () => {
     await inbox.observe(observation({
       revision: 4,
       status: 'idle',
-      suspended: true,
-    }))
-    await inbox.observe(observation({
-      revision: 5,
-      status: 'idle',
       recovering: true,
     }))
     expect(inbox.pending()).toEqual([])
 
-    await inbox.observe(observation({ revision: 6, status: 'idle' }))
+    await inbox.observe(observation({ revision: 5, status: 'idle' }))
 
     expect(inbox.pending()).toMatchObject([
-      { kind: 'finished', taskGeneration: 1, revision: 6 },
+      { kind: 'finished', taskGeneration: 1, revision: 5 },
     ])
   })
 
   it.each([
     ['queued input', { queuedCount: 1 }],
     ['a closed session', { isOpen: false }],
-    ['suspension', { suspended: true }],
     ['recovery', { recovering: true }],
   ])('keeps a task active when an error coincides with %s', async (_label, guard) => {
     const inbox = await openInbox()

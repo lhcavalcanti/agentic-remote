@@ -165,9 +165,10 @@ import {
   useSessionKnowledgeRoot,
 } from './use-session-knowledge-root'
 import { SessionActions } from './SessionActions'
+import { ActivityRow } from './ActivityRow'
+import { activityKindFromMessage, activityPresentation } from './activity-presentation'
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
-import { SubagentCount } from './SubagentCount'
 import { SessionRetentionSettings } from './SessionRetentionSettings'
 import { SessionResources } from './SessionResources'
 import {
@@ -224,8 +225,7 @@ import {
 } from '../shared/side-question'
 import type {
   AgentProvider,
-  ActivityKind,
-  ActivityStatus,
+  BackgroundTask,
   BackgroundTaskSnapshot,
   ChatMessage,
   ComputerSummary,
@@ -305,12 +305,9 @@ import {
   renameSession,
   readWorkspaceFile,
   restartSession,
-  resumeSession,
-  saveSessionVisibility,
   saveHiddenSessionVisibility,
   saveSessionHidden,
   saveSessionUnread,
-  suspendSession,
   fetchSessionOrder,
   fetchSettingsProfile,
   importSettingsProfile,
@@ -407,6 +404,8 @@ import { PauseFollowingContext } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
 import { SessionPatchReceiver } from './session-patches'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
+import { BackgroundTasksStatus } from './features/background-tasks/BackgroundTasksStatus'
+import { backgroundTaskStopRequest } from './features/background-tasks/task-summary'
 import {
   PermissionCard,
   StaleInteractionRecoveryCard,
@@ -677,6 +676,15 @@ function subscribePrefersLight(notify: () => void): () => void {
 
 function prefersLightNow(): boolean {
   return typeof window.matchMedia === 'function' && Boolean(window.matchMedia(prefersLightQuery)?.matches)
+}
+
+const drawerQuery = '(max-width: 960px)'
+
+/** Whether the sidebar is the drawer that slides over everything. */
+function drawerIsOverlay(): boolean {
+  return typeof window.matchMedia === 'function'
+    ? window.matchMedia(drawerQuery).matches
+    : window.innerWidth <= 960
 }
 
 function settingsNotice(state: SettingsProfileState): string | undefined {
@@ -1709,251 +1717,6 @@ function ChangeDirectoryDialog({
   )
 }
 
-function activityKindFromMessage(message: ChatMessage): ActivityKind {
-  if (message.activityKind) {
-    return message.activityKind
-  }
-  const title = message.content.split('\n', 1)[0] || ''
-  if (/^Skill \(/.test(title)) {
-    return 'skill'
-  }
-  if (/^Agent \(/.test(title)) {
-    return 'agent'
-  }
-  return 'tool'
-}
-
-function activityStatusFromMessage(message: ChatMessage): ActivityStatus {
-  return message.activityStatus || 'running'
-}
-
-function compactActivityText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
-}
-
-function activityPresentation(message: ChatMessage): {
-  title: string
-  kind: ActivityKind
-  name: string
-  origin?: string
-  summary?: string
-  arguments?: string
-} {
-  const [title = '', ...detailLines] = message.content.split('\n')
-  const detail = compactActivityText(detailLines.join('\n'))
-  const kind = activityKindFromMessage(message)
-  if (kind === 'skill') {
-    const match = title.match(/^Skill \((.+)\)$/)
-    return {
-      title,
-      kind,
-      name: match ? `skill(${match[1]})` : 'skill',
-      arguments: detail || undefined,
-    }
-  }
-  if (kind === 'agent') {
-    const match = title.match(/^Agent \(([^)]+)\)(?: · (.*))?$/)
-    return {
-      title,
-      kind,
-      name: match ? `agent(${match[1]})` : 'agent',
-      summary: match?.[2],
-      arguments: detail || undefined,
-    }
-  }
-  if (title.startsWith('MCP ·')) {
-    const parts = title.split(' · ')
-    const hasServer = parts.length > 2
-    const server = hasServer ? parts[1] || '' : ''
-    const operation = hasServer ? parts[2] || 'tool' : parts[1] || 'tool'
-    return {
-      title,
-      kind,
-      name: operation,
-      origin: server ? `(MCP: ${server})` : '(MCP)',
-      summary: parts.slice(3).join(' · ') || undefined,
-      arguments: detail || undefined,
-    }
-  }
-  const [name = 'tool', ...summaryParts] = title.split(' · ')
-  return {
-    title,
-    kind,
-    name,
-    summary: summaryParts.join(' · ') || undefined,
-    arguments: detail || undefined,
-  }
-}
-
-function formatActivityDuration(durationMs?: number): string {
-  if (
-    durationMs === undefined ||
-    !Number.isFinite(durationMs) ||
-    durationMs < 0
-  ) {
-    return '—'
-  }
-  const seconds = durationMs / 1_000
-  if (seconds < 1) {
-    return `${Math.round(durationMs)}ms`
-  }
-  if (seconds < 10) {
-    return `${seconds.toFixed(1)}s`
-  }
-  if (seconds < 60) {
-    return `${Math.round(seconds)}s`
-  }
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = Math.round(seconds % 60)
-  return `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s`
-}
-
-function activityStatusGlyph(status: ActivityStatus): string {
-  switch (status) {
-    case 'completed':
-      return '●'
-    case 'failed':
-      return '×'
-    case 'pending':
-      return '·'
-    case 'running':
-      return '○'
-  }
-}
-
-function activityStatusLabel(status: ActivityStatus): string {
-  switch (status) {
-    case 'completed':
-      return 'Completed'
-    case 'failed':
-      return 'Failed'
-    case 'pending':
-      return 'Pending'
-    case 'running':
-      return 'Running'
-  }
-}
-
-function ActivityMessage({ message }: { message: ChatMessage }) {
-  const presentation = activityPresentation(message)
-  const status = activityStatusFromMessage(message)
-  const isMcp = message.content.startsWith('MCP ·')
-  const isAgent = presentation.kind === 'agent'
-  const isHeading =
-    presentation.kind === 'skill' || presentation.kind === 'agent'
-  const result =
-    message.activityResult ||
-    (status === 'failed'
-      ? 'Error: tool failed; inspect the session log'
-      : isAgent && status !== 'completed'
-        ? 'still working'
-        : undefined)
-  const legacyTitle = presentation.title
-  const duration = formatActivityDuration(message.activityDurationMs)
-  const accessibleDetails = [
-    `${activityStatusLabel(status)}: ${legacyTitle}`,
-    result,
-    message.activityDurationMs === undefined ? undefined : `${duration} duration`,
-  ]
-    .filter(Boolean)
-    .join('; ')
-  return (
-    <div
-      aria-label={accessibleDetails}
-      className={`activity-message activity-message--${status}${
-        isMcp ? ' activity-message--mcp' : ''
-      }${isAgent ? ' activity-message--agent' : ''}${
-        isHeading ? ' activity-message--heading' : ''
-      }`}
-      aria-level={isHeading ? 3 : undefined}
-      role={isHeading ? 'heading' : undefined}
-      title={legacyTitle}
-    >
-      <span
-        aria-hidden="true"
-        className="activity-message__glyph"
-      >
-        {activityStatusGlyph(status)}
-      </span>
-      <span className="activity-message__body">
-        <strong className="activity-message__name">{presentation.name}</strong>
-        {presentation.origin ? (
-          <span className="activity-message__origin">
-            {' '}
-            {presentation.origin}
-          </span>
-        ) : null}
-        {presentation.summary ? (
-          <>
-            <span className="activity-message__separator"> · </span>
-            <span className="activity-message__summary">
-              {compactActivityText(presentation.summary)}
-            </span>
-          </>
-        ) : null}
-        {presentation.arguments ? (
-          <>
-            <span className="activity-message__separator"> · </span>
-            <span className="activity-message__arguments">
-              {presentation.arguments}
-            </span>
-          </>
-        ) : null}
-        {result ? (
-          <>
-            <span className="activity-message__separator"> · </span>
-            <span
-              className="activity-message__result"
-              title={result}
-            >
-              {compactActivityText(result)}
-            </span>
-          </>
-        ) : null}
-      </span>
-      <span
-        aria-label={
-          message.activityDurationMs === undefined
-            ? 'No duration recorded'
-            : `${duration} duration`
-        }
-        className="activity-message__duration"
-      >
-        {duration}
-      </span>
-      {legacyTitle !== presentation.name ? (
-        <span
-          aria-hidden="true"
-          className="activity-message__legacy-title"
-        >
-          {legacyTitle}
-        </span>
-      ) : null}
-    </div>
-  )
-}
-
-function ActivityArticle({
-  message,
-  currentToolId,
-}: {
-  message: ChatMessage
-  currentToolId?: string
-}) {
-  return (
-    <article
-      className={`message message--activity ${
-        message.id === currentToolId
-          ? 'tool-activity-slot'
-          : 'tool-activity-history'
-      }`}
-      key={message.id}
-    >
-      <ActivityMessage message={message} />
-    </article>
-  )
-}
-
 /**
  * One transcript row. Each parses its own Markdown, so a memo keeps a new
  * message from re-parsing every earlier one: the content is immutable once
@@ -2050,12 +1813,46 @@ function PendingEchoMessage({ content }: { content: string }) {
  */
 const RENDERED_HISTORY = 250
 
+/**
+ * The tool rows the reader has opened in a session: true while open, false
+ * once closed again where the window had moved past it, which keeps it where
+ * the reader left it instead of vanishing before it is brought back into view.
+ */
+type ActivityRowStates = Readonly<Record<string, boolean>>
+
+/** The rows without the closed ones kept in place, in one session or all. */
+function releaseClosedActivityRows(
+  sessions: Record<string, ActivityRowStates>,
+  only?: string,
+): Record<string, ActivityRowStates> {
+  let released = sessions
+  for (const [key, rows] of Object.entries(sessions)) {
+    if (
+      (only !== undefined && key !== only) ||
+      Object.values(rows).every((open) => open)
+    ) {
+      continue
+    }
+    if (released === sessions) {
+      released = { ...sessions }
+    }
+    released[key] = Object.fromEntries(
+      Object.entries(rows).filter(([, open]) => open),
+    )
+  }
+  return released
+}
+
 const ConversationMessages = memo(function ConversationMessages({
   messages: allMessages,
   pendingEchoes,
   currentToolId,
   showAll,
   onShowAll,
+  computerId,
+  sessionId,
+  activityRows,
+  onToggleActivity,
 }: {
   messages: ChatMessage[]
   pendingEchoes: PendingEcho[]
@@ -2067,6 +1864,13 @@ const ConversationMessages = memo(function ConversationMessages({
   // reader had opened would close under them.
   showAll: boolean
   onShowAll: () => void
+  computerId: string
+  sessionId: string
+  // The tool rows the reader has opened, held by the conversation for the
+  // same reason as `showAll`.
+  activityRows?: ActivityRowStates
+  // Whether the row came along past the cut, so a closed one can be kept.
+  onToggleActivity: (messageId: string, pastWindow: boolean) => void
 }) {
   const cut = showAll
     ? 0
@@ -2075,8 +1879,11 @@ const ConversationMessages = memo(function ConversationMessages({
   // Some rows from before the cut have to come with it. An activity that is
   // still running is one: the separate activity indicator is suppressed while
   // one exists, so dropping the row leaves nothing on screen saying anything
-  // is happening. The parent of a visible child is another, or the child is
-  // lifted out of the group it belongs to and read as work of its own.
+  // is happening. One the reader has opened is another, or it vanishes from
+  // under them, and so is one they closed again there, or it vanishes before
+  // it can be brought back into view. The parent of a visible child is a
+  // third, or the child is lifted out of the group it belongs to and read as
+  // work of its own.
   const carried: ChatMessage[] = []
   if (cut > 0) {
     const wanted = new Set<string>()
@@ -2090,7 +1897,11 @@ const ConversationMessages = memo(function ConversationMessages({
       if (message.role !== 'activity') {
         continue
       }
-      if (message.activityStatus === 'running' || wanted.has(message.id)) {
+      if (
+        message.activityStatus === 'running' ||
+        (activityRows !== undefined && Object.hasOwn(activityRows, message.id)) ||
+        wanted.has(message.id)
+      ) {
         carried.unshift(message)
         // Groups nest, so the parent's own parent is needed as well.
         if (message.activityGroupId) {
@@ -2099,6 +1910,20 @@ const ConversationMessages = memo(function ConversationMessages({
       }
     }
   }
+  // The rows that came along as last drawn, read when one is toggled. One
+  // toggle for every row keeps an unchanged row from drawing again.
+  const carriedRef = useRef(carried)
+  useLayoutEffect(() => {
+    carriedRef.current = carried
+  })
+  const toggleActivity = useCallback(
+    (messageId: string) =>
+      onToggleActivity(
+        messageId,
+        carriedRef.current.some((message) => message.id === messageId),
+      ),
+    [onToggleActivity],
+  )
   const hidden = cut - carried.length
   const messages = carried.length ? [...carried, ...tail] : tail
   const activityMessages = new Map(
@@ -2139,16 +1964,21 @@ const ConversationMessages = memo(function ConversationMessages({
       groupedActivityIds.add(message.id)
     }
   }
+  const activityRow = (message: ChatMessage, key?: string): ReactNode => (
+    <ActivityRow
+      computerId={computerId}
+      current={message.id === currentToolId}
+      expanded={activityRows?.[message.id] === true}
+      key={key}
+      message={message}
+      onToggle={toggleActivity}
+      sessionId={sessionId}
+    />
+  )
   const renderActivity = (message: ChatMessage): ReactNode => {
     const children = activityChildren.get(message.id) || []
     if (children.length === 0) {
-      return (
-        <ActivityArticle
-          currentToolId={currentToolId}
-          key={message.id}
-          message={message}
-        />
-      )
+      return activityRow(message, message.id)
     }
     const kind = activityKindFromMessage(message)
     const groupLabel =
@@ -2161,10 +1991,7 @@ const ConversationMessages = memo(function ConversationMessages({
         className="activity-group"
         key={message.id}
       >
-        <ActivityArticle
-          currentToolId={currentToolId}
-          message={message}
-        />
+        {activityRow(message)}
         <div className="activity-group__children">
           {children.map((child) => renderActivity(child))}
         </div>
@@ -4064,6 +3891,18 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [expandedTranscripts, setExpandedTranscripts] = useState<
     Record<string, boolean>
   >({})
+  // Which tool rows the reader has opened, by session.
+  const [activityRows, setActivityRows] = useState<
+    Record<string, ActivityRowStates>
+  >({})
+  // Another session opens at its end, so moving to one lets go of every
+  // closed row kept in place. Done while rendering, before anything is drawn
+  // with them.
+  const [activityRowsSession, setActivityRowsSession] = useState(selectedKey)
+  if (activityRowsSession !== selectedKey) {
+    setActivityRowsSession(selectedKey)
+    setActivityRows((current) => releaseClosedActivityRows(current))
+  }
   // Stable per session. A fresh closure on every render defeats the memo the
   // transcript relies on, so every keystroke in the composer would rebuild
   // every row and walk the hidden history again.
@@ -4072,7 +3911,33 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return
     }
     setExpandedTranscripts((current) => ({ ...current, [selectedKey]: true }))
+    // Everything is inside the window now, so nothing needs keeping in place.
+    setActivityRows((current) =>
+      releaseClosedActivityRows(current, selectedKey),
+    )
   }, [selectedKey])
+  // Opening a row records it open. Closing it forgets it, unless the window
+  // has moved past it: then it stays, closed, where the reader is, rather
+  // than vanishing before it can be brought back into view.
+  const toggleSelectedActivity = useCallback(
+    (messageId: string, pastWindow: boolean) => {
+      if (!selectedKey) {
+        return
+      }
+      setActivityRows((current) => {
+        const rows: Record<string, boolean> = { ...current[selectedKey] }
+        if (rows[messageId] !== true) {
+          rows[messageId] = true
+        } else if (pastWindow) {
+          rows[messageId] = false
+        } else {
+          delete rows[messageId]
+        }
+        return { ...current, [selectedKey]: rows }
+      })
+    },
+    [selectedKey],
+  )
   // The socket is bound once, so it reaches the restore through a ref.
   const restoreFailedPromptRef = useRef<
     (key: string, content: string, failedAt?: string) => void
@@ -4217,7 +4082,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     [expandedKnowledge, knowledgeFolders],
   )
   const [commands, setCommands] = useState<SlashCommand[]>([])
-  const commandCatalogEpoch = useRef(0)
   // Which session the list above belongs to. It is fetched per session, so
   // until the new one has arrived the old one is still on hand -- and reading
   // it as though it described the session now open let a command only the
@@ -4246,8 +4110,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // acted on a message that was not in front of the reader.
   const [queueActionId, setQueueActionId] = useState<string>()
   // Keyed by session: the owning computer serializes lifecycle work per
-  // session, so closing or suspending one never has to hold back another. The
-  // refs answer a second click before React has rendered the first one.
+  // session, so closing one never has to hold back another. The ref answers
+  // a second click before React has rendered the first one.
   const [closingSessions, setClosingSessions] = useState<ReadonlySet<string>>(
     () => new Set(),
   )
@@ -4261,10 +4125,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [clearing, setClearing] = useState(false)
   const [recovering, setRecovering] = useState(false)
   const [restarting, setRestarting] = useState(false)
-  const [suspendingSessions, setSuspendingSessions] = useState<
-    ReadonlySet<string>
-  >(() => new Set())
-  const suspendingSessionsRef = useRef(new Set<string>())
   const [retentionOpen, setRetentionOpen] = useState(false)
   const [reopening, setReopening] = useState(false)
   const [movingToTmux, setMovingToTmux] = useState(false)
@@ -4501,9 +4361,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // rather than written back. -1 means "nothing acknowledged yet", which keeps
   // revision 0 (an empty hub) from looking like a snapshot already applied.
   const [sessionOrderRevision, setSessionOrderRevision] = useState(-1)
-  const [showSuspendedSessions, setShowSuspendedSessions] = useState(true)
-  const [savingSuspendedVisibility, setSavingSuspendedVisibility] = useState(false)
-  const savingSuspendedVisibilityRef = useRef(false)
   // Hidden sessions keep running; only the list leaves them out.
   const [hiddenSessionKeys, setHiddenSessionKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -4558,7 +4415,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       acknowledgedSessionOrderRef.current = snapshot.order
       setSessionOrderRevision(snapshot.revision)
       setSessionOrder(snapshot.order)
-      setShowSuspendedSessions(snapshot.showSuspended !== false)
       // A hub that predates hiding sends neither field.
       setHiddenSessionKeys(new Set(Array.isArray(snapshot.hidden) ? snapshot.hidden : []))
       setShowHiddenSessions(snapshot.showHidden === true)
@@ -5019,7 +4875,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       backgroundTaskSnapshots,
       sessionQuery,
       sessionFilter,
-      showSuspendedSessions,
       { keys: listedHiddenKeys, shown: showHiddenSessions },
       listedUnreadKeys,
     ),
@@ -5029,7 +4884,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       backgroundTaskSnapshots,
       sessionQuery,
       sessionFilter,
-      showSuspendedSessions,
       listedHiddenKeys,
       showHiddenSessions,
       listedUnreadKeys,
@@ -5424,8 +5278,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const selectedBackgroundTasks = selected
     ? taskSnapshot(backgroundTaskSnapshots, selected)
     : undefined
-  const selectedRunningBackgroundTasks =
-    selectedBackgroundTasks?.runningCount || 0
   const selectedHasRunningBackgroundAgent =
     hasRunningBackgroundAgent(selectedBackgroundTasks)
   const selectedHasActiveBackgroundTasks =
@@ -5536,15 +5388,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // server refuses these actions too.
   const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
   const selectedClosing = Boolean(selected && closingSessions.has(sessionKey(selected)))
-  const selectedSuspending = Boolean(
-    selected && suspendingSessions.has(sessionKey(selected)),
-  )
   const selectedQueueHeadIsSteering = Boolean(
     selected?.status === 'running' &&
     selected.executionMode === 'tmux' &&
     selectedComputerOnline &&
     !selectedRetained &&
-    selected?.suspended !== true &&
     !selected.pendingUserInput &&
     !selected.pendingPermission &&
     !selected.failedPrompt &&
@@ -5560,12 +5408,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const selectedLifecycleBlocked = !selectedComputerOnline ||
     selectedRetained ||
     selected?.status !== 'idle' ||
-    selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
   const selectedRestartBlocked = !selectedComputerOnline ||
     selectedRetained ||
     (selected?.status !== 'idle' && selected?.status !== 'error') ||
-    selected?.suspended === true ||
     Boolean(selected?.pendingUserInput || selected?.pendingPermission)
   const workspaceInsertUnavailableReason = selected && !selectedComputerOnline
     ? `Reconnect ${selected.computerName} to add a file reference.`
@@ -5594,7 +5440,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     selectedShowsRecovery &&
     selectedComputerOnline &&
     !selectedRetained &&
-    selected?.suspended !== true &&
     (selected?.status === 'idle' ||
       selected?.status === 'error') &&
     ((!selected?.pendingPermission &&
@@ -7202,22 +7047,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       setCommandsKey(selectedKey)
       return
     }
-    if (selected?.suspended || selected?.interruption || selected?.archivedAt) {
-      // A suspended session has no runtime to ask, and asking would start the
-      // one that suspending put down. Only local read-only resource views are
-      // offered until it is resumed.
-      //
-      // The flag is a dependency on purpose. Resuming is meant to bring the
-      // session back the way reopening the CLI does, so the runtime coming up
-      // on resume is the feature rather than a side effect of this read: the
-      // list is only knowable from a live runtime, and a resumed session that
-      // offered no commands until its first message would be the bug.
+    if (selected?.interruption || selected?.archivedAt) {
+      // A retained session has no runtime to ask, and asking would start one.
+      // Only local read-only resource views are offered until it is reopened.
       setCommands(sessionResourceCommands)
       setCommandsKey(selectedKey)
       return
     }
     let active = true
-    const catalogEpoch = commandCatalogEpoch.current
     void listCommands(selectedComputerId, selectedSessionId)
       .then((availableCommands) => {
         if (active) {
@@ -7242,7 +7079,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         }
       })
       .catch((caught) => {
-        if (active && commandCatalogEpoch.current === catalogEpoch) {
+        if (active) {
           setCommands([])
           setCommandsKey(selectedKey)
           setError((current) =>
@@ -7254,7 +7091,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
   }, [
     selected?.provider,
-    selected?.suspended,
     selected?.interruption,
     selected?.archivedAt,
     selectedComputerId,
@@ -9550,13 +9386,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
   }, [computers, knowledgeMode, knowledgeRootsLoaded, roots.length, selected, selectedKey, sessionKnowledgeRoot.binding])
 
-  /** Whether the sidebar is the drawer that slides over everything. */
-  function drawerIsOverlay(): boolean {
-    return typeof window.matchMedia === 'function'
-      ? window.matchMedia('(max-width: 960px)').matches
-      : window.innerWidth <= 960
-  }
-
   /** What a shortcut answers to now, for anything that tells the reader. */
   // Read rather than written out, or a remapped shortcut goes on being
   // advertised by keys that no longer do anything.
@@ -10561,6 +10390,21 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     selectSession(session)
     setBackgroundTasksOpen(true)
     void loadBackgroundTasks(session, true)
+  }
+
+  /**
+   * Puts a request that the agent stop a task into the session's draft, for
+   * the user to send. It is for tasks the app has no handle to stop itself,
+   * so it adds to whatever is already being written rather than replacing it.
+   */
+  function askToStopBackgroundTask(task: BackgroundTask) {
+    if (!selected) {
+      return
+    }
+    const targetKey = sessionKey(selected)
+    appendComposerForKey(targetKey, backgroundTaskStopRequest(task))
+    setBackgroundTasksOpen(false)
+    window.requestAnimationFrame(() => focusComposer(targetKey))
   }
 
   async function cancelSelectedBackgroundTask(taskId: string) {
@@ -12524,54 +12368,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
   }
 
-  async function toggleSelectedSessionSuspended(
-    // Any session, not only the open one: the list offers this beside each
-    // conversation so it can be put down or picked up without opening it.
-    session?: ManagedSession,
-  ) {
-    const target = session || selected
-    if (!target) {
-      return
-    }
-    const targetKey = sessionKey(target)
-    if (suspendingSessionsRef.current.has(targetKey)) {
-      return
-    }
-    const wasSuspended = target.suspended === true
-    if (!wasSuspended && targetKey === selectedKey) {
-      // Synchronous before suspendSession's first await: any later selected
-      // catalog rejection belongs to the runtime being put down.
-      commandCatalogEpoch.current += 1
-    }
-    suspendingSessionsRef.current.add(targetKey)
-    setSuspendingSessions(new Set(suspendingSessionsRef.current))
-    setError(undefined)
-    try {
-      const updated = wasSuspended
-        ? await resumeSession(target.computerId, target.id)
-        : await suspendSession(target.computerId, target.id)
-      setSessions((current) => upsertSession(current, updated))
-    } catch (caught) {
-      // Offered from the list on purpose, so a session that is not open can be
-      // put down without navigating to it. A refusal has to be seen, though,
-      // and the error banner belongs to the conversation -- which on a narrow
-      // screen is behind the sidebar the reader is looking at.
-      //
-      // So a failure, and only a failure, opens the session it is about. The
-      // sidebar closes either way: a refusal for the session already open left
-      // the drawer sitting over the very message explaining it.
-      if (targetKey !== selectedKey) {
-        selectSession(target)
-      } else {
-        setSidebarOpen(false)
-      }
-      setError(caught instanceof Error ? caught.message : String(caught))
-    } finally {
-      suspendingSessionsRef.current.delete(targetKey)
-      setSuspendingSessions(new Set(suspendingSessionsRef.current))
-    }
-  }
-
   async function reopenInterruptedSession() {
     if (!selected || reopening) return
     const target = selected
@@ -12611,8 +12407,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       selected.provider === 'claude' ||
       selected.executionMode !== 'sdk' ||
       selected.status !== 'idle' ||
-      selected.suspended === true ||
-      suspendingSessionsRef.current.has(sessionKey(selected)) ||
       !window.confirm(
         `Move "${selected.title}" to tmux?\n\nThe Copilot SDK process will disconnect and the same session will resume in a tmux window.`,
       )
@@ -13118,8 +12912,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const to = order.indexOf(overKey)
     if (from < 0 || to < 0) return
     const computerId = activeSession.computerId
-    // Each listed session carries the hidden or suspended sessions after it
-    // that the list leaves out, so they stay where they were relative to it.
+    // Each listed session carries the hidden sessions after it that the list
+    // leaves out, so they stay where they were relative to it.
     const lane = reorderSessionLaneWithHiddenFollowers(
       order,
       activeKey,
@@ -13252,30 +13046,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     if (unread && key === selectedKey) unreadHoldRef.current = key
     else if (unreadHoldRef.current === key) unreadHoldRef.current = undefined
     changeSessionUnread(session, unread, true)
-  }
-
-  function changeShowSuspendedSessions(showSuspended: boolean) {
-    if (
-      savingSuspendedVisibilityRef.current ||
-      showSuspended === showSuspendedSessions
-    ) return
-    savingSuspendedVisibilityRef.current = true
-    setSavingSuspendedVisibility(true)
-    void (async () => {
-      try {
-        applySessionOrderSnapshot(await saveSessionVisibility(showSuspended))
-      } catch (caught) {
-        void syncSessionOrderRef.current()
-        setError(
-          `Could not save suspended-session visibility: ${
-            caught instanceof Error ? caught.message : String(caught)
-          }`,
-        )
-      } finally {
-        savingSuspendedVisibilityRef.current = false
-        setSavingSuspendedVisibility(false)
-      }
-    })()
   }
 
   function closeShellView() {
@@ -13538,13 +13308,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 view={navigationView}
                 query={sessionQuery}
                 filter={sessionFilter}
-                showSuspended={showSuspendedSessions}
-                showSuspendedSaving={savingSuspendedVisibility}
                 showHidden={showHiddenSessions}
                 showHiddenSaving={savingHiddenVisibility}
                 onQueryChange={setSessionQuery}
                 onFilterChange={setSessionFilter}
-                onShowSuspendedChange={changeShowSuspendedSessions}
                 onShowHiddenChange={changeShowHiddenSessions}
                 onRefresh={refreshAuthoritative}
                 refreshMessage={refreshMessage}
@@ -13563,14 +13330,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 onOpenSessionTasks={openTasksForSession}
                 onCloseSession={requestSessionClose}
                 onSelectSession={selectSession}
-                onToggleSessionSuspended={(session) =>
-                  void toggleSelectedSessionSuspended(session)
-                }
                 selectedKey={selectedKey}
                 sort={sessionSort}
                 onSortChange={changeSessionSort}
                 closingSessions={closingSessions}
-                suspendingSessions={suspendingSessions}
                 hiddenSessions={hiddenSessionKeys}
                 hidingSessions={hidingSessions}
                 onToggleSessionHidden={toggleSessionHidden}
@@ -14029,17 +13792,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 <button
                   aria-label="Move session to tmux"
                   className="session-action"
-                  disabled={
-                    movingToTmux ||
-                    selectedLifecycleBlocked ||
-                    selectedSuspending
-                  }
+                  disabled={movingToTmux || selectedLifecycleBlocked}
                   onClick={() => void moveSelectedSessionToTmux()}
-                  title={
-                    selected.suspended
-                      ? 'Resume the session before moving it to tmux'
-                      : 'Move this Copilot session to tmux'
-                  }
+                  title="Move this Copilot session to tmux"
                   type="button"
                 >
                   <SquareTerminal size={18} />
@@ -14194,8 +13949,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           ) : (
             <PauseFollowingContext.Provider value={pauseFollowing}>
               <ConversationMessages
+                activityRows={activityRows[sessionKey(selected)]}
+                computerId={selected.computerId}
                 currentToolId={currentTool?.id}
                 onShowAll={expandSelectedTranscript}
+                onToggleActivity={toggleSelectedActivity}
+                sessionId={selected.id}
                 showAll={expandedTranscripts[sessionKey(selected)] === true}
                 // Identity is the computer and the session together: two
                 // computers can hand out the same provider session id, and
@@ -14322,23 +14081,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               <span>{selected.queuedCount || 0} queued</span>
             ) : null}
             {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
-              <button
-                aria-label="View background tasks"
-                className={`web-statusline__tasks ${
-                  selectedRunningBackgroundTasks > 0
-                    ? 'web-statusline__tasks--running'
-                    : ''
-                }`}
-                onClick={openBackgroundTasks}
-                title="View background tasks"
-                type="button"
-              >
-                {selectedRunningBackgroundTasks} background task
-                {selectedRunningBackgroundTasks === 1 ? '' : 's'} running
-              </button>
-            ) : null}
-            {statusline.backgroundTasks && selectedSupportsBackgroundTasks ? (
-              <SubagentCount snapshot={selectedBackgroundTasks} onOpen={openBackgroundTasks} />
+              <BackgroundTasksStatus
+                onOpen={openBackgroundTasks}
+                snapshot={selectedBackgroundTasks}
+              />
             ) : null}
             {statusline.sessionId ? (
               <span>{selected.id.slice(0, 8)}</span>
@@ -14491,7 +14237,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               { label: 'Rename', onClick: () => setRenameOpen(true), disabled: !selectedComputerOnline },
               { label: selectedNotificationsMuted ? 'Unmute notifications' : 'Mute notifications', onClick: () => void toggleSelectedSessionMute(), disabled: mutingSession },
               ...(selected.provider !== 'claude' && selected.executionMode === 'sdk' && selectedProviderCapability?.supportsTmuxMigration
-                ? [{ label: 'Move session to tmux', onClick: () => void moveSelectedSessionToTmux(), disabled: movingToTmux || selectedLifecycleBlocked || selectedSuspending }] : []),
+                ? [{ label: 'Move session to tmux', onClick: () => void moveSelectedSessionToTmux(), disabled: movingToTmux || selectedLifecycleBlocked }] : []),
               { label: 'Restart', onClick: () => void restartSelectedSession(), disabled: restarting || selectedRestartBlocked },
               ...(selectedShowsRecovery
                 ? [{ label: 'Recover conversation', onClick: () => void recoverSelectedConversation(), disabled: !selectedCanRecover || recovering }] : []),
@@ -14795,10 +14541,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               : undefined
           }
           loading={loadingBackgroundTasks}
+          onAskToStop={askToStopBackgroundTask}
           onCancel={(taskId) => void cancelSelectedBackgroundTask(taskId)}
           onClose={() => setBackgroundTasksOpen(false)}
           onRefresh={() => void loadBackgroundTasks(selected, true)}
           open={backgroundTasksOpen}
+          ownerKey={sessionKey(selected)}
           sessionTitle={selected.title}
           snapshot={
             selectedBackgroundTasks || {

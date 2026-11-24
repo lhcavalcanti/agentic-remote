@@ -52,7 +52,7 @@ The session list keeps its left-aligned dense workspace layout:
 ```text
 Sessions  12                         [Refresh]
 Search sessions                         [Sort]
-[All] [Needs you] [Working] [Suspended]
+[All] [Needs you] [Working] [Unread]
 ------------------------------------------------
 computer
   session

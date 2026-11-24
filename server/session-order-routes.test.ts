@@ -105,7 +105,6 @@ describe('hub session order routes', () => {
       sessionOrder: {
         revision: 0,
         bootstrapped: false,
-        showSuspended: true,
         showHidden: false,
         hidden: [],
         unread: [],
@@ -125,7 +124,6 @@ describe('hub session order routes', () => {
       sessionOrder: {
         revision: 2,
         bootstrapped: true,
-        showSuspended: true,
         showHidden: false,
         hidden: [],
         unread: [],
@@ -192,38 +190,6 @@ describe('hub session order routes', () => {
     await app.close()
   })
 
-  it('persists suspended visibility through the shared snapshot', async () => {
-    const store = await orderStore()
-    const { app } = await hub(store)
-
-    const saved = await app.inject({
-      method: 'PUT',
-      url: '/api/session-order',
-      headers: { host: 'localhost' },
-      payload: { showSuspended: false },
-    })
-    expect(saved.statusCode).toBe(200)
-    expect(saved.json().sessionOrder).toEqual({
-      revision: 1,
-      bootstrapped: false,
-      showSuspended: false,
-      showHidden: false,
-      hidden: [],
-      unread: [],
-      order: {},
-    })
-
-    const malformed = await app.inject({
-      method: 'PUT',
-      url: '/api/session-order',
-      headers: { host: 'localhost' },
-      payload: { showSuspended: 'no' },
-    })
-    expect(malformed.statusCode).toBeGreaterThanOrEqual(400)
-    expect(store.snapshot().revision).toBe(1)
-    await app.close()
-  })
-
   it('persists hidden-session visibility through the shared snapshot', async () => {
     const store = await orderStore()
     const { app } = await hub(store)
@@ -237,7 +203,6 @@ describe('hub session order routes', () => {
     expect(saved.statusCode).toBe(200)
     expect(saved.json().sessionOrder).toMatchObject({
       revision: 1,
-      showSuspended: true,
       showHidden: true,
     })
 
@@ -627,7 +592,6 @@ describe('hub session order routes', () => {
       sessionOrder: {
         revision: 2,
         bootstrapped: true,
-        showSuspended: true,
         showHidden: false,
         hidden: [],
         unread: [],

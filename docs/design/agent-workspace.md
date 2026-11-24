@@ -270,15 +270,13 @@ background tasks, and computer identity colors.
 Computer groups are labels rather than nested cards. Provider and runtime
 badges remain above the title; folder context stays visible. Drag handles are
 quiet for a mouse but revealed on focus and remain available on touch.
-Each session card stacks Close above Pause/Resume at its trailing edge. Close
-reuses the confirmed permanent-delete lifecycle; Pause/Resume keeps the
-existing suspend behavior and disabled states.
+Each session card keeps Close at its trailing edge, beside Read over Hide.
+Close keeps a session reopenable under Recently closed for 14 days.
 New session is a compact action in the Sessions heading, leaving Send visually
 primary. Computer management remains directly reachable in the sidebar footer.
 On a phone, Send is explicitly labeled and header actions have 40px targets.
 The desktop sidebar gives sessions more space while retaining an independently
-scrollable Knowledge tree. Offline sessions cannot be suspended or resumed
-until their computer reconnects.
+scrollable Knowledge tree.
 Cached task status is identified as last known while offline. Short viewports
 remain scrollable; phone session and file navigation do not compete for the
 same visible height. The session-actions disclosure is bounded by the

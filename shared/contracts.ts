@@ -28,6 +28,8 @@ export interface AgentProviderCapability {
   supportsRecoverableClose?: boolean
   /** Answers side questions about a session without prompting it. */
   supportsSideQuestions?: boolean
+  /** Reads a tool call's complete arguments and output from the session's event log. */
+  supportsActivityDetails?: boolean
   supportsLaunchIdentity?: boolean
   unavailableReason?: string
 }
@@ -91,6 +93,37 @@ export interface ManagedSessionMcpServersSnapshot extends SessionMcpServersSnaps
 export type MessageRole = 'user' | 'assistant' | 'activity' | 'notice'
 export type ActivityStatus = 'pending' | 'running' | 'completed' | 'failed'
 export type ActivityKind = 'tool' | 'skill' | 'agent'
+
+/** One text of a tool call, as plain text without terminal colours or NUL. */
+export interface ActivityDetailText {
+  /** At most `ACTIVITY_DETAIL_TEXT_LIMIT_BYTES` of UTF-8. */
+  text: string
+  /** Whether `text` is only the start of a longer value. */
+  truncated: boolean
+  /** The UTF-8 size of the whole value, in bytes. */
+  originalBytes: number
+}
+
+export interface ActivityDetailArguments extends ActivityDetailText {
+  /** A shell `command`, other arguments as pretty JSON, or arguments given as text. */
+  format: 'command' | 'json' | 'text'
+}
+
+/** A tool call's complete detail, read from its session's event log on request. */
+export interface ActivityDetail {
+  toolCallId: string
+  toolName: string
+  mcpServerName?: string
+  mcpToolName?: string
+  kind: ActivityKind
+  status: 'running' | 'completed' | 'failed'
+  startedAt?: string
+  completedAt?: string
+  durationMs?: number
+  arguments?: ActivityDetailArguments
+  result?: ActivityDetailText
+  error?: ActivityDetailText
+}
 
 export interface TaskCompletionEvidence {
   source: 'root-task-complete'
@@ -473,14 +506,6 @@ export interface SessionSummary {
   restartRecovery?: SessionRestartRecovery
   /** A recovery brief that still owns the session and must settle first. */
   recoverySeedState?: 'pending' | 'dispatching' | 'failed'
-  /**
-   * Whether the session is being kept without anything running for it.
-   *
-   * The conversation is on disk, so the process holding it is the expendable
-   * part: a suspended session keeps its id, its history and its place in the
-   * list, and gives back the memory and CPU until it is wanted again.
-   */
-  suspended?: boolean
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -865,8 +890,6 @@ export interface SessionOrderSnapshot {
    * appends on its own, so a non-empty order does not mean a migration ran.
    */
   bootstrapped: boolean
-  /** Shared visibility for sessions paused through Agentic Remote. */
-  showSuspended: boolean
   /** Shared visibility for hidden sessions. A hub that predates it sends none: false. */
   showHidden?: boolean
   /**

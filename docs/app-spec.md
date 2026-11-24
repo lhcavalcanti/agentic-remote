@@ -69,21 +69,19 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - The Sessions drawer MUST show all configured computers.
 - Selecting, creating, or opening a session MUST NOT hide other computers.
 - Sessions MUST offer metadata search and All, Needs you, Working, and Unread
-  filters, plus a hub-owned Suspended visibility toggle that defaults to
-  showing sessions paused through Agentic Remote. A committed visibility
-  change, including hiding or showing one session, MUST survive hub restarts
-  and update every connected browser; a failed save MUST leave the last
-  committed state visible and report the failure. Filtering and hiding MUST
-  keep every configured computer visible and MUST NOT change the selected
-  session, its draft, or its Knowledge position. Suspended or hidden sessions
-  the list leaves out MUST also be excluded from keyboard next/previous
-  navigation. Search and the Needs you, Working, or Unread filters MUST disable
-  reordering. With Custom order, All selected and no search, listed sessions
-  MAY still be reordered while suspended or hidden sessions are left out: each
-  listed session MUST move with the contiguous left-out sessions immediately
-  following it, while leading left-out sessions without a listed predecessor
-  retain their position. Clearing filters MUST restore and persist
-  suspended-session visibility.
+  filters. A committed visibility change, including hiding or showing one
+  session, MUST survive hub restarts and update every connected browser; a
+  failed save MUST leave the last committed state visible and report the
+  failure. Filtering and hiding MUST keep every configured computer visible and
+  MUST NOT change the selected session, its draft, or its Knowledge position.
+  Hidden sessions the list leaves out MUST also be excluded from keyboard
+  next/previous navigation. Search and the Needs you, Working, or Unread
+  filters MUST disable reordering. With Custom order, All selected and no
+  search, listed sessions MAY still be reordered while hidden sessions are left
+  out: each listed session MUST move with the contiguous left-out sessions
+  immediately following it, while leading left-out sessions without a listed
+  predecessor retain their position. There is no suspended state: a session
+  is open or closed (§3.3).
 - Any session MAY be hidden from the Sessions list. Hiding changes nothing else
   about it: it keeps running, notifying, and answering Oracle, and it stays
   openable by address and from Oracle. The list MUST leave hidden sessions out
@@ -91,7 +89,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   default, shows them; hiding is not filtering, so Clear filters leaves it
   alone. A hidden session MUST stay listed and counted while it needs you.
   Listed hidden sessions MUST carry a **Hidden** tag. Their rows MUST also be
-  visibly marked apart from suspended and ordinary rows, not by colour alone.
+  visibly marked apart from ordinary rows, not by colour alone.
   The toggle MUST show the hidden count, and MAY be omitted while nothing is
   hidden and it is off. Discovery MUST NOT unhide a session.
 - A session MUST become unread when a turn ends while nobody is reading it:
@@ -106,7 +104,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   open session marked unread MUST stay unread until it is opened again or the
   app becomes visible again. Unread rows MUST carry a bold title, an accent dot,
   a bar on each side in the dot's colour, and "unread" in their accessible
-  name, distinct from the status, attention, hidden, and suspended cues.
+  name, distinct from the status, attention, and hidden cues.
   Unread state is hub-owned and shared by every browser like hidden state: it
   MUST follow Clear and Recover replacements and MUST be dropped on close,
   delete, and unpair. The Unread filter MUST show its count, counting hidden
@@ -129,8 +127,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   holds. A drag MAY be applied optimistically, but a refused write MUST restore
   the last acknowledged order and report the failure rather than claim a local
   save. A drag MUST submit only the dragged computer's lane, and a session MUST
-  NOT move between computers. Suspended visibility, hidden sessions, Hidden
-  visibility, and unread sessions share the same revisioned hub snapshot;
+  NOT move between computers. Hidden sessions, Hidden visibility, and unread
+  sessions share the same revisioned hub snapshot;
   computer-group order, sort mode, search, and the four primary filters remain
   browser-local.
 - Search, the three primary filters, the selected session, and session-list
@@ -166,24 +164,15 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   listing MUST NOT be treated as evidence that an entry is gone. A
   browser-local order from before the hub owned it MAY seed an empty hub once,
   after which the hub snapshot is authoritative.
-- Each session row MUST place **Close** above **Pause**/**Resume** in its
-  lifecycle controls, followed by **Hide**/**Show** beside that pair so the row
-  does not grow. Close MUST use the same confirmation, close lifecycle (§3.3),
-  and owning-computer route as **Close session**; Pause and
-  Resume retain their existing suspend lifecycle, availability, and labels.
+- Each session row MUST offer **Close** in a column of its own, with
+  **Mark as read**/**Mark as unread** above **Hide**/**Show** beside it, so the
+  row does not grow. Close MUST use the same confirmation, close lifecycle
+  (§3.3), and owning-computer route as **Close session**.
   Hide and Show MUST stay available while the owning computer is offline, since
   the hub keeps them.
   While a session closes, only its own Close waits and its row is dimmed;
   every other session MUST remain closable, since the owning computer
   serializes lifecycle work per session.
-- Pause MUST be unavailable, with a title naming the reason, while the session
-  is busy (not idle, or holding a question or permission), owns queued or
-  running background tasks, is interrupted or archived, or its own suspend or
-  resume is pending. Another session's pending suspend or resume MUST NOT
-  block it. The owning computer MUST enforce the same rules and refuse
-  with a 409 naming the reason (501 where it cannot suspend terminal sessions),
-  never a generic server error; suspending a suspended session returns it
-  unchanged.
 - Needs you MUST include pending questions, permissions, waiting sessions, and
   errors, including queued delivery that requires confirmation. Pending actions
   MUST take precedence over passive runtime status.
@@ -258,14 +247,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   replaces it. The banner MUST name the cause beside Reopen; one recorded
   without a cause keeps the generic notice. The owning computer MUST log one
   `sessionLifecycle` line for each interruption it records and for each
-  completed suspend, resume, close, reopen of a closed session, and expiry.
+  completed close, reopen of a closed session, and expiry.
 - Session retention MUST be persisted on the owning computer and broadcast to
   connected devices. A user MAY pin a session for review or opt into elapsed-age
   archival; default retention MUST be unlimited for records, not live processes.
   Retention edits MUST be field-level so concurrent devices changing different
   fields do not overwrite each other.
-- Implicit archival MUST require an absent provider owner, an idle or
-  intentionally suspended session, and the configured elapsed age. It MUST NOT
+- Implicit archival MUST require an absent provider owner, an idle session,
+  and the configured elapsed age. It MUST NOT
   affect running/waiting work, queued, running, or detached background tasks,
   pending questions/permissions, queued or uncertain delivery,
   failed/recovering work, or review pins. It MUST NOT delete provider
@@ -273,7 +262,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   run before startup recovery has probed managed owners, and MUST re-check
   ownership and eligibility when it commits.
 - Interrupted and archived records MUST stay read-only until Reopen. Sends,
-  queued work, commands, restart, clear, recovery, suspend, and runtime changes
+  queued work, commands, restart, clear, recovery, and runtime changes
   MUST be refused without consuming queued or failed work. Queue edits,
   removals, reorders, and immediate dispatches MUST be refused by the owning
   computer and disabled in the UI. Automatic dispatchers, including terminal
@@ -307,6 +296,19 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   runtime advertises task support. The UI MUST show queued, running,
   completed, failed, and cancelled task states, including task progress and
   timestamps where available.
+- The status line MUST show background work as one item, "N tasks", followed
+  by "· M subagents" while subagents run, singular for one. N is the
+  runtime's count of running background work plus any synchronous subagent it
+  leaves out, so the subagents are always among the tasks. The item is a pill
+  in the task colour that opens the tasks sheet without changing the status
+  line's height, and its name says it in words, such as "4 background tasks
+  running, 1 subagent".
+- The tasks sheet MUST open with the same words and give each task one row:
+  status icon, title, Subagent or Shell, and how long it has run. Subagents
+  come first, then shells, each with running work before finished work. A row
+  opens in place onto its command or prompt, output, and recent activity,
+  which shows the last 5 entries until Show all is chosen. Rows are at least
+  40px tall on a phone.
 - While at least one background task is running, the session's Tasks status
   action MUST carry the blue task cue: a blue dot and label, unfilled until
   hovered or focused. Background work MUST NOT give the row its own edge, tint,
@@ -334,11 +336,14 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Background task reads and cancellation MUST remain scoped to the owning
   computer and session. Task state MUST resynchronize after a reconnect
   instead of relying on a transient event count.
-- Every queued or running task MUST expose a visible management area. When the
-  owning runtime provides a live cancellation handle, the panel MUST offer a
-  confirmed Stop task action. When it does not, the panel MUST explain why
-  stopping is unavailable rather than hiding the management state or guessing
-  at an operating-system process.
+- Every queued or running task MUST offer an action on its row. When the
+  owning runtime provides a live cancellation handle, it is a confirmed Stop
+  task. When it does not, it is Ask to stop, which adds a request naming the
+  task's id and title to the session's draft, after anything already written,
+  and never sends it. The sheet MUST say why stopping is unavailable, once for
+  the whole sheet when no task can be stopped and otherwise in that task's
+  opened row, rather than hiding the state or guessing at an operating-system
+  process.
 - A terminal session's tasks are projected from Copilot's event log, which
   offers no cancellation handle, so they MUST NOT offer Stop. A projected task
   MUST stop counting as running once the log shows its work is over:
@@ -411,7 +416,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Copilot sessions MUST offer **Recover conversation** in session actions when
   the owning computer advertises context recovery. It MUST be enabled for
   idle, provider-error, or stale-interaction sessions and remain visible but
-  disabled while running, waiting, suspended, offline, holding a live prompt or
+  disabled while running, waiting, offline, holding a live prompt or
   queue claim, rebuilding context, or owning queued/running background work.
   Recovery MUST enforce the same ownership checks server-side. Claude sessions
   MUST NOT offer it.
@@ -488,6 +493,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   provider listings MUST NOT list it as open, and sends to it are refused until
   it is reopened. A computer that does not advertise recoverable close offers
   only Delete permanently.
+- Sessions are no longer suspended. When a computer loads a session an older
+  release suspended, it MUST close it as Close records it, except that the
+  work still waiting for it (queued messages, a failed send, a context brief)
+  is kept, and log it once as closed with cause `suspend-retired`. Its
+  history, provider data, and Knowledge binding MUST be kept, so it appears in
+  Recently closed and Reopen restores it. A session that was already closed or
+  archived stays as it was, and loading again changes nothing.
 - **Recently closed**, in the Sessions header between Refresh and New session,
   MUST list closed sessions newest first with when each closed and will be
   deleted, its context, **Reopen**, and a confirmed **Delete permanently**.
@@ -509,7 +521,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   them to the persisted terminal recovery set; once such a process exits it
   MUST be listed as closed and MUST NOT be recreated.
 - A tmux session MUST join the persisted terminal recovery set when Agentic
-  Remote creates, moves to tmux, reopens, suspends, resumes, reconfigures,
+  Remote creates, moves to tmux, reopens, reconfigures,
   restarts, clears, or recovers it, or sends it a prompt, command, queued
   item, or answer.
 - After host boot, missing terminal sessions in the recovery set MUST be
@@ -793,8 +805,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   chosen computer, named, given its task, and badged **Oracle** in the session
   list.
 - In **Delegate**, Oracle MUST be able to steer every session, not only the
-  ones it started: it messages any session, reopening a closed one or resuming
-  a suspended one first, and answers what a session waits on (a permission
+  ones it started: it messages any session, reopening a closed one first, and
+  answers what a session waits on (a permission
   request, a question, or a form) so the session carries on without you.
   Creating or messaging a session answers Copilot's folder-trust prompt, and
   only that genuine prompt for the session's own folder, then delivers the
@@ -804,12 +816,8 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Oracle MAY list recently closed sessions with their context, in **Ask**
   too, so you can find one by what it was doing, and in **Delegate** reopen
   one when you ask; reopening sends nothing.
-- In **Delegate**, Oracle MAY suspend any session when you ask, a broad
-  request such as pausing the idle review sessions included, MUST NOT suspend
-  one on its own initiative, and resumes one when you ask. Both go through the
-  owning computer's Pause and Resume lifecycle (§3.1), whose refusal reason
-  Oracle reports to you; resuming a session that is not suspended changes
-  nothing. Each appears in its transcript.
+- Asked to pause or set aside sessions, Oracle closes them with its close
+  tool under the same rules as any other close, and reopens one when you ask.
 - **Ask** is the panel's conversational mode: you ask Oracle about your
   sessions while their work carries on. Oracle answers from the current state,
   reading sessions as they are recorded and asking side questions that fork a
@@ -817,7 +825,7 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   turn added so its answer is not mistaken for the whole story, and MUST NOT
   interrupt, cancel, redirect, prompt,
   or otherwise change any session or its work. The hub refuses every tool that
-  would start, message, rename, suspend, resume, stop, or close a session for
+  would start, message, rename, reopen, stop, or close a session for
   that message, and Oracle's reads never open, resume, or reconcile a session.
   Oracle's memory and settings are its own and stay writable. Under the message
   bar, an **Ask |
@@ -1179,6 +1187,35 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   turn also without **Remove**; an edit saved for one is discarded.
 - Running tools MUST flow with the conversation and MUST NOT remain sticky.
 - Completed and failed root-level tools MUST remain as compact history entries.
+- A tool row for a call its session logged MUST be a disclosure button
+  (`aria-expanded`, `aria-controls`, Enter/Space, a visible focus ring) that
+  opens in place onto the complete call: the command as a shell line or the
+  arguments as JSON or text, the output, and the error, each as plain text,
+  never Markdown or HTML, in a monospace block with its own scroll that wraps
+  on a phone, with **Copy**; and its status, duration, and start and finish
+  times. Rows MUST stay compact: on touch at least 28px tall, the whole
+  full-width row being the target, while the open panel's buttons are at least
+  44px. Skill and agent rows MUST stay headings with the button inside.
+- The call MUST be read only when its row opens, from the owning computer's
+  Copilot event log through
+  `GET /api/computers/:computerId/sessions/:sessionId/activities/:toolCallId`,
+  never by the transcript poll. A call whose completion is logged MUST be kept
+  in a bounded cache rather than read again. A running call shows its
+  arguments and **Running…** and MUST be read once more if its row's status
+  changes while open. A call an abort, error or shutdown ended unfinished MUST
+  open as failed, as its row shows it.
+- Each text MUST be stripped of terminal escape sequences (colours, titles,
+  hyperlinks) and NUL and cut at 256 KiB, saying how much is shown. **Copy**
+  MUST also work over plain HTTP, where browsers withhold the Clipboard API.
+  A call missing from the log MUST say so and offer **Try again**; a Claude
+  Agent session, or a computer that cannot read calls yet, MUST say that
+  details are unavailable.
+- Opening a tool row MUST keep it where it is and stop following the end;
+  closing it MUST bring it back into view. Rows MUST stay open across
+  transcript updates, and an open row MUST stay rendered when newer messages
+  push it past the rendered history. Closed there, it MUST stay in place until
+  it is back inside the rendered history or the reader moves to another
+  session. An unchanged row MUST NOT redraw.
 - Parallel tools MUST retain independent running/completed/failed states.
 - Unfinished tools at abort or error MUST become failed rather than spinning
   forever.
@@ -1325,7 +1362,9 @@ Questions and permissions are the highest-priority UI state.
 - Paste receipt MUST recognize both current and legacy CLI collapsed-paste
   markers, including multiline input shorter than the character collapse limit,
   and long lines scrolled within the composer. A late confirmed paste MUST NOT
-  be reported as a failure solely because the first wait expired.
+  be reported as a failure solely because the first wait expired: a loaded
+  Copilot gets about 30 seconds to show the paste the same way twice before
+  Enter, and after that the send is uncertain, with nothing cleared or retyped.
 - Sending MUST NOT append to an existing terminal draft or uncertain paste.
   Eligible immediate sends to an idle or errored tmux session MUST request
   guarded terminal-draft replacement in the original attempt and MUST NOT show
@@ -1339,7 +1378,11 @@ Questions and permissions are the highest-priority UI state.
   MUST keep the readiness an ordinary immediate send would have: an agent that
   is already working receives it as an immediate follow-up instead of a false
   "new terminal text" refusal. After text was cleared, the pane MUST still be
-  idle before the paste. Running or waiting sessions, uncertain delivery, queued sends,
+  idle before the paste; Copilot's wait for background shells counts as idle
+  only while its event log finds the turn over, no background agent, and a
+  shell running, rechecked before and after the clear, before the paste, and
+  before Enter.
+  Running or waiting sessions, uncertain delivery, queued sends,
   SDK/Claude sessions, and app-local commands MUST never request replacement.
 - A first message to a terminal this service has not yet seen ready, such as
   after the hub restarts, MUST wait for a live composer. A Copilot started in
@@ -1615,6 +1658,16 @@ relabel the queue, and archived or interrupted queues say **Retained until
 reopened**. The region's accessible name, description, and per-prompt steer
 marker MUST match that same current state.
 
+A tmux queue head waiting only for Copilot's prompt to come back, while Copilot
+works, waits on background shells or agents, or redraws after its turn, MUST
+NOT show a status line or count as needing the user, since the queue region
+already says the prompt is queued. Such a wait MUST look at the prompt again at
+least every 5 seconds, and at once when the event log shows the session going
+idle. A wait the person can resolve MUST be shown with what to do: close a
+full-screen view in the terminal, answer Copilot's session-in-use prompt or
+close the other client, check a terminal whose pane has stayed empty or
+unreadable for about 30 seconds, or reopen an interrupted or archived session.
+
 An app-queued terminal prompt MUST be durably removed from automatic retry
 before delivery begins. A failed completion write MUST NOT resend the prompt;
 the service MUST retain the delivery outcome and retry only persistence. After
@@ -1647,7 +1700,7 @@ after a reserved head is edited or removed. Stale reservations MAY retry;
 ordinary authentication or storage failures MUST NOT cause a hot retry loop.
 A durable reply settlement MUST wake eligible queued work after releasing its
 own locks, without clearing a newer question or dispatching from a stopped,
-suspended, deleting, or already-owned session.
+closed, deleting, or already-owned session.
 
 Startup MUST resume eligible persisted native queues without requiring a
 post-enqueue completion event. Only previously managed-open native sessions
@@ -1655,7 +1708,7 @@ qualify, and delivery MUST still require current discovery, ownership, a
 readable empty native composer, and the normal admission/claim guards.
 Unavailable observations or refused claim writes MUST retain FIFO and use
 bounded retry. A queued entry MUST NOT by itself create or reopen a native
-runtime; unknown prior delivery or explicit closed/suspended state stays held.
+runtime; unknown prior delivery or an explicitly closed session stays held.
 Repeated startup MUST NOT duplicate delivery or create additional pollers.
 An unmanaged owner that discovery lists again MUST hold its queue behind Reopen,
 except for work the app queued to that live owner: the next discovery pass that
@@ -1961,7 +2014,7 @@ clear replacement IDs without losing, duplicating, or reordering content.
   quarantine rather than risk deleting a replacement.
 - Path-first updates MUST use the same persisted revision and replacement
   lineage as catalog-root updates. Saving the same current folder MUST be a
-  no-op. Active, suspended, and historical sessions MUST be handled passively;
+  no-op. Active and historical sessions MUST be handled passively;
   changing Knowledge MUST NOT open or resume them. Persisted reads MAY succeed
   while the owner is offline, but path validation or creation MUST fail
   explicitly until the owner is reachable. If catalog finalization fails after
@@ -2184,7 +2237,7 @@ people sharing a hub share its profile. See
   reconnect.
 - The hub MUST validate every key and value against an allowlist, bound the
   profile to 32 KB, and guard it with the `/api/` Host and Origin policy.
-- Preview features MUST default off. A preview that depends on a hub feature flag MUST remain unavailable while that flag is off and show **Turned off on this hub**. Stored preferences MUST NOT enable hub behavior. Hub flags come only from the service environment, are read once at startup, and require a restart to change. Their values MUST be only `on` or `off` (case-insensitive, ignoring surrounding whitespace); any other value MUST fail hub startup with the variable's name.
+- Preview features MUST default off. A preview that depends on a hub feature flag MUST remain unavailable while that flag is off and show **Turned off on this hub**; once the hub reports the flag off, it MUST also say how to turn it on: set that flag's variable to `on` in the hub's environment file and restart the hub. Stored preferences MUST NOT enable hub behavior. Hub flags come only from the service environment, are read once at startup, and require a restart to change. Their values MUST be only `on` or `off` (case-insensitive, ignoring surrounding whitespace); any other value MUST fail hub startup with the variable's name.
 - A device without a copy MUST offer its earlier browser-local settings once;
   the hub MUST keep only settings no device has chosen yet.
 

@@ -366,7 +366,7 @@ describe('Session admission and queue lifecycle', () => {
       },
     )
 
-    it.each(['suspend', 'delete', 'newer owner'] as const)(
+    it.each(['delete', 'newer owner'] as const)(
       `${provider} does not cross a claimed dispatch across %s`,
       async (transition) => {
         const runtime = await fixture(provider)
@@ -377,8 +377,7 @@ describe('Session admission and queue lifecycle', () => {
         await load.started
         await expect(runtime.service.removeQueuedPrompt(id, 'first'))
           .rejects.toMatchObject({ statusCode: 409 })
-        if (transition === 'suspend') await runtime.store.setSuspended(id, true)
-        else if (transition === 'delete') {
+        if (transition === 'delete') {
           const deleting = runtime.service instanceof AgentService
             ? runtime.service['deletingSessions']
             : runtime.service['deletingSessions']

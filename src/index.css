@@ -1489,12 +1489,6 @@ button {
   border-bottom: 0;
 }
 
-.session-filters__visibility {
-  display: flex;
-  flex: 1 0 auto;
-  gap: 4px;
-}
-
 .session-filter {
   display: flex;
   flex: 1 0 auto;
@@ -1877,9 +1871,9 @@ button {
   --session-edge: transparent;
   display: grid;
   width: 100%;
-  /* Handle, the conversation itself, and the control that puts it down.
-     Opening and suspending are separate buttons side by side, so the row is
-     the thing that arranges them rather than a button of its own. */
+  /* Handle, the conversation itself, and its controls. Opening it and its
+     controls are separate buttons side by side, so the row is the thing that
+     arranges them rather than a button of its own. */
   grid-template-columns: 20px minmax(0, 1fr) auto;
   gap: 4px;
   align-items: start;
@@ -2230,12 +2224,13 @@ button {
 /* The Tasks status remains a separate action without replacing the activity
    time or nesting a button inside the session button. It is the row's only
    background-work cue, so it stays a quiet label with the task colour's dot,
-   filled only while pointed at or focused. */
+   filled only while pointed at or focused. Its label is centred on the
+   badges' 15px line, so it reads on that line with the other states. */
 .session-item__tasks {
   display: inline-flex;
   position: absolute;
   right: 0;
-  top: 0;
+  top: 7.5px;
   align-items: center;
   justify-content: center;
   min-height: 28px;
@@ -2246,6 +2241,7 @@ button {
   border: 0;
   border-radius: 4px;
   background: transparent;
+  transform: translateY(-50%);
 }
 
 .session-item__body--task-status .session-item__badges,
@@ -2393,23 +2389,20 @@ button {
   align-self: start;
   justify-self: end;
   min-height: 40px;
+  margin-top: -6px;
+  transform: none;
+}
+
+/* With Tasks beside it, the text hangs from the top instead of centring, so
+   its badges line meets the label, which rises into the row's padding. */
+.session-item__body--task-status:has(> .session-origin-run-link) > .session-item__open {
+  align-content: start;
+  padding-top: 6.5px;
 }
 
 .session-item__body:has(> .session-origin-run-link) .session-item__badges,
 .session-item__body:has(> .session-origin-run-link) .session-item__text > strong {
   padding-right: 0;
-}
-
-.subagent-count {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-@media (max-width: 600px) {
-  .subagent-count {
-    min-height: 40px;
-  }
 }
 
 .knowledge-toggle,
@@ -2495,6 +2488,11 @@ button {
 .session-action:hover:not(:disabled),
 .session-action--active {
   background: var(--panel-soft);
+}
+
+/* A description beside the label must not shrink the icon out of line. */
+.session-action > svg {
+  flex-shrink: 0;
 }
 
 .session-action--danger {
@@ -3117,6 +3115,228 @@ button {
   white-space: nowrap;
 }
 
+/* A row for a call the session logged opens in place onto the whole call. */
+.activity-message--toggle {
+  border: 0;
+  text-align: start;
+  cursor: pointer;
+  grid-template-columns: 10px minmax(0, 1fr) auto 12px;
+}
+
+.activity-message--toggle:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: -2px;
+}
+
+.activity-message--toggle[aria-expanded='true'] {
+  background: var(--panel-raised);
+}
+
+.activity-message__chevron {
+  align-self: center;
+  color: var(--muted);
+}
+
+.activity-message--toggle[aria-expanded='true'] .activity-message__chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .activity-message__chevron {
+    transition: transform 150ms ease;
+  }
+}
+
+/* An open row is being read, so it is not dimmed with the rest of history. */
+.message--activity-expanded {
+  opacity: 1;
+}
+
+.activity-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 10px 11px;
+  padding: 4px 0 2px 12px;
+  border-left: 1px solid var(--border);
+}
+
+.activity-details__meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 0;
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.activity-details__tool {
+  color: var(--text);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.activity-details__status--completed {
+  color: var(--success);
+}
+
+.activity-details__status--failed {
+  color: var(--danger);
+}
+
+.activity-details__status--running {
+  color: var(--muted-strong);
+}
+
+.activity-details__block {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--panel);
+}
+
+.activity-details__block--error {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.activity-details__block figcaption {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 0 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+}
+
+.activity-details__block--error .activity-details__label {
+  color: var(--danger);
+}
+
+.activity-details__actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.activity-details__copy,
+.activity-details__retry {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.activity-details__retry {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.activity-details__copy:hover,
+.activity-details__retry:hover {
+  border-color: var(--border);
+  background: var(--panel-soft);
+}
+
+.activity-details__copy:focus-visible,
+.activity-details__retry:focus-visible,
+.activity-details__text:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: -2px;
+}
+
+.activity-details__copy-error {
+  color: var(--danger);
+  font-size: 11px;
+}
+
+/* Its own scroll, wrapped so a phone never scrolls sideways. */
+.activity-details__text {
+  max-height: min(22rem, 55vh);
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  color: var(--text);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.activity-details__block--command .activity-details__text::before {
+  content: '$ ';
+  color: var(--muted);
+}
+
+.activity-details__truncated,
+.activity-details__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.activity-details__truncated {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.activity-details__note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.activity-details__note--running {
+  color: var(--muted-strong);
+}
+
+.activity-details__note--error {
+  color: var(--danger);
+}
+
+/* Tool rows are the most numerous in a transcript, so a touch row stays
+   compact: the whole full-width row is the target, at least 28px tall. The
+   open panel's buttons get the full 44px. */
+@media (pointer: coarse) {
+  .activity-message--toggle {
+    min-height: 28px;
+    align-items: center;
+  }
+
+  .activity-details__block figcaption {
+    min-height: 44px;
+  }
+
+  .activity-details__copy,
+  .activity-details__retry {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 @keyframes tool-activity-change {
   from {
     opacity: 0;
@@ -3438,6 +3658,24 @@ button {
   margin-right: 6px;
 }
 
+/* A task's checkbox takes the bullet's place in the indent, so a wrapped line
+   starts under the text rather than under the box. */
+.markdown-body .task-list-item {
+  position: relative;
+  list-style: none;
+}
+
+.markdown-body .task-list-item > input[type='checkbox'],
+.markdown-body .task-list-item > p:first-child > input[type='checkbox']:first-child {
+  position: absolute;
+  top: 0.3em;
+  top: calc((1lh - 13px) / 2);
+  left: -19px;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+}
+
 .typing-indicator {
   display: inline-flex;
   height: 20px;
@@ -3520,6 +3758,12 @@ button {
   font-weight: 760;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+/* On a light page the accent needs its darker form to read as text. Kept at
+   the specificity of a class, so contexts that mute the eyebrow still win. */
+:where(.app-shell[data-appearance='light']) .eyebrow {
+  color: var(--accent-foreground);
 }
 
 .permission-card h3,
@@ -3864,7 +4108,8 @@ button {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: rgba(24, 25, 22, 0.96);
+  /* A tray a step darker than the page in either appearance. */
+  background: var(--navigation);
 }
 
 .queued-prompts > header {
@@ -3947,7 +4192,8 @@ button {
   border-radius: 7px;
   border: 1px solid rgba(110, 168, 254, 0.5);
   background: rgba(110, 168, 254, 0.16);
-  color: #cfe0ff;
+  /* A pale blue on graphite and a deep one on a light page, legible on both. */
+  color: color-mix(in srgb, var(--task) 25%, var(--text));
   font: inherit;
   font-size: 11px;
   font-weight: 650;
@@ -3963,10 +4209,10 @@ button {
   border-bottom: 0;
 }
 
-.queued-prompt > span {
+.queued-prompt__text {
   display: -webkit-box;
   overflow: hidden;
-  color: var(--text-soft);
+  color: var(--text);
   font-size: 11px;
   line-height: 1.35;
   white-space: pre-wrap;
@@ -3975,7 +4221,8 @@ button {
 }
 
 .queued-prompt__steer {
-  color: #9ec5fe;
+  /* The task blue, paler on graphite and deeper on a light tray. */
+  color: color-mix(in srgb, var(--task) 60%, var(--text));
   font-weight: 650;
 }
 
@@ -4134,6 +4381,19 @@ button {
 
 .composer--refresh > .composer-text-panel {
   padding: 7px 14px;
+}
+
+/* Recording takes the buttons' place. It keeps its tint but not the border and
+   shadow the other parts dropped, inset as far as those buttons with corners
+   that follow the composer's, so its edge never runs along the composer's own. */
+.composer--refresh > .recording-panel {
+  width: auto;
+  min-height: 40px;
+  margin: 6px;
+  padding: 4px;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
 }
 
 .composer-actions--refresh .composer-actions__spacer {
@@ -4442,25 +4702,46 @@ button {
   }
 }
 
-/* The running count is the way into the panel, so it behaves as a control
-   while still reading as part of the status line. */
+/* The status line's one item for background work, and its way into the
+   tasks sheet. A pill in the task colour reads as a control; it is drawn into
+   the line's own padding, so the line keeps its font and height. */
 .web-statusline__tasks {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin: -3px 0;
+  padding: 2px 8px;
+  color: var(--task);
+  border: 1px solid color-mix(in srgb, var(--task) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--task) 7%, transparent);
   font: inherit;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+/* A finger gets the line's whole height, not only the pill's. It stops at the
+   line's padding edge: past it the line would scroll by those few pixels. */
+.web-statusline__tasks::before {
+  position: absolute;
+  inset: -2px -3px;
+  content: "";
+}
+
+.web-statusline__tasks--running {
+  border-color: color-mix(in srgb, var(--task) 60%, transparent);
+  background: color-mix(in srgb, var(--task) 15%, transparent);
 }
 
 .web-statusline__tasks:hover,
 .web-statusline__tasks:focus-visible {
-  color: var(--text);
-  text-decoration: underline;
+  background: color-mix(in srgb, var(--task) 24%, transparent);
 }
 
-.web-statusline__tasks--running {
-  color: var(--accent-foreground);
+.web-statusline__tasks:focus-visible {
+  outline: 2px solid var(--task);
+  outline-offset: 0;
 }
 
 .background-tasks-dialog__toolbar {
@@ -4468,18 +4749,17 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: -8px 0 14px;
+  margin: -8px 0 12px;
   color: var(--muted);
   font-size: 11px;
 }
 
+/* The same words the status item is named by. */
 .background-tasks-dialog__toolbar p {
   margin: 0;
-}
-
-.background-tasks-dialog__toolbar strong {
-  color: #6ea8fe;
-  font-size: 14px;
+  color: var(--task);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .background-tasks-dialog__empty {
@@ -4489,80 +4769,93 @@ button {
   text-align: center;
 }
 
+/* Said once for the sheet, rather than on every task it applies to. */
+.background-tasks-dialog__note {
+  flex: 0 0 auto;
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  color: var(--muted-strong);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-raised);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.background-tasks-dialog__note strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+/* One row per task in a single list, so eight tasks fit on a phone screen
+   and each opens in place onto what it is doing. */
 .background-task-list {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  gap: 10px;
-  /* Room for the scrollbar, so it does not sit on top of the cards. */
-  padding-right: 4px;
+  margin: 0;
+  padding: 0;
   overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-raised);
+  list-style: none;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
 
 .background-task {
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
-  border-radius: 11px;
-  background: var(--panel-raised);
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border);
 }
 
-.background-task--running,
-.background-task--queued {
-  border-left-color: #6ea8fe;
+.background-task:first-child {
+  border-top: 0;
 }
 
-.background-task--completed {
-  border-left-color: var(--success);
+.background-task--expanded {
+  background: color-mix(in srgb, var(--task) 4%, transparent);
 }
 
-.background-task--failed {
-  border-left-color: var(--danger);
-}
-
-.background-task--cancelled {
-  border-left-color: #777c72;
-}
-
-.background-task__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.background-task__title {
-  display: flex;
+/* Actions keep a column of their own, so the kind and time line up down the
+   list whether or not a row has something to stop. */
+.background-task__row {
+  display: grid;
   min-width: 0;
-  align-items: flex-start;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
+  align-items: center;
+  column-gap: 6px;
+  padding-right: 8px;
 }
 
-.background-task__title > span:last-child {
-  display: flex;
+.background-task__toggle {
+  display: grid;
   min-width: 0;
-  flex-direction: column;
-  gap: 3px;
+  min-height: 42px;
+  grid-template-columns: 16px minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 6px 7px 12px;
+  color: var(--text);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.background-task__title strong {
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  font-weight: 650;
+.background-task__toggle:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
-.background-task__title small {
-  color: var(--muted);
-  font-size: 10px;
+.background-task__toggle:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: -2px;
 }
 
 .background-task__status-icon {
   display: grid;
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: #6ea8fe;
+  color: var(--task);
   place-items: center;
 }
 
@@ -4578,32 +4871,115 @@ button {
   color: var(--muted);
 }
 
-.background-task__status {
-  flex: 0 0 auto;
-  color: #6ea8fe;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.background-task__title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.background-task--completed .background-task__status {
-  color: var(--success);
-}
-
-.background-task--failed .background-task__status {
-  color: var(--danger);
-}
-
-.background-task--cancelled .background-task__status {
+.background-task__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* Fixed widths line the kind and time up down the list too. */
+.background-task__kind {
+  min-width: 62px;
+  padding: 1px 7px;
+  color: var(--muted-strong);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  text-align: center;
+}
+
+.background-task--agent .background-task__kind {
+  color: var(--task);
+  border-color: color-mix(in srgb, var(--task) 45%, transparent);
+}
+
+.background-task__elapsed {
+  min-width: 46px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.background-task__chevron {
+  color: var(--muted);
+  transition: transform 140ms ease;
+}
+
+.background-task--expanded .background-task__chevron {
+  transform: rotate(90deg);
+}
+
+.background-task__action {
+  min-height: 30px;
+  justify-self: end;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.background-task__action:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
+}
+
+/* Stopping ends work, so Stop keeps a danger outline of its own. */
+.background-task__stop {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: transparent;
+}
+
+.background-task__stop:hover:not(:disabled),
+.background-task__stop:focus-visible {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/* Asking only writes a draft. It stays text and icon until pointed at or
+   focused, so a list of running tasks does not read as a wall of buttons;
+   the transparent border keeps its size the same either way. */
+.background-task__ask {
+  color: var(--task);
+  border-color: transparent;
+  background: transparent;
+}
+
+.background-task__ask:hover,
+.background-task__ask:focus-visible {
+  border-color: color-mix(in srgb, var(--task) 45%, transparent);
+  background: color-mix(in srgb, var(--task) 10%, transparent);
+}
+
+/* Lines up under the title, past the status icon. */
+.background-task__panel {
+  padding: 2px 14px 14px 38px;
+  color: var(--muted-strong);
+  font-size: 11px;
+}
+
+.background-task__source {
+  margin: 0;
+  color: var(--muted-strong);
 }
 
 .background-task__metadata {
   display: flex;
   flex-wrap: wrap;
   gap: 7px 14px;
-  margin: 10px 0 0 22px;
+  margin: 10px 0 0;
 }
 
 .background-task__metadata div {
@@ -4625,7 +5001,7 @@ button {
 }
 
 .background-task__intent {
-  margin: 11px 0 0 22px;
+  margin: 11px 0 0;
   color: var(--muted-strong);
   font-size: 11px;
   line-height: 1.4;
@@ -4634,8 +5010,8 @@ button {
 .background-task__progress,
 .background-task__output,
 .background-task__error,
-.background-task__details {
-  margin: 11px 0 0 22px;
+.background-task__prompt {
+  margin: 11px 0 0;
   font-size: 10px;
 }
 
@@ -4650,12 +5026,10 @@ button {
 
 .background-task__progress ul {
   display: flex;
-  max-height: 150px;
   flex-direction: column;
   gap: 4px;
   margin: 6px 0 0;
   padding: 0;
-  overflow-y: auto;
   list-style: none;
 }
 
@@ -4670,9 +5044,29 @@ button {
   color: var(--muted);
 }
 
+.background-task__more {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  margin-top: 2px;
+  padding: 0;
+  color: var(--task);
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.background-task__more:hover,
+.background-task__more:focus-visible {
+  text-decoration: underline;
+}
+
+.background-task__command,
 .background-task__output pre,
 .background-task__error pre,
-.background-task__details pre {
+.background-task__prompt pre {
   max-height: 180px;
   margin: 6px 0 0;
   padding: 8px;
@@ -4688,79 +5082,82 @@ button {
   overflow-wrap: anywhere;
 }
 
+.background-task__command {
+  margin: 0;
+}
+
 .background-task__error {
   color: var(--danger);
 }
 
 .background-task__error pre {
-  color: #f3ada1;
-  border-color: rgba(239, 129, 111, 0.3);
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
-.background-task__details summary {
+.background-task__prompt summary {
   color: var(--muted);
   cursor: pointer;
 }
 
-.background-task__management {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0 0 22px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-}
-
-.background-task__management > strong {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.background-task__management > p {
-  min-width: 0;
-  margin: 0;
+.background-task__stop-unavailable {
+  margin: 11px 0 0;
   color: var(--muted);
   font-size: 10px;
   line-height: 1.35;
-}
-
-.background-task__stop {
-  display: inline-flex;
-  min-height: 30px;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 6px;
-  margin-left: auto;
-  padding: 0 10px;
-  color: #f3ada1;
-  border-color: rgba(239, 129, 111, 0.35);
-  background: rgba(239, 129, 111, 0.08);
-  font-size: 10px;
-}
-
-.background-task__stop-unavailable {
-  margin-left: auto;
-  text-align: right;
 }
 
 .background-task__stop-unavailable strong {
   color: var(--muted-strong);
 }
 
+@media (max-width: 960px), (pointer: coarse) {
+  .background-task__action,
+  .background-task__more {
+    min-height: 40px;
+  }
+}
+
+/* On a phone the kind and time move under the title, which keeps the width
+   for what the task is, and every control is at least 40px tall. */
 @media (max-width: 560px) {
-  .background-task__management {
-    align-items: stretch;
-    flex-direction: column;
+  .background-task__toggle {
+    min-height: 48px;
+    grid-template-areas:
+      "icon title chevron"
+      "icon meta chevron";
+    grid-template-columns: 16px minmax(0, 1fr) 14px;
+    row-gap: 3px;
   }
 
-  .background-task__stop,
-  .background-task__stop-unavailable {
-    align-self: stretch;
-    margin-left: 0;
+  .background-task__status-icon {
+    grid-area: icon;
+  }
+
+  .background-task__title {
+    grid-area: title;
+  }
+
+  .background-task__meta {
+    grid-area: meta;
+  }
+
+  .background-task__chevron {
+    grid-area: chevron;
+  }
+
+  .background-task__elapsed {
+    min-width: 0;
     text-align: left;
+  }
+
+  .background-task__action,
+  .background-task__more {
+    min-height: 40px;
+  }
+
+  .background-task__panel {
+    padding-left: 12px;
   }
 }
 
@@ -4816,12 +5213,14 @@ button {
   color: var(--computer-accent);
 }
 
-.web-statusline__provider {
-  color: var(--accent-foreground);
+/* Each computer keeps its hue, deepened toward the text colour on a light page
+   so its name reads at 4.5:1. */
+:where(.app-shell[data-appearance='light']) .web-statusline__computer {
+  color: color-mix(in srgb, var(--computer-accent) 50%, var(--text));
 }
 
-.web-statusline__tasks {
-  color: #6ea8fe;
+.web-statusline__provider {
+  color: var(--accent-foreground);
 }
 
 .icon-button--task-running {
@@ -5039,7 +5438,9 @@ button {
   color: var(--muted-strong);
   font-size: 11px;
 }
-.settings-navigation__content { min-width: 0; overflow-y: auto; padding: 0 4px 16px; }
+/* The padding keeps focus rings inside this scroller; the margin takes it back
+   so fields line up with the search field above. */
+.settings-navigation__content { min-width: 0; overflow-y: auto; margin-inline: -4px; padding: 0 4px 16px; }
 .settings-navigation__content .app-settings-group { padding-top: 0; }
 .settings-navigation .app-settings-group__body { grid-template-columns: 1fr; }
 .settings-navigation [hidden] { display: none !important; }
@@ -5342,6 +5743,14 @@ button {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
+}
+
+/* A hub variable is one long token: inline-code size keeps it on one line on
+   most phones, and a narrower screen may break it anywhere. */
+.notification-scope-option code {
+  color: var(--muted-strong);
+  font-size: 0.88em;
+  overflow-wrap: anywhere;
 }
 
 /* Sections that belong together share one cell of a settings group. */
@@ -5654,7 +6063,7 @@ button {
 
 .send-button--stop {
   color: var(--text);
-  background: #383c34;
+  background: var(--panel-soft);
 }
 
 .send-button--queue {
@@ -5994,6 +6403,11 @@ button {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 24px;
+}
+
+/* A title long enough to wrap must not squeeze Close below 40px. */
+.dialog__header > .icon-button {
+  flex: none;
 }
 
 /* A side question is an aside to the conversation. Its thread docks above the
@@ -7587,7 +8001,7 @@ button {
     height: auto;
     max-height: 100%;
     padding: 20px max(18px, env(safe-area-inset-right))
-      max(6px, calc(env(safe-area-inset-bottom) - 20px))
+      max(12px, env(safe-area-inset-bottom))
       max(18px, env(safe-area-inset-left));
     overflow-y: auto;
     border-right: 0;
@@ -7622,8 +8036,10 @@ button {
     margin-top: 12px;
   }
 
+  /* The sheet's own padding keeps the home indicator clear; this only spaces
+     the last action from it. */
   .new-session-dialog > form {
-    padding-bottom: max(18px, env(safe-area-inset-bottom));
+    padding-bottom: 12px;
   }
 
   .new-session-dialog .dialog__submit {
@@ -7685,10 +8101,29 @@ button {
   .document-code figcaption button,
   .knowledge-node,
   .knowledge-node__status button,
+  .workspace-crumbs button,
+  .knowledge-crumbs button,
   .session-filter,
   .session-list__results button,
+  .recording-panel button,
+  .dialog-tab,
   .session-item__tasks {
     min-height: 40px;
+  }
+
+  .workspace-crumbs button,
+  .knowledge-crumbs button,
+  .session-filter {
+    min-width: 40px;
+  }
+
+  /* Centred on the badges line, a 40px target would reach into the row
+     above, so it starts at the row's edge and holds its label up on that
+     line instead. */
+  .session-item__body:not(:has(> .session-origin-run-link)) > .session-item__tasks {
+    top: -6px;
+    padding: 0 5px 13px;
+    transform: none;
   }
 
   .document-view-controls .document-view-switch button {
@@ -7944,8 +8379,9 @@ button {
     white-space: nowrap;
   }
 
+  /* Its breadcrumbs are 40px targets now, so they set the bar's height. */
   .knowledge-reader__crumbs {
-    padding: 4px 16px;
+    padding: 0 16px;
   }
 
   .knowledge-reader__file-crumb {
@@ -7995,6 +8431,33 @@ button {
     width: 40px;
     height: 40px;
     flex: 0 0 40px;
+  }
+
+  /* The folder keeps its size as text in the header line; the line's height
+     around it, down to the header's foot, answers a touch. A browser without
+     overflow: clip keeps the line's hidden overflow and the smaller target. */
+  @supports (overflow: clip) {
+    .conversation-header__title .conversation-header__meta {
+      overflow-x: clip;
+      overflow-y: visible;
+    }
+  }
+
+  .conversation-header__cwd {
+    position: relative;
+  }
+
+  /* A folder as short as "~/" also reaches back over the line's plain text,
+     which it ends, to 44px wide. */
+  .conversation-header__cwd::before {
+    position: absolute;
+    inset: -16px 0 -10px min(0px, calc(100% - 44px));
+    content: "";
+  }
+
+  .timeline-follow__button {
+    width: 40px;
+    height: 40px;
   }
 
   .header-action-label {
@@ -8059,6 +8522,21 @@ button {
     max-height: 82px;
   }
 
+  /* A row is as tall as its 40px buttons, so two still fit the tray. */
+  .queued-prompt {
+    grid-template-columns: 16px minmax(0, 1fr) 40px 40px;
+    padding-block: 0;
+  }
+
+  .queued-prompt .icon-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .queued-prompt > .drag-handle {
+    height: 40px;
+  }
+
   .queued-edit-banner {
     font-size: 12px;
     line-height: 1.35;
@@ -8092,6 +8570,11 @@ button {
   .composer-actions,
   .recording-panel {
     border-radius: 13px;
+  }
+
+  /* Its 40px buttons fill the strip, which keeps the buttons row's height. */
+  .composer--refresh > .recording-panel {
+    padding: 0;
   }
 
   .composer textarea {
@@ -8275,10 +8758,10 @@ button {
 }
 
 /* Sits at the end of the row, out of the way of the title but reachable
-   without opening the conversation. Close stays above Pause so the destructive
-   and reversible lifecycle actions keep a stable order. Read and Hide, which
-   only change how the list treats the session, share a second column: a third
-   control under the first two would make every row taller. */
+   without opening the conversation. Close has the first column to itself.
+   Read and Hide, which only change how the list treats the session, share a
+   second column: a third control under the first two would make every row
+   taller. */
 .session-item__controls {
   grid-column: 3;
   grid-row: 1;
@@ -8289,8 +8772,12 @@ button {
   gap: 2px;
 }
 
+.session-item__close {
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
 .session-item__close,
-.session-item__suspend,
 .session-item__unread,
 .session-item__hide {
   flex: 0 0 auto;
@@ -8314,18 +8801,14 @@ button {
 }
 
 .session-item:hover .session-item__close,
-.session-item:hover .session-item__suspend,
 .session-item:hover .session-item__unread,
 .session-item:hover .session-item__hide,
 .session-item:focus-within .session-item__close,
-.session-item:focus-within .session-item__suspend,
 .session-item:focus-within .session-item__unread,
 .session-item:focus-within .session-item__hide,
 .session-item__close:focus-visible,
-.session-item__suspend:focus-visible,
 .session-item__unread:focus-visible,
-.session-item__hide:focus-visible,
-.session-item__suspend--active {
+.session-item__hide:focus-visible {
   opacity: 1;
 }
 
@@ -8334,19 +8817,13 @@ button {
   color: var(--danger);
 }
 
-.session-item__suspend:hover,
 .session-item__unread:hover,
 .session-item__hide:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text);
 }
 
-.session-item__suspend--active {
-  color: #6ea8fe;
-}
-
 .session-item__close:focus-visible,
-.session-item__suspend:focus-visible,
 .session-item__unread:focus-visible,
 .session-item__hide:focus-visible {
   outline: 2px solid var(--accent-foreground);
@@ -8354,24 +8831,20 @@ button {
 }
 
 /* Still hidden until the pointer is near. Fading a disabled control in on its
-   own left every busy session showing a faint pause button at all times. */
+   own left every busy session showing a faint button at all times. */
 .session-item__close:disabled,
-.session-item__suspend:disabled,
 .session-item__unread:disabled,
 .session-item__hide:disabled {
   cursor: not-allowed;
 }
 
 .session-item:hover .session-item__close:disabled,
-.session-item:hover .session-item__suspend:disabled,
 .session-item:hover .session-item__unread:disabled,
 .session-item:hover .session-item__hide:disabled,
 .session-item:focus-within .session-item__close:disabled,
-.session-item:focus-within .session-item__suspend:disabled,
 .session-item:focus-within .session-item__unread:disabled,
 .session-item:focus-within .session-item__hide:disabled,
 .session-item__close:disabled:focus-visible,
-.session-item__suspend:disabled:focus-visible,
 .session-item__unread:disabled:focus-visible,
 .session-item__hide:disabled:focus-visible {
   opacity: 0.35;
@@ -8382,7 +8855,6 @@ button {
    finding an invisible target. It stays visible, and large enough to hit. */
 @media (hover: none) {
   .session-item__close,
-  .session-item__suspend,
   .session-item__unread,
   .session-item__hide {
     opacity: 1;
@@ -8391,7 +8863,6 @@ button {
   }
 
   .session-item__close:disabled,
-  .session-item__suspend:disabled,
   .session-item__unread:disabled,
   .session-item__hide:disabled {
     opacity: 0.3;
@@ -8435,19 +8906,9 @@ button {
   white-space: nowrap;
 }
 
-/* A suspended session keeps its place and its history, and says plainly that
-   nothing is running in it. */
-.session-item--suspended {
-  opacity: 0.55;
-}
-
-.session-item--suspended .status-dot {
-  background: var(--muted);
-}
-
 /* Listed although hidden, because Hidden shows it or because it needs you: a
-   dashed outline sets it apart, and unlike a suspended row it keeps its full
-   strength. An unread or open row keeps its bars in place of the side dashes. */
+   dashed outline sets it apart, and it keeps its full strength. An unread or
+   open row keeps its bars in place of the side dashes. */
 .session-item--hidden {
   border-top: 1px dashed var(--border-strong);
   border-bottom: 1px dashed var(--border-strong);
@@ -8464,8 +8925,8 @@ button {
 
 /* Unread: a turn ended that nobody has read yet. The title carries the
    weight, an accent dot leads it and a bar on each side frames the row, which
-   no status, attention, hidden or suspended cue uses, so it combines with all
-   of them. The open row's own bars take precedence. */
+   no status, attention or hidden cue uses, so it combines with all of them.
+   The open row's own bars take precedence. */
 .session-item--unread:not(.session-item--active) {
   --session-edge: var(--session-unread);
 }
@@ -9637,8 +10098,9 @@ button {
     margin-right: max(16px, env(safe-area-inset-right));
   }
 
-  .oracle-mode button {
-    min-height: 36px;
+  .oracle-mode button,
+  .oracle-runtime {
+    min-height: 40px;
   }
 
   .oracle-queue__editor textarea {

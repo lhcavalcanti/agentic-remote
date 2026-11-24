@@ -23,7 +23,7 @@ Reopen starts a fresh retention interval without changing conversation order.
 An already-old eligible
 record can archive on the next pass: Copilot discovery runs every 10 seconds;
 Claude checks every 60 seconds, and both reconcile at startup. Archival requires
-no live provider owner and an idle or intentionally suspended state. Queues,
+no live provider owner and an idle state. Queues,
 unconfirmed dispatches, queued, running, or detached background tasks,
 questions, permissions, failures, context recovery, and review pins prevent it. A previously running/waiting interrupted turn is not
 reclassified as idle just because its process disappeared.
@@ -38,7 +38,10 @@ discovery's snapshot is never archived.
 Archival is not Delete or Close. It never terminates a live process, removes
 history, deletes a folder/worktree, or erases resumability. Close and Delete
 permanently are confirmed user actions ([app spec §3.3](app-spec.md)): Close
-keeps a session reopenable for 14 days, then deletes it. Default
+keeps a session reopenable for 14 days, then deletes it. A session an older
+release suspended is closed when its computer first loads it, keeping its
+queued prompts, failed send, and context brief, and logged as closed with
+cause `suspend-retired`; an archived one stays archived. Default
 retention does not start a process for every retained record. Existing safe
 startup recovery may restore an owned terminal; ordinary discovery does not
 respawn a missing one. Failed recovery leaves a visible interruption.
@@ -49,9 +52,8 @@ reopen resumes the same ID and waits for readiness before dispatching preserved
 FIFO work. SDK reopen does not retry the interrupted turn or automatically
 release its queue; explicitly continue after reviewing its result. Interrupted
 and archived records are read-only until Reopen: sends, queued prompts, retries,
-commands, restart, clear, recovery, suspend, tmux moves, and runtime changes are
-refused with nothing consumed, and resuming an archived record also requires
-Reopen. Queued prompts cannot be edited, removed, reordered, or dispatched until
+commands, restart, clear, recovery, tmux moves, and runtime changes are
+refused with nothing consumed. Queued prompts cannot be edited, removed, reordered, or dispatched until
 Reopen, and a pending context brief waits too; Reopen sends it once before the
 queue continues. Automatic queue drains skip retained records, and the queue
 claim itself refuses one, so an interruption landing mid-drain sends nothing. Expired
@@ -63,8 +65,8 @@ including patched connections. Retention-capable nodes include archival metadata
 in authenticated snapshots, so reconnect distinguishes retained history from
 explicit deletion without fetching each archived transcript. Metadata-only lifecycle logs identify the
 session, transition, interruption cause, and UTC detection time (with a failed
-relaunch's bounded error), and record each completed suspend, resume, close,
-reopen of a closed session, and expiry; they contain no prompts or provider
+relaunch's bounded error), and record each completed close, reopen of a closed
+session, and expiry; they contain no prompts or provider
 credentials. Concurrent lifecycle changes invalidate stale discovery; retention
 is decided against the current durable record, not a previously read snapshot.
 An authoritative refresh keeps an unlisted archived row only while it is the

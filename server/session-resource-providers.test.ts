@@ -41,13 +41,11 @@ function seed(cwd: string, provider: 'copilot' | 'claude'): SessionDetail {
   return { id: 'session', provider, cwd, title: 'Fixture', status: 'idle', isOpen: true, updatedAt: capturedAt, messages: [] }
 }
 
-async function copilotFixture(mode: 'loaded' | 'unloaded' | 'tmux' | 'suspended' = 'loaded') {
+async function copilotFixture(mode: 'loaded' | 'unloaded' | 'tmux' = 'loaded') {
   const cwd = await directory()
   const store = new SessionStore(cwd)
   await store.initialize()
-  await store.create({
-    ...seed(cwd, 'copilot'), suspended: mode === 'suspended',
-  }, { managedOpen: true, backend: mode === 'tmux' ? 'terminal' : 'sdk' })
+  await store.create(seed(cwd, 'copilot'), { managedOpen: true, backend: mode === 'tmux' ? 'terminal' : 'sdk' })
   const sdk = {
     sessionId: 'session',
     send: vi.fn(async () => 'receipt'),
@@ -258,7 +256,7 @@ describe('read-only Copilot resource views', () => {
     expect(await readFile(path.join(cwd, 'state.json'), 'utf8')).toBe(before)
   })
 
-  it.each(['unloaded', 'tmux', 'suspended'] as const)('reports %s resources as workspace defaults without starting the session', async (mode) => {
+  it.each(['unloaded', 'tmux'] as const)('reports %s resources as workspace defaults without starting the session', async (mode) => {
     const { cwd, service, client, sdk, terminal } = await copilotFixture(mode)
     expect(await service.listSkills('session')).toMatchObject({ scope: 'workspace', skills: [{ name: 'workspace', source: 'user' }] })
     const mcp = await service.listMcpServers('session')
@@ -540,12 +538,10 @@ describe('read-only Claude resource views', () => {
     expect(query).toHaveBeenCalledTimes(1)
   })
 
-  it('returns unavailable after restart or suspension and refuses reads after shutdown', async () => {
-    const { service, begin, end, store, cwd, sdk, query } = await claudeFixture()
+  it('returns unavailable after restart and refuses reads after shutdown', async () => {
+    const { service, begin, end, cwd, sdk, query } = await claudeFixture()
     await begin()
     await end()
-    await service.suspendSession('session')
-    expect(await service.listSkills('session')).toMatchObject({ scope: 'unavailable' })
     await service.stop()
     await expect(service.listSkills('session')).rejects.toMatchObject({ statusCode: 503 })
     await expect(service.listMcpServers('missing')).rejects.toMatchObject({ statusCode: 503 })
@@ -553,7 +549,6 @@ describe('read-only Claude resource views', () => {
     await reloaded.store.initialize()
     expect(await reloaded.listSkills('session')).toMatchObject({ scope: 'unavailable' })
     await expect(reloaded.listMcpServers('missing')).rejects.toMatchObject({ statusCode: 404 })
-    expect(store.get('session')?.suspended).toBe(true)
     expect(query).toHaveBeenCalledTimes(1)
     await reloaded.store.close()
   })

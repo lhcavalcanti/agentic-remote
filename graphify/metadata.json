@@ -657,9 +657,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 259,
+  "communities": 251,
   "community_algorithm": "louvain-seed-42",
-  "edges": 26361,
+  "edges": 26366,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -1260,8 +1260,8 @@
     "server/skill-settings.ts": "e032e8a35f8e957846e7aff9fb4ffe43305e1c8f7827bc900b45c58517dbc817",
     "server/startup-phases.test.ts": "0e011eb08c02cf537ef7501ff2185530d5f587010587760ca94d26eaa6718c4d",
     "server/startup-phases.ts": "cf52a86b5a0ba81c0b84fafb0e7d9605e8786908718d66c1b62ea034b4354bfa",
-    "server/static-files.test.ts": "57cf18c5bd65a66efd3f1dd0f842817c1862159ba2202191f8f5a16b3ed03221",
-    "server/static-files.ts": "822c51af30a1821dcc245980988350bdd2053eecadbda0bb32376f1f5294c1c4",
+    "server/static-files.test.ts": "3ab4e4a8d94ca8683a15d0755c856c6dd389ea5e38ff97b0e97524f9ebc32dab",
+    "server/static-files.ts": "beb4817e5163b6b208b54e49cee39883b8d04070ebb0c4e4c67c909a6d0552c7",
     "server/submission-error-http.test.ts": "e3c54c88a62b2b339a75463056ac3928f6d23315d48efb8cd18e3d7a4bea173f",
     "server/terminal-form-controls.test.ts": "102050c5ca97831f37ee5c4119680ff5b32870e11646447d40a327821dec156c",
     "server/terminal-form-deadline.test.ts": "4abe7cd75cba5123c99150dad748baeb8b8ed29e3a3f5ecff9eea094799695a9",
@@ -1594,7 +1594,7 @@
     "vite.config.ts": "2289aaf469d302d2f6b5f53975092cbff6d2d8eddc2ef8768514555401d2c64f"
   },
   "mode": "local-ast-only",
-  "nodes": 9168,
+  "nodes": 9171,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1871,23 +1871,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "f04961f86c60d930ad0e854c3da78c1895a2fdfc2fe02440f00970ee6bda8218",
-    "communities.json": "7b4316d6c7f036ee6d25e1df9040d7b268eb9e3b1cab9632dcdb08586aaba03c",
-    "graph.html": "d5f6634e9fa085dbecc6685156f0307e58669f828cda09b637241ba98d04b026",
-    "graph.json": "7cdacb2705040b84d0ffa64bdf0788f297f8091c8f58d69832fbf7c801c5303d"
+    "GRAPH_REPORT.md": "91375a2340ced7b2b75780dd26307f8f04f2c7465e253d25c92cecbbec96402f",
+    "communities.json": "a3928a192fc1d0f53c96f9f747644b6e1d64069385351f3dc93ea69e4b3479d2",
+    "graph.html": "c6b875d19ea5e46ecbc895b0fd7dd25d9103df78beecd23ad49cb86977b17a0e",
+    "graph.json": "57d798ccda0c08b8b20b7e7b0a169dcd9e9f2406421587768ed01e984cc13baf"
   },
   "schema_version": 1,
-  "source_commit": "9e34bb672dc98a6e6017e9bd4586c43dad0cdf22",
-  "source_fingerprint": "6a7d5d1263261a70de7d1b50337a9365d9f8e7ffbecc8359260ab20e37e9fc87",
-  "working_tree_changes": [
-    "docs/design/scheduler.md",
-    "package.json",
-    "server/manager-agent.test.ts",
-    "server/manager-agent.ts",
-    "server/manager-context.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
-  ]
+  "source_commit": "77417b4dbab0620ffc698f7c524a312df48588fc",
+  "source_fingerprint": "35da6c61be65b4a192ed37c2f1db80d12203208516c87c8798c792b1980ee844",
+  "working_tree_changes": []
 }

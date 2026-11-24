@@ -101,11 +101,16 @@ describe('closed session context', () => {
       expect(context.prompts).toEqual(['Look at this'])
     })
 
-    it('reads no more than the first 20,000 characters of a message', () => {
+    it('reads no more than the first 4,000 characters of a message', () => {
       const afterNote = (length: number) => `<!-- ${'x'.repeat(length)} -->\n\nAfter the note`
 
       expect(replyTo(afterNote(100))).toBe('After the note')
-      expect(replyTo(afterNote(25_000))).toBeUndefined()
+      expect(replyTo(afterNote(5_000))).toBeUndefined()
+    })
+
+    it('reads a deeply nested paste without failing the close or showing its markers', () => {
+      expect(replyTo(`${'>'.repeat(30_000)} deep`)).toBeUndefined()
+      expect(replyTo(`${'> '.repeat(15_000)}deep`)).toBeUndefined()
     })
   })
 

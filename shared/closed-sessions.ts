@@ -11,8 +11,13 @@ export const CLOSED_SESSION_RETENTION_MS = CLOSED_SESSION_RETENTION_DAYS * 24 * 
 const CONTEXT_PROMPTS = 3
 const CONTEXT_PROMPT_LENGTH = 200
 const CONTEXT_REPLY_LENGTH = 400
-/** How much of a message is read for its context, so a huge paste cannot hold up a close. */
-const CONTEXT_SOURCE_LENGTH = 20_000
+/**
+ * How much of a message is read for its context: ten times its longest
+ * excerpt. Parsing grows faster than the input for some pastes, such as
+ * thousands of nested quotes or emphasis markers, so a longer read could hold
+ * up a close.
+ */
+const CONTEXT_SOURCE_LENGTH = 4_000
 
 /** When a session closed at `closedAt` is deleted, in epoch milliseconds; NaN when unreadable. */
 export function closedSessionExpiresAt(closedAt: string): number {
@@ -60,41 +65,65 @@ function htmlText(html: string): string {
 }
 
 /**
- * The words a reader sees of a node once it is rendered: text and code stay,
+ * The words a reader sees of a tree once it is rendered: text and code stay,
  * links keep their words, and images, raw markup, link definitions and
- * footnotes go.
+ * footnotes go. Walked with a stack of its own, since a paste can nest
+ * thousands of quotes deep.
  */
-function nodeText(node: Nodes): string {
-  switch (node.type) {
-    case 'text':
-    case 'inlineCode':
-    case 'code':
-      return node.value
-    case 'html':
-      return htmlText(node.value)
-    case 'break':
-      return '\n'
-    case 'image':
-    case 'imageReference':
-    case 'definition':
-    case 'footnoteDefinition':
-    case 'footnoteReference':
-      return ''
-    default:
-      return 'children' in node
-        ? (node.children as Nodes[]).map(nodeText).join(blockParents.has(node.type) ? '\n' : '')
-        : ''
+function nodeText(tree: Nodes): string {
+  let text = ''
+  const pending: (Nodes | string)[] = [tree]
+  while (pending.length > 0) {
+    const node = pending.pop()!
+    if (typeof node === 'string') {
+      text += node
+      continue
+    }
+    switch (node.type) {
+      case 'text':
+      case 'inlineCode':
+      case 'code':
+        text += node.value
+        break
+      case 'html':
+        text += htmlText(node.value)
+        break
+      case 'break':
+        text += '\n'
+        break
+      case 'image':
+      case 'imageReference':
+      case 'definition':
+      case 'footnoteDefinition':
+      case 'footnoteReference':
+        break
+      default:
+        if ('children' in node) {
+          const children = node.children as Nodes[]
+          const apart = blockParents.has(node.type)
+          for (let index = children.length - 1; index >= 0; index -= 1) {
+            pending.push(children[index]!)
+            if (apart && index > 0) pending.push('\n')
+          }
+        }
+    }
   }
+  return text
 }
 
 /**
  * A message as plain text, read with the grammar the conversation is rendered
  * with, so lists, headings and tables are told from prose before its lines
- * are joined. Only its first 20,000 characters are read.
+ * are joined. Only its first 4,000 characters are read, and a message the
+ * parser cannot read is kept as typed rather than stop the session closing.
  */
 function plainText(content: string): string {
   const source = Array.from(content.slice(0, 2 * CONTEXT_SOURCE_LENGTH)).slice(0, CONTEXT_SOURCE_LENGTH).join('')
-  return nodeText(markdown.parse(source))
+  try {
+    return nodeText(markdown.parse(source))
+  } catch {
+    return source
+  }
 }
 
 function said(message: ChatMessage, role: ChatMessage['role']): boolean {

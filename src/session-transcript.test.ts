@@ -32,11 +32,18 @@ describe('mergeTranscriptWindow', () => {
   })
 
   it('does not put a settled held row back to running from an older carried copy', () => {
+    const running = line(2, { role: 'activity', activityStatus: 'running' })
     const done = line(2, { role: 'activity', activityStatus: 'completed' })
-    const held = windowed(0, [line(0), line(1), done, ...range(3, 10)])
-    const merged = mergeTranscriptWindow(held, windowed(5, range(5, 10), [line(2, { role: 'activity', activityStatus: 'running' })]))
-    expect(merged.messagesStart).toBe(0)
-    expect(merged.messages[2]).toEqual(done)
+    // A finished root task is read again as the agent's message, under the same id.
+    const reported = line(2, {
+      taskCompletion: { source: 'root-task-complete', toolCallId: 'call-2', completedAt: at },
+    })
+    for (const settled of [done, reported]) {
+      const held = windowed(0, [line(0), line(1), settled, ...range(3, 10)])
+      const merged = mergeTranscriptWindow(held, windowed(5, range(5, 10), [running]))
+      expect(merged.messagesStart).toBe(0)
+      expect(merged.messages[2]).toEqual(settled)
+    }
   })
 
   it('updates held rows from what the window carries, and lets go of a stale running one', () => {
@@ -68,6 +75,17 @@ describe('prependTranscriptPage', () => {
     expect(ids(grown.messages)).toEqual(ids(range(2, 8)))
     expect(prependTranscriptPage(windowed(6, range(6, 8)), page, 'm5')).toBeUndefined()
     expect(prependTranscriptPage(windowed(5, [line(5, { id: 'moved' })]), page, 'm5')).toBeUndefined()
+  })
+
+  it('keeps a finished task the page reads over an older running copy the window carried', () => {
+    const reported = line(3, {
+      taskCompletion: { source: 'root-task-complete', toolCallId: 'call-3', completedAt: at },
+    })
+    const page = { messages: [line(2), reported, line(4)], messagesStart: 2, messagesTotal: 8 }
+    const carried = [line(3, { role: 'activity', activityStatus: 'running' })]
+    const grown = prependTranscriptPage(windowed(5, range(5, 8), carried), page, 'm5')!
+    expect(grown.messages[1]).toEqual(reported)
+    expect(grown).toMatchObject({ messagesStart: 2, carriedMessages: [] })
   })
 
   it('keeps a completion the window carried over the running copy a late page holds', () => {

@@ -6,15 +6,25 @@ function isRunning(message: ChatMessage): boolean {
 }
 
 /**
- * Of two copies of one row, the one carried with the latest window -- unless
- * it is still running where the other has settled. An activity that finished
- * never runs again, so a copy read before it finished cannot undo that.
+ * How far a row has come: an activity waiting to run, then running, then
+ * anything else -- an activity that finished or failed, or the agent's message
+ * a finished root task is read again as, under the same id. A row only moves
+ * forward.
+ */
+function progress(message: ChatMessage): number {
+  if (message.role !== 'activity') return 2
+  if (message.activityStatus === 'pending') return 0
+  return message.activityStatus === 'running' ? 1 : 2
+}
+
+/**
+ * Of two copies of one row, the one carried with the latest window, unless
+ * the other has come further: a copy read before an activity finished cannot
+ * undo that.
  */
 function laterCopy(row: ChatMessage, carried: ChatMessage | undefined): ChatMessage {
   if (!carried) return row
-  return isRunning(carried) && row.role === 'activity' && row.activityStatus !== undefined && !isRunning(row)
-    ? row
-    : carried
+  return progress(row) > progress(carried) ? row : carried
 }
 
 /**

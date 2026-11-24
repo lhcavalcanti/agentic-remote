@@ -27,6 +27,7 @@ import type {
   SideQuestionExchange,
 } from '../shared/contracts.js'
 import type { SessionKnowledgeBaseLocation } from './session-directory.js'
+import type { SessionReadOptions, TranscriptPage, TranscriptPageQuery } from '../shared/transcript-window.js'
 import type { StartupPhases } from './startup-phases.js'
 import type { LaunchReconciliation, TerminationAcknowledgement } from '../shared/launch-identity.js'
 import type { SessionPaneRoot } from './host-telemetry/session-pane-roots.js'
@@ -42,10 +43,16 @@ export interface SessionService {
   listHistory(): SessionDetail[]
   /** Sessions closed through the app that can still be reopened. */
   listClosedSessions?(): SessionDetail[]
-  getSession(id: string): SessionDetail | undefined
+  /** With `window`, only the latest messages, without copying the rest. */
+  getSession(id: string, options?: SessionReadOptions): SessionDetail | undefined
   /** Whether this provider owns a session, answered without copying it. */
   hasSession?(id: string): boolean
-  openSession(id: string): Promise<SessionDetail>
+  openSession(id: string, options?: SessionReadOptions): Promise<SessionDetail>
+  /**
+   * The messages before a browser's first one: 404 for a session that is not
+   * here, 409 when that message is no longer where the browser holds it.
+   */
+  readMessages?(id: string, query: TranscriptPageQuery): TranscriptPage
   activateSession(id: string): Promise<SessionDetail>
   configureRetention?(id: string, input: SessionRetentionPatch): Promise<SessionDetail>
   createSession(

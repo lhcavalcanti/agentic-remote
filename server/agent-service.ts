@@ -180,6 +180,9 @@ import {
 } from './terminal-session.js'
 import { buildRecoveryBrief } from './recovery-context.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
+import {
+  windowSession, type SessionReadOptions, type TranscriptPage, type TranscriptPageQuery,
+} from '../shared/transcript-window.js'
 
 interface ActivePrompt {
   assistantMessageId: string
@@ -3863,8 +3866,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  getSession(id: string): SessionDetail | undefined {
-    const session = this.store.get(id)
+  getSession(id: string, options?: SessionReadOptions): SessionDetail | undefined {
+    const session = this.store.get(id, options)
     return session ? this.publicSession(session) : undefined
   }
 
@@ -3872,8 +3875,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.store.has(id)
   }
 
-  async openSession(id: string): Promise<SessionDetail> {
-    const stored = await this.store.readAfterWrites(id)
+  readMessages(id: string, query: TranscriptPageQuery): TranscriptPage {
+    const page = this.store.readMessages(id, query)
+    if (!page) throw Object.assign(new Error('Session not found'), { statusCode: 404 })
+    return page
+  }
+
+  async openSession(id: string, options: SessionReadOptions = {}): Promise<SessionDetail> {
+    const stored = await this.store.readAfterWrites(id, options)
     // Read as kept: opening one of these must not start its runtime.
     if (stored.interruption || stored.archivedAt || stored.closedAt || this.closingSessions.has(id)) {
       return this.publicSession(stored)
@@ -3887,20 +3896,21 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.hydratedSessions.has(id)) {
       return this.publicSession(stored)
     }
+    // These read the whole session anyway, and what they publish stays whole.
     if (this.store.backend(id) === 'terminal') {
       const interrupted = await this.store.markInterrupted(id, 'terminal-stopped')
       this.publish(interrupted)
-      return this.publicSession(interrupted)
+      return this.publicSession(windowSession(interrupted, options.window))
     }
 
     const inFlight = this.hydratingSessions.get(id)
     if (inFlight) {
-      return this.publicSession(await inFlight)
+      return this.publicSession(windowSession(await inFlight, options.window))
     }
     const hydration = this.hydrateSession(id)
     this.hydratingSessions.set(id, hydration)
     try {
-      return this.publicSession(await hydration)
+      return this.publicSession(windowSession(await hydration, options.window))
     } finally {
       this.hydratingSessions.delete(id)
     }

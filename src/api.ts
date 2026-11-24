@@ -83,6 +83,17 @@ import type {
 import { HubSignInExpiredError, hubFetch } from './hub-sign-in'
 import { hubUnreachable } from './hub-reachability'
 import { currentSessionEventSequence, rememberSessionResponse } from './session-response-order'
+import {
+  TRANSCRIPT_WINDOW,
+  type TranscriptPage,
+  type TranscriptPageQuery,
+} from '../shared/transcript-window'
+
+/**
+ * Sent with every hub request: the browser holds a window of each transcript,
+ * so the session a change answers with is cut to one too.
+ */
+const TRANSCRIPT_WINDOW_HEADER = 'x-transcript-window'
 
 async function responseError(
   response: Response,
@@ -151,6 +162,7 @@ export async function request<TResult>(
 ): Promise<TResult> {
   const startedAtSequence = currentSessionEventSequence()
   const headers = new Headers(init?.headers)
+  headers.set(TRANSCRIPT_WINDOW_HEADER, String(TRANSCRIPT_WINDOW))
   if (
     init?.body != null &&
     !(init.body instanceof FormData) &&
@@ -693,17 +705,44 @@ export async function searchWorkspace(
   )
 }
 
+/**
+ * A session with the latest window of its transcript. A hub from before
+ * windows answers with the whole transcript, which reads the same way.
+ */
 export async function getSession(
   computerId: string,
   sessionId: string,
   signal?: AbortSignal,
   options: { passive?: boolean } = {},
 ): Promise<ManagedSession> {
+  const query = new URLSearchParams()
+  if (options.passive) query.set('passive', '1')
+  query.set('window', String(TRANSCRIPT_WINDOW))
   const response = await request<{ session: ManagedSession }>(
-    `${sessionPath(computerId, sessionId)}${options.passive ? '?passive=1' : ''}`,
+    `${sessionPath(computerId, sessionId)}?${query}`,
     { signal, cache: 'no-store' },
   )
   return response.session
+}
+
+/**
+ * The messages before the first one the browser holds. A 409 means that
+ * message has moved -- the transcript was rebuilt -- and a fresh window is
+ * read instead of splicing this page onto it.
+ */
+export async function readSessionMessages(
+  computerId: string,
+  sessionId: string,
+  page: TranscriptPageQuery,
+  signal?: AbortSignal,
+): Promise<TranscriptPage> {
+  const query = new URLSearchParams({
+    before: String(page.before), beforeId: page.beforeId, limit: String(page.limit),
+  })
+  return request<TranscriptPage>(
+    `${sessionPath(computerId, sessionId)}/messages?${query}`,
+    { signal, cache: 'no-store' },
+  )
 }
 
 export async function listCommands(
@@ -796,7 +835,10 @@ export async function dispatchQueuedPrompt(
       `${sessionPath(computerId, sessionId)}/queue/${encodeURIComponent(promptId)}/dispatch`,
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          [TRANSCRIPT_WINDOW_HEADER]: String(TRANSCRIPT_WINDOW),
+        },
         body: JSON.stringify({ content }),
         signal: AbortSignal.timeout(35_000),
       },

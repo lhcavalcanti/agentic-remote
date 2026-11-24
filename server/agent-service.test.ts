@@ -4296,6 +4296,37 @@ describe('AgentService deletion', () => {
     await service.stop()
   })
 
+  it('opens and reads a window of a long session, and pages what came before it', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
+    directories.push(directory)
+    const service = new AgentService(
+      new SessionStore(path.join(directory, 'state')),
+      new FakeCopilotClient(),
+      async () => [],
+      async () => undefined,
+    )
+    await service.start()
+    const created = await service.createSession(directory)
+    await service.store.setBackend(created.id, 'terminal')
+    service['externalSessionIds'].add(created.id)
+    await service.store.replaceMessages(created.id, Array.from({ length: 20 }, (_, index) => ({
+      id: `m${index}`, role: 'assistant' as const, content: `line ${index}`, createdAt: '2026-11-24T00:00:00.000Z',
+    })))
+
+    const opened = await service.openSession(created.id, { window: 5 })
+
+    expect(opened).toMatchObject({ id: created.id, messagesStart: 15, messagesTotal: 20 })
+    expect(opened.messages.map((message) => message.id)).toEqual(['m15', 'm16', 'm17', 'm18', 'm19'])
+    expect(service.getSession(created.id, { window: 5 })?.messages).toEqual(opened.messages)
+    expect(service.readMessages(created.id, { before: 15, beforeId: 'm15', limit: 5 }).messages
+      .map((message) => message.id)).toEqual(['m10', 'm11', 'm12', 'm13', 'm14'])
+    expect(() => service.readMessages('missing', { before: 1, beforeId: 'm1', limit: 5 }))
+      .toThrow(expect.objectContaining({ statusCode: 404 }))
+    // Readers that do not ask still get everything.
+    expect(service.getSession(created.id)?.messages).toHaveLength(20)
+    await service.stop()
+  })
+
   it('persists SDK ownership when Restart recovers a vanished managed terminal', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'agent-service-test-'))
     directories.push(directory)

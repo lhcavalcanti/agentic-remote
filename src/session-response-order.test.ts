@@ -116,6 +116,24 @@ describe('Snapshot transcripts', () => {
     expect(row.messages).toEqual(held)
   })
 
+  it('carries a held window, with where it starts and what it carries, onto a summary', () => {
+    const carried = [{ id: 'm0', role: 'activity' as const, content: 'Still running', createdAt: session.updatedAt, activityStatus: 'running' as const }]
+    const windowed = { ...open, messagesStart: 40, messagesTotal: 41, carriedMessages: carried }
+    const [row] = carrySnapshotTranscripts([{ ...session, title: 'Renamed', messages: [] }], [windowed])
+    expect(row).toMatchObject({ title: 'Renamed', messages: held, messagesStart: 40, messagesTotal: 41, carriedMessages: carried })
+  })
+
+  it('keeps the earlier rows held under a snapshot row that carries a window lining up with them', () => {
+    const line = (index: number) => ({ id: `w${index}`, role: 'assistant' as const, content: `line ${index}`, createdAt: session.updatedAt })
+    const paged = { ...session, messages: [10, 11, 12, 13].map(line), messagesStart: 10, messagesTotal: 14, carriedMessages: [] }
+    const [row] = carrySnapshotTranscripts(
+      [{ ...session, messages: [12, 13, 14].map(line), messagesStart: 12, messagesTotal: 15, carriedMessages: [] }],
+      [paged],
+    )
+    expect(row).toMatchObject({ messagesStart: 10, messagesTotal: 15 })
+    expect(row.messages.map((message) => message.id)).toEqual(['w10', 'w11', 'w12', 'w13', 'w14'])
+  })
+
   it('leaves a row that carries its own transcript alone', () => {
     const own = [{ id: 'm2', role: 'user' as const, content: 'Newer', createdAt: session.updatedAt }]
     const [row] = carrySnapshotTranscripts([{ ...session, messages: own }], [open])

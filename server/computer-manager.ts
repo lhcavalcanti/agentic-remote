@@ -50,6 +50,10 @@ import { activityDetailsUnavailable, updateComputerForActivityDetails } from './
 import { updateComputerForScheduleWorktrees, type ScheduleWorktreeInput } from '../shared/schedule-worktrees.js'
 import type { ScheduleWorktreeService } from './schedule-worktrees.js'
 import type { SessionService } from './session-service.js'
+import {
+  pageWholeSession, windowSession,
+  type SessionReadOptions, type TranscriptPage, type TranscriptPageQuery,
+} from '../shared/transcript-window.js'
 import type { HostTelemetryService, HostTelemetryTarget } from './host-telemetry/service.js'
 import {
   readSessionSkills,
@@ -504,32 +508,74 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : this.requireClient(computerId).searchWorkspace(sessionId, query, path)
   }
 
-  async getSession(computerId: string, sessionId: string): Promise<ManagedSession> {
+  /**
+   * Opens a session. With `window`, only its latest messages are sent; a node
+   * from before windows answers whole, and is windowed here instead.
+   */
+  async getSession(
+    computerId: string,
+    sessionId: string,
+    options?: SessionReadOptions,
+  ): Promise<ManagedSession> {
     const computer = this.requireComputer(computerId)
+    const window = options?.window
+    const asked = window === undefined ? [] : [{ window }]
     const session =
       computerId === this.identity.info.id
-        ? await this.localService.openSession(sessionId)
-        : await this.requireClient(computerId).getSession(sessionId)
-    return managedSession(session, computer)
+        ? await this.localService.openSession(sessionId, ...asked)
+        : await this.requireClient(computerId).getSession(sessionId, ...asked)
+    return managedSession(windowSession(session, window), computer)
   }
 
   /**
    * A session as it is recorded, without loading, resuming, or reconciling
    * it, so that reading it, as Oracle does, can never change it.
    */
-  async readSession(computerId: string, sessionId: string): Promise<ManagedSession> {
+  async readSession(
+    computerId: string,
+    sessionId: string,
+    options?: SessionReadOptions,
+  ): Promise<ManagedSession> {
     const computer = this.requireComputer(computerId)
+    const window = options?.window
     if (computerId !== this.identity.info.id) {
       return managedSession(
-        await this.requireClient(computerId).getSession(sessionId, { passive: true }),
+        windowSession(
+          await this.requireClient(computerId).getSession(sessionId, {
+            passive: true, ...(window === undefined ? {} : { window }),
+          }),
+          window,
+        ),
         computer,
       )
     }
-    const session = this.localService.getSession(sessionId)
+    const session = this.localService.getSession(sessionId, ...(window === undefined ? [] : [{ window }]))
     if (!session) {
       throw Object.assign(new Error('Session not found'), { statusCode: 404 })
     }
-    return managedSession(session, computer)
+    return managedSession(windowSession(session, window), computer)
+  }
+
+  /** The messages before a browser's first one, on the computer that owns the session. */
+  async readMessages(
+    computerId: string,
+    sessionId: string,
+    query: TranscriptPageQuery,
+  ): Promise<TranscriptPage> {
+    this.requireComputer(computerId)
+    if (computerId === this.identity.info.id) {
+      return this.localService.readMessages
+        ? this.localService.readMessages(sessionId, query)
+        : pageWholeSession(this.localService.getSession(sessionId), query)
+    }
+    const client = this.requireClient(computerId)
+    try {
+      return await client.readMessages(sessionId, query)
+    } catch (error) {
+      // A node from before pages has no route for them; read whole, it still pages.
+      if (!(error instanceof RemoteNodeRequestError) || error.statusCode !== 404) throw error
+      return pageWholeSession(await client.getSession(sessionId, { passive: true }), query)
+    }
   }
 
   async listCommands(

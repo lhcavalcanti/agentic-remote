@@ -12,6 +12,11 @@ export interface PendingEcho {
   sentAt: number
   /** User messages already in the transcript, which cannot be its echo. */
   knownUserIds: string[]
+  /**
+   * Where the transcript held when it was sent started. Rows before that were
+   * never seen, so one paged in later cannot be told from its echo either.
+   */
+  knownFrom?: number
   /** When its session last settled without logging it. */
   settledAt?: number
 }
@@ -26,6 +31,7 @@ export function createPendingEcho(
   content: string,
   messages: ChatMessage[],
   sentAt: number,
+  messagesStart = 0,
 ): PendingEcho {
   return {
     id,
@@ -34,6 +40,7 @@ export function createPendingEcho(
     knownUserIds: messages
       .filter((message) => message.role === 'user')
       .map((message) => message.id),
+    ...(messagesStart > 0 ? { knownFrom: messagesStart } : {}),
   }
 }
 
@@ -51,12 +58,15 @@ function sameText(left: string, right: string): boolean {
 function pairEchoes(
   echoes: PendingEcho[],
   messages: ChatMessage[],
+  messagesStart = 0,
 ): { unlogged: PendingEcho[], logged: string[] } {
   const logged: string[] = []
   const unlogged = echoes.filter((echo) => {
     const known = new Set(echo.knownUserIds)
     const content = normalize(echo.content)
-    const match = messages.find((message) =>
+    const unseen = (echo.knownFrom ?? 0) - messagesStart
+    const match = messages.find((message, index) =>
+      index >= unseen &&
       message.role === 'user' &&
       !known.has(message.id) &&
       !logged.includes(message.id) &&
@@ -76,9 +86,10 @@ function pairEchoes(
 export function unloggedPendingEchoes(
   echoes: PendingEcho[],
   messages: ChatMessage[],
+  messagesStart = 0,
 ): PendingEcho[] {
   if (echoes.length === 0) return echoes
-  return pairEchoes(echoes, messages).unlogged
+  return pairEchoes(echoes, messages, messagesStart).unlogged
 }
 
 /**
@@ -92,9 +103,10 @@ export function retainPendingEchoes(
   messages: ChatMessage[],
   status: SessionStatus,
   now: number,
+  messagesStart = 0,
 ): PendingEcho[] {
   if (echoes.length === 0) return echoes
-  const { unlogged, logged } = pairEchoes(echoes, messages)
+  const { unlogged, logged } = pairEchoes(echoes, messages, messagesStart)
   const settled = status === 'idle' || status === 'error'
   let changed = unlogged !== echoes
   const retained: PendingEcho[] = []
@@ -124,6 +136,7 @@ export function retainPendingEchoes(
 
 export interface PendingEchoOwner {
   messages: ChatMessage[]
+  messagesStart?: number
   status: SessionStatus
 }
 
@@ -140,7 +153,7 @@ export function prunePendingEchoMap(
   for (const [key, echoes] of Object.entries(map)) {
     const session = owner(key)
     const kept = session
-      ? retainPendingEchoes(echoes, session.messages, session.status, now)
+      ? retainPendingEchoes(echoes, session.messages, session.status, now, session.messagesStart)
       : []
     if (kept === echoes) continue
     next ??= { ...map }

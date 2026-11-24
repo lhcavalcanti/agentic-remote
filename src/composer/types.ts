@@ -97,4 +97,7 @@ export type ComposerProps = {
   onRecallSentMessage: (id: string) => void
   onCancelSentMessage: () => void
   onUseSentMessage: () => boolean
+  /** Reads the page of messages before the ones the session holds. */
+  onLoadEarlierMessages?: () => void
+  loadingEarlierMessages?: boolean
 }

@@ -68,6 +68,7 @@ import {
   getPushSettings,
   getProviderRuntimeOptions,
   getSession,
+  readSessionMessages,
   getSessionKnowledgeRoot,
   updateSessionKnowledgeRoot,
   SessionKnowledgeRequestError,
@@ -297,6 +298,7 @@ vi.mock('./api', async (importOriginal) => ({
   readWorkspaceFile: vi.fn(),
   searchWorkspace: vi.fn(),
   getSession: vi.fn(),
+  readSessionMessages: vi.fn(),
   getSessionKnowledgeRoot: vi.fn(),
   updateSessionKnowledgeRoot: vi.fn(),
   listCommands: vi.fn(),
@@ -336,8 +338,10 @@ class MockWebSocket {
   onopen: (() => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
   onclose: (() => void) | null = null
+  readonly url: string
 
-  constructor() {
+  constructor(url = '') {
+    this.url = url
     MockWebSocket.instances.push(this)
   }
 
@@ -6718,6 +6722,123 @@ describe('App', () => {
       await screen.findByRole('button', { name: /Show \d+ earlier messages/ }),
     ).toBeInTheDocument()
     expect(screen.queryByText('second line 0')).not.toBeInTheDocument()
+  })
+
+  describe('a long session held as a window', () => {
+    const line = (index: number) => ({
+      id: `w${index}`,
+      role: 'assistant' as const,
+      content: `window line ${index}`,
+      createdAt: new Date(Date.UTC(2026, 6, 22, 0, 0, index)).toISOString(),
+    })
+    const rows = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, index) => line(from + index))
+    const windowed = {
+      ...session, messages: rows(40, 300), messagesStart: 40, messagesTotal: 300, carriedMessages: [],
+    }
+
+    it('asks for windows, reveals what it holds, then pages earlier messages in and keeps them', async () => {
+      vi.mocked(listSessions).mockResolvedValue([{ ...session, messages: [] }])
+      vi.mocked(getSession).mockResolvedValue(windowed)
+      vi.mocked(readSessionMessages).mockResolvedValue({ messages: rows(0, 40), messagesStart: 0, messagesTotal: 300 })
+      render(<App />)
+
+      // What the browser holds comes first, without asking the hub.
+      fireEvent.click(await screen.findByRole('button', { name: 'Show 50 earlier messages' }))
+      expect(await screen.findByText('window line 40')).toBeInTheDocument()
+      expect(readSessionMessages).not.toHaveBeenCalled()
+      // Then what it does not, a page at a time.
+      fireEvent.click(screen.getByRole('button', { name: 'Show 40 earlier messages' }))
+      expect(await screen.findByText('window line 0')).toBeInTheDocument()
+      expect(readSessionMessages).toHaveBeenCalledWith(
+        'computer-1', 'session-1', { before: 40, beforeId: 'w40', limit: 500 },
+      )
+      expect(screen.queryByRole('button', { name: /earlier messages/ })).not.toBeInTheDocument()
+      expect(MockWebSocket.instances[0]?.url).toContain('/api/events?patches=1&window=500')
+
+      // A later window over the socket keeps everything paged in.
+      act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.upserted',
+            session: { ...windowed, messages: rows(41, 301), messagesStart: 41, messagesTotal: 301 },
+          }),
+        } as MessageEvent)
+      })
+      expect(await screen.findByText('window line 300')).toBeInTheDocument()
+      expect(screen.getByText('window line 0')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /earlier messages/ })).not.toBeInTheDocument()
+    })
+
+    it('keeps every row once and in order when changes land while a page loads', async () => {
+      let answer: (page: { messages: ChatMessage[]; messagesStart: number; messagesTotal: number }) => void = () => {}
+      vi.mocked(readSessionMessages).mockImplementation(() => new Promise((resolve) => { answer = resolve }))
+      vi.mocked(listSessions).mockResolvedValue([{ ...session, messages: [] }])
+      vi.mocked(getSession).mockResolvedValue(windowed)
+      render(<App />)
+      const deliver = (event: unknown) => act(() => {
+        MockWebSocket.instances[0]?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent)
+      })
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Show 50 earlier messages' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Show 40 earlier messages' }))
+      expect(await screen.findByRole('button', { name: 'Loading earlier messages…' })).toBeDisabled()
+      // The socket's window and a patch to it arrive while the page is out.
+      deliver({
+        type: 'session.upserted', patchVersion: 1,
+        session: { ...windowed, messages: rows(40, 301), messagesTotal: 301 },
+      })
+      const { messages: _messages, ...summary } = windowed
+      deliver({
+        type: 'session.patched', session: summary,
+        patch: { from: 1, to: 2, keep: 301, count: 302, messages: [line(301)] },
+      })
+      await act(async () => answer({ messages: rows(0, 40), messagesStart: 0, messagesTotal: 302 }))
+      expect(await screen.findByText('window line 0')).toBeInTheDocument()
+      // A fresh window, as a new socket is first sent, keeps them all too.
+      deliver({
+        type: 'session.upserted', patchVersion: 1,
+        session: { ...windowed, messages: rows(52, 302), messagesStart: 52, messagesTotal: 302 },
+      })
+
+      const shown = screen.getAllByText(/^window line \d+$/).map((element) => element.textContent)
+      expect(shown).toEqual(rows(0, 302).map((message) => message.content))
+    })
+
+    it('reads a fresh window rather than splicing a page onto a transcript that moved', async () => {
+      const rebuilt = {
+        ...windowed,
+        messages: rows(40, 300).map((message) => ({ ...message, id: `rebuilt-${message.id}`, content: `rebuilt ${message.content}` })),
+      }
+      vi.mocked(listSessions).mockResolvedValue([{ ...session, messages: [] }])
+      vi.mocked(getSession).mockResolvedValueOnce(windowed).mockResolvedValue(rebuilt)
+      vi.mocked(readSessionMessages).mockRejectedValue(new SubmissionError('The conversation changed', 409))
+      render(<App />)
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Show 50 earlier messages' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Show 40 earlier messages' }))
+
+      expect(await screen.findByText('rebuilt window line 40')).toBeInTheDocument()
+      expect(getSession).toHaveBeenLastCalledWith('computer-1', 'session-1', undefined, { passive: true })
+      expect(screen.queryByText('window line 0')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Show 40 earlier messages' })).toBeEnabled()
+    })
+
+    it('keeps a running activity from before the window on screen', async () => {
+      const running = {
+        id: 'running-tool', role: 'activity' as const, content: 'Bash\n$ pnpm dev',
+        createdAt: '2026-07-22T00:00:00.000Z', activityStatus: 'running' as const,
+      }
+      const busy = { ...windowed, activity: 'Compiling the bundle', carriedMessages: [running] }
+      vi.mocked(listSessions).mockResolvedValue([{ ...busy, messages: [], carriedMessages: undefined }])
+      vi.mocked(getSession).mockResolvedValue(busy)
+      render(<App />)
+
+      expect(await screen.findByText('$ pnpm dev')).toBeInTheDocument()
+      // It is the work in progress, so the separate activity line stays away.
+      expect(screen.queryByText('Compiling the bundle')).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Show 49 earlier messages' })).toBeInTheDocument()
+    })
   })
 
   it('preserves a separate composer draft for each session', async () => {

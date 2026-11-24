@@ -64,6 +64,7 @@ import {
   ResourceReads,
 } from './session-resources.js'
 import type { SessionKnowledgeBaseLocation } from './session-directory.js'
+import type { TranscriptPage, TranscriptPageQuery } from '../shared/transcript-window.js'
 import {
   HOST_TELEMETRY_CAPABILITY_VERSION, HostSnapshotSchema, HostHistorySchema, HostProcessesSchema,
 } from '../shared/host-telemetry.js'
@@ -407,12 +408,30 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
   /**
    * `passive` reads the session as recorded, without opening it. A node from
    * before passive reads ignores it and opens the session, as it always did.
+   * `window` asks for only the latest messages; a node from before windows
+   * ignores it too and answers with the whole transcript.
    */
-  async getSession(sessionId: string, options: { passive?: boolean } = {}): Promise<SessionDetail> {
+  async getSession(
+    sessionId: string,
+    options: { passive?: boolean; window?: number } = {},
+  ): Promise<SessionDetail> {
+    const query = new URLSearchParams()
+    if (options.passive) query.set('passive', '1')
+    if (options.window !== undefined) query.set('window', String(options.window))
     const response = await this.request<{ session: SessionDetail }>(
-      `/node-api/sessions/${encodeURIComponent(sessionId)}${options.passive ? '?passive=1' : ''}`,
+      `/node-api/sessions/${encodeURIComponent(sessionId)}${query.size ? `?${query}` : ''}`,
     )
     return response.session
+  }
+
+  /** The messages before a browser's first one. A node from before pages has no such route (404). */
+  async readMessages(sessionId: string, page: TranscriptPageQuery): Promise<TranscriptPage> {
+    const query = new URLSearchParams({
+      before: String(page.before), beforeId: page.beforeId, limit: String(page.limit),
+    })
+    return this.request<TranscriptPage>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/messages?${query}`,
+    )
   }
 
   async listCommands(sessionId: string): Promise<SlashCommand[]> {

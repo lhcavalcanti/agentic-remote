@@ -1,4 +1,5 @@
 import type { ManagedSession } from '../shared/contracts'
+import { mergeTranscriptWindow } from './session-transcript'
 
 let eventSequence = 0
 const responseSequences = new WeakMap<object, number>()
@@ -75,27 +76,35 @@ export function projectSessionResponse(
  * A conversation that really was emptied says so through its own response or
  * event, which is authoritative and carries the emptiness before any snapshot
  * built from it can arrive.
+ *
+ * A held window comes along whole: where it starts, how long the transcript
+ * is, and the rows it carries from before it. A row that brings a window of
+ * its own keeps the earlier rows held that line up with it.
  */
 export function carrySnapshotTranscripts(
   rows: ManagedSession[],
   existing: ManagedSession[],
 ): ManagedSession[] {
-  if (!rows.some((row) => row.messages.length === 0)) {
+  if (!rows.some((row) => row.messages.length === 0 || row.messagesStart !== undefined)) {
     return rows
   }
   const held = new Map(
     existing
       .filter((entry) => entry.messages.length > 0)
-      .map((entry) => [`${entry.computerId}:${entry.id}`, entry.messages]),
+      .map((entry) => [`${entry.computerId}:${entry.id}`, entry]),
   )
   if (held.size === 0) {
     return rows
   }
   return rows.map((row) => {
+    const entry = held.get(`${row.computerId}:${row.id}`)
+    if (!entry) return row
     if (row.messages.length > 0) {
-      return row
+      return mergeTranscriptWindow(entry, row)
     }
-    const messages = held.get(`${row.computerId}:${row.id}`)
-    return messages ? { ...row, messages } : row
+    const { messages, messagesStart, messagesTotal, carriedMessages } = entry
+    return messagesStart === undefined
+      ? { ...row, messages }
+      : { ...row, messages, messagesStart, messagesTotal, carriedMessages }
   })
 }

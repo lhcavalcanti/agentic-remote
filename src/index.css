@@ -4661,6 +4661,17 @@ button {
   margin: 0;
 }
 
+/* A long session holds only its latest messages until earlier ones are asked for. */
+.composer-history__earlier {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .composer-history__actions {
   display: flex;
   justify-content: flex-end;
@@ -8848,6 +8859,11 @@ button {
 
 .transcript-earlier:hover {
   color: var(--text);
+}
+
+.transcript-earlier:disabled {
+  color: var(--muted);
+  cursor: progress;
 }
 
 /* Sits at the end of the row, out of the way of the title but reachable

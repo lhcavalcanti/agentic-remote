@@ -1237,6 +1237,32 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   MUST NOT stop following. Scrolling up stops following and offers **Scroll
   to latest**; returning to the end, Scroll to latest, or sending a message
   follows again.
+- A long session MUST open without its whole transcript. The browser reads a
+  session with `?window=500`, says `X-Transcript-Window: 500` on every hub
+  request so a change or a listing answers with windows too, and opens its
+  event socket with `?patches=1&window=500`. It holds those messages with `messagesStart`
+  (the absolute index of the first) and `messagesTotal`, plus
+  `carriedMessages`: rows from before them that the timeline still draws —
+  running activities and the activity rows its rows are grouped under. It
+  draws the latest 250. **Show N earlier messages**, N counting every earlier
+  message whether held or not, first reveals what is held, then reads earlier
+  messages 500 at a time through
+  `GET /api/computers/:computerId/sessions/:sessionId/messages?before=&beforeId=&limit=`
+  and puts them in above the reader, who MUST stay on the row they were
+  reading. A page MUST be joined only where the held messages still start: an
+  answer that no longer lines up is dropped, and a `409` (the transcript was
+  rebuilt at that boundary) reads a fresh window instead. Held rows from
+  before a later window stay while every row both hold is the same row; a held
+  row still running that the window does not carry as running goes, with
+  every row before it, and can be read again. A page that arrives late is
+  brought up to what the window carries the same way, and an activity that
+  finished MUST NOT be shown running again. Nothing held MUST be duplicated,
+  dropped from between other rows, or reordered.
+- Sent messages and ArrowUp recall cover the messages held. While earlier
+  ones are not, Sent messages MUST say how many and offer to load them.
+  Readers that do not ask for a window — browsers from before windows,
+  Oracle, Dreamer, Close and Recently closed, the queue, and side questions —
+  MUST still read whole transcripts.
 - A Markdown table wider than its message, in the timeline or in Oracle's
   answers, MUST scroll sideways within the message with each word kept whole,
   rather than squeeze its columns to single letters.

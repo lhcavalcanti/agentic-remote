@@ -46,6 +46,7 @@ import {
   rebaseKnowledgeRelativePath,
 } from '../shared/knowledge-path'
 import { closedSessionContext } from '../shared/closed-sessions'
+import { pageWholeSession, windowSession } from '../shared/transcript-window'
 
 export const FIXTURE_NOW = '2026-09-04T16:20:00.000Z'
 export const SELECTED_SESSION_ID = 'fixture-plan-workspace'
@@ -1392,9 +1393,17 @@ export async function setupWorkspaceFixture(
       } satisfies VoiceCapabilities)
       return
     }
+    // As the hub does for a browser that holds windows: a listing carries at
+    // most a window of each transcript.
+    const listed = () => {
+      const window = Number(request.headers()['x-transcript-window'])
+      return Number.isInteger(window) && window > 0
+        ? sessions.map((session) => session.messages.length ? windowSession(session, window) : session)
+        : sessions
+    }
     if (method === 'GET' && path === '/api/sessions') {
       await respond({
-        sessions,
+        sessions: listed(),
         answeredComputerIds: fixtureComputers
           .filter((computer) => computer.online)
           .map((computer) => computer.id),
@@ -1402,7 +1411,7 @@ export async function setupWorkspaceFixture(
       return
     }
     if (method === 'GET' && path === '/api/history') {
-      await respond({ sessions })
+      await respond({ sessions: listed() })
       return
     }
     if (method === 'GET' && path === '/api/closed-sessions') {
@@ -1911,11 +1920,26 @@ export async function setupWorkspaceFixture(
         await respond({ binding })
         return
       }
-      if (
-        (method === 'GET' && action === '') ||
-        (method === 'POST' && action === '/open')
-      ) {
+      if (method === 'GET' && action === '') {
+        // As the hub does: a read that asks for a window gets one.
+        const window = Number(url.searchParams.get('window'))
+        await respond({ session: windowSession(session, Number.isInteger(window) && window > 0 ? window : undefined) })
+        return
+      }
+      if (method === 'POST' && action === '/open') {
         await respond({ session })
+        return
+      }
+      if (method === 'GET' && action === '/messages') {
+        try {
+          await respond(pageWholeSession(session, {
+            before: Number(url.searchParams.get('before')),
+            beforeId: url.searchParams.get('beforeId') ?? '',
+            limit: Number(url.searchParams.get('limit')),
+          }))
+        } catch (error) {
+          await respond({ error: (error as Error).message }, (error as { statusCode?: number }).statusCode ?? 500)
+        }
         return
       }
       if (method === 'GET' && action === '/commands') {

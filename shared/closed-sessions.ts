@@ -11,13 +11,15 @@ export const CLOSED_SESSION_RETENTION_MS = CLOSED_SESSION_RETENTION_DAYS * 24 * 
 const CONTEXT_PROMPTS = 3
 const CONTEXT_PROMPT_LENGTH = 200
 const CONTEXT_REPLY_LENGTH = 400
+/** How much of a message is read for its context, so a huge paste cannot hold up a close. */
+const CONTEXT_SOURCE_LENGTH = 20_000
 /**
- * How much of a message is read for its context: ten times its longest
- * excerpt. Parsing grows faster than the input for some pastes, such as
- * thousands of nested quotes or emphasis markers, so a longer read could hold
- * up a close.
+ * How much is read of a message the parser is slow on, ten times the longest
+ * excerpt. Its time grows faster than its input where emphasis markers,
+ * brackets or quote markers crowd together, and deep nesting overflows its
+ * stack.
  */
-const CONTEXT_SOURCE_LENGTH = 4_000
+const CONTEXT_CROWDED_SOURCE_LENGTH = 4_000
 
 /** When a session closed at `closedAt` is deleted, in epoch milliseconds; NaN when unreadable. */
 export function closedSessionExpiresAt(closedAt: string): number {
@@ -51,15 +53,18 @@ const htmlElements = new Set((
   'summary sup svg table tbody td template textarea tfoot th thead time title tr track tt u ul var video wbr'
 ).split(' '))
 
-/** What raw HTML leaves to read: nothing for markup, and the text of anything else. */
-function htmlText(html: string): string {
+/**
+ * What raw HTML leaves to read: nothing for markup, and the text of anything
+ * else. A lone capital, as in `Store<S>`, is a type parameter unless the
+ * message also closes it, as in `<B>bold</B>`.
+ */
+function htmlText(html: string, closedCapitals: ReadonlySet<string>): string {
   if (/^<[!?]/.test(html)) return ''
   const name = /^<\/?([a-zA-Z][a-zA-Z\d-]*)/.exec(html)?.[1]
   if (!name) return html
   const lower = name.toLowerCase()
-  const markup = name.includes('-')
-    ? name === lower
-    : htmlElements.has(lower) && (name === lower || (name.length > 1 && name === name.toUpperCase()))
+  const capitals = name === name.toUpperCase() && (name.length > 1 || closedCapitals.has(name))
+  const markup = name.includes('-') ? name === lower : htmlElements.has(lower) && (name === lower || capitals)
   if (!markup) return html
   return lower === 'br' ? '\n' : ''
 }
@@ -70,7 +75,8 @@ function htmlText(html: string): string {
  * footnotes go. Walked with a stack of its own, since a paste can nest
  * thousands of quotes deep.
  */
-function nodeText(tree: Nodes): string {
+function nodeText(tree: Nodes, source: string): string {
+  const closedCapitals = new Set(Array.from(source.matchAll(/<\/([A-Z])\s*>/g), (match) => match[1]!))
   let text = ''
   const pending: (Nodes | string)[] = [tree]
   while (pending.length > 0) {
@@ -86,7 +92,7 @@ function nodeText(tree: Nodes): string {
         text += node.value
         break
       case 'html':
-        text += htmlText(node.value)
+        text += htmlText(node.value, closedCapitals)
         break
       case 'break':
         text += '\n'
@@ -111,19 +117,32 @@ function nodeText(tree: Nodes): string {
   return text
 }
 
+// The first `length` code points, without splitting a pair.
+function head(text: string, length: number): string {
+  return Array.from(text.slice(0, 2 * length)).slice(0, length).join('')
+}
+
 /**
  * A message as plain text, read with the grammar the conversation is rendered
  * with, so lists, headings and tables are told from prose before its lines
- * are joined. Only its first 4,000 characters are read, and a message the
- * parser cannot read is kept as typed rather than stop the session closing.
+ * are joined. Its first 20,000 characters are read, or 4,000 of one more than
+ * a tenth emphasis, bracket or quote markers, or of one nested too deep for
+ * the parser; a message the parser still cannot read is kept as typed rather
+ * than stop the session closing.
  */
 function plainText(content: string): string {
-  const source = Array.from(content.slice(0, 2 * CONTEXT_SOURCE_LENGTH)).slice(0, CONTEXT_SOURCE_LENGTH).join('')
-  try {
-    return nodeText(markdown.parse(source))
-  } catch {
-    return source
+  const source = head(content, CONTEXT_SOURCE_LENGTH)
+  const crowded = (source.match(/[*_~[>]/g)?.length ?? 0) > source.length / 10
+  const lengths = crowded ? [CONTEXT_CROWDED_SOURCE_LENGTH] : [CONTEXT_SOURCE_LENGTH, CONTEXT_CROWDED_SOURCE_LENGTH]
+  for (const length of lengths) {
+    const read = head(source, length)
+    try {
+      return nodeText(markdown.parse(read), read)
+    } catch {
+      // Read less, or keep it as typed.
+    }
   }
+  return source
 }
 
 function said(message: ChatMessage, role: ChatMessage['role']): boolean {

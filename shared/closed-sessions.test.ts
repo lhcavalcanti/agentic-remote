@@ -79,6 +79,7 @@ describe('closed session context', () => {
       ['images', 'Before ![diagram](https://example.com/d.png) after ![shot][s]\n\n[s]: https://example.com/s.png', 'Before after'],
       ['inline and fenced code', 'Run `pnpm test` first:\n\n```ts\nconst total = 2 * 3\n```', 'Run pnpm test first: const total = 2 * 3'],
       ['HTML, but not a type named in prose', 'A <b>bold</b> word<br>and <kbd>Ctrl</kbd>+<kbd>C</kbd> return Promise<Option>.\n\n<details>\n<summary>Logs</summary>\n</details>\n\n<!-- marker -->', 'A bold word and Ctrl+C return Promise<Option>.'],
+      ['paired capital tags, but not a lone type parameter', 'Use <B>bold</B> in Store<S>', 'Use bold in Store<S>'],
       ['a table', '| File | Change |\n| --- | :---: |\n| a.ts | added |', 'File Change a.ts added'],
       ['footnotes', 'It grew[^1].\n\n[^1]: Measured with df.', 'It grew.'],
       ['a quote and a rule', '> Quoted *line*\n\n---\n\nAfter', 'Quoted line After'],
@@ -101,11 +102,17 @@ describe('closed session context', () => {
       expect(context.prompts).toEqual(['Look at this'])
     })
 
-    it('reads no more than the first 4,000 characters of a message', () => {
+    it('reads no more than the first 20,000 characters of a message', () => {
       const afterNote = (length: number) => `<!-- ${'x'.repeat(length)} -->\n\nAfter the note`
 
-      expect(replyTo(afterNote(100))).toBe('After the note')
-      expect(replyTo(afterNote(5_000))).toBeUndefined()
+      expect(replyTo(afterNote(5_000))).toBe('After the note')
+      expect(replyTo(afterNote(25_000))).toBeUndefined()
+    })
+
+    it('reads a paste crowded with emphasis markers for less, so it cannot hold up the close', () => {
+      const started = performance.now()
+      expect(replyTo('*a'.repeat(15_000))).toBeDefined()
+      expect(performance.now() - started).toBeLessThan(1_000)
     })
 
     it('reads a deeply nested paste without failing the close or showing its markers', () => {

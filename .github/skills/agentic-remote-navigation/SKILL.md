@@ -243,8 +243,9 @@ Do not weaken these without an explicit product decision.
 - The browser reads ahead (`src/session-prefetch.ts`) the windows of the
   sidebar's top 8 sessions it holds no transcript for, one at a time while the
   page is idle and at most about 2 MB a pass. Keep those reads passive, so they
-  resume nothing and mark nothing read, and never poll: the event socket keeps
-  them fresh.
+  resume nothing and mark nothing read, never send them to a node older than
+  1.15.1 (it ignores `?passive=1` and opens the session), and never poll: the
+  event socket keeps them fresh.
 - `SessionStore.persist` writes compact JSON and coalesces writes queued behind
   an in-flight write; the snapshot is taken when the write starts, so every
   caller's mutation is still durable when its promise resolves.

@@ -70,6 +70,14 @@ describe('prefetchCandidates', () => {
     expect(ids(prefetchCandidates(sidebar, skips()))).toEqual(['online'])
   })
 
+  it('passes over sessions on a node too old to read them without opening them', () => {
+    const node = (id: string, version?: string): ComputerSummary =>
+      ({ id, name: id, isLocal: false, online: true, ...(version ? { version } : {}) })
+    const computers = [hub, node('old', '1.15.0'), node('first', '1.15.1'), node('new', '2.10.0'), node('silent')]
+    const sidebar = ['old', 'first', 'new', 'silent', 'hub'].map((computerId) => listed(computerId, { computerId }))
+    expect(ids(prefetchCandidates(sidebar, skips({ computers })))).toEqual(['first', 'new', 'hub'])
+  })
+
   it('passes over a session whose read is already on its way', () => {
     const sidebar = [listed('reading'), listed('idle')]
     const inFlight = (session: ManagedSession) => session.id === 'reading'
@@ -120,7 +128,7 @@ describe('SessionPrefetcher', () => {
 
   function harness(
     sidebar: ManagedSession[],
-    options: { size?: (session: ManagedSession) => number; budget?: number } = {},
+    options: { size?: (session: ManagedSession) => number; budget?: number; allowed?: () => boolean } = {},
   ) {
     const idle: (() => void)[] = []
     const held = new Set<string>()
@@ -199,6 +207,23 @@ describe('SessionPrefetcher', () => {
     prefetcher.stop()
     expect(idle).toHaveLength(0)
     expect(reads).toHaveLength(0)
+  })
+
+  it('looks again, just before a read, at whether reading ahead is still allowed', async () => {
+    let allowed = true
+    const { prefetcher, idle, reads, runIdle } = harness(rows(2), { allowed: () => allowed })
+    prefetcher.start()
+    // Save-Data came on, or the page was hidden, before the page went idle.
+    allowed = false
+    await runIdle()
+    expect(reads).toHaveLength(0)
+    expect(idle).toHaveLength(0)
+
+    allowed = true
+    prefetcher.stop()
+    prefetcher.start()
+    await runIdle()
+    expect(reads.map((read) => read.session.id)).toEqual(['s0'])
   })
 
   it('ends a pass once its answers come to the budget, and starts the next with a new one', async () => {

@@ -16,11 +16,28 @@ const IDLE_DEADLINE_MS = 2_000
 /** Where the browser has no idle callbacks (Safari), a read waits this long. */
 const IDLE_FALLBACK_MS = 300
 
+/** A node reads a session without opening it, as `?passive=1` asks, from this version on. */
+const PASSIVE_READS_SINCE = [1, 15, 1]
+
+/**
+ * Whether reading a session on this computer leaves it as it is. The hub
+ * serving the page does; a node from before passive reads ignores `?passive=1`
+ * and opens the session, resuming its runtime, so it is read ahead only once it
+ * has said it is newer.
+ */
+export function readsPassively(computer: Pick<ComputerSummary, 'isLocal' | 'version'>): boolean {
+  if (computer.isLocal) return true
+  const version = computer.version?.match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number)
+  if (!version) return false
+  const differs = version.findIndex((part, index) => part !== PASSIVE_READS_SINCE[index])
+  return differs < 0 || version[differs] > PASSIVE_READS_SINCE[differs]
+}
+
 export interface PrefetchSkips {
   selectedKey?: string
   /** `computerId:sessionId` of the sessions hidden from the list. */
   hiddenKeys: ReadonlySet<string>
-  computers: readonly Pick<ComputerSummary, 'id' | 'online'>[]
+  computers: readonly Pick<ComputerSummary, 'id' | 'online' | 'isLocal' | 'version'>[]
   /** Whether a read of this session is already on its way. */
   inFlight: (session: ManagedSession) => boolean
 }
@@ -43,14 +60,16 @@ export function prefetchCandidates(
   skips: PrefetchSkips,
   rows = PREFETCH_SIDEBAR_ROWS,
 ): ManagedSession[] {
-  const online = new Set(skips.computers.filter((computer) => computer.online).map((computer) => computer.id))
+  const readable = new Set(skips.computers
+    .filter((computer) => computer.online && readsPassively(computer))
+    .map((computer) => computer.id))
   return sidebar.slice(0, rows).filter((session) => {
     const key = sessionKey(session)
     return key !== skips.selectedKey &&
       !holdsTranscript(session) &&
       session.isOpen !== false && !session.closedAt && !session.archivedAt &&
       !skips.hiddenKeys.has(key) &&
-      online.has(session.computerId) &&
+      readable.has(session.computerId) &&
       !skips.inFlight(session)
   })
 }
@@ -67,9 +86,14 @@ export function connectionSparesData(connection: ConnectionHints | undefined): b
     connection?.effectiveType === '2g'
 }
 
+export interface BrowserConnection extends ConnectionHints {
+  addEventListener?: (type: 'change', listener: () => void) => void
+  removeEventListener?: (type: 'change', listener: () => void) => void
+}
+
 /** The browser's connection hints, where it gives them. */
-export function browserConnection(): ConnectionHints | undefined {
-  return (globalThis.navigator as (Navigator & { connection?: ConnectionHints }) | undefined)?.connection
+export function browserConnection(): BrowserConnection | undefined {
+  return (globalThis.navigator as (Navigator & { connection?: BrowserConnection }) | undefined)?.connection
 }
 
 /** Calls `run` once the page is idle; the function returned calls it off. */
@@ -89,6 +113,8 @@ export interface SessionPrefetcherOptions {
   candidates: () => readonly ManagedSession[]
   read: (session: ManagedSession, signal: AbortSignal) => Promise<ManagedSession>
   install: (session: ManagedSession) => void
+  /** Looked at again just before each read: the page may have changed since. */
+  allowed?: () => boolean
   idle?: IdleScheduler
   /** How many bytes an answer came to. */
   size?: (session: ManagedSession) => number
@@ -151,7 +177,7 @@ export class SessionPrefetcher {
   }
 
   private async readNext(): Promise<void> {
-    const session = this.active ? this.next() : undefined
+    const session = this.active && (this.options.allowed?.() ?? true) ? this.next() : undefined
     if (!session) {
       this.busy = false
       return

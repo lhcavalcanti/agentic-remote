@@ -406,12 +406,7 @@ import { PauseFollowingContext } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
 import { SessionPatchReceiver } from './session-patches'
 import { mergeTranscriptWindow, prependTranscriptPage } from './session-transcript'
-import {
-  browserConnection,
-  connectionSparesData,
-  holdsTranscript,
-  prefetchCandidates,
-} from './session-prefetch'
+import { holdsTranscript, prefetchCandidates } from './session-prefetch'
 import { useSessionPrefetch } from './use-session-prefetch'
 import { TRANSCRIPT_WINDOW } from '../shared/transcript-window'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
@@ -4234,13 +4229,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [movingSessionFolder, setMovingSessionFolder] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
   // The open session whose read has been answered and drawn, or '' with none
-  // open: reading other sessions ahead waits for it.
+  // open: reading other sessions ahead waits for it, and does not start while
+  // it could not be read.
   const [drawnSessionKey, setDrawnSessionKey] = useState<string>()
   // Whether that read came back as a window. A hub from before windows answers
   // with whole transcripts, and reading ahead there would bring long ones whole.
   const [windowedHub, setWindowedHub] = useState(false)
   const [eventSocketOpen, setEventSocketOpen] = useState(false)
-  const [pageVisible, setPageVisible] = useState(() => document.visibilityState === 'visible')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarView, setSidebarView] = useState<'sessions' | 'knowledge'>('sessions')
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
@@ -5549,10 +5544,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // there to keep them fresh, the next sessions in the sidebar are read
   // passively while the page is idle, so opening one draws it at once.
   const prefetchStarts = useRef(new Map<string, number>())
-  useSessionPrefetch({
-    ready: !loading && windowedHub && eventSocketOpen && pageVisible && !sending &&
-      drawnSessionKey === (selected ? sessionKey(selected) : '') &&
-      !connectionSparesData(browserConnection()),
+  const interruptPrefetch = useSessionPrefetch({
+    ready: !loading && windowedHub && eventSocketOpen && !sending && queueActionId === undefined &&
+      drawnSessionKey === (selected ? sessionKey(selected) : ''),
     candidates: () => prefetchCandidates(navigationView.visible, {
       selectedKey,
       hiddenKeys: listedHiddenKeys,
@@ -5568,24 +5562,21 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       const startedAt = prefetchStarts.current.get(key)
       prefetchStarts.current.delete(key)
       const current = sessionsRef.current.find((entry) => sessionKey(entry) === key)
-      // Anything heard about the session or its computer since the read
-      // began is newer than what it read, and a transcript held by now came
-      // some other way, so the answer is dropped rather than merged. Nor is a
-      // session that has gone meanwhile brought back.
+      // Anything heard about the session or its computer -- removed, paired
+      // again, gone offline -- since the read began is newer than what it
+      // read, and a transcript held by now came some other way, so the answer
+      // is dropped rather than merged. Nor is a session that has gone
+      // meanwhile brought back.
       if (
         startedAt === undefined || !current || holdsTranscript(current) ||
         (sessionEventSequenceRef.current.get(key) || 0) > startedAt ||
-        (computerEventSequenceRef.current.get(answer.computerId) || 0) > startedAt
+        (computerEventSequenceRef.current.get(answer.computerId) || 0) > startedAt ||
+        (computerRecordSequenceRef.current.get(answer.computerId) || 0) > startedAt
       ) return
       sessionsRef.current = upsertSession(sessionsRef.current, answer)
       setSessions((list) => upsertSession(list, answer))
     },
   })
-  useEffect(() => {
-    const changed = () => setPageVisible(document.visibilityState === 'visible')
-    document.addEventListener('visibilitychange', changed)
-    return () => document.removeEventListener('visibilitychange', changed)
-  }, [])
   // An interrupted or archived record is read-only until it is reopened; the
   // server refuses these actions too.
   const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
@@ -7189,6 +7180,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         if (active) {
           setSessions((current) => upsertSession(current, session))
           setWindowedHub(session.messagesTotal !== undefined)
+          setDrawnSessionKey(`${selectedComputerId}:${selectedSessionId}`)
         }
       })
       .catch((caught: unknown) => {
@@ -7199,7 +7191,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       .finally(() => {
         if (active) {
           setLoadingTranscript(false)
-          setDrawnSessionKey(`${selectedComputerId}:${selectedSessionId}`)
         }
       })
     return () => {
@@ -11013,6 +11004,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       submissionsInFlight.current.add(targetKey)
       submissionAnchors.current.add(targetKey)
       setSending(true)
+      // The send goes out alone; reading ahead picks up again once it is answered.
+      interruptPrefetch()
       const sendOptions = terminalSendOptions({
         status: selected.status,
         provider: selected.provider,
@@ -12246,6 +12239,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       })
     }
     try {
+      interruptPrefetch()
       const result = await dispatchQueuedPrompt(target.computerId, target.id, promptId, content)
       if (!composerMounted.current) return result.outcome === 'sent'
       if (result.session && stillListed(result.session)) applySession(result.session)

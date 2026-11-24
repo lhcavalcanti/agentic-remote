@@ -6855,6 +6855,7 @@ describe('App', () => {
       signal?: AbortSignal
       passive: boolean
       resolve: (session: ManagedSession) => void
+      reject: (error: Error) => void
     }
     const pause = (ms = 400) => act(() => new Promise((resolve) => setTimeout(resolve, ms)))
 
@@ -6868,8 +6869,8 @@ describe('App', () => {
       vi.mocked(getSession).mockImplementation((_computerId, sessionId, signal, options) =>
         sessionId === session.id
           ? Promise.resolve(drawn)
-          : new Promise((resolve) => {
-            reads.push({ sessionId, signal, passive: options?.passive === true, resolve })
+          : new Promise((resolve, reject) => {
+            reads.push({ sessionId, signal, passive: options?.passive === true, resolve, reject })
           }))
       render(<App />)
       expect(await screen.findByText('Hello agent')).toBeInTheDocument()
@@ -6925,23 +6926,66 @@ describe('App', () => {
       expect(ahead()[1].sessionId).toBe('session-2')
     })
 
-    it('abandons a read ahead while the reader sends, and reads it again once sent', async () => {
-      let sent: (session: ManagedSession) => void = () => undefined
-      vi.mocked(sendMessage).mockImplementation(() => new Promise((resolve) => {
-        sent = resolve
-      }))
+    it('abandons a read ahead before the reader sends, and reads it again once sent', async () => {
       const { ahead, openSocket } = await renderWithReads()
       openSocket()
       await waitFor(() => expect(ahead()).toHaveLength(1))
+      let abortedWhenSent: boolean | undefined
+      let sent: (session: ManagedSession) => void = () => undefined
+      vi.mocked(sendMessage).mockImplementation(() => {
+        abortedWhenSent = ahead()[0].signal?.aborted
+        return new Promise((resolve) => {
+          sent = resolve
+        })
+      })
 
       fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Run the tests' } })
       submitComposerMessage()
-      await waitFor(() => expect(ahead()[0].signal?.aborted).toBe(true))
+      await waitFor(() => expect(sendMessage).toHaveBeenCalled())
+      // The reader's request goes out alone.
+      expect(abortedWhenSent).toBe(true)
       await pause()
       expect(ahead()).toHaveLength(1)
       await act(async () => sent(session))
       await waitFor(() => expect(ahead()).toHaveLength(2))
       expect(ahead()[1].sessionId).toBe('session-2')
+    })
+
+    it('abandons a read ahead before sending a queued prompt now, and reads it again after', async () => {
+      const prompts = ['first queued', 'second queued'].map((content, index) => ({
+        id: `q${index + 1}`, content, createdAt: '2026-09-05T00:00:00.000Z',
+      }))
+      const queued: ManagedSession = { ...session, queuedPrompts: prompts, queuedCount: prompts.length }
+      vi.mocked(listComputers).mockResolvedValue([{
+        ...computer,
+        providers: computer.providers?.map((provider) => ({ ...provider, supportsQueuedPromptDispatch: true })),
+      }])
+      const { ahead, openSocket } = await renderWithReads(
+        [queued, secondSession, third], windowOf(queued, ...session.messages),
+      )
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      let abortedWhenSent: boolean | undefined
+      let sent: (result: Awaited<ReturnType<typeof dispatchQueuedPrompt>>) => void = () => undefined
+      vi.mocked(dispatchQueuedPrompt).mockImplementation(() => {
+        abortedWhenSent = ahead()[0].signal?.aborted
+        return new Promise((resolve) => {
+          sent = resolve
+        })
+      })
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 2' }))
+      fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: 'second, sooner' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send edited message' }))
+      await waitFor(() => expect(dispatchQueuedPrompt).toHaveBeenCalled())
+      expect(abortedWhenSent).toBe(true)
+      await pause()
+      expect(ahead()).toHaveLength(1)
+      await act(async () => sent({
+        outcome: 'sent', promptId: 'q2', attemptId: 'sooner',
+        session: { ...queued, queuedPrompts: [prompts[0]], queuedCount: 1 },
+      }))
+      await waitFor(() => expect(ahead()).toHaveLength(2))
     })
 
     it('drops a read ahead that answers after the event socket said something newer', async () => {
@@ -6962,6 +7006,34 @@ describe('App', () => {
       open('Renamed meanwhile')
       expect(screen.queryByText('Read before that')).not.toBeInTheDocument()
       expect(screen.queryByText('Second chat')).not.toBeInTheDocument()
+    })
+
+    it('drops a read ahead that answers after its computer was paired again', async () => {
+      const { ahead, openSocket } = await renderWithReads()
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({ type: 'computer.updated', computer: { ...computer, registrationId: 'paired-again' } }),
+        } as MessageEvent)
+      })
+      await act(async () => ahead()[0].resolve(windowOf(secondSession, said('ahead-1', 'Read from the old pairing'))))
+
+      open('Second chat')
+      expect(screen.queryByText('Read from the old pairing')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Loading conversation')).toBeInTheDocument()
+    })
+
+    it('reads nothing ahead while the open session could not be read', async () => {
+      const { reads, ahead, openSocket } = await renderWithReads()
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+
+      open('Third chat')
+      const opened = reads.find((read) => read.sessionId === 'session-3' && !read.passive)
+      await act(async () => opened?.reject(new Error('The computer did not answer')))
+      await pause()
+      expect(ahead()).toHaveLength(1)
     })
 
     it('waits while the page is hidden, and abandons its read when the socket closes', async () => {
@@ -6989,6 +7061,31 @@ describe('App', () => {
         openSocket()
         await pause()
         expect(ahead()).toHaveLength(0)
+      } finally {
+        Reflect.deleteProperty(navigator, 'connection')
+      }
+    })
+
+    it('abandons its read when the connection comes to ask to save data, and reads again after', async () => {
+      const connection = Object.assign(new EventTarget(), { saveData: false, effectiveType: '4g' })
+      Object.defineProperty(navigator, 'connection', { configurable: true, value: connection })
+      try {
+        const { ahead, openSocket } = await renderWithReads()
+        openSocket()
+        await waitFor(() => expect(ahead()).toHaveLength(1))
+        connection.saveData = true
+        act(() => {
+          connection.dispatchEvent(new Event('change'))
+        })
+        expect(ahead()[0].signal?.aborted).toBe(true)
+        await pause()
+        expect(ahead()).toHaveLength(1)
+
+        connection.saveData = false
+        act(() => {
+          connection.dispatchEvent(new Event('change'))
+        })
+        await waitFor(() => expect(ahead()).toHaveLength(2))
       } finally {
         Reflect.deleteProperty(navigator, 'connection')
       }

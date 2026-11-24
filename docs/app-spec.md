@@ -1258,23 +1258,24 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   brought up to what the window carries the same way, and an activity that
   finished MUST NOT be shown running again. Nothing held MUST be duplicated,
   dropped from between other rows, or reordered.
-- Opening a session SHOULD draw it at once. Once the open session is drawn,
-  its event socket open and the page visible, the browser reads ahead the
-  window of each session in the sidebar's top 8 rows that holds no transcript
-  yet — never the open one, a closed, archived or hidden session, one on an
-  offline computer, or one already being read — one at a time while the page
-  is idle. It MUST read them passively (`?passive=1&window=500`), so reading
+- Opening a session SHOULD draw it at once. Once the open session has been
+  read and drawn, its event socket is open and the page is visible, the
+  browser reads ahead the window of each session in the sidebar's top 8 rows
+  that holds no transcript yet — never the open one, a closed, archived or
+  hidden session, one on an offline computer or on a node from before passive
+  reads (1.15.1), or one already being read — one at a time while the page is
+  idle. It MUST read them passively (`?passive=1&window=500`), so reading
   ahead resumes no runtime and marks nothing read or unread, and only while
   the open session's read came back as a window: a hub from before windows
-  would send long sessions whole. Opening a session or sending MUST abandon
-  the read on its way, and reading ahead MUST pause while the page is hidden
-  or its socket is down; it reads again afterwards. A pass stops after about 2
-  MB of answers, and a connection that asks to save data (Save-Data, or 2G)
-  reads nothing ahead. An answer MUST be dropped when anything was heard about
-  its session or computer after it was asked for, or when the session has
-  meanwhile gone or come to hold a transcript. The event socket keeps what was
-  read fresh; nothing is polled. Opening a session read ahead still reads it
-  as before, which marks it read.
+  would send long sessions whole. Opening a session, sending, or sending a
+  queued prompt now MUST abandon the read on its way before that request goes
+  out, and reading ahead MUST pause while the page is hidden, its socket is
+  down, or the connection asks to save data (Save-Data, or 2G); it reads again
+  afterwards. A pass stops after about 2 MB of answers. An answer MUST be
+  dropped when anything was heard about its session or computer after it was
+  asked for, or when the session has meanwhile gone or come to hold a
+  transcript. The event socket keeps what was read fresh; nothing is polled.
+  Opening a session read ahead still reads it as before, which marks it read.
 - Sent messages and ArrowUp recall cover the messages held. While earlier
   ones are not, Sent messages MUST say how many and offer to load them.
   Readers that do not ask for a window — browsers from before windows,

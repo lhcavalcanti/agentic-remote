@@ -52,11 +52,22 @@ test('Show earlier reveals what is held, then pages earlier messages in without 
   await expect(earlier).toHaveText('Show 700 earlier messages')
   expect(fixture.requests.some((request) => request.path.includes('/messages?'))).toBe(false)
 
-  // Then a page at a time, each joined where the last one began.
+  // Then a page at a time, each joined where the last one began. The first
+  // is held back long enough to see it loading.
+  let answer = () => {}
+  const answered = new Promise<void>((resolve) => { answer = resolve })
+  await page.route('**/messages?before=700*', async (route) => {
+    await answered
+    await route.fallback()
+  })
   await earlier.scrollIntoViewIfNeeded()
   const held = row('Question 700')
   const heldTop = await viewTop(held)
   await earlier.click()
+  await expect(earlier).toHaveText('Loading earlier messages…')
+  await expect(earlier).toBeDisabled()
+  await testInfo.attach('loading-earlier', { body: await page.screenshot(), contentType: 'image/png' })
+  answer()
   await expect(row('Question 200')).toBeAttached()
   expect(Math.abs(await viewTop(held) - heldTop)).toBeLessThanOrEqual(2)
   expect(fixture.requests).toContainEqual({

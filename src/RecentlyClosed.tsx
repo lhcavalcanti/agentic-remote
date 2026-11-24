@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { History, RotateCcw, Trash2 } from 'lucide-react'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import {
@@ -310,7 +310,29 @@ export function RecentlyClosedDialog({
 }) {
   const offline = computers.filter((computer) => !computer.online).map((computer) => computer.name)
   const at = now()
-  const wide = useSyncExternalStore(subscribeWide, wideNow, () => false)
+  const listRef = useRef<HTMLUListElement>(null)
+  const refocus = useRef<{ card: string; label: string }>(undefined)
+  // Crossing the desktop width moves each card's actions, which remounts
+  // them, so the one that had the focus is noted first and given it back.
+  const subscribe = useCallback((notify: () => void) => subscribeWide(() => {
+    const active = document.activeElement
+    const card = active instanceof HTMLElement && listRef.current?.contains(active)
+      ? active.closest('article')?.getAttribute('aria-labelledby')
+      : undefined
+    refocus.current = card ? { card, label: active?.getAttribute('aria-label') ?? '' } : undefined
+    notify()
+  }), [])
+  const wide = useSyncExternalStore(subscribe, wideNow, () => false)
+  useLayoutEffect(() => {
+    const target = refocus.current
+    refocus.current = undefined
+    if (!target || listRef.current?.contains(document.activeElement)) return
+    const card = [...(listRef.current?.querySelectorAll('article') ?? [])]
+      .find((article) => article.getAttribute('aria-labelledby') === target.card)
+    ;[...(card?.querySelectorAll('button') ?? [])]
+      .find((button) => button.getAttribute('aria-label') === target.label)
+      ?.focus()
+  }, [wide])
   return (
     <DialogFrame
       className="recently-closed-dialog"
@@ -339,7 +361,7 @@ export function RecentlyClosedDialog({
           it here so you can reopen it.
         </p>
       ) : (
-        <ul aria-label="Recently closed sessions" className="recently-closed-list">
+        <ul aria-label="Recently closed sessions" className="recently-closed-list" ref={listRef}>
           {sessions.map((session) => (
             <RecentlyClosedCard
               key={sessionKey(session)}

@@ -329,4 +329,20 @@ describe('recently closed sessions', () => {
     expect(buttonNames(header())).toEqual([])
     expect(buttonNames(card)).toEqual(['Show more', reopen, remove])
   })
+
+  it('gives a moved Reopen or Delete permanently its focus back when the window crosses the desktop width', () => {
+    const resizeWindow = windowWide(true)
+    // Two sessions of one name, so the focus returns to the right one.
+    const elsewhere = { ...audit(), id: 'audit-on-node', computerId: 'node', computerName: 'production' }
+    const { dialog } = renderList({ sessions: [audit(), elsewhere] })
+    const reopen = () => within(dialog).getAllByRole('button', { name: 'Reopen Audit disk usage' })[1]
+    const remove = () => within(dialog).getAllByRole('button', { name: 'Delete Audit disk usage permanently' })[1]
+
+    reopen().focus()
+    resizeWindow(false)
+    expect(reopen()).toHaveFocus()
+    remove().focus()
+    resizeWindow(true)
+    expect(remove()).toHaveFocus()
+  })
 })

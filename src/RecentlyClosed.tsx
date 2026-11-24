@@ -1,4 +1,4 @@
-import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { History, RotateCcw, Trash2 } from 'lucide-react'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import {
@@ -6,7 +6,6 @@ import {
   closedSessionExpiresAt,
 } from '../shared/closed-sessions'
 import { DialogFrame } from './components/DialogFrame'
-import { markdownPlainText } from './markdown-plain-text'
 import { computerTone, providerName, sessionKey, shortPath } from './session-presentation'
 
 // English like the rest of the interface, rather than the browser's language
@@ -15,6 +14,8 @@ const relativeTime = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 const minute = 60_000
 const hour = 60 * minute
 const day = 24 * hour
+
+const noPrompts: string[] = []
 
 /** Wider than the app's phone layout, as the stylesheet's desktop rules are. */
 const wideQuery = '(min-width: 961px)'
@@ -131,10 +132,10 @@ function RecentlyClosedCard({
   const toggleRef = useRef<HTMLButtonElement>(null)
   const collapsedByReader = useRef(false)
   const contextId = useId()
-  const context = session.closedContext
-  // A prompt that was only an image or markup says nothing in words.
-  const prompts = useMemo(() => context?.prompts.map(markdownPlainText).filter(Boolean) ?? [], [context])
-  const reply = useMemo(() => (context?.reply ? markdownPlainText(context.reply) : ''), [context])
+  // Plain text since the computer that closed it read it so; a context from
+  // an older release keeps the text it was stored with.
+  const prompts = session.closedContext?.prompts ?? noPrompts
+  const reply = session.closedContext?.reply ?? ''
   const closedAt = Date.parse(session.closedAt ?? '')
   const expiresAt = closedSessionExpiresAt(session.closedAt ?? '')
   const titleId = `recently-closed-${sessionKey(session)}`

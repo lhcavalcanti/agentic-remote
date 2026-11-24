@@ -39,7 +39,11 @@ const closed = session('release', {
   },
 })
 
-// Closed with more to say than three lines hold, in Markdown as agents write it.
+const auditReply =
+  'Yes. Ubuntu-26.04 went from 1,024 to 1,224 GiB of virtual disk capacity, exactly +200 GiB, ' +
+  'and the Linux filesystem grew too: WSL now has 1,203.7 GiB, with 521.3 GiB free. Nothing else changed.'
+
+// Closed with more to say than three lines hold.
 function audit(title = 'Audit disk usage'): ManagedSession {
   return session(title.toLowerCase().replaceAll(' ', '-'), {
     title,
@@ -48,22 +52,11 @@ function audit(title = 'Audit disk usage'): ManagedSession {
     closedContext: {
       title,
       cwd: '/home/tester/src/app',
-      prompts: [
-        'How do I give **WSL** 200 GB more?',
-        '![screenshot](https://example.com/disk.png)',
-        'Is it larger now? See [the log](https://example.com/log)',
-      ],
-      reply:
-        'Yes. `Ubuntu-26.04` went from **1,024 to 1,224 GiB** of virtual disk capacity, exactly ' +
-        '**+200 GiB**, and the Linux filesystem grew too: WSL now has 1,203.7 GiB, with 521.3 GiB ' +
-        'free. <b>Nothing else changed.</b>',
+      prompts: ['How do I give WSL 200 GB more?', 'Is it larger now? See the log'],
+      reply: auditReply,
     },
   })
 }
-
-const auditReply =
-  'Yes. Ubuntu-26.04 went from 1,024 to 1,224 GiB of virtual disk capacity, exactly +200 GiB, ' +
-  'and the Linux filesystem grew too: WSL now has 1,203.7 GiB, with 521.3 GiB free. Nothing else changed.'
 
 /** Lays text out at `perLine()` characters to an 18px line, cut after three lines. */
 function layOut(perLine: () => number) {
@@ -237,20 +230,6 @@ describe('recently closed sessions', () => {
     expect(within(failed.dialog).getByRole('alert')).toHaveTextContent('Hub unavailable')
     fireEvent.click(within(failed.dialog).getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledOnce()
-  })
-
-  it('reads the prompts and the last reply as plain text, without their Markdown', () => {
-    const { dialog } = renderList({ sessions: [audit()] })
-    const card = within(dialog).getByRole('article', { name: 'Audit disk usage' })
-
-    // A prompt that was only an image says nothing in words, so it is left out.
-    expect(within(card).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
-      'How do I give WSL 200 GB more?',
-      'Is it larger now? See the log',
-    ])
-    expect(within(card).getByText(auditReply)).toBeInTheDocument()
-    expect(card).not.toHaveTextContent(/[*`<>]/)
-    expect(card.querySelector('a, b, img')).toBeNull()
   })
 
   it('offers Show more only on a card whose context is cut, and opens that card alone', () => {

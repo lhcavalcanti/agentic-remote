@@ -1,5 +1,6 @@
 import { expect, type BrowserContextOptions, type Page } from '@playwright/test'
-import type { BackgroundTask, BackgroundTaskSnapshot, ManagedSession } from '../shared/contracts'
+import { closedSessionContext } from '../shared/closed-sessions'
+import type { BackgroundTask, BackgroundTaskSnapshot, ChatMessage, ManagedSession } from '../shared/contracts'
 import { oracleHostStatusFixture } from './oracle-host-status-fixture'
 import { fixtureNotifications, fixtureScheduleProposals, fixtureScheduleRuns, fixtureSchedules } from './shell-fixtures'
 import {
@@ -152,19 +153,28 @@ export function backgroundTasksFixture(stoppable: boolean): BackgroundTaskSnapsh
 }
 
 /**
- * Three closed sessions, newest first, with context in Markdown as agents
- * write it: the first says more than three lines hold on every viewport, the
- * last fits on any.
+ * Three closed sessions, newest first, with a context read from Markdown as
+ * agents write it, as the closing computer reads it: the first says more
+ * than three lines hold on every viewport, the last fits on any.
  */
 export function recentlyClosedFixture(): ManagedSession[] {
+  const cwd = '/home/demo/field-notes'
   const closed = (
     id: string, computerId: string, computerName: string, title: string, secondsAgo: number,
     prompts: string[], reply: string,
-  ): ManagedSession => ({
-    id, computerId, computerName, title, cwd: '/home/demo/field-notes', provider: 'copilot', executionMode: 'sdk',
-    updatedAt: fixtureAgo(secondsAgo), status: 'idle', isOpen: false, messages: [], closedAt: fixtureAgo(secondsAgo),
-    closedContext: { title, cwd: '/home/demo/field-notes', prompts, reply },
-  })
+  ): ManagedSession => {
+    const messages: ChatMessage[] = [
+      ...prompts.map((content, index): ChatMessage => ({
+        id: `${id}-prompt-${index}`, role: 'user', content, createdAt: fixtureAgo(secondsAgo + 60 * (prompts.length - index)),
+      })),
+      { id: `${id}-reply`, role: 'assistant', content: reply, createdAt: fixtureAgo(secondsAgo) },
+    ]
+    return {
+      id, computerId, computerName, title, cwd, provider: 'copilot', executionMode: 'sdk',
+      updatedAt: fixtureAgo(secondsAgo), status: 'idle', isOpen: false, messages: [], closedAt: fixtureAgo(secondsAgo),
+      closedContext: closedSessionContext({ title, cwd, messages }),
+    }
+  }
   return [
     closed('fixture-disk-audit', 'fixture-studio', 'Studio', 'Audit disk usage and propose cleanup', 50 * 60, [
       'How do I give **WSL** 200 GB more?',
@@ -172,13 +182,15 @@ export function recentlyClosedFixture(): ManagedSession[] {
         'restarted the distribution, and want to be sure its filesystem grew with it.',
       'Continue',
     ], 'Yes—the resize worked. I verified that `Ubuntu-26.04` went from **1,024 to 1,224 GiB** of virtual disk ' +
-      'capacity, exactly **+200 GiB**, and that the Linux filesystem grew too. WSL now has **1,203.7 GiB** of ' +
-      'filesystem capacity, with **521.3 GiB available** (55% used). Windows `C:` has **991.5 GiB available**. ' +
-      'I didn’t change anything else; the [cleanup plan](https://example.com/plan) lists three folders to rev…'),
+      'capacity, exactly **+200 GiB**, and that the Linux filesystem grew too.\n\n' +
+      '- WSL now has **1,203.7 GiB** of filesystem capacity, with **521.3 GiB available** (55% used).\n' +
+      '- Windows `C:` has **991.5 GiB available**.\n\n' +
+      'I didn’t change anything else; the [cleanup plan](https://example.com/plan) lists three folders to ' +
+      'review before deleting any of them.'),
     closed('fixture-guide-revisions', 'fixture-build', 'Build node', 'Compare the field guide revisions', 3 * 60 * 60, [
       'Compare the two field guide revisions and list what moved',
       'Keep the [recovery checklist](https://example.com/checklist) as the reference',
-    ], '## Summary - Three sections moved and none were removed. - The checklist matches the newer revision.'),
+    ], '## Summary\n\n- Three sections moved and none were removed.\n- The checklist matches the newer revision.'),
     closed('fixture-nightly-sync', 'fixture-studio', 'Studio', 'Profile the nightly sync', 2 * 24 * 60 * 60, [
       'Find out why the nightly sync takes 40 minutes now',
     ], 'Caching folder listings would bring it to about 12 minutes.'),

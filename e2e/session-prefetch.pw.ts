@@ -5,15 +5,22 @@ import {
   OFFLINE_SESSION_ID,
   PENDING_SESSION_ID,
   PERMISSION_SESSION_ID,
+  SELECTED_SESSION_ID,
+  createWorkspaceFixtureState,
   setupWorkspaceFixture,
 } from './workspace-fixtures'
 
 test('a session read ahead opens from memory while its own read is still out', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 800 })
+  const state = createWorkspaceFixtureState()
+  // The idle session first among the hub's, so the read after it shows its answer is in.
+  state.sessionOrder.order['fixture-studio'] = [SELECTED_SESSION_ID, IDLE_SESSION_ID, PENDING_SESSION_ID]
+    .map((id) => `fixture-studio:${id}`)
   const fixture = await setupWorkspaceFixture(page, {
     baseUrl: testInfo.project.use.baseURL!,
     knowledgeMode: 'hidden',
     summaryListing: true,
+    state,
   })
   const readAhead = (id: string) => fixture.requests.some((request) =>
     request.method === 'GET' && request.path.endsWith(`/sessions/${id}?passive=1&window=500`))
@@ -23,14 +30,15 @@ test('a session read ahead opens from memory while its own read is still out', a
   await page.goto(fixture.url)
   await expect(page.locator('.timeline article.message').first()).toBeVisible()
 
-  // One at a time down the sidebar: the idle session's answer is in once the
-  // read after it has gone out.
-  await expect.poll(() => readAhead(PERMISSION_SESSION_ID), { timeout: 15_000 }).toBe(true)
-  expect(readAhead(PENDING_SESSION_ID)).toBe(true)
+  // One at a time down the sidebar.
+  await expect.poll(() => readAhead(PENDING_SESSION_ID), { timeout: 15_000 }).toBe(true)
   expect(readAhead(IDLE_SESSION_ID)).toBe(true)
-  await expect.poll(() => readAhead(BACKGROUND_SESSION_ID), { timeout: 15_000 }).toBe(true)
-  // Its computer is offline.
-  expect(readAhead(OFFLINE_SESSION_ID)).toBe(false)
+  // Never on a node that has not said its version, which might be one that
+  // opens a session it is only asked to read, nor on one that is offline.
+  await page.waitForTimeout(1_000)
+  for (const id of [PERMISSION_SESSION_ID, BACKGROUND_SESSION_ID, OFFLINE_SESSION_ID]) {
+    expect(readAhead(id)).toBe(false)
+  }
 
   await page.locator('.session-list').getByText('Draft the weekly summary', { exact: true }).click()
   await expect(page.locator('.timeline')).toContainText('The short summary is ready for your next review.')

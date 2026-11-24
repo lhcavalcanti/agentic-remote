@@ -353,8 +353,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   showing what the list has until it arrives, and MUST read it again whenever
   the list says that task changed, one read at a time. The owning computer
   answers from the list it last published, without asking the runtime again,
-  and `404` once the task is no longer listed; the sheet then keeps the
-  summary and says so.
+  and `404` for a task that list does not have. When a read fails, the sheet
+  MUST show the current summary, not an earlier read, and say so.
 - A socket with `tasks=changes` MUST be sent each session's list once as
   summaries with a version, then only the tasks that changed (anything in
   them, so an opened task is read again) and the ids of those removed, or the

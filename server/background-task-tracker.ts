@@ -71,6 +71,11 @@ export class BackgroundTaskTracker {
     )
   }
 
+  /** Whether a list has been published for the session since it was last removed. */
+  has(sessionId: string): boolean {
+    return this.snapshots.has(sessionId)
+  }
+
   /** A copy of one task as last published, without copying the rest. */
   task(sessionId: string, taskId: string): BackgroundTask | undefined {
     const task = this.snapshots.get(sessionId)?.tasks.find((candidate) => candidate.id === taskId)

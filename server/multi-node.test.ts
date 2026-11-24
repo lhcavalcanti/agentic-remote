@@ -106,6 +106,7 @@ class FakeSessionService extends EventEmitter implements SessionService {
         supportsContextRecovery: true,
         supportsRecoverableClose: true,
         supportsActivityDetails: true,
+        supportsBackgroundTaskDetails: true,
       },
     ]
   }
@@ -1955,14 +1956,16 @@ describe('multi-node hub', () => {
         expect(detail.headers['cache-control']).toBe('no-store')
         expect(detail.json()).toEqual(running(taskId))
         expect((await get(`${tasks}/review`)).json()).toEqual(finished)
-        if (computerId === remoteId) {
-          // The node reads the one task; the hub does not fetch its whole list.
-          expect(remoteRead).toHaveBeenCalledWith('remote-session', 'remote-task')
-          expect(remoteList).not.toHaveBeenCalled()
-        }
         const missing = await get(`${tasks}/missing`)
         expect(missing.statusCode).toBe(404)
         expect(missing.json().error).toBe('Background task not found')
+        if (computerId === remoteId) {
+          // The node reads the one task, and its 404 is final: the hub does
+          // not fetch the whole list, not even for a task that is gone.
+          expect(remoteRead).toHaveBeenCalledWith('remote-session', 'remote-task')
+          expect(remoteRead).toHaveBeenCalledWith('remote-session', 'missing')
+          expect(remoteList).not.toHaveBeenCalled()
+        }
       }
 
       // The node summarizes its own list when the hub asks.
@@ -3706,9 +3709,13 @@ describe('remote snapshot consistency', () => {
       ...taskSnapshot(true),
       tasks: [{ ...taskSnapshot(true).tasks[0], command: 'pnpm build '.repeat(200), prompt: 'Build it' }],
     }
-    // An older node ignores ?summary=1 and has no route for one task.
+    // An older node does not say it reads one task, and ignores ?summary=1.
+    const copilot = {
+      id: 'copilot' as const, name: 'GitHub Copilot', available: true, terminalBacked: true, supportsBackgroundTasks: true,
+    }
+    const providers = vi.spyOn(client, 'providers', 'get').mockReturnValue([copilot])
     vi.spyOn(client, 'listBackgroundTasks').mockImplementation(async () => structuredClone(whole))
-    const read = vi.spyOn(client, 'readBackgroundTask').mockRejectedValue(new RemoteNodeRequestError('Not Found', 404))
+    const read = vi.spyOn(client, 'readBackgroundTask')
 
     expect(await manager.listBackgroundTasks(computer.id, 'kept', { summary: true }))
       .toEqual(summarizeBackgroundTasks(whole))
@@ -3716,12 +3723,18 @@ describe('remote snapshot consistency', () => {
     // Server-side readers, such as Oracle and the scheduler, still read whole tasks.
     expect(await manager.listBackgroundTasks(computer.id, 'kept')).toEqual(whole)
     expect(await manager.readBackgroundTask(computer.id, 'kept', 'review-task')).toEqual(whole.tasks[0])
-    expect(read).toHaveBeenCalledWith('kept', 'review-task')
     await expect(manager.readBackgroundTask(computer.id, 'kept', 'missing'))
       .rejects.toMatchObject({ message: 'Background task not found', statusCode: 404 })
-    // Only a missing route falls back; an unreachable node is reported as it is.
+    expect(read).not.toHaveBeenCalled()
+
+    // A node that reads one task answers for itself: its 404 is final.
+    providers.mockReturnValue([{ ...copilot, supportsBackgroundTaskDetails: true }])
+    vi.mocked(client.listBackgroundTasks).mockClear()
+    read.mockRejectedValue(new RemoteNodeRequestError('Background task not found', 404))
+    await expect(manager.readBackgroundTask(computer.id, 'kept', 'missing')).rejects.toMatchObject({ statusCode: 404 })
     read.mockRejectedValue(new RemoteNodeRequestError('Workshop is unavailable.', 503))
     await expect(manager.readBackgroundTask(computer.id, 'kept', 'review-task')).rejects.toMatchObject({ statusCode: 503 })
+    expect(client.listBackgroundTasks).not.toHaveBeenCalled()
     manager.stop()
   })
 

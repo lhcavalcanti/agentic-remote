@@ -95,7 +95,7 @@ import {
   type CopilotTaskProgress,
   type CopilotTasksApi,
 } from './background-task-adapter.js'
-import { BackgroundTaskTracker, listedBackgroundTask } from './background-task-tracker.js'
+import { BackgroundTaskTracker, backgroundTaskNotFound, listedBackgroundTask } from './background-task-tracker.js'
 import {
   assertSessionNotRetained,
   isRetainedRefusal,
@@ -2936,6 +2936,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         supportsRecoverableClose: true,
         supportsSideQuestions: true,
         supportsActivityDetails: true,
+        supportsBackgroundTaskDetails: true,
       },
     ]
   }
@@ -8040,9 +8041,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   /**
    * One task whole, as the list last published it. Asked as a browser opens a
-   * task and again each time it changes, so it reads what is already known
-   * rather than asking the runtime for every task again; a task not listed yet
-   * is looked for in a fresh list.
+   * task and again each time it changes, so it answers from what is already
+   * known, 404 for a task that list does not have, rather than asking the
+   * runtime for every task again. Only a session with no list yet is listed.
    */
   async readBackgroundTask(
     sessionId: string,
@@ -8051,8 +8052,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!this.store.has(sessionId)) {
       throw new Error('Session not found')
     }
-    return this.backgroundTaskTracker.task(sessionId, taskId) ??
-      listedBackgroundTask(await this.listBackgroundTasks(sessionId), taskId)
+    if (!this.backgroundTaskTracker.has(sessionId)) {
+      return listedBackgroundTask(await this.listBackgroundTasks(sessionId), taskId)
+    }
+    const task = this.backgroundTaskTracker.task(sessionId, taskId)
+    if (!task) throw backgroundTaskNotFound()
+    return task
   }
 
   async cancelBackgroundTask(

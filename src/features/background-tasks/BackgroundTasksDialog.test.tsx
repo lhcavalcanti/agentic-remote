@@ -396,6 +396,21 @@ describe('background tasks sheet', () => {
       expect(screen.getByText('Full details could not be loaded; this is what the list has.')).toBeInTheDocument()
     })
 
+    it('shows the current summary, not an earlier read, once reading the task again fails', async () => {
+      const readTask = vi.fn(async (): Promise<BackgroundTask> => whole)
+      const sheet = renderSheet(listed(summarized), { readTask })
+      fireEvent.click(rowToggle('Running shell: pnpm dev'))
+      await flush()
+      expect(screen.getByText('pnpm dev --host 127.0.0.1')).toBeInTheDocument()
+
+      readTask.mockRejectedValueOnce(new Error('The hub could not be reached'))
+      sheet.rerender({ snapshot: listed({ ...summarized, command: '…--host 0.0.0.0' }) })
+      await flush()
+      expect(screen.getByText('…--host 0.0.0.0')).toBeInTheDocument()
+      expect(screen.queryByText('pnpm dev --host 127.0.0.1')).not.toBeInTheDocument()
+      expect(screen.getByText('Full details could not be loaded; this is what the list has.')).toBeInTheDocument()
+    })
+
     it('shows a whole task as it is, without reading it', async () => {
       const readTask = vi.fn(async () => whole)
       renderSheet({ ...listed(whole), summary: undefined }, { readTask })

@@ -166,12 +166,12 @@ and progress are left out, and a list of summaries says `summary: true`.
 `GET …/sessions/:sessionId/tasks?summary=1` (and `…/tasks/:taskId/cancel?summary=1`)
 answers with summaries, and `GET …/sessions/:sessionId/tasks/:taskId` with one
 task whole, which the owning computer reads from the list it last published
-rather than asking the runtime again (`404` once the task is not listed). The
-node API mirrors both; the hub forwards them, summarizes a whole list from a
-node from before summaries itself, and finds one task in such a node's whole
-list when it has no route for one (`404`). Requests without `?summary=1`, and
-readers on the hub (Oracle, the scheduler, cancellation), still get whole
-tasks.
+rather than asking the runtime again (`404` for a task that list does not
+have). The node API mirrors both and advertises `supportsBackgroundTaskDetails`;
+the hub forwards them, summarizes a whole list from a node from before
+summaries itself, and finds one task in the whole list of a node that does not
+advertise the read. Requests without `?summary=1`, and readers on the hub
+(Oracle, the scheduler, cancellation), still get whole tasks.
 
 A socket that adds `tasks=changes` (with or without `patches=1`) is sent each
 session's list once as summaries with a `patchVersion`, then

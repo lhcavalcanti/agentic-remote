@@ -2451,7 +2451,7 @@ describe('AgentService deletion', () => {
     task.progress!.recentActivity!.push({ message: 'altered', timestamp: '2026-08-31T18:00:02.000Z' })
     expect((await service.readBackgroundTask(created.id, 'task-1')).progress?.recentActivity).toHaveLength(1)
 
-    // A task the last list did not have yet is listed afresh.
+    // One the published list does not have is not found, still without asking.
     client.session.backgroundTasks.push({
       type: 'shell',
       id: 'shell-2',
@@ -2459,9 +2459,17 @@ describe('AgentService deletion', () => {
       status: 'running',
       startedAt: '2026-08-31T18:01:00.000Z',
     })
+    await expect(service.readBackgroundTask(created.id, 'shell-2'))
+      .rejects.toMatchObject({ message: 'Background task not found', statusCode: 404 })
+    expect(asked).not.toHaveBeenCalled()
+    expect(progress).not.toHaveBeenCalled()
+
+    // A session whose tasks were never listed here is listed once.
+    service['backgroundTaskTracker'].remove(created.id)
     await expect(service.readBackgroundTask(created.id, 'shell-2')).resolves.toMatchObject({ id: 'shell-2' })
     expect(asked).toHaveBeenCalledOnce()
     await expect(service.readBackgroundTask(created.id, 'missing')).rejects.toThrow('Background task not found')
+    expect(asked).toHaveBeenCalledOnce()
     await expect(service.readBackgroundTask('missing-session', 'task-1')).rejects.toThrow('Session not found')
     await service.stop()
   })

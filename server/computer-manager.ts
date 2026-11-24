@@ -1180,24 +1180,24 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
       : client.listBackgroundTasks(sessionId)
   }
 
-  /** One task whole, read on the computer that owns its session. */
+  /**
+   * One task whole, read on the computer that owns its session. A node that
+   * does not say it reads one task, being from before task details or not yet
+   * heard from, has it whole in its list.
+   */
   async readBackgroundTask(
     computerId: string,
     sessionId: string,
     taskId: string,
   ): Promise<BackgroundTask> {
-    this.requireComputer(computerId)
+    const computer = this.requireComputer(computerId)
     if (computerId === this.identity.info.id) {
       return readBackgroundTaskFrom(this.localService, sessionId, taskId)
     }
     const client = this.requireClient(computerId)
-    try {
-      return await client.readBackgroundTask(sessionId, taskId)
-    } catch (error) {
-      // A node from before task details has no route for one; its list has it whole.
-      if (!(error instanceof RemoteNodeRequestError) || error.statusCode !== 404) throw error
-      return listedBackgroundTask(await client.listBackgroundTasks(sessionId), taskId)
-    }
+    return computer.providers?.some((provider) => provider.supportsBackgroundTaskDetails === true)
+      ? client.readBackgroundTask(sessionId, taskId)
+      : listedBackgroundTask(await client.listBackgroundTasks(sessionId), taskId)
   }
 
   async cancelBackgroundTask(

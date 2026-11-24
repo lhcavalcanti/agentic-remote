@@ -209,7 +209,8 @@ function useWholeTask(task: BackgroundTask, read: TaskReader | undefined) {
           const whole = await current(task.id)
           if (status.mounted) setState({ whole })
         } catch {
-          if (status.mounted) setState((previous) => ({ ...previous, failed: true }))
+          // An earlier read is older than the summary that asked for this one.
+          if (status.mounted) setState({ failed: true })
         }
       } while (status.stale && status.mounted)
       status.busy = false

@@ -30,6 +30,8 @@ export interface AgentProviderCapability {
   supportsSideQuestions?: boolean
   /** Reads a tool call's complete arguments and output from the session's event log. */
   supportsActivityDetails?: boolean
+  /** Reads one background task whole (`…/tasks/:taskId`), and lists summaries on request. */
+  supportsBackgroundTaskDetails?: boolean
   supportsLaunchIdentity?: boolean
   unavailableReason?: string
 }

@@ -488,8 +488,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   messages (the confirmation counts queued ones), but the owning computer
   keeps the record, uploads, and the provider's saved session, with a short
   context computed without a model when it closes: title, folder, the last
-  three prompts, and an excerpt of the last reply. A closed session leaves the
-  list, custom order, and hidden set; discovery, restart recovery, and
+  three prompts, and an excerpt of the last reply, each read as Markdown and
+  kept as plain text without its syntax, images, or HTML. A closed session
+  leaves the list, custom order, and hidden set; discovery, restart recovery, and
   provider listings MUST NOT list it as open, and sends to it are refused until
   it is reopened. A computer that does not advertise recoverable close offers
   only Delete permanently.
@@ -503,6 +504,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - **Recently closed**, in the Sessions header between Refresh and New session,
   MUST list closed sessions newest first with when each closed and will be
   deleted, its context, **Reopen**, and a confirmed **Delete permanently**.
+  The context MUST show three lines each of the prompts and the last reply,
+  with **Show more** only when that cuts something. A desktop puts Reopen and
+  Delete permanently beside each card's title and the prompts beside the
+  reply; a phone keeps the full-width sheet with its button row.
   Reopen uses the history reopen lifecycle and sends nothing. The owning
   computer MUST delete a closed session permanently 14 days after it closed,
   checking at startup and hourly; a failed deletion is logged and retried at

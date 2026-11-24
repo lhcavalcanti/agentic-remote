@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "4321a41517716837ad16ca1a691c74a14285211e",
+  "built_at_commit": "75f9075ebff15a8f57941923f37488e45320e32c",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -238752,7 +238752,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L29",
+      "source_location": "L37",
       "target": "src_activityrow_test_bashdetail",
       "weight": 1.0
     },
@@ -238763,7 +238763,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L20",
+      "source_location": "L28",
       "target": "src_activityrow_test_output",
       "weight": 1.0
     },
@@ -238774,7 +238774,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L22",
+      "source_location": "L30",
       "target": "src_activityrow_test_raw",
       "weight": 1.0
     },
@@ -238785,7 +238785,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L76",
+      "source_location": "L84",
       "target": "src_activityrow_test_rendertranscript",
       "weight": 1.0
     },
@@ -238796,7 +238796,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L43",
+      "source_location": "L51",
       "target": "src_activityrow_test_row",
       "weight": 1.0
     },
@@ -238807,7 +238807,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L39",
+      "source_location": "L47",
       "target": "src_activityrow_test_runningdetail",
       "weight": 1.0
     },
@@ -238818,7 +238818,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L25",
+      "source_location": "L33",
       "target": "src_activityrow_test_text",
       "weight": 1.0
     },
@@ -238829,7 +238829,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L88",
+      "source_location": "L96",
       "target": "src_activityrow_test_togglefor",
       "weight": 1.0
     },
@@ -238840,7 +238840,7 @@
       "relation": "contains",
       "source": "src_activityrow_test",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L53",
+      "source_location": "L61",
       "target": "src_activityrow_test_transcript",
       "weight": 1.0
     },
@@ -238900,7 +238900,7 @@
       "relation": "calls",
       "source": "src_activityrow_test_bashdetail",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L33",
+      "source_location": "L41",
       "target": "src_activityrow_test_text",
       "weight": 1.0
     },
@@ -238912,7 +238912,7 @@
       "relation": "calls",
       "source": "src_activityrow_test_runningdetail",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L39",
+      "source_location": "L47",
       "target": "src_activityrow_test_bashdetail",
       "weight": 1.0
     },
@@ -393410,7 +393410,7 @@
       "label": "bashDetail()",
       "norm_label": "bashdetail()",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L29"
+      "source_location": "L37"
     },
     {
       "_origin": "ast",
@@ -393421,7 +393421,7 @@
       "label": "output",
       "norm_label": "output",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L20"
+      "source_location": "L28"
     },
     {
       "_origin": "ast",
@@ -393432,7 +393432,7 @@
       "label": "raw",
       "norm_label": "raw",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L22"
+      "source_location": "L30"
     },
     {
       "_callable": true,
@@ -393444,7 +393444,7 @@
       "label": "renderTranscript()",
       "norm_label": "rendertranscript()",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L76"
+      "source_location": "L84"
     },
     {
       "_callable": true,
@@ -393456,7 +393456,7 @@
       "label": "row()",
       "norm_label": "row()",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L43"
+      "source_location": "L51"
     },
     {
       "_callable": true,
@@ -393468,7 +393468,7 @@
       "label": "runningDetail()",
       "norm_label": "runningdetail()",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L39"
+      "source_location": "L47"
     },
     {
       "_callable": true,
@@ -393480,7 +393480,7 @@
       "label": "text()",
       "norm_label": "text()",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L25"
+      "source_location": "L33"
     },
     {
       "_callable": true,
@@ -393492,7 +393492,7 @@
       "label": "toggleFor()",
       "norm_label": "togglefor()",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L88"
+      "source_location": "L96"
     },
     {
       "_callable": true,
@@ -393504,7 +393504,7 @@
       "label": "Transcript()",
       "norm_label": "transcript()",
       "source_file": "src/ActivityRow.test.tsx",
-      "source_location": "L53"
+      "source_location": "L61"
     },
     {
       "_origin": "ast",

@@ -663,15 +663,15 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 261,
+  "communities": 263,
   "community_algorithm": "louvain-seed-42",
-  "edges": 26681,
+  "edges": 26691,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
     ".github/copilot-instructions.md": "03d9664de9489495b64bdda845ea7419e677bfa6b14145e03cd9fcc6cca79a30",
     ".github/dependabot.yml": "2501122e8fb361cbce6c51468d1cb94fc1112cd6e195235877c14b3eb8745664",
-    ".github/skills/agentic-remote-navigation/SKILL.md": "d62d166005ff4225c5966da64528382e0b1bdd02ef21231229b29829373c0309",
+    ".github/skills/agentic-remote-navigation/SKILL.md": "dea41397dddbde8722d6fe1a8271d508bf933e20f45fb02ded3dd6ada3cdc0f9",
     ".github/skills/frontend-design/LICENSE.txt": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
     ".github/skills/frontend-design/SKILL.md": "dc239b9eb5e8fc8632af8c4ac87c5544482b584b638c2d12098db07959228eab",
     ".github/skills/frontend-design/SOURCE.md": "eb1017ad0da7614f81c743942d2835a26d23edd3904523f97a912d62cb378087",
@@ -704,7 +704,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "529aa655096955a17cbbf30ec0771fa7c186bebcff3b2a01da4748e89c20ea94",
+    "docs/app-spec.md": "9a3fbb2f2ff6488d1c396b315364763d60afea8d1734c91144f8cc49eb2244ea",
     "docs/architecture.md": "6ca29751956b262fee49f3957bee9d9e5fdc25c9e4f7b971f0524e3f3676638c",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -1363,8 +1363,8 @@
     "src/ActivityDetails.tsx": "6d871849962d193ca6894814111c8d0b911c5c1a39a550d8b71447a1a66debf4",
     "src/ActivityRow.test.tsx": "e08ee4c7462b8ff914b4a58afc827a7e7df738b1af2977f91d76cf7359cd8765",
     "src/ActivityRow.tsx": "b46ef2fab57d4351b2017e9c5c1d2a85c5bacbd857e78fbcdd3279410d2cee3e",
-    "src/App.test.tsx": "2afe85abc70e1f2c63c0bea71319bc4e73fdebbbb15b127032e3feaf93fe8077",
-    "src/App.tsx": "f43ad9d1eca838189ce8ffdbe781b90292fbbf31e1df64a4f38e27b6d17d32f9",
+    "src/App.test.tsx": "32f12470e4a4a5cbfa295423cbda4960024e84c0ec222618cb91021aa82f44b4",
+    "src/App.tsx": "3a8afe8525044594f88e989ea52cde2f646ac95cff30adf7db60b060344b2b98",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -1549,8 +1549,8 @@
     "src/session-navigation-view.ts": "40bc2fb0d2c915330db372caacb753e562d965ced9604542f920a96a803b348e",
     "src/session-origin.ts": "8dd585d814dd45136b635c7e08ac344314975795bb7eb15490853eecc246aa14",
     "src/session-patches.ts": "7e68aff6eaf9a5a634bbd866420b3acf4cca99c5534658ebf84f0ac9d9865799",
-    "src/session-prefetch.test.ts": "eb3fe9b377847860a59d056ceed089f0d41dc88b3907b489edca45db43b26462",
-    "src/session-prefetch.ts": "2e145d40b02d2679745afe6e358b4b094ed19fde743f2a92e97012246e547605",
+    "src/session-prefetch.test.ts": "39dd881484b8a97fc76f59e8fe143b63aa4e8245ed61a697d800b206d1de5a8f",
+    "src/session-prefetch.ts": "93c15c8fe936235e1af65cf37398c82f1c09f78ba5784c61d1ca12f2d6b3ae57",
     "src/session-presentation.test.ts": "365fabde4f70fd3e0df2146f587c5020919e431710df92c1fe3e2d68cea8970d",
     "src/session-presentation.ts": "4441806139eb644519dac2d1a481092ddb45689a09d6d34c473a5d9082d4a1ae",
     "src/session-resource-commands.test.ts": "aad01518e46dd66c0910f8c113f9895712c7628bf9385eee6d33ef0f0e73e62a",
@@ -1595,7 +1595,7 @@
     "src/use-recently-closed.ts": "79f3818db6a49d817066f7e966f90b7ee8e89cf83e761756adf6d929d62eab5e",
     "src/use-session-knowledge-root.test.tsx": "4f80b53683ee9b270982608b2de9a8f7aa5b03baa03be3ce2a29f073317349c4",
     "src/use-session-knowledge-root.ts": "931caaf6414ed837536b35bd930f257c9365b675dbd35ec641d70cf71b192b7e",
-    "src/use-session-prefetch.ts": "410476b27623a5e560914f1c7db4a6135c93d41cd8754bf50d45bc00a81fc423",
+    "src/use-session-prefetch.ts": "5cf5f8f4bc9a5ad28006994424669b170c5adf432e18723328c63e10a44f0afb",
     "src/voice-recorder.test.ts": "233efe2e6c66d7fb78706918bebf21f6115e36491fbcd9af9fe389185c8d59bf",
     "src/voice-recorder.ts": "b01fad559d219bb7290666a30c315939a8ca53ca30a14d2b5255455c466dd2b4",
     "tsconfig.app.json": "9db467556a29303882f9844ff4a1607ac9ee47225b42c0589cb348cf913b4bb3",
@@ -1606,7 +1606,7 @@
     "vite.config.ts": "108ea80875a9e6483eb24531c8d8a7e3cd68ce866e5db64e9c0c243125186b2d"
   },
   "mode": "local-ast-only",
-  "nodes": 9244,
+  "nodes": 9248,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1883,13 +1883,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "7532a6f0a0d798b0d78774083bea879fa1b6c71ea0ef7312da76b5e01df2c748",
-    "communities.json": "cdb22f564caa4eea3570c564555d542d257d2a98e29f33c0dbfe99f1a4744570",
-    "graph.html": "97315235ca8054adaa8ea65e1b2361048d658b26bfc314930b9fd5b8323037d1",
-    "graph.json": "620a752cda603d8ea729265d7189a9c2fb8a15b5dea6149b54a18edbaf97d5c0"
+    "GRAPH_REPORT.md": "28d5eb57b79e06fcfb0c440ff589d0a68ead0957585b8c8938d8566c74effbef",
+    "communities.json": "3160a04e8b601b68ecb7e657dd3fa0f99b2965348c29dc3a70bc3a156515f211",
+    "graph.html": "a9dddf320151e1dc4ccf99733fb59473b00de3fbaff26942770c5591ab265fc1",
+    "graph.json": "5175291b2b2aaed964479c7517148d0d80b3e114e4acca9cd86a340d31d77a92"
   },
   "schema_version": 1,
-  "source_commit": "525a4507aa0177c8a1bf5aa3c93657129e68f0fa",
-  "source_fingerprint": "a113ab3faa5df1b478e70a899665e1c663f2c1991f5045c3f3b6b000ebf04d54",
+  "source_commit": "bc1754c67fbdd9d227e837ea98b872ea23b433ac",
+  "source_fingerprint": "a086a740c855335e78425a346e411462174345a9272edd82acd8edb3da46e03d",
   "working_tree_changes": []
 }

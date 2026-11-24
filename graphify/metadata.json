@@ -779,7 +779,7 @@
     "e2e/session-unread.pw.ts": "12f58fd70663ee77d1f65ce1f88b056073e767e54326e78005c67514c7dfbcbf",
     "e2e/shell-fixtures.ts": "75d818141cbf8c849a212885fd945ff37ed70c54d2e3b7de15acce7dc08aabd8",
     "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
-    "e2e/transcript-window.pw.ts": "3f32e98c4c93315e3a893e4be692b06c8e3288a9b25ca35d75a170ebedb5b8a6",
+    "e2e/transcript-window.pw.ts": "632c41b6d9abf768fe06b7818941d1a41965765a42f8edba45599577362a910e",
     "e2e/ui-locks.pw.ts": "949aecbb961a903ee546c7374e0560594b8268fbd466c5e3ebc8acac1ca7948e",
     "e2e/ui-locks.pw.ts-snapshots/desktop-app-settings-chromium-linux.png": "bdc1d6f2acab77e4f21d1c9b34736693bcba828093402cfab2c655773e7bb03f",
     "e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-chromium-linux.png": "7dcbcdf3fcaaccb7809d837f7965a463fe3ffacbab9b3ee3e0916b42d4a00aff",
@@ -944,7 +944,7 @@
     "e2e/ui-locks.pw.ts-snapshots/tool-call-details-phone-chromium-linux.png": "adafd2e713dbe98e90772c8b0c598ccf8ba2b1b2949bdb7e32ceeb9afefb36fa",
     "e2e/ui-scenes.ts": "578b8a3f6c74828676fd3c8cd82ca626694672f62ae61f104ac5c85ecab571e3",
     "e2e/workspace-fixtures.test.ts": "edee8b965861af85a07b7888c10f6852ea508e166efda7259628962d77213904",
-    "e2e/workspace-fixtures.ts": "bf015de32320b0acab001768c65eec2560e1289e2df697be699792447031c01a",
+    "e2e/workspace-fixtures.ts": "2577f384c1f46c87a72d3ad6ed0f95dd9785cc8a2c53fd7d85b4ecd655d8ab80",
     "fixtures/voice/README.md": "c85318f655ee28bee3957558d215a36526cb93f8f9826d3dc05fe4019e59345e",
     "fixtures/voice/en-false-start.wav": "2272d8ae82743ae34ebf2018db4c294d89b1a9d0e0dcbda7dfff580ca8771355",
     "fixtures/voice/en-long-male-clean.wav": "08a5352989b38877f086d3022161e8606bcb90e6febef223f9593994c9c9d2d7",
@@ -1875,13 +1875,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "ff550b892e0d4f43604b4554ca31de1e1ca1747f3254c43b3f38b780dd040c45",
+    "GRAPH_REPORT.md": "05f1e28f29a9259849cf440d649f3961e973dac3541a900968337e7b16544587",
     "communities.json": "24a2565c2ec7d0f3c747c7de4cabfd89da316eea81ec5e835bbacf2178428973",
-    "graph.html": "9d5a45c9c6ad087bc11af36f1d333e385c1658dc99d5e1ae4965ab430ad60924",
-    "graph.json": "375fc32b32d976aa80bb43aeefd5ea6feab7c9a8aa6e31094681afc60eb884ed"
+    "graph.html": "f3a7752a9133d8427ac2df85972343048582e3fdcdd0adc49ee7f76a14728d38",
+    "graph.json": "309809f3f0dfb9e6902857f52964e2824a22bc97cffd9fe16af701c0a25d3662"
   },
   "schema_version": 1,
-  "source_commit": "0127018e8b8ab9d4833fae62986ed74fe93c0e20",
-  "source_fingerprint": "2d01b99fdfc0822b1760f99ae6c8cd6e6473f109cf7d2302a8c2a734c234767b",
+  "source_commit": "76c95a3a398ea0098e4c3fc321af385eb4ceeb45",
+  "source_fingerprint": "007495bf74b1405f47c6b680856ccf1a252f258f7b9c48262fc5f09269a98487",
   "working_tree_changes": []
 }

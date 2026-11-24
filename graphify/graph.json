@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "0127018e8b8ab9d4833fae62986ed74fe93c0e20",
+  "built_at_commit": "76c95a3a398ea0098e4c3fc321af385eb4ceeb45",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -15570,7 +15570,7 @@
       "relation": "calls",
       "source": "e2e_workspace_fixtures_setupworkspacefixture",
       "source_file": "e2e/workspace-fixtures.ts",
-      "source_location": "L1565",
+      "source_location": "L1573",
       "target": "e2e_workspace_fixtures_fixturevalue",
       "weight": 1.0
     },
@@ -15594,7 +15594,7 @@
       "relation": "contains",
       "source": "e2e_workspace_fixtures_setupworkspacefixture",
       "source_file": "e2e/workspace-fixtures.ts",
-      "source_location": "L2008",
+      "source_location": "L2016",
       "target": "e2e_workspace_fixtures_setupworkspacefixture_emit",
       "weight": 1.0
     },
@@ -15630,7 +15630,7 @@
       "relation": "calls",
       "source": "e2e_workspace_fixtures_setupworkspacefixture",
       "source_file": "e2e/workspace-fixtures.ts",
-      "source_location": "L1718",
+      "source_location": "L1726",
       "target": "shared_closed_sessions_closedsessioncontext",
       "weight": 1.0
     },
@@ -15642,7 +15642,7 @@
       "relation": "calls",
       "source": "e2e_workspace_fixtures_setupworkspacefixture",
       "source_file": "e2e/workspace-fixtures.ts",
-      "source_location": "L1562",
+      "source_location": "L1570",
       "target": "shared_knowledge_path_joinknowledgerelativepath",
       "weight": 1.0
     },
@@ -15654,7 +15654,7 @@
       "relation": "calls",
       "source": "e2e_workspace_fixtures_setupworkspacefixture",
       "source_file": "e2e/workspace-fixtures.ts",
-      "source_location": "L1609",
+      "source_location": "L1617",
       "target": "shared_knowledge_path_rebaseknowledgerelativepath",
       "weight": 1.0
     },
@@ -15726,7 +15726,7 @@
       "relation": "calls",
       "source": "e2e_workspace_fixtures_setupworkspacefixture",
       "source_file": "e2e/workspace-fixtures.ts",
-      "source_location": "L1927",
+      "source_location": "L1935",
       "target": "shared_transcript_window_pagewholesession",
       "weight": 1.0
     },
@@ -15738,7 +15738,7 @@
       "relation": "calls",
       "source": "e2e_workspace_fixtures_setupworkspacefixture",
       "source_file": "e2e/workspace-fixtures.ts",
-      "source_location": "L1918",
+      "source_location": "L1401",
       "target": "shared_transcript_window_windowsession",
       "weight": 1.0
     },
@@ -318768,7 +318768,7 @@
       "label": "emit()",
       "norm_label": "emit()",
       "source_file": "e2e/workspace-fixtures.ts",
-      "source_location": "L2008"
+      "source_location": "L2016"
     },
     {
       "_callable": true,

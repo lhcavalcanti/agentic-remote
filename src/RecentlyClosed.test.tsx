@@ -2,6 +2,8 @@
 
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import { CloseSessionDialog, RecentlyClosedDialog } from './RecentlyClosed'
@@ -153,6 +155,77 @@ describe('closing a session', () => {
     expect(within(dialog).queryByRole('button', { name: 'Close session' })).not.toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Delete permanently' })).toBeInTheDocument()
   })
+
+  it('opens on Close session, so Enter closes the session to reopen later', async () => {
+    const user = userEvent.setup()
+    const onCloseSession = vi.fn()
+    const onDelete = vi.fn()
+    render(
+      <CloseSessionDialog
+        onCancel={vi.fn()}
+        onCloseSession={onCloseSession}
+        onDelete={onDelete}
+        recoverable
+        session={session('one', { title: 'Release review' })}
+      />,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Close session' })
+
+    expect(within(dialog).getByRole('button', { name: 'Close session' })).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(onCloseSession).toHaveBeenCalledOnce()
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  it('never opens on Delete permanently, so Enter cannot delete a session for good', async () => {
+    const user = userEvent.setup()
+    const onDelete = vi.fn()
+    render(
+      <CloseSessionDialog
+        onCancel={vi.fn()}
+        onCloseSession={vi.fn()}
+        onDelete={onDelete}
+        recoverable={false}
+        session={session('one', { title: 'Release review' })}
+      />,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Close session' })
+
+    expect(dialog).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(onDelete).not.toHaveBeenCalled()
+  })
+
+  it('gives the focus back to what opened it when cancelled', async () => {
+    const user = userEvent.setup()
+    function Row() {
+      const [asking, setAsking] = useState(false)
+      return (
+        <>
+          <button onClick={() => setAsking(true)} type="button">Close Release review</button>
+          {asking ? (
+            <CloseSessionDialog
+              onCancel={() => setAsking(false)}
+              onCloseSession={vi.fn()}
+              onDelete={vi.fn()}
+              recoverable
+              session={session('one', { title: 'Release review' })}
+            />
+          ) : null}
+        </>
+      )
+    }
+    render(<Row />)
+    const opener = screen.getByRole('button', { name: 'Close Release review' })
+
+    await user.click(opener)
+    const dialog = screen.getByRole('dialog', { name: 'Close session' })
+    expect(within(dialog).getByRole('button', { name: 'Close session' })).toHaveFocus()
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(dialog).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+  })
 })
 
 describe('recently closed sessions', () => {
@@ -205,19 +278,23 @@ describe('recently closed sessions', () => {
     expect(onReopen).toHaveBeenLastCalledWith(closed)
   })
 
-  it('deletes a session permanently only after confirming', async () => {
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
-    const { dialog, onDelete } = renderList()
+  it('deletes a session permanently at once, and reports a delete that failed', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let fail!: (error: Error) => void
+    const onDelete = vi.fn(() => new Promise<void>((_resolve, reject) => { fail = reject }))
+    const { dialog } = renderList({ onDelete })
     const remove = within(dialog).getByRole('button', { name: 'Delete Release review permanently' })
 
     fireEvent.click(remove)
-    expect(onDelete).not.toHaveBeenCalled()
-    fireEvent.click(remove)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(onDelete).toHaveBeenCalledWith(closed)
+    expect(remove).toHaveTextContent('Deleting…')
+    expect(remove).toBeDisabled()
+    await act(async () => fail(new Error('Unable to delete session')))
 
-    await waitFor(() => expect(onDelete).toHaveBeenCalledWith(closed))
-    expect(confirm).toHaveBeenLastCalledWith(
-      'Delete “Release review” permanently? Its history is removed from development and it can no longer be reopened.',
-    )
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Unable to delete session')
+    expect(remove).toHaveTextContent('Delete permanently')
+    expect(remove).toBeEnabled()
   })
 
   it('says when nothing was closed, and offers a retry when the list could not load', () => {

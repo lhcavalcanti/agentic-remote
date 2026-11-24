@@ -81,7 +81,8 @@ export function CloseSessionDialog({
       )}
       <div className="close-session-dialog__actions">
         {recoverable ? (
-          <button className="primary-button" onClick={onCloseSession} type="button">
+          // Enter closes, which Reopen undoes; a delete for good never starts focused.
+          <button autoFocus className="primary-button" onClick={onCloseSession} type="button">
             Close session
           </button>
         ) : (
@@ -168,14 +169,6 @@ function RecentlyClosedCard({
   }, [expanded, prompts, reply])
 
   async function act(kind: 'reopen' | 'delete') {
-    if (
-      kind === 'delete' &&
-      !window.confirm(
-        `Delete “${session.title}” permanently? Its history is removed from ${session.computerName} and it can no longer be reopened.`,
-      )
-    ) {
-      return
-    }
     setPending(kind)
     setError(undefined)
     try {

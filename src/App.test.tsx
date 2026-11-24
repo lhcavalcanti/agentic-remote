@@ -11,6 +11,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComponentProps } from 'react'
@@ -17565,6 +17566,21 @@ describe('App', () => {
     expect(deleteSession).not.toHaveBeenCalled()
   })
 
+  it('closes a session to reopen with Enter, from the Close session it opens on', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    await screen.findAllByText('Project chat')
+
+    fireEvent.click(sessionAction('Close session'))
+    const dialog = screen.getByRole('dialog', { name: 'Close session' })
+    expect(within(dialog).getByRole('button', { name: 'Close session' })).toHaveFocus()
+    await user.keyboard('{Enter}')
+
+    await waitFor(() => expect(closeSession).toHaveBeenCalledWith('computer-1', 'session-1'))
+    expect(dialog).not.toBeInTheDocument()
+    expect(deleteSession).not.toHaveBeenCalled()
+  })
+
   it('deletes a session for good from the Close confirmation', async () => {
     render(<App />)
     await screen.findAllByText('Project chat')
@@ -17696,6 +17712,7 @@ describe('App', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete Project chat permanently' }))
 
     await waitFor(() => expect(deleteSession).toHaveBeenCalledWith('computer-1', 'session-1'))
+    expect(window.confirm).not.toHaveBeenCalled()
     expect(await within(dialog).findByText(/Nothing closed in the last 14 days/)).toBeInTheDocument()
   })
 

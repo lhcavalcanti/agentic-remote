@@ -1050,6 +1050,8 @@ describe('agentic-remote-gate', () => {
 
   it('fails closed without running checks when bubblewrap is missing', async () => {
     const f = await fixture()
+    // Expose Node without adding its whole bin directory, which may contain bwrap and Python.
+    await stub(f.bin, 'node', `exec ${JSON.stringify(process.execPath)} "$@"`)
     const system = path.join(f.root, 'system-bin')
     await mkdir(system)
     await Promise.all(
@@ -1058,7 +1060,7 @@ describe('agentic-remote-gate', () => {
         .map((name) => symlink(path.join('/usr/bin', name), path.join(system, name))),
     )
     const result = await gate(f, [f.mainSha, '--repo', REPO], {
-      PATH: `${f.bin}:${path.dirname(process.execPath)}:${system}`,
+      PATH: `${f.bin}:${system}`,
     })
     expect(result.code).not.toBe(0)
 
@@ -1196,6 +1198,7 @@ describe('agentic-remote-gate', () => {
 
   it('fails closed without running checks when python3 is outside the system directories', async () => {
     const f = await fixture()
+    await stub(f.bin, 'node', `exec ${JSON.stringify(process.execPath)} "$@"`)
     const system = path.join(f.root, 'system-bin')
     const local = path.join(f.root, 'local-bin')
     await mkdir(system)
@@ -1207,7 +1210,7 @@ describe('agentic-remote-gate', () => {
     )
     await symlink('/usr/bin/python3', path.join(local, 'python3'))
     const result = await gate(f, [f.mainSha, '--repo', REPO], {
-      PATH: `${f.bin}:${path.join(f.root, 'sandbox-bin')}:${path.dirname(process.execPath)}:${local}:${system}`,
+      PATH: `${f.bin}:${path.join(f.root, 'sandbox-bin')}:${local}:${system}`,
     })
     expect(result.code).not.toBe(0)
 
@@ -1223,8 +1226,9 @@ describe('agentic-remote-gate', () => {
     'accepts a python3 reached through a merged /bin',
     async () => {
       const f = await fixture()
+      await stub(f.bin, 'node', `exec ${JSON.stringify(process.execPath)} "$@"`)
       const result = await gate(f, [f.mainSha, '--repo', REPO], {
-        PATH: `${f.bin}:${path.join(f.root, 'sandbox-bin')}:${path.dirname(process.execPath)}:/bin`,
+        PATH: `${f.bin}:${path.join(f.root, 'sandbox-bin')}:/bin`,
       })
       expect(result.code, result.output).toBe(0)
       expect((await statuses(f)).at(-1)?.state).toBe('success')

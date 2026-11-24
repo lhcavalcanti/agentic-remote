@@ -1032,7 +1032,7 @@
     "server/feature-flags.test.ts": "5e918fec771a56ce6f4dcd354cbf41c8ad8740c067ece5acffd6100aed9d34ab",
     "server/file-upload-routes.test.ts": "c9714330279f98c3942fe8e5e26a6d9c89bd80ac05c7929eef758b956f073d2b",
     "server/file-upload-routes.ts": "cf922309a2f3bba0c83e2448f39bc292b983c9f3830ccffe0adbab241d3aa7a9",
-    "server/full-gate.test.ts": "0d5ee37c73e959ccb0a3a80203e2785c1a225339824d43eaa99ef94131d3db5a",
+    "server/full-gate.test.ts": "57bfc5c0a645a0afca682e149729bb44483f7d00f919c256902ac5f5e5cd5b75",
     "server/history-projection.test.ts": "21dafd80c118238e83ae63320993d68fcb62b3a5179b56d0bc114501ba79550f",
     "server/host-telemetry/alerts.test.ts": "44f3fd9e2646178eb195b436a6e9ab3fa01d9af47236d1d887c0bc64ac18e51b",
     "server/host-telemetry/alerts.ts": "1fba4a02feabfbb5c8df62e153a57689db4275e67d359e35f96dbccf4cb785a1",
@@ -1851,14 +1851,14 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "e0fa5713bab82667bf0a0d7975117268d4ef872384c2d356266ebf88fbaed1b5",
+    "GRAPH_REPORT.md": "7c444a6fef2ebfdea0afa22b646e15b33f0b668947f290c8bb6b7dca48e761ec",
     "communities.json": "31676b3d0164e8c0a7b12ca9bac735f0fb8be77d7b28cf2ab28a09678b72337b",
-    "graph.html": "1e050d76c7277c660fc30a145434f9486cc0b18895120be0b7969a1cdf57aede",
-    "graph.json": "4ba769e96103e4818aeff475bc605c5c76cdad119803f373b27248dbebf9eb06"
+    "graph.html": "28e5f42d42f5fbf65130ede3b284a94de6922d09459467e5eb74f2305b7f19ea",
+    "graph.json": "6aae9d2ea12b9b6cfda06db714c96ea0df2b91ff303193b0a64641d2d8634975"
   },
   "schema_version": 1,
-  "source_commit": "75f9075ebff15a8f57941923f37488e45320e32c",
-  "source_fingerprint": "3141d8a4578109a1aa993339508ee76d9cf3028744f2d2978dc20f86e298ea3f",
+  "source_commit": "211e441a020bc5010db2c05e58815b8d9138c99d",
+  "source_fingerprint": "2e91f892d22d6507f135bca63ac0fff36760388baf0b0ee45f4b7e26cf8ea300",
   "working_tree_changes": [
     "src/ActivityRow.test.tsx"
   ]

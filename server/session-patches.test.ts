@@ -524,8 +524,6 @@ describe('task publications', () => {
     const { type: _type, computerId: _computer, sessionId: _session, ...snapshot } = event
     return summarizeBackgroundTasks(snapshot)
   }
-  const byId = (snapshot: BackgroundTaskSnapshot | undefined) =>
-    snapshot && { ...snapshot, tasks: [...snapshot.tasks].sort((left, right) => left.id.localeCompare(right.id)) }
   const frames = (browser: Browser) => browser.sent.map((payload) => JSON.parse(payload) as HubWireEvent)
   const hundred = () => Array.from({ length: 100 }, (_, index) => index < 10 ? running(`t${index}`) : task(`t${index}`))
 
@@ -574,7 +572,7 @@ describe('task publications', () => {
     // however long the list.
     expect(browser.sent[0].length).toBeLessThan(30_000)
     expect(browser.sent[1].length).toBeLessThan(2 * BACKGROUND_TASK_TAIL + 600)
-    expect(byId(browser.taskLists.get('local:a'))).toEqual(byId(summaries(listed(turned))))
+    expect(browser.taskLists.get('local:a')).toEqual(summaries(listed(turned)))
     expect(browser.resyncCount).toBe(0)
   })
 
@@ -610,6 +608,25 @@ describe('task publications', () => {
     expect(frames(browser)[1]).toEqual({
       type: 'session.tasks.updated', computerId: 'local', sessionId: 'a', ...summaries(finished), patchVersion: 2,
     })
+  })
+
+  it('keeps the published order, sending the whole list when a change cannot reproduce it', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(false, undefined, true)
+    publications.add(browser.socket)
+    const [a, b, c, d] = [running('a'), task('b'), task('c'), task('d')]
+    publications.broadcast(listed([a, b, c, d]))
+    // The same tasks in another order are a change.
+    publications.broadcast(listed([b, a, c, d]))
+    // A task that turns up below the newest cannot be placed by a change.
+    publications.broadcast(listed([b, a, task('older'), c, d]))
+    // A new task on top, and one gone, can.
+    publications.broadcast(listed([running('newest'), b, a, task('older'), c]))
+    expect(frames(browser).map((frame) => frame.type)).toEqual([
+      'session.tasks.updated', 'session.tasks.updated', 'session.tasks.updated', 'session.tasks.patched',
+    ])
+    expect(browser.taskLists.get('local:a')?.tasks.map((entry) => entry.id))
+      .toEqual(['newest', 'b', 'a', 'older', 'c'])
   })
 
   it('answers a task resync with the latest list, and a socket that joins later with the whole list', () => {
@@ -715,11 +732,21 @@ describe('task publications', () => {
         } else if (edit < 0.75) {
           const index = Math.floor(next() * tasks.length)
           tasks[index] = { ...tasks[index], status: 'completed', completedAt: at, canCancel: false }
-        } else if (edit < 0.85) {
+        } else if (edit < 0.82) {
           const index = Math.floor(next() * tasks.length)
           tasks[index] = { ...tasks[index], result: `result ${step}` }
-        } else if (edit < 0.92) {
+        } else if (edit < 0.88) {
           tasks.splice(Math.floor(next() * tasks.length), 1)
+        } else if (edit < 0.92) {
+          // An older task turns up below the newest, or two trade places.
+          made += 1
+          const index = Math.floor(next() * tasks.length)
+          if (next() < 0.5) {
+            tasks.splice(index, 0, task(`t${made}`))
+          } else {
+            const other = Math.floor(next() * tasks.length)
+            ;[tasks[index], tasks[other]] = [tasks[other], tasks[index]]
+          }
         }
         // Otherwise the same list again, as a node's resync sends it.
         const published = listed(tasks, id)
@@ -737,8 +764,9 @@ describe('task publications', () => {
       for (const [key, value] of latest) {
         const { type: _type, computerId: _computer, sessionId: _session, ...whole } = value
         for (const browser of browsers) {
-          expect(byId(browser.taskLists.get(key)), `seed ${seed} ${key}`)
-            .toEqual(byId(browser.socket.taskVersions ? summaries(value) : JSON.parse(JSON.stringify(whole))))
+          // In the published order, too.
+          expect(browser.taskLists.get(key), `seed ${seed} ${key}`)
+            .toEqual(browser.socket.taskVersions ? summaries(value) : JSON.parse(JSON.stringify(whole)))
         }
       }
       for (const browser of browsers) {

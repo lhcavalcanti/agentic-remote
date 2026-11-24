@@ -74,6 +74,10 @@ function taskFingerprint(task: BackgroundTask): string {
   return createHash('sha1').update(JSON.stringify(task)).digest('base64')
 }
 
+function sameOrder(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index])
+}
+
 /**
  * Message fields are primitives or, like `taskCompletion`, plain objects of
  * primitives. A transcript rebuilt from the event log makes those objects
@@ -295,7 +299,7 @@ export class SessionPublications {
         tasks.set(task.id, { summary: summarizeBackgroundTask(task), fingerprint })
       }
     }
-    if (!changed && tasks.size === previous!.tasks.size) return previous!
+    if (!changed && sameOrder([...tasks.keys()], [...previous!.tasks.keys()])) return previous!
     return {
       version: (previous?.version ?? 0) + 1,
       computerId: event.computerId,
@@ -306,13 +310,22 @@ export class SessionPublications {
     }
   }
 
-  /** What changed from `previous` to `current`, or null when the whole list is no larger. */
+  /**
+   * What changed from `previous` to `current`, or null when the whole list is
+   * no larger, or when applying the change would not give the list's order:
+   * a browser puts new tasks first and keeps the rest where they were.
+   */
   private taskPatch(previous: TaskPublication, current: TaskPublication): string | null {
     const tasks = [...current.tasks.values()]
       .filter((entry) => previous.tasks.get(entry.summary.id) !== entry)
       .map((entry) => entry.summary)
     const removed = [...previous.tasks.keys()].filter((id) => !current.tasks.has(id))
     if (tasks.length + removed.length >= current.tasks.size) return null
+    const applied = [
+      ...tasks.filter((task) => !previous.tasks.has(task.id)).map((task) => task.id),
+      ...[...previous.tasks.keys()].filter((id) => current.tasks.has(id)),
+    ]
+    if (!sameOrder(applied, [...current.tasks.keys()])) return null
     const patch: BackgroundTasksPatch = {
       from: previous.version,
       to: current.version,

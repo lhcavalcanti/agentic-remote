@@ -176,11 +176,12 @@ advertise the read. Requests without `?summary=1`, and readers on the hub
 A socket that adds `tasks=changes` (with or without `patches=1`) is sent each
 session's list once as summaries with a `patchVersion`, then
 `session.tasks.patched` with `{from, to, count, tasks, removed}`: the
-summaries of the tasks that changed and the ids of those no longer listed. A
+summaries of the tasks that changed and the ids of those no longer listed.
+Applied, the list is the new tasks first, then the held ones in their order. A
 task counts as changed when anything in it did, compared by a fingerprint of
-the whole task, so a reader who opened it reads it again; when nothing changed
-nothing is sent, and when a change would be no smaller than the list, the
-list is sent whole again. A change that does not apply to the browser's copy,
+the whole task, so a reader who opened it reads it again; when nothing changed,
+order included, nothing is sent, and when a change would be no smaller than
+the list or would not give the list's order, the list is sent whole again. A change that does not apply to the browser's copy,
 or whose `count` does not add up, is dropped and the browser sends one
 `{type: 'session.tasks.resync', computerId, sessionId}`, answered with the
 latest list. Publications are kept only while such a socket is connected and

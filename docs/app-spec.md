@@ -358,8 +358,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - A socket with `tasks=changes` MUST be sent each session's list once as
   summaries with a version, then only the tasks that changed (anything in
   them, so an opened task is read again) and the ids of those removed, or the
-  whole list when that is no larger. A change that does not apply MUST be
-  dropped and the list asked for again. Every other socket, and every request
+  whole list when that is no larger or a change cannot keep the list's order.
+  A change that does not apply MUST be dropped and the list asked for again. Every other socket, and every request
   without `?summary=1`, MUST keep receiving whole lists of whole tasks, so a
   browser from before summaries keeps working. Readers on the hub, such as
   Oracle and the scheduler, MUST keep reading whole tasks.

@@ -725,6 +725,8 @@ export interface SessionMessagesPatch {
  * What changed in a session's task list since the publication a socket was
  * last sent: the summaries of the tasks that are new or changed, and the ids
  * of those no longer listed. Every other task is as the socket holds it.
+ * Applied, the list is the new tasks in the order given, then the held ones in
+ * their order; a change that would order the list otherwise is not sent as one.
  */
 export interface BackgroundTasksPatch {
   /** The publication this applies to. */

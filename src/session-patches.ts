@@ -23,8 +23,9 @@ interface TaskBase {
 
 /**
  * The list a change produces: new tasks first, then those held, changed ones
- * replaced and removed ones left out. Unchanged tasks keep their identity, so
- * what renders them can tell they did not change.
+ * replaced and removed ones left out. The hub sends a change only when this is
+ * the list's published order. Unchanged tasks keep their identity, so what
+ * renders them can tell they did not change.
  */
 function applyTaskPatch(tasks: readonly BackgroundTask[], patch: BackgroundTasksPatch): BackgroundTask[] {
   const removed = new Set(patch.removed)

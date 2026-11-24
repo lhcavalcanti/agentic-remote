@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "fbdea84e7c4e107bb68d75e0854c6f889e500464",
+  "built_at_commit": "4dc12e28681f443d3e068998312d071040776c02",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -224366,7 +224366,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L33",
+      "source_location": "L38",
       "target": "shared_closed_sessions_blockparents",
       "weight": 1.0
     },
@@ -224399,7 +224399,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L109",
+      "source_location": "L138",
       "target": "shared_closed_sessions_closedsessioncontext",
       "weight": 1.0
     },
@@ -224410,7 +224410,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L18",
+      "source_location": "L23",
       "target": "shared_closed_sessions_closedsessionexpiresat",
       "weight": 1.0
     },
@@ -224421,7 +224421,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L23",
+      "source_location": "L28",
       "target": "shared_closed_sessions_excerpt",
       "weight": 1.0
     },
@@ -224432,7 +224432,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L40",
+      "source_location": "L45",
       "target": "shared_closed_sessions_htmlelements",
       "weight": 1.0
     },
@@ -224443,7 +224443,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L50",
+      "source_location": "L55",
       "target": "shared_closed_sessions_htmltext",
       "weight": 1.0
     },
@@ -224454,7 +224454,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L135",
+      "source_location": "L164",
       "target": "shared_closed_sessions_isclosedsessioncontext",
       "weight": 1.0
     },
@@ -224465,7 +224465,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L30",
+      "source_location": "L35",
       "target": "shared_closed_sessions_markdown",
       "weight": 1.0
     },
@@ -224476,7 +224476,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L67",
+      "source_location": "L73",
       "target": "shared_closed_sessions_nodetext",
       "weight": 1.0
     },
@@ -224487,7 +224487,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L95",
+      "source_location": "L120",
       "target": "shared_closed_sessions_plaintext",
       "weight": 1.0
     },
@@ -224498,7 +224498,7 @@
       "relation": "contains",
       "source": "shared_closed_sessions",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L100",
+      "source_location": "L129",
       "target": "shared_closed_sessions_said",
       "weight": 1.0
     },
@@ -224559,7 +224559,7 @@
       "relation": "calls",
       "source": "shared_closed_sessions_closedsessioncontext",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L122",
+      "source_location": "L151",
       "target": "shared_closed_sessions_excerpt",
       "weight": 1.0
     },
@@ -224571,7 +224571,7 @@
       "relation": "calls",
       "source": "shared_closed_sessions_closedsessioncontext",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L122",
+      "source_location": "L151",
       "target": "shared_closed_sessions_plaintext",
       "weight": 1.0
     },
@@ -224583,7 +224583,7 @@
       "relation": "calls",
       "source": "shared_closed_sessions_closedsessioncontext",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L117",
+      "source_location": "L146",
       "target": "shared_closed_sessions_said",
       "weight": 1.0
     },
@@ -224595,7 +224595,7 @@
       "relation": "calls",
       "source": "shared_closed_sessions_nodetext",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L74",
+      "source_location": "L89",
       "target": "shared_closed_sessions_htmltext",
       "weight": 1.0
     },
@@ -224607,7 +224607,7 @@
       "relation": "calls",
       "source": "shared_closed_sessions_plaintext",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L97",
+      "source_location": "L123",
       "target": "shared_closed_sessions_nodetext",
       "weight": 1.0
     },
@@ -384457,7 +384457,7 @@
       "label": "blockParents",
       "norm_label": "blockparents",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L33"
+      "source_location": "L38"
     },
     {
       "_origin": "ast",
@@ -384491,7 +384491,7 @@
       "label": "closedSessionContext()",
       "norm_label": "closedsessioncontext()",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L109"
+      "source_location": "L138"
     },
     {
       "_callable": true,
@@ -384503,7 +384503,7 @@
       "label": "closedSessionExpiresAt()",
       "norm_label": "closedsessionexpiresat()",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L18"
+      "source_location": "L23"
     },
     {
       "_callable": true,
@@ -384515,7 +384515,7 @@
       "label": "excerpt()",
       "norm_label": "excerpt()",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L23"
+      "source_location": "L28"
     },
     {
       "_origin": "ast",
@@ -384526,7 +384526,7 @@
       "label": "htmlElements",
       "norm_label": "htmlelements",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L40"
+      "source_location": "L45"
     },
     {
       "_callable": true,
@@ -384538,7 +384538,7 @@
       "label": "htmlText()",
       "norm_label": "htmltext()",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L50"
+      "source_location": "L55"
     },
     {
       "_callable": true,
@@ -384550,7 +384550,7 @@
       "label": "isClosedSessionContext()",
       "norm_label": "isclosedsessioncontext()",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L135"
+      "source_location": "L164"
     },
     {
       "_origin": "ast",
@@ -384561,7 +384561,7 @@
       "label": "markdown",
       "norm_label": "markdown",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L30"
+      "source_location": "L35"
     },
     {
       "_callable": true,
@@ -384573,7 +384573,7 @@
       "label": "nodeText()",
       "norm_label": "nodetext()",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L67"
+      "source_location": "L73"
     },
     {
       "_callable": true,
@@ -384585,7 +384585,7 @@
       "label": "plainText()",
       "norm_label": "plaintext()",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L95"
+      "source_location": "L120"
     },
     {
       "_callable": true,
@@ -384597,7 +384597,7 @@
       "label": "said()",
       "norm_label": "said()",
       "source_file": "shared/closed-sessions.ts",
-      "source_location": "L100"
+      "source_location": "L129"
     },
     {
       "_origin": "ast",

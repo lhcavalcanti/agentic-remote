@@ -276,6 +276,24 @@ describe('recently closed sessions', () => {
     expect(more).toHaveTextContent('Show more')
   })
 
+  it('keeps Show more in view once Show less has shortened a card', () => {
+    layOut(() => 60)
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+    try {
+      const { dialog } = renderList({ sessions: [audit()] })
+      const more = within(dialog).getByRole('button', { name: 'Show more' })
+
+      fireEvent.click(more)
+      expect(scrollIntoView).not.toHaveBeenCalled()
+      fireEvent.click(more)
+      expect(scrollIntoView.mock.contexts).toEqual([more])
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' })
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView
+    }
+  })
+
   it('looks again for a cut context when a card changes size', () => {
     let perLine = 1000
     layOut(() => perLine)

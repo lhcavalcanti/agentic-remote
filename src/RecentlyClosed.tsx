@@ -128,6 +128,8 @@ function RecentlyClosedCard({
   const [cut, setCut] = useState(false)
   const promptsRef = useRef<HTMLUListElement>(null)
   const replyRef = useRef<HTMLParagraphElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const collapsedByReader = useRef(false)
   const contextId = useId()
   const context = session.closedContext
   // A prompt that was only an image or markup says nothing in words.
@@ -143,6 +145,12 @@ function RecentlyClosedCard({
   // while the card is open.
   useLayoutEffect(() => {
     if (expanded) return
+    if (collapsedByReader.current) {
+      collapsedByReader.current = false
+      // Shortening the card pulls Show more up, which a scrolled list can
+      // leave above the view; bring it back to where the reader is.
+      toggleRef.current?.scrollIntoView?.({ block: 'nearest' })
+    }
     const parts = [promptsRef.current, replyRef.current].filter((part) => part !== null)
     let current = true
     const measure = () => {
@@ -262,7 +270,11 @@ function RecentlyClosedCard({
             aria-controls={contextId}
             aria-expanded={expanded}
             className="recently-closed-card__more"
-            onClick={() => setExpanded(!expanded)}
+            onClick={() => {
+              collapsedByReader.current = expanded
+              setExpanded(!expanded)
+            }}
+            ref={toggleRef}
             type="button"
           >
             {expanded ? 'Show less' : 'Show more'}

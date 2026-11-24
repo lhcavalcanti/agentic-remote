@@ -779,7 +779,7 @@
     "e2e/session-unread.pw.ts": "12f58fd70663ee77d1f65ce1f88b056073e767e54326e78005c67514c7dfbcbf",
     "e2e/shell-fixtures.ts": "75d818141cbf8c849a212885fd945ff37ed70c54d2e3b7de15acce7dc08aabd8",
     "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
-    "e2e/transcript-window.pw.ts": "f1ea3638cecf9e9fca7ccaa5b12692102cba14cc9367a33bee04cf1c2cf61cce",
+    "e2e/transcript-window.pw.ts": "3f32e98c4c93315e3a893e4be692b06c8e3288a9b25ca35d75a170ebedb5b8a6",
     "e2e/ui-locks.pw.ts": "949aecbb961a903ee546c7374e0560594b8268fbd466c5e3ebc8acac1ca7948e",
     "e2e/ui-locks.pw.ts-snapshots/desktop-app-settings-chromium-linux.png": "bdc1d6f2acab77e4f21d1c9b34736693bcba828093402cfab2c655773e7bb03f",
     "e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-chromium-linux.png": "7dcbcdf3fcaaccb7809d837f7965a463fe3ffacbab9b3ee3e0916b42d4a00aff",
@@ -1220,8 +1220,8 @@
     "server/session-order-store.ts": "37bfe18e97542fc60c57b78bc02dbec567df3eed0dc725371fb69753f20d15fc",
     "server/session-patch-integration.test.ts": "9ed3b21239d86119a1b74d634121563d5e5c2595e7326e5da50fd17c8aa9dda8",
     "server/session-patch-routes.test.ts": "9108c25edd7436b134466eb5ab83c7f61fe906da4ef237bfccb0d9571eb0f016",
-    "server/session-patches.test.ts": "67964ee11ef7eb407d0303b18c287b63529b43fd90842a866bb8c04b7f9c0b8b",
-    "server/session-patches.ts": "1e3b17c54ac005b098e239c98a4fed425a6157a90146fb4efe29ebbb6e76aeaf",
+    "server/session-patches.test.ts": "a90a55e3a293fd69bc89c7b51f270d9b38cfb632fc2a66a092b9ce754ce7181a",
+    "server/session-patches.ts": "0da046b2d120975db65a64ec48e9af6635b55e126dabe04731884537b215e639",
     "server/session-provenance.test.ts": "39454ad107ded7581254609dd3c49f27309db8dfb8d029437dda4cb190c5e430",
     "server/session-provenance.ts": "e5367af4390ae7233b17346c665c7dc06fbf520e70deeef57eef84ea8d52495a",
     "server/session-reply-durability.test.ts": "a7e7ec2f4b9c9a66f0ec683f5010053c6f7da69e2c303405c6af4c8a3f784665",
@@ -1875,13 +1875,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "6ce9f45f0fabf8e5934d8dd8035dfdcdee3cdbf4c1f4dac4e3d81fdad6e70376",
+    "GRAPH_REPORT.md": "20afb06da76347c8faebeee3535683b7e8842a23daa3f0d7cc51a80e19e06b74",
     "communities.json": "4189bc31d43ac4fa3a6ccc8cd9424d10ada77f3447beeafafeac14d7a2c17580",
-    "graph.html": "7b4ea7a46f78d0058502e37c3d6448dd3f3cec80aa6ec385c184d1bd53221f6f",
-    "graph.json": "d2c60a00f53defa569a23a38e686ba3bc5842229a44fff22f96f7774e87b63e6"
+    "graph.html": "0231e4dc25ca2ae62307552013288b6f200f69d7e0672cb4c5c010c951ff3e4d",
+    "graph.json": "683381c79a676fcd86236addd4d06a39807903357ad64ef66c298ac1c601017d"
   },
   "schema_version": 1,
-  "source_commit": "84448378a746a82d5eb10b69d290c348078b04b8",
-  "source_fingerprint": "293ec4825182876d7f2a43de654b0779f5623653c97c85a5455c43520a08280b",
+  "source_commit": "8a27d07ee8d338e2213b2940625da96756a784f4",
+  "source_fingerprint": "661977b6dd214762cac3475f963aca288d24ba46bec96e4035dfd281de153edd",
   "working_tree_changes": []
 }

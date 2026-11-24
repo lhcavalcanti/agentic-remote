@@ -1393,9 +1393,17 @@ export async function setupWorkspaceFixture(
       } satisfies VoiceCapabilities)
       return
     }
+    // As the hub does for a browser that holds windows: a listing carries at
+    // most a window of each transcript.
+    const listed = () => {
+      const window = Number(request.headers()['x-transcript-window'])
+      return Number.isInteger(window) && window > 0
+        ? sessions.map((session) => session.messages.length ? windowSession(session, window) : session)
+        : sessions
+    }
     if (method === 'GET' && path === '/api/sessions') {
       await respond({
-        sessions,
+        sessions: listed(),
         answeredComputerIds: fixtureComputers
           .filter((computer) => computer.online)
           .map((computer) => computer.id),
@@ -1403,7 +1411,7 @@ export async function setupWorkspaceFixture(
       return
     }
     if (method === 'GET' && path === '/api/history') {
-      await respond({ sessions })
+      await respond({ sessions: listed() })
       return
     }
     if (method === 'GET' && path === '/api/closed-sessions') {

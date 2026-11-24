@@ -58,15 +58,31 @@ const htmlElements = new Set((
  * else. A lone capital, as in `Store<S>`, is a type parameter unless the
  * message also closes it, as in `<B>bold</B>`.
  */
-function htmlText(html: string, closedCapitals: ReadonlySet<string>): string {
+function htmlText(html: string, closed: ReadonlySet<string>): string {
   if (/^<[!?]/.test(html)) return ''
   const name = /^<\/?([a-zA-Z][a-zA-Z\d-]*)/.exec(html)?.[1]
   if (!name) return html
   const lower = name.toLowerCase()
-  const capitals = name === name.toUpperCase() && (name.length > 1 || closedCapitals.has(name))
+  const capitals = name === name.toUpperCase() && (name.length > 1 || closed.has(name))
   const markup = name.includes('-') ? name === lower : htmlElements.has(lower) && (name === lower || capitals)
   if (!markup) return html
   return lower === 'br' ? '\n' : ''
+}
+
+/** The single capitals a tree's raw HTML closes, as in `</B>`; code is not HTML. */
+function closedCapitals(tree: Nodes): Set<string> {
+  const closed = new Set<string>()
+  const pending: Nodes[] = [tree]
+  while (pending.length > 0) {
+    const node = pending.pop()!
+    if (node.type === 'html') {
+      const name = /^<\/([A-Z])\s*>$/.exec(node.value)?.[1]
+      if (name) closed.add(name)
+    } else if ('children' in node) {
+      for (const child of node.children as Nodes[]) pending.push(child)
+    }
+  }
+  return closed
 }
 
 /**
@@ -75,8 +91,8 @@ function htmlText(html: string, closedCapitals: ReadonlySet<string>): string {
  * footnotes go. Walked with a stack of its own, since a paste can nest
  * thousands of quotes deep.
  */
-function nodeText(tree: Nodes, source: string): string {
-  const closedCapitals = new Set(Array.from(source.matchAll(/<\/([A-Z])\s*>/g), (match) => match[1]!))
+function nodeText(tree: Nodes): string {
+  const closed = closedCapitals(tree)
   let text = ''
   const pending: (Nodes | string)[] = [tree]
   while (pending.length > 0) {
@@ -92,7 +108,7 @@ function nodeText(tree: Nodes, source: string): string {
         text += node.value
         break
       case 'html':
-        text += htmlText(node.value, closedCapitals)
+        text += htmlText(node.value, closed)
         break
       case 'break':
         text += '\n'
@@ -137,7 +153,7 @@ function plainText(content: string): string {
   for (const length of lengths) {
     const read = head(source, length)
     try {
-      return nodeText(markdown.parse(read), read)
+      return nodeText(markdown.parse(read))
     } catch {
       // Read less, or keep it as typed.
     }

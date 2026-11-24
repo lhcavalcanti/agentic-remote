@@ -80,6 +80,7 @@ describe('closed session context', () => {
       ['inline and fenced code', 'Run `pnpm test` first:\n\n```ts\nconst total = 2 * 3\n```', 'Run pnpm test first: const total = 2 * 3'],
       ['HTML, but not a type named in prose', 'A <b>bold</b> word<br>and <kbd>Ctrl</kbd>+<kbd>C</kbd> return Promise<Option>.\n\n<details>\n<summary>Logs</summary>\n</details>\n\n<!-- marker -->', 'A bold word and Ctrl+C return Promise<Option>.'],
       ['paired capital tags, but not a lone type parameter', 'Use <B>bold</B> in Store<S>', 'Use bold in Store<S>'],
+      ['a type parameter beside a closing tag in code', 'Code `</B>` and a Wrapper<B> type', 'Code </B> and a Wrapper<B> type'],
       ['a table', '| File | Change |\n| --- | :---: |\n| a.ts | added |', 'File Change a.ts added'],
       ['footnotes', 'It grew[^1].\n\n[^1]: Measured with df.', 'It grew.'],
       ['a quote and a rule', '> Quoted *line*\n\n---\n\nAfter', 'Quoted line After'],

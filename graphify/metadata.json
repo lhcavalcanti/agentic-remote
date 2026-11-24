@@ -655,9 +655,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 286,
+  "communities": 272,
   "community_algorithm": "louvain-seed-42",
-  "edges": 26317,
+  "edges": 26319,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -806,8 +806,8 @@
     "e2e/ui-locks.pw.ts-snapshots/desktop-oracle-panel-chromium-linux.png": "75b2a50e722f2ad8f4a2bfa8846762a6fef364a761ebf841216b8184705f5759",
     "e2e/ui-locks.pw.ts-snapshots/desktop-oracle-schedule-approval-chromium-linux.png": "579e58c90ddb58d43d394661aab36a8f7856aa2b18320cadb9224c66bb95730e",
     "e2e/ui-locks.pw.ts-snapshots/desktop-preview-features-chromium-linux.png": "20f6a27b8438d9bc32d788dd765981a6f872113c0282a48538cd9501f37cdb23",
-    "e2e/ui-locks.pw.ts-snapshots/desktop-recently-closed-chromium-linux.png": "48dc3785f22d084e194d7392664dbc0034e0ceb421be0a299911a50d5cf23426",
-    "e2e/ui-locks.pw.ts-snapshots/desktop-recently-closed-expanded-chromium-linux.png": "bcf5fb2443427abbb840beb0cac7841dd2b9f8917fabd193ef6f2b526b75923a",
+    "e2e/ui-locks.pw.ts-snapshots/desktop-recently-closed-chromium-linux.png": "d86427bdd6535f3e333323cdcb40778b58121d0e1dfd852521493fb74e562eaf",
+    "e2e/ui-locks.pw.ts-snapshots/desktop-recently-closed-expanded-chromium-linux.png": "d07e02766b6ebf7df3504276bb540d222014ed3fa63b3c9733817ab01701805e",
     "e2e/ui-locks.pw.ts-snapshots/desktop-runtime-dialog-chromium-linux.png": "668f5450f949510663ea5d9a8df9c04aee1dcbcfc827f321420834f60b983336",
     "e2e/ui-locks.pw.ts-snapshots/desktop-scheduler-chromium-linux.png": "d17e6ff13a8df1a31787e47d6c979c554e8f55a72508e5f3e109ccf1c41d4e4d",
     "e2e/ui-locks.pw.ts-snapshots/desktop-scheduler-form-chromium-linux.png": "0e85510cdb5482b53b982c1cb78f75793ce11cd145a3bb874077d49f09bc4e8a",
@@ -857,8 +857,8 @@
     "e2e/ui-locks.pw.ts-snapshots/foldable-oracle-panel-chromium-linux.png": "b2e099104c77ce24af4c9d6db7918bd4f5451d5d0dbc33c7d5da77b03e1397a7",
     "e2e/ui-locks.pw.ts-snapshots/foldable-oracle-schedule-approval-chromium-linux.png": "be5639c088a94000b0b6dc7972af549225086ee0aab5153d22d4ef7b17865891",
     "e2e/ui-locks.pw.ts-snapshots/foldable-preview-features-chromium-linux.png": "ed1c46066e1cc478e4b5667031a08fc8a36ae03019cfcf3e7534f483a84a5d5e",
-    "e2e/ui-locks.pw.ts-snapshots/foldable-recently-closed-chromium-linux.png": "99ceaf13be5d4a67078dab7d2c49e33a54c63215eeba6298d1f513b9f2de8fa3",
-    "e2e/ui-locks.pw.ts-snapshots/foldable-recently-closed-expanded-chromium-linux.png": "f5576109f5de3e8ec6213e26258948135737bc26b32461273b39d9fd9655c043",
+    "e2e/ui-locks.pw.ts-snapshots/foldable-recently-closed-chromium-linux.png": "1fb35139263936dce8041d80072aed9872b88d3d54cacad9551e8db42f3891f1",
+    "e2e/ui-locks.pw.ts-snapshots/foldable-recently-closed-expanded-chromium-linux.png": "250d909c6f05020022855025f2929915d06250292fd8b30be0d275fd60b8eb5e",
     "e2e/ui-locks.pw.ts-snapshots/foldable-runtime-dialog-chromium-linux.png": "70ac5151e4ae97d6b12248298990a225d225c84c4ac050cc20faed4129ab1332",
     "e2e/ui-locks.pw.ts-snapshots/foldable-scheduler-chromium-linux.png": "faac3bb654cfa0fc8b4382cd95b89274557d0de3111155371c93ec1cd7b17665",
     "e2e/ui-locks.pw.ts-snapshots/foldable-scheduler-form-chromium-linux.png": "c81914d8118aad7daaf81bf464d1d0c5d0d7b40217c20342199c2ff89fffaa5d",
@@ -909,7 +909,7 @@
     "e2e/ui-locks.pw.ts-snapshots/phone-oracle-panel-chromium-linux.png": "810814551caeb363ec6f481d2fa2176ef598458432d0987b3d38002f483fef9b",
     "e2e/ui-locks.pw.ts-snapshots/phone-oracle-schedule-approval-chromium-linux.png": "4d21f252e19d802b14ab3e9bfdf2cc83bc3b2ba537533df54c5f6bec29cc468c",
     "e2e/ui-locks.pw.ts-snapshots/phone-preview-features-chromium-linux.png": "9b46dc1352a851340fbe93af1c27e0aee594f74ea236ab5cf27891fbdd0a06b7",
-    "e2e/ui-locks.pw.ts-snapshots/phone-recently-closed-chromium-linux.png": "c620608989efc77459f52a8923b2fd5ef6b8cb4f1e33bdedc6c3e35960bf57d1",
+    "e2e/ui-locks.pw.ts-snapshots/phone-recently-closed-chromium-linux.png": "a358ef981bf9a0ab907a5d4ade784894708dabbd83a59749d4fbddca2cf122c5",
     "e2e/ui-locks.pw.ts-snapshots/phone-recently-closed-expanded-chromium-linux.png": "d4de652052bf31a9136fbd1a66d61bd50f625a0b5b0ae7e54c0972062b6390f5",
     "e2e/ui-locks.pw.ts-snapshots/phone-runtime-dialog-chromium-linux.png": "a75cb299b439d9a9cc8b937201cdead0a52640a5249cfc90844272335259aceb",
     "e2e/ui-locks.pw.ts-snapshots/phone-scheduler-chromium-linux.png": "736740e9b256baf5002092c2596ddb60585d08de75cc4f1b3f62a04b2a8990e3",
@@ -1381,8 +1381,8 @@
     "src/PreviewFeaturesSettings.tsx": "327bb57c542d84ede4303b52b60b58b6475958fa148f0c90913cab383b9bd0fa",
     "src/ReaderWorkspace.test.tsx": "5656d5bb5f85a10de474e57b94e23cf0203f4354c8e8b2db26d3ed89b748b904",
     "src/ReaderWorkspace.tsx": "6b9e93e705b832217ef733e3b2fbf25810270943609bb963bf94eb1fbfbbdc28",
-    "src/RecentlyClosed.test.tsx": "7c109b9d728d773752469a2f9ba5212d2e144d18cdf44eb31ff8628c0e3f5907",
-    "src/RecentlyClosed.tsx": "b590e57430794c00dd9bd5ccce61f146c5b079c70c8c20860ce8f25a33c25e66",
+    "src/RecentlyClosed.test.tsx": "229b117bcb57138f0c1a756160cf1b3fcfc1a6044998d76cbcddaaa317764b49",
+    "src/RecentlyClosed.tsx": "949c2d2477049eea146feb3c9faf340d338f49bba84035a774fdd8218803c2db",
     "src/RuntimeModelName.tsx": "b1bb96d03cb4c0536ffe6df43ca122f65ea7bb725eccc0d2a66ed2289617d6d5",
     "src/ScheduleProposalCards.test.tsx": "d905e7db4c26b77584d5da3e5a418e328a655abf7cc6a99ff3fe6374300fb943",
     "src/ScheduleProposalCards.tsx": "b3c6dc4ad78ae1747ae78c548055d60b8524b5862d33c117c1d91186c1a1e379",
@@ -1482,8 +1482,8 @@
     "src/markdown-document/worker-handler.ts": "db2f54a5b3b5e2e4af4c2dfef3cabd961f2be19e47793b39d7f89e1344146257",
     "src/markdown-navigation.test.ts": "f51d2999147549fddbe8cd41be99a01bbd6528ed2c3b275dcd9976898d1882dd",
     "src/markdown-navigation.ts": "db79c484e41a84ac97505088fb6a60f3ad7642746efd1684822dba45540261e0",
-    "src/markdown-plain-text.test.ts": "c45d9779e9b14caf3f99158ad6cc0702f5676adcea044b2a04ce99f325cd9a66",
-    "src/markdown-plain-text.ts": "16fdd09fe4380f7272205df8ad7ea3dae10cbf2d223a4f3e242a1dd181551f26",
+    "src/markdown-plain-text.test.ts": "78000ca19b87d13a73661a14a0d8a7c291a85881a324cd8a4b0eade98b5d7749",
+    "src/markdown-plain-text.ts": "6505238dc4c0bd23a1471c3388b9f725884d606218eabb90a72457f771e8c887",
     "src/message-time.ts": "942fce8834ac38214a7a468ed0b73d17a453af33203628ace943213855aa238d",
     "src/notifications/NotificationPanel.test.tsx": "992d6fd3298e7fd3801682337d2d7a42acf3be45928dde9116475851021eefc3",
     "src/notifications/NotificationPanel.tsx": "faac9c46e45666422fd3c7f03e2563483c73854ec5c165b05636bf62441f7d48",
@@ -1590,7 +1590,7 @@
     "vite.config.ts": "108ea80875a9e6483eb24531c8d8a7e3cd68ce866e5db64e9c0c243125186b2d"
   },
   "mode": "local-ast-only",
-  "nodes": 9145,
+  "nodes": 9148,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1867,13 +1867,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "3b5ad39e7eb7c0abacfc9e54d28b1ded1e27593ebbd93e1129a1c2fc4e0fa02f",
-    "communities.json": "f24540588faa5f9a689b6172b773bf6f33d2d7af7b56bcaa9b5629eed469c757",
-    "graph.html": "2c61339224b4d991524cb2bbce55cd9649fe65d400ba3dac322b5dd95377de8c",
-    "graph.json": "11322886847aac5e4add490c27ea5b7e0338e0c685deff1b39cd9ee644cf2eac"
+    "GRAPH_REPORT.md": "334af1e75bbfbb1d9c215b6160ff15efe11d97a697ce5413bf1ddb1ee68850bb",
+    "communities.json": "7b7c217ec33a0a67131cbc6d65b5044a10f61d0965405fc6e4809f528e02a575",
+    "graph.html": "e45811317c2179dfd6f55af6194d22a9c97c8b1aedbb0e599ddb06b1fca4eb58",
+    "graph.json": "de9ad3429075c1ac1ac604b1866f8f3ef62308ba30b362ddfd24070450ca9cd5"
   },
   "schema_version": 1,
-  "source_commit": "55ae0d66d019c346e0fb673fea7990191075fde9",
-  "source_fingerprint": "e671ade0cfdb6da833d4de6cb1e3ede17ccfbaffc4626f6f35561158508e0eae",
+  "source_commit": "5f58151a2cee2eac0aef529841aa70f4e2b27909",
+  "source_fingerprint": "1261765ae8592cc66b0d5cea790e25644ea1389a7a705e2cc644c1355f18b4ae",
   "working_tree_changes": []
 }

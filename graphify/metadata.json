@@ -1482,8 +1482,8 @@
     "src/markdown-document/worker-handler.ts": "db2f54a5b3b5e2e4af4c2dfef3cabd961f2be19e47793b39d7f89e1344146257",
     "src/markdown-navigation.test.ts": "f51d2999147549fddbe8cd41be99a01bbd6528ed2c3b275dcd9976898d1882dd",
     "src/markdown-navigation.ts": "db79c484e41a84ac97505088fb6a60f3ad7642746efd1684822dba45540261e0",
-    "src/markdown-plain-text.test.ts": "78000ca19b87d13a73661a14a0d8a7c291a85881a324cd8a4b0eade98b5d7749",
-    "src/markdown-plain-text.ts": "6505238dc4c0bd23a1471c3388b9f725884d606218eabb90a72457f771e8c887",
+    "src/markdown-plain-text.test.ts": "444a4a0645a55a63922ac7f3c70dd57284e08494ce6ec0325720ee8d681157e9",
+    "src/markdown-plain-text.ts": "e9f05af9946a955fdf3dd36a8203a94c60391197077729cc8e242dc36e75cd66",
     "src/message-time.ts": "942fce8834ac38214a7a468ed0b73d17a453af33203628ace943213855aa238d",
     "src/notifications/NotificationPanel.test.tsx": "992d6fd3298e7fd3801682337d2d7a42acf3be45928dde9116475851021eefc3",
     "src/notifications/NotificationPanel.tsx": "faac9c46e45666422fd3c7f03e2563483c73854ec5c165b05636bf62441f7d48",
@@ -1867,13 +1867,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "334af1e75bbfbb1d9c215b6160ff15efe11d97a697ce5413bf1ddb1ee68850bb",
+    "GRAPH_REPORT.md": "360d5b526b058e2793f486d926acf13070f735a78115d2d7f6ddc073f8ecea59",
     "communities.json": "7b7c217ec33a0a67131cbc6d65b5044a10f61d0965405fc6e4809f528e02a575",
-    "graph.html": "e45811317c2179dfd6f55af6194d22a9c97c8b1aedbb0e599ddb06b1fca4eb58",
-    "graph.json": "de9ad3429075c1ac1ac604b1866f8f3ef62308ba30b362ddfd24070450ca9cd5"
+    "graph.html": "a2c366308dbf31f32a3d0880015799801409c4517815cb66afdf0f46912e49ce",
+    "graph.json": "7afefbced0e0200fc9c5c22e1e0ce02197356a6382834f7f65a2bc6927a1f796"
   },
   "schema_version": 1,
-  "source_commit": "5f58151a2cee2eac0aef529841aa70f4e2b27909",
-  "source_fingerprint": "1261765ae8592cc66b0d5cea790e25644ea1389a7a705e2cc644c1355f18b4ae",
+  "source_commit": "10dd2a55d8a09b170c73495b745101e2dbfa603e",
+  "source_fingerprint": "78f315df675ce673811c54e6153a51a3eb0342c70a5c9a503db903fc586c9dd1",
   "working_tree_changes": []
 }

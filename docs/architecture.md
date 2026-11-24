@@ -242,6 +242,20 @@ reads (route `config: { compress: false }`), whose JSON can carry base64 media.
 The hub reaches nodes with `fetch`, which asks for gzip and decodes it, so the
 node-to-hub hop is compressed too. Payloads and routes are unchanged.
 
+### Static files
+
+`vite build` writes brotli (quality 11; 5 above 4 MiB) and gzip 9 siblings of
+each compressible output file of at least 1 KiB, keeping only smaller ones
+(`scripts/precompress-assets.ts`). The hub serves them with `@fastify/static`'s
+`preCompressed` (`server/static-files.ts`): a request gets the encoding it
+accepts, or the plain file, always with `Vary: Accept-Encoding`, and ETags,
+`304`, `HEAD` and ranges apply to the encoding sent. `Accept-Encoding` is read
+as RFC 9110 defines it (`*` covers only codings not named), and a client that
+refuses every encoding on offer, the plain file included, gets `406`. Siblings
+have no URLs of their own. Content-hashed `/assets/*` is
+`public, max-age=31536000, immutable`; everything else, including `/`, the
+client-route fallback, `sw.js` and the manifest, is `no-cache`.
+
 ### Terminal command catalogs
 
 A tmux session's slash commands are its folder's catalog, which only a

@@ -1,8 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { Logger, Plugin } from 'vite'
 import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import { precompressDirectory } from './scripts/precompress-assets.ts'
 
 // Test files that drive a real tmux server. Everything else belongs to `fast`,
 // which must pass without tmux, Copilot or Claude installed (the hosted light
@@ -37,6 +40,7 @@ const tmuxTests = [
 const slowTests = [
   'e2e/capture-screens.test.ts',
   'graphify/manage.test.ts',
+  'scripts/precompress-assets.test.ts',
   'server/activity-details.test.ts',
   'server/agent-service-event-projection.test.ts',
   'server/agent-service-recovery.test.ts',
@@ -123,6 +127,7 @@ const slowTests = [
   'server/settings-profile-routes.test.ts',
   'server/settings-profile-store.test.ts',
   'server/startup-phases.test.ts',
+  'server/static-files.test.ts',
   'server/submission-error-http.test.ts',
   'server/terminal-send-uncertainty.test.ts',
   'server/tmux-errors.test.ts',
@@ -199,6 +204,12 @@ for (const file of [...canaryTests, ...tmuxTests, ...slowTests]) {
   }
 }
 
+// server/static-files.ts caches everything under /assets/ for a year, which is
+// safe only while Vite's content-hashed output is all that lands there.
+if (existsSync(new URL('./public/assets', import.meta.url))) {
+  throw new Error('public/assets would be cached as immutable; move its unhashed files elsewhere')
+}
+
 const oracleVoiceAssetNames = new Set([
   'ort-wasm-simd-threaded.mjs',
   'ort-wasm-simd-threaded.wasm',
@@ -219,6 +230,30 @@ const oracleVoiceThirdPartyNotices = readFileSync(
   ),
   'utf8',
 )
+
+// Brotli and gzip siblings of the finished output, which server/static-files.ts
+// sends to clients that accept them.
+function precompressBuild(): Plugin {
+  let outDir = ''
+  let logger: Logger | undefined
+  return {
+    name: 'precompress-build',
+    apply: 'build',
+    enforce: 'post',
+    configResolved(config) {
+      outDir = path.resolve(config.root, config.build.outDir)
+      logger = config.logger
+    },
+    async closeBundle(error) {
+      if (error) return
+      const files = await precompressDirectory(outDir)
+      const megabytes = (key: 'bytes' | 'brotliBytes' | 'gzipBytes') =>
+        (files.reduce((total, file) => total + (file[key] ?? file.bytes), 0) / 1e6).toFixed(2)
+      logger?.info(`precompressed ${files.length} files: ${megabytes('bytes')} MB, ` +
+        `${megabytes('brotliBytes')} MB brotli, ${megabytes('gzipBytes')} MB gzip`)
+    },
+  }
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ command, mode }) => {
@@ -271,6 +306,7 @@ export default defineConfig(({ command, mode }) => {
           })
         },
       },
+      precompressBuild(),
     ],
     resolve: oracleVoiceE2eBuild
       ? {

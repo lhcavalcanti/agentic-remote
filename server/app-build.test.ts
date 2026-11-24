@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { brotliDecompressSync, gunzipSync } from 'node:zlib'
 import type { FastifyInstance } from 'fastify'
 import { build } from 'vite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -61,6 +62,9 @@ describe('production app build identity', () => {
           await readFile(new URL('../public/sw.js', import.meta.url), 'utf8')
         }`,
       )
+      // Precompressed after every file is written, the emitted worker included.
+      expect(brotliDecompressSync(await readFile(path.join(output, 'sw.js.br'))).toString()).toBe(worker)
+      expect(gunzipSync(await readFile(path.join(output, 'sw.js.gz'))).toString()).toBe(worker)
       const voiceNotices = await readFile(
         path.join(output, 'oracle-voice-assets', 'THIRD_PARTY_NOTICES.txt'),
         'utf8',

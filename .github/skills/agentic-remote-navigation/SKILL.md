@@ -108,6 +108,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Node routes (`/node-api`) | `server/node-routes.ts` |
 | Hub to node routing | `server/computer-manager.ts`, `server/remote-node-client.ts` |
 | Gzip of large JSON responses (both roles) | `server/response-compression.ts` |
+| Built client files: precompression, cache headers | `server/static-files.ts`, `scripts/precompress-assets.ts` |
 | Workspace listing, reading, search | `server/workspace-browser.ts` |
 | Knowledge root metadata | `server/knowledge-store.ts` |
 | Session cwd containment | `server/session-directory.ts` |
@@ -252,6 +253,11 @@ Do not weaken these without an explicit product decision.
   thread pool for clients that accept it, on hub and node alike. Never
   compress on the event loop; a route whose JSON carries file contents opts
   out with `config: { compress: false }`.
+- Built files are compressed once, by `vite build` (`scripts/precompress-assets.ts`:
+  brotli 11, 5 above 4 MiB, and gzip 9 siblings), and `server/static-files.ts`
+  serves the one a request accepts. Hashed `/assets/*` is `immutable` for a
+  year and everything else `no-cache`, so only hashed output may land in
+  `assets/` (`vite.config.ts` refuses a `public/assets`).
 - A tmux session's `/commands` comes from its folder's catalog, read through
   one single-flight temporary SDK session per folder. It is fresh for 60 s,
   when a known tmux session skips process discovery, and is served for up to

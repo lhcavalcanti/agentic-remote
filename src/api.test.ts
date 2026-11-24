@@ -14,6 +14,7 @@ import {
   getSession,
   getSessionKnowledgeRoot,
   readSessionMessages,
+  sessionReadInFlight,
   getRuntimeOptions,
   HUB_SNAPSHOT_TIMEOUT_MS,
   listBackgroundTasks,
@@ -141,6 +142,23 @@ describe('API request headers', () => {
     for (const init of [openInit, pageInit, sendInit]) {
       expect(new Headers(init.headers).get('x-transcript-window')).toBe('500')
     }
+  })
+
+  it('says which sessions are being read until their answers arrive', async () => {
+    let answer: (response: Response) => void = () => undefined
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => {
+      answer = resolve
+    })))
+    const reading = getSession('computer', 'session', undefined, { passive: true })
+    expect(sessionReadInFlight('computer', 'session')).toBe(true)
+    expect(sessionReadInFlight('computer', 'other')).toBe(false)
+    answer(Response.json({ session: { id: 'session' } }))
+    await reading
+    expect(sessionReadInFlight('computer', 'session')).toBe(false)
+
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'Gone' }, { status: 404 })))
+    await expect(getSession('computer', 'session')).rejects.toThrow()
+    expect(sessionReadInFlight('computer', 'session')).toBe(false)
   })
 
   it('requests no-store Oracle voice capabilities', async () => {

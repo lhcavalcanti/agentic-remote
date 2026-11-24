@@ -229,6 +229,7 @@ vi.mock('./activity-presentation', async (importOriginal) => {
 vi.mock('./api', async (importOriginal) => ({
   request: vi.fn(async () => ({ defaultDisplayName: 'Sample User' })),
   SessionKnowledgeRequestError: (await importOriginal<typeof import('./api')>()).SessionKnowledgeRequestError,
+  sessionReadInFlight: (await importOriginal<typeof import('./api')>()).sessionReadInFlight,
   checkHubSignIn: vi.fn(async () => undefined),
   fetchHubFeatureFlags: vi.fn(async () => defaultHubFeatureFlags),
   getActivityDetail: vi.fn(),
@@ -6838,6 +6839,168 @@ describe('App', () => {
       // It is the work in progress, so the separate activity line stays away.
       expect(screen.queryByText('Compiling the bundle')).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: 'Show 49 earlier messages' })).toBeInTheDocument()
+    })
+  })
+
+  describe('reading ahead', () => {
+    const said = (id: string, content: string): ChatMessage => ({
+      id, role: 'assistant', content, createdAt: '2026-07-22T00:00:02.000Z',
+    })
+    const windowOf = (base: ManagedSession, ...messages: ChatMessage[]): ManagedSession => ({
+      ...base, messages, messagesStart: 0, messagesTotal: messages.length,
+    })
+    const third: ManagedSession = { ...secondSession, id: 'session-3', title: 'Third chat' }
+    interface Read {
+      sessionId: string
+      signal?: AbortSignal
+      passive: boolean
+      resolve: (session: ManagedSession) => void
+    }
+    const pause = (ms = 400) => act(() => new Promise((resolve) => setTimeout(resolve, ms)))
+
+    /** The first session drawn; every read of another waits to be answered. */
+    async function renderWithReads(
+      sessions: ManagedSession[] = [session, secondSession, third],
+      drawn: ManagedSession = windowOf(session, ...session.messages),
+    ) {
+      const reads: Read[] = []
+      vi.mocked(listSessions).mockResolvedValue(sessions)
+      vi.mocked(getSession).mockImplementation((_computerId, sessionId, signal, options) =>
+        sessionId === session.id
+          ? Promise.resolve(drawn)
+          : new Promise((resolve) => {
+            reads.push({ sessionId, signal, passive: options?.passive === true, resolve })
+          }))
+      render(<App />)
+      expect(await screen.findByText('Hello agent')).toBeInTheDocument()
+      return {
+        reads,
+        ahead: () => reads.filter((read) => read.passive),
+        openSocket: () => act(() => MockWebSocket.instances.at(-1)?.onopen?.()),
+      }
+    }
+    const open = (title: string) => fireEvent.click(screen.getByText(title).closest('button')!)
+
+    it('reads the next sessions in the sidebar ahead, so opening one draws it at once', async () => {
+      const { reads, ahead, openSocket } = await renderWithReads()
+      // Not before the event socket is open to keep what it reads fresh.
+      await pause()
+      expect(ahead()).toHaveLength(0)
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      expect(getSession).toHaveBeenCalledWith('computer-1', 'session-2', expect.any(AbortSignal), { passive: true })
+      // One at a time.
+      await pause()
+      expect(ahead()).toHaveLength(1)
+      await act(async () => ahead()[0].resolve(windowOf(secondSession, said('ahead-1', 'Read ahead of time'))))
+      await waitFor(() => expect(ahead()).toHaveLength(2))
+      expect(ahead()[1].sessionId).toBe('session-3')
+      // Reading ahead opens nothing: no session was read but passively, and
+      // none was marked read or unread.
+      expect(reads.every((read) => read.passive)).toBe(true)
+      expect(saveSessionUnread).not.toHaveBeenCalled()
+
+      open('Second chat')
+      // Drawn from what was read ahead while its own read is still out.
+      expect(screen.getByText('Read ahead of time')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Loading conversation')).not.toBeInTheDocument()
+      // Opening it reads it as before, which is what marks it read.
+      expect(getSession).toHaveBeenLastCalledWith('computer-1', 'session-2')
+    })
+
+    it('abandons a read ahead when the reader opens a session, and reads it again once that is drawn', async () => {
+      const { reads, ahead, openSocket } = await renderWithReads()
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+
+      open('Third chat')
+      expect(ahead()[0].signal?.aborted).toBe(true)
+      const opened = reads.find((read) => read.sessionId === 'session-3' && !read.passive)
+      expect(opened).toBeDefined()
+      // The reader's read goes first.
+      await pause()
+      expect(ahead()).toHaveLength(1)
+      await act(async () => opened?.resolve(windowOf(third, said('third-1', 'Third answer'))))
+      await waitFor(() => expect(ahead()).toHaveLength(2))
+      expect(ahead()[1].sessionId).toBe('session-2')
+    })
+
+    it('abandons a read ahead while the reader sends, and reads it again once sent', async () => {
+      let sent: (session: ManagedSession) => void = () => undefined
+      vi.mocked(sendMessage).mockImplementation(() => new Promise((resolve) => {
+        sent = resolve
+      }))
+      const { ahead, openSocket } = await renderWithReads()
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+
+      fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Run the tests' } })
+      submitComposerMessage()
+      await waitFor(() => expect(ahead()[0].signal?.aborted).toBe(true))
+      await pause()
+      expect(ahead()).toHaveLength(1)
+      await act(async () => sent(session))
+      await waitFor(() => expect(ahead()).toHaveLength(2))
+      expect(ahead()[1].sessionId).toBe('session-2')
+    })
+
+    it('drops a read ahead that answers after the event socket said something newer', async () => {
+      const { ahead, openSocket } = await renderWithReads()
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      // Renamed and running, said without a transcript.
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.upserted',
+            session: { ...secondSession, title: 'Renamed meanwhile', status: 'running' },
+          }),
+        } as MessageEvent)
+      })
+      await act(async () => ahead()[0].resolve(windowOf(secondSession, said('ahead-1', 'Read before that'))))
+
+      open('Renamed meanwhile')
+      expect(screen.queryByText('Read before that')).not.toBeInTheDocument()
+      expect(screen.queryByText('Second chat')).not.toBeInTheDocument()
+    })
+
+    it('waits while the page is hidden, and abandons its read when the socket closes', async () => {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+      const { ahead, openSocket } = await renderWithReads()
+      openSocket()
+      await pause()
+      expect(ahead()).toHaveLength(0)
+
+      visibility.mockReturnValue('visible')
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      act(() => MockWebSocket.instances.at(-1)?.onclose?.())
+      expect(ahead()[0].signal?.aborted).toBe(true)
+    })
+
+    it('reads nothing ahead on a connection that asks to save data', async () => {
+      Object.defineProperty(navigator, 'connection', {
+        configurable: true, value: { saveData: true, effectiveType: '4g' },
+      })
+      try {
+        const { ahead, openSocket } = await renderWithReads()
+        openSocket()
+        await pause()
+        expect(ahead()).toHaveLength(0)
+      } finally {
+        Reflect.deleteProperty(navigator, 'connection')
+      }
+    })
+
+    it('reads nothing ahead from a hub that answers with whole transcripts', async () => {
+      // A hub from before windows: reading ahead there would bring long
+      // sessions whole.
+      const { ahead, openSocket } = await renderWithReads(undefined, session)
+      openSocket()
+      await pause()
+      expect(ahead()).toHaveLength(0)
     })
   })
 

@@ -31,6 +31,7 @@
     "e2e/session-follow.pw.ts",
     "e2e/session-hide.pw.ts",
     "e2e/session-patch-browser.ts",
+    "e2e/session-prefetch.pw.ts",
     "e2e/session-unread.pw.ts",
     "e2e/shell-fixtures.ts",
     "e2e/sign-in-expired.pw.ts",
@@ -662,9 +663,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 260,
+  "communities": 261,
   "community_algorithm": "louvain-seed-42",
-  "edges": 26674,
+  "edges": 26681,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -779,6 +780,7 @@
     "e2e/session-follow.pw.ts": "f9105d041e1eab6a81dbfc9faeb4858e70b70dc2cf012a7a0853a3647a5ef135",
     "e2e/session-hide.pw.ts": "7c7210db8d967ef163d69ddf71d62e5489ebc56bad311f50cc9df519deb050a7",
     "e2e/session-patch-browser.ts": "c311e0dabbcd4d4e14e75ae707d9098ad7403889fe5ed6e1f22d4b6b96ea7985",
+    "e2e/session-prefetch.pw.ts": "1237439cc0448970ab35b033259b6a2c1e04bd691c5bfa72092a51dcc5e729ba",
     "e2e/session-unread.pw.ts": "12f58fd70663ee77d1f65ce1f88b056073e767e54326e78005c67514c7dfbcbf",
     "e2e/shell-fixtures.ts": "75d818141cbf8c849a212885fd945ff37ed70c54d2e3b7de15acce7dc08aabd8",
     "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
@@ -947,7 +949,7 @@
     "e2e/ui-locks.pw.ts-snapshots/tool-call-details-phone-chromium-linux.png": "adafd2e713dbe98e90772c8b0c598ccf8ba2b1b2949bdb7e32ceeb9afefb36fa",
     "e2e/ui-scenes.ts": "ccbe5957b6dab2270ad8d944e923b2982ffa295b871aedb667adc3ddca571b66",
     "e2e/workspace-fixtures.test.ts": "edee8b965861af85a07b7888c10f6852ea508e166efda7259628962d77213904",
-    "e2e/workspace-fixtures.ts": "2577f384c1f46c87a72d3ad6ed0f95dd9785cc8a2c53fd7d85b4ecd655d8ab80",
+    "e2e/workspace-fixtures.ts": "3fde99ded13eb62de835aeff83bc0b304126a746e8a1db93fc907cbcf1ac37f3",
     "fixtures/voice/README.md": "c85318f655ee28bee3957558d215a36526cb93f8f9826d3dc05fe4019e59345e",
     "fixtures/voice/en-false-start.wav": "2272d8ae82743ae34ebf2018db4c294d89b1a9d0e0dcbda7dfff580ca8771355",
     "fixtures/voice/en-long-male-clean.wav": "08a5352989b38877f086d3022161e8606bcb90e6febef223f9593994c9c9d2d7",
@@ -1604,7 +1606,7 @@
     "vite.config.ts": "108ea80875a9e6483eb24531c8d8a7e3cd68ce866e5db64e9c0c243125186b2d"
   },
   "mode": "local-ast-only",
-  "nodes": 9243,
+  "nodes": 9244,
   "not_semantically_extracted": [
     ".github/copilot-instructions.md",
     ".github/dependabot.yml",
@@ -1881,19 +1883,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "e77c1f7137d6f403dde9bf26fc6e5d24c6f3331b42bae21a3a4ab13ef9e73ef2",
-    "communities.json": "6ae864bc787ee24246e431d0ae3326c010f05ff6fe500919e1071992d6ccb593",
-    "graph.html": "3e170f0973b4099075b53e499d51a9227425b70ac419ef616a13cca8cdc909cf",
-    "graph.json": "ec6bb086148501efd3e2c9a26ae2775310982db36c51b394698bf3e09d6c8064"
+    "GRAPH_REPORT.md": "7532a6f0a0d798b0d78774083bea879fa1b6c71ea0ef7312da76b5e01df2c748",
+    "communities.json": "cdb22f564caa4eea3570c564555d542d257d2a98e29f33c0dbfe99f1a4744570",
+    "graph.html": "97315235ca8054adaa8ea65e1b2361048d658b26bfc314930b9fd5b8323037d1",
+    "graph.json": "620a752cda603d8ea729265d7189a9c2fb8a15b5dea6149b54a18edbaf97d5c0"
   },
   "schema_version": 1,
-  "source_commit": "804376def89ce06f1645cd89c13cdf1130f95c75",
-  "source_fingerprint": "440c4781f4dc4420ea32462eed7be9c0a314a3dab26e999d23b780a3e805d84c",
-  "working_tree_changes": [
-    "package.json",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
-  ]
+  "source_commit": "525a4507aa0177c8a1bf5aa3c93657129e68f0fa",
+  "source_fingerprint": "a113ab3faa5df1b478e70a899665e1c663f2c1991f5045c3f3b6b000ebf04d54",
+  "working_tree_changes": []
 }

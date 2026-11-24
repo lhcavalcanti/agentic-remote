@@ -1,14 +1,22 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, configure, fireEvent, getConfig, render, screen, waitFor, within } from '@testing-library/react'
 import { useCallback, useState } from 'react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActivityDetail, ActivityStatus, ChatMessage } from '../shared/contracts'
 import { SubmissionError } from '../shared/submission-error'
 import { activityPresentation } from './activity-presentation'
 import { getActivityDetail } from './api'
 import { ActivityRow } from './ActivityRow'
 import { PauseFollowingContext } from './sent-message'
+
+// Every test here renders a transcript and waits for the details read and
+// its redraw. Under host load that takes longer than Testing Library's 1 s
+// default, which failed promotions twice; a wait that never succeeds still
+// fails, only later.
+const defaultAsyncTimeout = getConfig().asyncUtilTimeout
+beforeAll(() => configure({ asyncUtilTimeout: 5_000 }))
+afterAll(() => configure({ asyncUtilTimeout: defaultAsyncTimeout }))
 
 vi.mock('./api', () => ({ getActivityDetail: vi.fn() }))
 vi.mock('./activity-presentation', async (importOriginal) => {
@@ -283,11 +291,11 @@ describe('ActivityRow', () => {
     renderTranscript([row('completed')])
     fireEvent.click(toggleFor(/^Completed: Bash/))
     // A busy host can take past findByRole's 1s default to load and copy.
-    const copy = await screen.findByRole('button', { name: 'Copy output' }, { timeout: 5_000 })
+    const copy = await screen.findByRole('button', { name: 'Copy output' })
     copy.focus()
 
     fireEvent.click(copy)
-    expect(await screen.findByRole('button', { name: 'Output copied' }, { timeout: 5_000 })).toHaveFocus()
+    expect(await screen.findByRole('button', { name: 'Output copied' })).toHaveFocus()
     expect(execCommand).toHaveBeenCalledExactlyOnceWith('copy')
     expect(copied).toBe(output)
     expect(document.getSelection()?.toString()).toBe('')

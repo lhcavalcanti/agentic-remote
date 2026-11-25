@@ -4,6 +4,7 @@ import type {
   AgentMode,
   AgentProvider,
   AgentProviderCapability,
+  BackgroundTask,
   BackgroundTaskSnapshot,
   DirectoryListing,
   ConfigureRuntimeInput,
@@ -139,6 +140,11 @@ export interface SessionService {
   /** A tool call's complete arguments and output, from the session's event log. */
   readActivityDetail?(sessionId: string, toolCallId: string): Promise<ActivityDetail>
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot>
+  /**
+   * One task whole, as the list last published it, for a browser opening it.
+   * Without it, the task is found in a fresh list.
+   */
+  readBackgroundTask?(sessionId: string, taskId: string): Promise<BackgroundTask>
   cancelBackgroundTask(
     sessionId: string,
     taskId: string,

@@ -21,6 +21,7 @@ import type {
   AddComputerInput,
   AgentProvider,
   AudioTranscription,
+  BackgroundTask,
   BackgroundTaskSnapshot,
   ComputerSummary,
   ConfigureRuntimeInput,
@@ -1131,12 +1132,28 @@ export async function askSession(
   return response.answer
 }
 
+/**
+ * A session's tasks as summaries; `readBackgroundTask` reads one whole. A hub
+ * from before summaries answers whole, without `summary`.
+ */
 export async function listBackgroundTasks(
   computerId: string,
   sessionId: string,
 ): Promise<BackgroundTaskSnapshot> {
   return request<BackgroundTaskSnapshot>(
-    `${sessionPath(computerId, sessionId)}/tasks`,
+    `${sessionPath(computerId, sessionId)}/tasks?summary=1`,
+  )
+}
+
+/** One task whole, as a reader opens it. Its output is not kept in caches. */
+export async function readBackgroundTask(
+  computerId: string,
+  sessionId: string,
+  taskId: string,
+): Promise<BackgroundTask> {
+  return request<BackgroundTask>(
+    `${sessionPath(computerId, sessionId)}/tasks/${encodeURIComponent(taskId)}`,
+    { cache: 'no-store' },
   )
 }
 
@@ -1191,7 +1208,7 @@ export async function cancelBackgroundTask(
   taskId: string,
 ): Promise<BackgroundTaskSnapshot> {
   return request<BackgroundTaskSnapshot>(
-    `${sessionPath(computerId, sessionId)}/tasks/${encodeURIComponent(taskId)}/cancel`,
+    `${sessionPath(computerId, sessionId)}/tasks/${encodeURIComponent(taskId)}/cancel?summary=1`,
     {
       method: 'POST',
       body: '{}',

@@ -16,6 +16,7 @@ import type {
   AudioTranscription,
   CreateSessionInput,
   ConfigureRuntimeInput,
+  BackgroundTask,
   BackgroundTaskSnapshot,
   DirectoryListing,
   ExecuteCommandInput,
@@ -844,11 +845,23 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
     return response.answer
   }
 
+  /**
+   * `summary` asks for summaries. A node from before them ignores it and
+   * answers whole.
+   */
   async listBackgroundTasks(
     sessionId: string,
+    options: { summary?: boolean } = {},
   ): Promise<BackgroundTaskSnapshot> {
     return this.request<BackgroundTaskSnapshot>(
-      `/node-api/sessions/${encodeURIComponent(sessionId)}/tasks`,
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/tasks${options.summary ? '?summary=1' : ''}`,
+    )
+  }
+
+  /** One task whole. A node from before task details has no such route (404). */
+  async readBackgroundTask(sessionId: string, taskId: string): Promise<BackgroundTask> {
+    return this.request<BackgroundTask>(
+      `/node-api/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskId)}`,
     )
   }
 

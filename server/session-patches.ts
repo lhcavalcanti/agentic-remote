@@ -1,9 +1,13 @@
+import { createHash } from 'node:crypto'
 import type {
+  BackgroundTask,
+  BackgroundTasksPatch,
   ChatMessage,
   HubEvent,
   ManagedSession,
   SessionMessagesPatch,
 } from '../shared/contracts.js'
+import { summarizeBackgroundTask } from '../shared/background-tasks.js'
 import { transcriptOf, windowTranscript } from '../shared/transcript-window.js'
 
 /** What a browser socket needs to be told about its patch state. */
@@ -19,7 +23,32 @@ export interface PatchSocket {
   transcriptWindow?: number
   /** Where each session a windowed socket holds starts; kept by the publications. */
   windowStarts?: Map<string, number>
+  /**
+   * Set on a socket that asked for task changes: the task list publication
+   * each session was last sent at.
+   */
+  taskVersions?: Map<string, number>
 }
+
+interface PublishedTask {
+  summary: BackgroundTask
+  /** Of the whole task, so a change its summary leaves out is still sent. */
+  fingerprint: string
+}
+
+interface TaskPublication {
+  version: number
+  computerId: string
+  sessionId: string
+  /** By id, in list order. */
+  tasks: Map<string, PublishedTask>
+  runningCount: number
+  supported: boolean
+  /** Serialized once, for every socket sent the whole list. */
+  whole?: string
+}
+
+type SessionTasksUpdated = Extract<HubEvent, { type: 'session.tasks.updated' }>
 
 interface Publication {
   version: number
@@ -39,6 +68,14 @@ type SessionUpserted = Extract<HubEvent, { type: 'session.upserted' }>
 
 function sessionKey(computerId: string, sessionId: string): string {
   return `${computerId}:${sessionId}`
+}
+
+function taskFingerprint(task: BackgroundTask): string {
+  return createHash('sha1').update(JSON.stringify(task)).digest('base64')
+}
+
+function sameOrder(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index])
 }
 
 /**
@@ -122,6 +159,7 @@ function changedInPlace(
  */
 export class SessionPublications {
   private readonly publications = new Map<string, Publication>()
+  private readonly taskPublications = new Map<string, TaskPublication>()
   private readonly sockets = new Set<PatchSocket>()
 
   add(socket: PatchSocket): void {
@@ -131,11 +169,16 @@ export class SessionPublications {
   delete(socket: PatchSocket): void {
     this.sockets.delete(socket)
     if (![...this.sockets].some((entry) => entry.patchVersions)) this.publications.clear()
+    if (![...this.sockets].some((entry) => entry.taskVersions)) this.taskPublications.clear()
   }
 
   broadcast(event: HubEvent): void {
     if (event.type === 'session.upserted') {
       this.upsert(event)
+      return
+    }
+    if (event.type === 'session.tasks.updated') {
+      this.publishTasks(event)
       return
     }
     if (event.type === 'session.removed') {
@@ -172,6 +215,22 @@ export class SessionPublications {
     }))
   }
 
+  /**
+   * A socket whose task change did not apply asked for the whole list again.
+   * It is sent the latest publication, which every later change builds on.
+   */
+  resyncTasks(socket: PatchSocket, computerId: string, sessionId: string): void {
+    if (!socket.taskVersions || socket.readyState !== 1) return
+    const key = sessionKey(computerId, sessionId)
+    const current = this.taskPublications.get(key)
+    if (!current) {
+      socket.taskVersions.delete(key)
+      return
+    }
+    socket.taskVersions.set(key, current.version)
+    socket.send(this.wholeTasks(current))
+  }
+
   private sendAll(payload: string): void {
     for (const socket of this.sockets) {
       if (socket.readyState === 1) socket.send(payload)
@@ -179,17 +238,123 @@ export class SessionPublications {
   }
 
   private forget(matches: (key: string) => boolean): void {
-    for (const key of [...this.publications.keys()]) {
-      if (matches(key)) this.publications.delete(key)
+    for (const publications of [this.publications, this.taskPublications]) {
+      for (const key of [...publications.keys()]) {
+        if (matches(key)) publications.delete(key)
+      }
     }
     for (const socket of this.sockets) {
-      for (const key of [...(socket.patchVersions?.keys() ?? [])]) {
-        if (matches(key)) socket.patchVersions!.delete(key)
-      }
-      for (const key of [...(socket.windowStarts?.keys() ?? [])]) {
-        if (matches(key)) socket.windowStarts!.delete(key)
+      for (const versions of [socket.patchVersions, socket.windowStarts, socket.taskVersions]) {
+        for (const key of [...(versions?.keys() ?? [])]) {
+          if (matches(key)) versions!.delete(key)
+        }
       }
     }
+  }
+
+  /**
+   * Sends a socket that asked for task changes the summaries of a session's
+   * tasks once, then only those that changed and the ids of those gone; the
+   * whole list again whenever that is no larger, or the socket does not hold
+   * the publication a change builds on. A task counts as changed when any of
+   * it did, so a reader who opened it reads it again. Any other socket is sent
+   * the event as it always was.
+   */
+  private publishTasks(event: SessionTasksUpdated): void {
+    const key = sessionKey(event.computerId, event.sessionId)
+    const asking = [...this.sockets].some((socket) => socket.taskVersions && socket.readyState === 1)
+    if (!asking) this.taskPublications.clear()
+    const previous = this.taskPublications.get(key)
+    const current = asking ? this.taskPublication(event, previous) : undefined
+    if (current) this.taskPublications.set(key, current)
+    let whole: string | undefined
+    let patch: string | null | undefined
+    for (const socket of this.sockets) {
+      if (socket.readyState !== 1) continue
+      if (!socket.taskVersions) {
+        whole ??= JSON.stringify(event)
+        socket.send(whole)
+        continue
+      }
+      const holds = previous !== undefined && socket.taskVersions.get(key) === previous.version
+      if (holds && current === previous) continue
+      socket.taskVersions.set(key, current!.version)
+      if (holds) patch ??= this.taskPatch(previous!, current!)
+      socket.send(holds && patch ? patch : this.wholeTasks(current!))
+    }
+  }
+
+  /** The publication `event` makes, or `previous` when nothing in it changed. */
+  private taskPublication(event: SessionTasksUpdated, previous: TaskPublication | undefined): TaskPublication {
+    const tasks = new Map<string, PublishedTask>()
+    let changed = !previous || previous.runningCount !== event.runningCount ||
+      previous.supported !== event.supported
+    for (const task of event.tasks) {
+      const fingerprint = taskFingerprint(task)
+      const before = previous?.tasks.get(task.id)
+      if (before?.fingerprint === fingerprint) {
+        tasks.set(task.id, before)
+      } else {
+        changed = true
+        tasks.set(task.id, { summary: summarizeBackgroundTask(task), fingerprint })
+      }
+    }
+    if (!changed && sameOrder([...tasks.keys()], [...previous!.tasks.keys()])) return previous!
+    return {
+      version: (previous?.version ?? 0) + 1,
+      computerId: event.computerId,
+      sessionId: event.sessionId,
+      tasks,
+      runningCount: event.runningCount,
+      supported: event.supported,
+    }
+  }
+
+  /**
+   * What changed from `previous` to `current`, or null when the whole list is
+   * no larger, or when applying the change would not give the list's order:
+   * a browser puts new tasks first and keeps the rest where they were.
+   */
+  private taskPatch(previous: TaskPublication, current: TaskPublication): string | null {
+    const tasks = [...current.tasks.values()]
+      .filter((entry) => previous.tasks.get(entry.summary.id) !== entry)
+      .map((entry) => entry.summary)
+    const removed = [...previous.tasks.keys()].filter((id) => !current.tasks.has(id))
+    if (tasks.length + removed.length >= current.tasks.size) return null
+    const applied = [
+      ...tasks.filter((task) => !previous.tasks.has(task.id)).map((task) => task.id),
+      ...[...previous.tasks.keys()].filter((id) => current.tasks.has(id)),
+    ]
+    if (!sameOrder(applied, [...current.tasks.keys()])) return null
+    const patch: BackgroundTasksPatch = {
+      from: previous.version,
+      to: current.version,
+      count: current.tasks.size,
+      tasks,
+      removed,
+    }
+    return JSON.stringify({
+      type: 'session.tasks.patched',
+      computerId: current.computerId,
+      sessionId: current.sessionId,
+      runningCount: current.runningCount,
+      supported: current.supported,
+      patch,
+    })
+  }
+
+  private wholeTasks(publication: TaskPublication): string {
+    publication.whole ??= JSON.stringify({
+      type: 'session.tasks.updated',
+      computerId: publication.computerId,
+      sessionId: publication.sessionId,
+      tasks: [...publication.tasks.values()].map((entry) => entry.summary),
+      runningCount: publication.runningCount,
+      supported: publication.supported,
+      summary: true,
+      patchVersion: publication.version,
+    })
+    return publication.whole
   }
 
   private upsert(received: SessionUpserted): void {

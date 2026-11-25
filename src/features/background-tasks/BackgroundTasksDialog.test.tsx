@@ -320,6 +320,108 @@ describe('background tasks sheet', () => {
     expect(screen.getByText('pnpm dev --host 127.0.0.1')).toBeInTheDocument()
   })
 
+  describe('when the list carries summaries', () => {
+    const flush = () => act(async () => {
+      for (let tick = 0; tick < 5; tick += 1) await Promise.resolve()
+    })
+    const summarized = task('dev', {
+      description: 'pnpm dev',
+      command: '…--host 127.0.0.1',
+      progress: { type: 'shell', recentOutput: '…ready in 300 ms' },
+    })
+    const whole = {
+      ...summarized,
+      command: 'pnpm dev --host 127.0.0.1',
+      pid: 4242,
+      progress: { type: 'shell' as const, recentOutput: 'vite starting\nready in 300 ms' },
+    }
+    const other = task('watch', { description: 'pnpm test --watch' })
+    const listed = (...tasks: BackgroundTask[]): BackgroundTaskSnapshot =>
+      ({ supported: true, runningCount: tasks.length, summary: true, tasks })
+
+    it('reads an opened task whole, and again only when that task changes', async () => {
+      const readTask = vi.fn(async () => whole)
+      const sheet = renderSheet(listed(summarized, other), { readTask })
+      expect(readTask).not.toHaveBeenCalled()
+
+      fireEvent.click(rowToggle('Running shell: pnpm dev'))
+      // What the list has shows at once, while the rest is read.
+      expect(screen.getByText('…--host 127.0.0.1')).toBeInTheDocument()
+      expect(screen.getByText('Loading full details…')).toBeInTheDocument()
+      await flush()
+      expect(readTask).toHaveBeenCalledExactlyOnceWith('dev')
+      expect(screen.getByText('pnpm dev --host 127.0.0.1')).toBeInTheDocument()
+      expect(screen.getByText(/vite starting/)).toBeInTheDocument()
+      expect(screen.getByText('4242')).toBeInTheDocument()
+      expect(screen.queryByText('Loading full details…')).not.toBeInTheDocument()
+
+      // Another task changing leaves this one as it was read.
+      sheet.rerender({ snapshot: listed(summarized, { ...other, status: 'completed', completedAt: ago(1) }) })
+      await flush()
+      expect(readTask).toHaveBeenCalledOnce()
+
+      readTask.mockResolvedValueOnce({ ...whole, progress: { type: 'shell', recentOutput: 'vite starting\npage reloaded' } })
+      sheet.rerender({ snapshot: listed({ ...summarized, progress: { type: 'shell', recentOutput: '…page reloaded' } }, other) })
+      await flush()
+      expect(readTask).toHaveBeenCalledTimes(2)
+      expect(screen.getByText(/page reloaded/)).toBeInTheDocument()
+    })
+
+    it('reads a task that changes while it is being read once more, after the first answer', async () => {
+      const answers: Array<(value: BackgroundTask) => void> = []
+      const readTask = vi.fn(() => new Promise<BackgroundTask>((resolve) => answers.push(resolve)))
+      const sheet = renderSheet(listed(summarized), { readTask })
+      fireEvent.click(rowToggle('Running shell: pnpm dev'))
+      await flush()
+      sheet.rerender({ snapshot: listed({ ...summarized, pid: 1 }) })
+      sheet.rerender({ snapshot: listed({ ...summarized, pid: 2 }) })
+      await flush()
+      expect(readTask).toHaveBeenCalledOnce()
+      answers[0](whole)
+      await flush()
+      expect(screen.getByText('pnpm dev --host 127.0.0.1')).toBeInTheDocument()
+      expect(readTask).toHaveBeenCalledTimes(2)
+      answers[1]({ ...whole, command: 'pnpm dev --host 0.0.0.0' })
+      await flush()
+      expect(screen.getByText('pnpm dev --host 0.0.0.0')).toBeInTheDocument()
+      expect(readTask).toHaveBeenCalledTimes(2)
+    })
+
+    it('keeps what the list has, and says so, when the task cannot be read whole', async () => {
+      const readTask = vi.fn(async () => { throw new Error('Background task not found') })
+      renderSheet(listed(summarized), { readTask })
+      fireEvent.click(rowToggle('Running shell: pnpm dev'))
+      await flush()
+      expect(screen.getByText('…--host 127.0.0.1')).toBeInTheDocument()
+      expect(screen.getByText('Full details could not be loaded; this is what the list has.')).toBeInTheDocument()
+    })
+
+    it('shows the current summary, not an earlier read, once reading the task again fails', async () => {
+      const readTask = vi.fn(async (): Promise<BackgroundTask> => whole)
+      const sheet = renderSheet(listed(summarized), { readTask })
+      fireEvent.click(rowToggle('Running shell: pnpm dev'))
+      await flush()
+      expect(screen.getByText('pnpm dev --host 127.0.0.1')).toBeInTheDocument()
+
+      readTask.mockRejectedValueOnce(new Error('The hub could not be reached'))
+      sheet.rerender({ snapshot: listed({ ...summarized, command: '…--host 0.0.0.0' }) })
+      await flush()
+      expect(screen.getByText('…--host 0.0.0.0')).toBeInTheDocument()
+      expect(screen.queryByText('pnpm dev --host 127.0.0.1')).not.toBeInTheDocument()
+      expect(screen.getByText('Full details could not be loaded; this is what the list has.')).toBeInTheDocument()
+    })
+
+    it('shows a whole task as it is, without reading it', async () => {
+      const readTask = vi.fn(async () => whole)
+      renderSheet({ ...listed(whole), summary: undefined }, { readTask })
+      fireEvent.click(rowToggle('Running shell: pnpm dev'))
+      await flush()
+      expect(readTask).not.toHaveBeenCalled()
+      expect(screen.getByText('pnpm dev --host 127.0.0.1')).toBeInTheDocument()
+      expect(screen.queryByText('Loading full details…')).not.toBeInTheDocument()
+    })
+  })
+
   it('shows the last five activity entries until all of them are asked for', () => {
     const steps = (count: number) => Array.from({ length: count }, (_, index) => ({
       message: `Step ${index + 1}`,

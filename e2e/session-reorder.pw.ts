@@ -194,8 +194,8 @@ test.describe('reordering with a mouse', () => {
         if (!text) throw new Error('Expected the row text')
         return text.getBoundingClientRect().left - element.getBoundingClientRect().left
       })
-      // Only the row's edge bar and padding come before its text.
-      expect(inset).toBeLessThanOrEqual(10)
+      // Only the row's edge bar and the unread dot's gutter come before its text.
+      expect(inset).toBeLessThanOrEqual(19)
       const studio = list.getByRole('region', { name: 'Studio', exact: true })
       const header = studio.locator('.computer-session-group__header')
       const status = studio.locator('.computer-session-group__status')

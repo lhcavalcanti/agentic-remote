@@ -1286,6 +1286,9 @@ button {
 }
 
 .session-list {
+  /* Between a session row's leading bar and its text: the unread dot sits
+     here, so a title starts at one place whether it is read or not. */
+  --session-gutter: 16px;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
@@ -1296,7 +1299,7 @@ button {
 
 .session-list__controls {
   flex: 0 0 auto;
-  padding: 0 4px 8px;
+  padding: 0 4px 4px;
 }
 
 .session-list__heading {
@@ -1304,7 +1307,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 2px;
-  margin: 0 0 5px;
+  margin: 0 0 4px;
 }
 
 .session-list__title {
@@ -1485,7 +1488,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 7px;
+  margin-top: 4px;
   border-bottom: 0;
 }
 
@@ -1773,7 +1776,7 @@ button {
 .computer-session-groups {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .computer-session-group {
@@ -1781,13 +1784,14 @@ button {
   padding: 0;
 }
 
+/* Its online dot sits over the rows' unread dots, centred in their gutter. */
 .computer-session-group__header {
   position: relative;
   display: flex;
   gap: 6px;
   align-items: center;
-  min-height: 30px;
-  padding: 2px 6px;
+  min-height: 26px;
+  padding: 0 6px 0 calc(var(--session-gutter) / 2);
   color: var(--muted);
   /* A press anywhere on it picks the computer up, so a long press neither
      selects its name nor opens the iOS callout. */
@@ -1822,9 +1826,10 @@ button {
   font-size: 10px;
 }
 
+/* In line with the titles of the rows it stands for. */
 .computer-session-group__empty {
   margin: 0;
-  padding: 7px 12px 7px 30px;
+  padding: 3px 12px 3px calc(3px + var(--session-gutter));
   color: var(--muted);
   font-size: 11px;
 }
@@ -1859,9 +1864,9 @@ button {
 .session-categories {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -2084,10 +2089,11 @@ button {
   gap: 2px;
 }
 
+/* Its label in line with the titles above it. */
 .session-category__more {
   align-self: flex-start;
   min-height: 28px;
-  margin-left: 22px;
+  margin-left: calc(3px + var(--session-gutter) - 8px);
   padding: 0 8px;
   color: var(--muted-strong);
   border: 0;
@@ -2106,7 +2112,7 @@ button {
 
 .session-category__empty {
   margin: 0;
-  padding: 7px 12px 7px 30px;
+  padding: 3px 12px 3px calc(3px + var(--session-gutter));
   color: var(--muted);
   font-size: 11px;
 }
@@ -2271,8 +2277,12 @@ button {
      rather than a button of its own. */
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px;
-  align-items: start;
-  padding: 6px 5px 6px 6px;
+  align-items: center;
+  /* As tall as its column of three 22px controls 2px apart, which reaches its
+     edges: no taller than its buttons, and they keep their 24px spacing from
+     the next row's. The text is centred beside them. */
+  min-height: 70px;
+  padding: 0 5px 0 var(--session-gutter);
   color: var(--text);
   /* Every row keeps room for a bar on each side, so its text stays put when
      it becomes unread or is opened. */
@@ -2484,11 +2494,13 @@ button {
   background: var(--danger);
 }
 
+/* The badges, the title and the folder line, one under the other, with the
+   unread dot beside the title out in the gutter. */
 .session-item__text {
-  display: flex;
+  display: grid;
   min-width: 0;
-  flex-direction: column;
-  gap: 3px;
+  grid-template-columns: minmax(0, 1fr);
+  row-gap: 3px;
 }
 
 .session-item small {
@@ -2497,15 +2509,17 @@ button {
   white-space: nowrap;
 }
 
+/* One line, cut short with an ellipsis: the row's tooltip and name keep the
+   whole title. */
 .session-item strong {
-  display: -webkit-box;
+  display: block;
+  grid-area: 2 / 1;
   overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
   font-size: 13.5px;
   font-weight: 550;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .provider-badge {
@@ -2521,6 +2535,7 @@ button {
 
 .session-item__badges {
   display: flex;
+  grid-row: 1;
   min-width: 0;
   align-items: center;
   flex-wrap: wrap;
@@ -2600,6 +2615,7 @@ button {
 /* The folder and its activity time read as one line. */
 .session-item__where {
   display: flex;
+  grid-row: 3;
   align-items: baseline;
   gap: 6px;
   min-width: 0;
@@ -2789,15 +2805,14 @@ button {
   align-self: start;
   justify-self: end;
   min-height: 40px;
-  margin-top: -6px;
   transform: none;
 }
 
 /* With Tasks beside it, the text hangs from the top instead of centring, so
-   its badges line meets the label, which rises into the row's padding. */
+   its badges line meets the label in the middle of its 40px target. */
 .session-item__body--task-status:has(> .session-origin-run-link) > .session-item__open {
   align-content: start;
-  padding-top: 6.5px;
+  padding-top: 12.5px;
 }
 
 .session-item__body:has(> .session-origin-run-link) .session-item__badges,
@@ -2925,6 +2940,12 @@ button {
 .session-item__open:focus-visible {
   outline: 2px solid var(--accent-foreground);
   outline-offset: 2px;
+}
+
+/* A little closer to the text, so it stays clear of the unread dot in the
+   row's gutter. */
+.session-item__open:focus-visible {
+  outline-offset: 1px;
 }
 
 .error-banner {
@@ -8659,7 +8680,7 @@ button {
 
   /* A long press anywhere on it picks the computer up. */
   .computer-session-group__header {
-    min-height: 44px;
+    min-height: 40px;
   }
 
   .session-search button {
@@ -9268,8 +9289,8 @@ button {
 /* Sits at the end of the row, out of the way of the title but reachable
    without opening the conversation: Close, Hide, then Read, top to bottom as
    the keyboard reaches them, in one narrow column that leaves the title room.
-   It takes no height of its own, so it never makes a row taller: centred on
-   the row, it reaches into a one-line row's padding instead. */
+   It takes no height of its own: the row is as tall as it is, so centred on
+   the row it reaches the row's edges and no further. */
 .session-item__controls {
   grid-column: 2;
   grid-row: 1;
@@ -9374,7 +9395,11 @@ button {
 
   /* Three 40px targets in one column would make every row taller, so Close
      keeps a column of its own beside Hide over Read, two targets tall as
-     before. */
+     before; the row is as tall as they are inside its borders. */
+  .session-item {
+    min-height: 84px;
+  }
+
   .session-item__controls {
     display: grid;
     height: auto;
@@ -9437,7 +9462,7 @@ button {
    narrower than a bar; the padding takes them so the text stays in line. */
 .session-item--hidden:not(.session-item--active, .session-item--unread) {
   padding-right: 7px;
-  padding-left: 8px;
+  padding-left: calc(var(--session-gutter) + 2px);
   border-right: 1px dashed var(--border-strong);
   border-left: 1px dashed var(--border-strong);
 }
@@ -9454,14 +9479,17 @@ button {
   font-weight: 700;
 }
 
+/* Out in the row's gutter, centred there and on the title's line, so the
+   title starts where a read one does. */
 .session-item__unread-dot {
-  display: inline-block;
+  grid-area: 2 / 1;
+  align-self: center;
+  justify-self: start;
   width: 7px;
   height: 7px;
-  margin-right: 6px;
+  margin-left: calc((var(--session-gutter) + 7px) / -2);
   border-radius: 50%;
   background: var(--session-unread);
-  vertical-align: 0.1em;
 }
 
 /* On its way out: the other rows stay fully usable meanwhile. */

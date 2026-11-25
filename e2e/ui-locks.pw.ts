@@ -10,13 +10,16 @@ import {
   type UISceneName,
 } from './ui-scenes'
 import {
+  BACKGROUND_SESSION_ID,
   FIXTURE_NOW,
+  IDLE_SESSION_ID,
   KNOWLEDGE_DOCUMENT_TITLE,
   KNOWLEDGE_ROOT_ID,
   SELECTED_SESSION_ID,
   createWorkspaceFixtureState,
   fixtureActivityDetails,
   fixtureActivityMessages,
+  fixtureBackgroundTasks,
   setupWorkspaceFixture,
 } from './workspace-fixtures'
 import { scheduleSchema, scheduleRunSchema } from '../shared/schedules'
@@ -1345,6 +1348,63 @@ test.describe('phone touch targets', () => {
   })
 })
 
+const LONG_ROW_TITLE = 'Collect the review notes and the handbook drafts nobody has opened yet'
+const LONG_TASKS_TITLE = 'Audit the release links across every handbook chapter and the archive'
+
+/**
+ * Rows with one-line and two-line titles, each with and without the Tasks
+ * label, besides an unread row and a listed hidden one, whose controls read
+ * Mark as read and Show.
+ */
+function sessionRowsState() {
+  const state = createWorkspaceFixtureState()
+  const idle = state.sessions.find((session) => session.id === IDLE_SESSION_ID)!
+  const tasks = state.sessions.find((session) => session.id === BACKGROUND_SESSION_ID)!
+  const notes = { ...structuredClone(idle), id: 'fixture-collect-notes', title: LONG_ROW_TITLE }
+  const audit = { ...structuredClone(tasks), id: 'fixture-audit-links', title: LONG_TASKS_TITLE }
+  state.sessions.push(notes, audit)
+  state.sessionOrder.order['fixture-studio'].push(`fixture-studio:${notes.id}`)
+  state.sessionOrder.order['fixture-build'].push(`fixture-build:${audit.id}`)
+  state.sessionOrder.unread = [`fixture-studio:${IDLE_SESSION_ID}`]
+  state.sessionOrder.hidden = [`fixture-studio:${notes.id}`]
+  state.sessionOrder.showHidden = true
+  return state
+}
+
+/** A session row's controls, and the box, content and other parts of the row around them. */
+function sessionRowLayout(row: Element) {
+  const rect = (element: Element) => {
+    const { left, right, top, bottom, width, height } = element.getBoundingClientRect()
+    return { left, right, top, bottom, width, height }
+  }
+  const control = (name: RegExp) => {
+    const button = [...row.querySelectorAll('button')].find((each) => name.test(each.getAttribute('aria-label') ?? ''))
+    if (!button) throw new Error(`No ${name} control in the row`)
+    return rect(button)
+  }
+  const style = getComputedStyle(row)
+  const px = (property: string) => Number.parseFloat(style.getPropertyValue(property))
+  const box = rect(row)
+  const title = row.querySelector('.session-item__text > strong')!
+  return {
+    title: title.textContent ?? '',
+    lines: Math.round(title.getBoundingClientRect().height / Number.parseFloat(getComputedStyle(title).lineHeight)),
+    row: box,
+    content: {
+      top: box.top + px('border-top-width') + px('padding-top'),
+      bottom: box.bottom - px('border-bottom-width') - px('padding-bottom'),
+    },
+    // The tallest of what the row lays out besides its controls.
+    rest: Math.max(...[...row.querySelectorAll(':scope > .drag-handle, :scope > .session-item__body')]
+      .map((part) => part.getBoundingClientRect().height)),
+    parts: [...row.querySelectorAll('.drag-handle, .session-item__text, .session-item__tasks, .session-origin-run-link')]
+      .map(rect),
+    close: control(/^Close /),
+    hide: control(/^(Hide|Show) /),
+    read: control(/^Mark .+ as (read|unread)$/),
+  }
+}
+
 for (const viewport of [uiViewports[0], phone]) {
   test.describe(`queued prompts ${viewport.name}`, () => {
     test.use({ viewport: viewport.viewport, isMobile: viewport.isMobile, hasTouch: viewport.hasTouch })
@@ -1470,6 +1530,100 @@ for (const viewport of [uiViewports[0], phone]) {
           expect(extent.top, 'Tasks target above its row').toBeGreaterThanOrEqual(row.top)
           expect(extent.bottom, 'Tasks target below its row').toBeLessThanOrEqual(row.bottom)
           if (viewport.hasTouch) expect(extent.height, 'Tasks target height').toBeGreaterThanOrEqual(40)
+        } finally { fixture.assertHealthy() }
+      })
+    }
+
+    // Close, Hide, then Mark as read or unread, as the keyboard reaches them.
+    // A mouse gets one column of 22px controls that leaves the title more room;
+    // touch keeps Close beside Hide over Read, since a column of 40px targets
+    // would make every row taller.
+    for (const setup of ['plain', 'schedule-origin'] as const) {
+      test(`${viewport.hasTouch ? 'keep Close beside Hide over Read' : 'stack Close, Hide and Read in one column'} in ${setup} rows without making them taller`, async ({ page, baseURL }) => {
+        let fixture: Awaited<ReturnType<typeof setupWorkspaceFixture>>
+        if (setup === 'plain') {
+          fixture = await setupWorkspaceFixture(page, {
+            baseUrl: baseURL!,
+            knowledgeMode: 'hidden',
+            state: sessionRowsState(),
+            taskSnapshots: { 'fixture-build:fixture-audit-links': fixtureBackgroundTasks[BACKGROUND_SESSION_ID] },
+          })
+          await page.goto(fixture.url)
+          if (viewport.hasTouch) await page.getByRole('button', { name: 'Open sessions', exact: true }).click()
+        } else {
+          fixture = await openScene(page, baseURL, 'session-origin-tasks')
+        }
+        try {
+          if (!viewport.hasTouch) await assertMousePointer(page)
+          const list = page.getByRole('navigation', { name: 'Sessions', exact: true })
+          const rows = list.locator('.session-item')
+          if (setup === 'plain') {
+            await expect(list.getByRole('button', { name: `View background tasks for ${LONG_TASKS_TITLE}`, exact: true }))
+              .toBeVisible()
+            await expect(rows).toHaveCount(8)
+          } else {
+            await expect(list.locator('.session-item__body--task-status:has(> .session-origin-run-link)')).toHaveCount(1)
+          }
+          const lines = new Set<number>()
+          for (const row of await rows.all()) {
+            await row.scrollIntoViewIfNeeded()
+            if (!viewport.hasTouch) {
+              // Still revealed by pointing at the row.
+              const reveal = row.getByRole('button', { name: /^(Hide|Show) / })
+              await page.mouse.move(0, 0)
+              await expect(reveal).toHaveCSS('opacity', '0')
+              await row.hover()
+              await expect(reveal).toHaveCSS('opacity', '1')
+            }
+            const { title, row: box, content, rest, parts, close, hide, read, ...layout } = await row.evaluate(sessionRowLayout)
+            lines.add(layout.lines)
+            for (const control of [close, hide, read]) {
+              // A one-line row with the Tasks label is 69.2px, 0.8px short of the
+              // desktop column, which reaches 0.4px into the 2px between rows.
+              expect(control.top, `${title}: control top`).toBeGreaterThanOrEqual(box.top - 0.5)
+              expect(control.bottom, `${title}: control bottom`).toBeLessThanOrEqual(box.bottom + 0.5)
+              expect(control.right, `${title}: control right`).toBeLessThanOrEqual(box.right)
+              for (const part of parts) {
+                expect(part.right, `${title}: handle, text and Tasks clear of the controls`).toBeLessThanOrEqual(control.left)
+              }
+            }
+            let controlsHeight = 0
+            if (viewport.hasTouch) {
+              expect(close.right, `${title}: Close beside Hide`).toBeLessThanOrEqual(hide.left)
+              expect(Math.abs(read.left - hide.left), `${title}: Read under Hide`).toBeLessThan(0.5)
+              expect(hide.bottom, `${title}: Hide over Read`).toBeLessThanOrEqual(read.top)
+              expect(Math.abs((close.top + close.bottom) / 2 - (hide.top + read.bottom) / 2), `${title}: Close centred beside them`)
+                .toBeLessThanOrEqual(1)
+              for (const control of [close, hide, read]) {
+                expect(control.width, `${title}: target width`).toBeGreaterThanOrEqual(40)
+                expect(control.height, `${title}: target height`).toBeGreaterThanOrEqual(40)
+              }
+              // Two targets tall, as before.
+              controlsHeight = read.bottom - hide.top
+              expect(controlsHeight, `${title}: controls height`).toBeLessThanOrEqual(2 * 40 + 2)
+            } else {
+              for (const control of [hide, read]) {
+                expect(Math.abs(control.left - close.left), `${title}: one column`).toBeLessThan(0.5)
+              }
+              expect(close.bottom, `${title}: Close over Hide`).toBeLessThanOrEqual(hide.top)
+              expect(hide.bottom, `${title}: Hide over Read`).toBeLessThanOrEqual(read.top)
+              for (const control of [close, hide, read]) {
+                expect(control.width, `${title}: control width`).toBeCloseTo(22, 0)
+                expect(control.height, `${title}: control height`).toBeCloseTo(22, 0)
+              }
+              expect(Math.abs((close.top + read.bottom) / 2 - (content.top + content.bottom) / 2), `${title}: centred on the row`)
+                .toBeLessThanOrEqual(1)
+            }
+            // The row is as tall as its content, or a phone's two targets, and
+            // no taller.
+            expect(content.bottom - content.top, `${title}: row height`).toBeCloseTo(Math.max(rest, controlsHeight), 0)
+          }
+          if (viewport.hasTouch) {
+            await expectTouchTargets(await rows.getByRole('button', { name: /^(Close |Hide |Show |Mark )/ }).all())
+          }
+          // Titles of one and two lines are both measured.
+          if (setup === 'plain') expect([...lines].sort()).toEqual([1, 2])
+          await assertNoHorizontalOverflow(page)
         } finally { fixture.assertHealthy() }
       })
     }

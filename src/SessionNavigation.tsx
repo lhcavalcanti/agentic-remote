@@ -333,27 +333,6 @@ function SortableSessionItem({
           <X aria-hidden="true" size={13} />
         </button>
         <button
-          aria-busy={markingUnread || undefined}
-          aria-label={
-            unread ? `Mark ${session.title} as read` : `Mark ${session.title} as unread`
-          }
-          className="session-item__unread"
-          disabled={markingUnread}
-          onClick={() => onToggleSessionUnread(session)}
-          title={
-            markingUnread
-              ? unread
-                ? 'Marking this session as unread'
-                : 'Marking this session as read'
-              : unread
-                ? 'Mark as read'
-                : 'Mark as unread'
-          }
-          type="button"
-        >
-          {unread ? <MailOpen aria-hidden="true" size={13} /> : <Mail aria-hidden="true" size={13} />}
-        </button>
-        <button
           aria-busy={hiding || undefined}
           aria-label={
             hidden ? `Show ${session.title} in the list` : `Hide ${session.title} from the list`
@@ -373,6 +352,27 @@ function SortableSessionItem({
           type="button"
         >
           {hidden ? <Eye aria-hidden="true" size={13} /> : <EyeOff aria-hidden="true" size={13} />}
+        </button>
+        <button
+          aria-busy={markingUnread || undefined}
+          aria-label={
+            unread ? `Mark ${session.title} as read` : `Mark ${session.title} as unread`
+          }
+          className="session-item__unread"
+          disabled={markingUnread}
+          onClick={() => onToggleSessionUnread(session)}
+          title={
+            markingUnread
+              ? unread
+                ? 'Marking this session as unread'
+                : 'Marking this session as read'
+              : unread
+                ? 'Mark as read'
+                : 'Mark as unread'
+          }
+          type="button"
+        >
+          {unread ? <MailOpen aria-hidden="true" size={13} /> : <Mail aria-hidden="true" size={13} />}
         </button>
       </div>
     </div>

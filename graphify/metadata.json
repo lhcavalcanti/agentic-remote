@@ -723,7 +723,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "1246dddaaf42283750a90c9d54fcbd9ee6eb6b87e3859f327d89c9337b45565f",
+    "docs/app-spec.md": "3744823428849ce79c083808bbca72d072137acfe86c76f35e7b385770838236",
     "docs/architecture.md": "ad43b1fda315d00d1d3483b2afcee79aa79aa64c1817ad36bdd700e0e253a0ae",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -1927,13 +1927,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "e5c9cd1bf23b3100882b51b604902d9010484f521db6690c1224205484053c30",
+    "GRAPH_REPORT.md": "ad8886ed73f16fb35d639b40d0418529f287750a8d83fa25953c780a7db584f4",
     "communities.json": "9820ad281d029c5461d7d3acb2de8303b42312d90e2a4784ef400f223544d0e7",
-    "graph.html": "9269b59f95fc658fe57123b872bea7dea3865548683b9c8826992395c580ecf5",
-    "graph.json": "5ed73da2111a1da240fa945737e16702ee718f37cfaf7b1178063322c7fda18f"
+    "graph.html": "528afeae5e9cd98b497e1490c3cc2bb98eaaeffa3a3aafacd9b97ca6cedb91ab",
+    "graph.json": "3c0b2efd66f3954c395d43b52774d9daa6db5be59fe8ca392763f34184912cf5"
   },
   "schema_version": 1,
-  "source_commit": "00df4bc1823f91480cac18bd9a17f20101c2ee06",
-  "source_fingerprint": "03ddf32b0970f239e2371a9f835680fa06bb92225354f96495b170f895dd5769",
+  "source_commit": "f8b408d01bbc660d90e3573250dc6bfd379d9e14",
+  "source_fingerprint": "b8772c3ead577ed63c113626a3df0a9fc3afc6f5cf0439b0c417e6965c173f5f",
   "working_tree_changes": []
 }

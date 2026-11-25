@@ -680,9 +680,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 259,
+  "communities": 276,
   "community_algorithm": "louvain-seed-42",
-  "edges": 27295,
+  "edges": 27296,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -1234,8 +1234,8 @@
     "server/session-admissions.ts": "0ac22f65f3354bac38062156f3ca77b568d3f7a7c9c469e843049e84c9de2a3e",
     "server/session-category-routes.test.ts": "88e4e1a6c436f0c50797b592a5d2e036a00fbcd4bcef4cc73ad5ba5a91e4879e",
     "server/session-category-routes.ts": "737cabef2ba6f7b3fe604aa3abb01d3cc2f0310dd7960ac5719a814c2f5967fb",
-    "server/session-category-store.test.ts": "2ac6e0c44ee683e1c2ba229cdcdb4d0f6d9fb416f5d3de7ecfb50fac84e4e3d9",
-    "server/session-category-store.ts": "c14abff8c308306b2521ddc2a8cbfc36073b6393fd77d048bf74223eb30b863b",
+    "server/session-category-store.test.ts": "f07a50eb65ca998c763531be4ccd129da09528b1d0ba350390bcc5da9aec9011",
+    "server/session-category-store.ts": "09b6fcdbb9994278f62ce1e56ea3226959a54f710c8c532c0adb0270af442372",
     "server/session-clear-transcript.test.ts": "bb73bb871f2d405beaf3273397bc26e826c688773bb2b5e22fe4968c9390ecc1",
     "server/session-directory.test.ts": "2aaf8033014c572bf4d1e55d0e530db80066311faf50047f9471d4b369a257df",
     "server/session-directory.ts": "0fbc02dbe1e2810dc218f9296dcd03f2d9577fac78080a4fc1a4b1bd4dbdfdce",
@@ -1923,13 +1923,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "871cff42d1df053df757191f813377882e821407eb3713d11fbc8eae1956074c",
-    "communities.json": "43257f6b1b1a308348ac757f79d7b635abc4ebf4f88dd3a2e18fd60a0d18184d",
-    "graph.html": "ca0e2e2c61f3e232cb26c791522187ece8948cfed79e6c70033187b95bcd1f72",
-    "graph.json": "43c4d242c5d4864b8e4e65afd1164ddcb289312b49fd206aa719f2e9e6f3e1e5"
+    "GRAPH_REPORT.md": "b4ebd63f58eb97e39c26ac819aba75e7be4cef084e1314b5ad97ab0c5b220a61",
+    "communities.json": "124dc1e6cf2f00ad9531bfec4503c521be04e4642c62ff485515d4aa6d7943f4",
+    "graph.html": "2e91ae0b31f43cbab4f43af1fb3033f52373a56ca66927151a2597d97d223398",
+    "graph.json": "fb52bb045fc1c6875c90ce97b777f3a020619089458b5989902cbc54dfe04188"
   },
   "schema_version": 1,
-  "source_commit": "649e91f1091f14642e9f17b12bf3f29630aaab44",
-  "source_fingerprint": "bb10d0c3214ea7972c25a049765bbcbb0d24c1530cb2f0f6a6bb0d438aaf8dcf",
+  "source_commit": "ff32a73a1bc3df2344f1b48b64dbe8241e13f966",
+  "source_fingerprint": "5a49276955e715880f5bf57fb7558c6e8a68815957233452a0daf58eab991aae",
   "working_tree_changes": []
 }

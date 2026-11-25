@@ -723,8 +723,8 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "6b7a21843ba2a5ea7fd3e05ad6b4b29b72bf4af5640f35ae709a46b1de93bb81",
-    "docs/architecture.md": "796627f62940774a1e8a0bd283e0094a878176ebb1d040d169f236fe3b9e409a",
+    "docs/app-spec.md": "1246dddaaf42283750a90c9d54fcbd9ee6eb6b87e3859f327d89c9337b45565f",
+    "docs/architecture.md": "ad43b1fda315d00d1d3483b2afcee79aa79aa64c1817ad36bdd700e0e253a0ae",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
     "docs/background-tasks-running.svg": "d89bfcfd46ce5b83500e7cd4320de812c5729bd41ae063351138d61d38b716df",
@@ -1237,8 +1237,8 @@
     "server/session-admissions.ts": "0ac22f65f3354bac38062156f3ca77b568d3f7a7c9c469e843049e84c9de2a3e",
     "server/session-category-routes.test.ts": "88e4e1a6c436f0c50797b592a5d2e036a00fbcd4bcef4cc73ad5ba5a91e4879e",
     "server/session-category-routes.ts": "737cabef2ba6f7b3fe604aa3abb01d3cc2f0310dd7960ac5719a814c2f5967fb",
-    "server/session-category-store.test.ts": "f07a50eb65ca998c763531be4ccd129da09528b1d0ba350390bcc5da9aec9011",
-    "server/session-category-store.ts": "09b6fcdbb9994278f62ce1e56ea3226959a54f710c8c532c0adb0270af442372",
+    "server/session-category-store.test.ts": "903aec3131fe25fc3073ce7238cd4493511cebd960ee0053a49fb6765c6a0d6d",
+    "server/session-category-store.ts": "a40cb251c26d5cb3ed6f8658b2b1103b7cd9e786f1d053d4d67a8381b62e4480",
     "server/session-clear-transcript.test.ts": "bb73bb871f2d405beaf3273397bc26e826c688773bb2b5e22fe4968c9390ecc1",
     "server/session-directory.test.ts": "2aaf8033014c572bf4d1e55d0e530db80066311faf50047f9471d4b369a257df",
     "server/session-directory.ts": "0fbc02dbe1e2810dc218f9296dcd03f2d9577fac78080a4fc1a4b1bd4dbdfdce",
@@ -1632,8 +1632,8 @@
     "src/use-oracle-conversation.ts": "36121e79ebe630657c4c647bf522f621b2800e0ecc812d8b02981896b05f4d53",
     "src/use-oracle-settings.ts": "5023e29ba37902da501d75cf72c286007b0ca0de7798c3a56c776ba975ce9e54",
     "src/use-recently-closed.ts": "79f3818db6a49d817066f7e966f90b7ee8e89cf83e761756adf6d929d62eab5e",
-    "src/use-session-categories.test.tsx": "1e6bec610b6ee2e9768ca7e4edde88cc4ac64521b4a980ddcaab999073c802cd",
-    "src/use-session-categories.ts": "086ec85c8fa1f21c2502a62be1da8175a55d3fa368fb4e63ab9918947ac00d19",
+    "src/use-session-categories.test.tsx": "e1d059bf572882d6815533b7a0fed3ec3cf39beaae3d71ff670de337ebb883ca",
+    "src/use-session-categories.ts": "02ee8b3a2a4d012618af8bbc52d58713d6ff7be84e95d3cf29315d4dd30e44fe",
     "src/use-session-knowledge-root.test.tsx": "4f80b53683ee9b270982608b2de9a8f7aa5b03baa03be3ce2a29f073317349c4",
     "src/use-session-knowledge-root.ts": "931caaf6414ed837536b35bd930f257c9365b675dbd35ec641d70cf71b192b7e",
     "src/use-session-prefetch.ts": "5cf5f8f4bc9a5ad28006994424669b170c5adf432e18723328c63e10a44f0afb",
@@ -1927,13 +1927,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "34781028a15efad639b91457da918d5d7f311dfe14a63132250ff26ee457d44d",
+    "GRAPH_REPORT.md": "de5c92038a2b3edf98e9e4a9efcfdcb30b9acdd4a4d7ed75baa86266a241b26b",
     "communities.json": "c775ca10fe059da5a28bef84ec6a011d7e3f3aab55c2d24c03041513adbf06f4",
-    "graph.html": "fd28ab641781b83e47f96d1dbe894144b97418872ea251fdcc10274bdcda15d7",
-    "graph.json": "c34ffac31a4ecba19752dbc685027730a15aa5ef67df0f555c6987686bfb6a9e"
+    "graph.html": "bb575b517cd2fe6ed678c055d980cc3ffa3230feed56ceb327bf6fbf46b5d2e8",
+    "graph.json": "5ff67ce3ea1335bb36df779944fece8b8b4ed1f2908901dd08db4f67bc47ab18"
   },
   "schema_version": 1,
-  "source_commit": "fc8542eb284b39b13a3f85186f9edb9948b1ebe1",
-  "source_fingerprint": "3d40763048a76a22566cff446209b88da652fbd9c16324fb046bc44bc5be58bd",
+  "source_commit": "7b73b5bf8deee9936cb02d86e72f0135006479ff",
+  "source_fingerprint": "5cbd34084945fe8c91732f62517bb0cbd62630ede6d7c46143c9514b0a6a4a24",
   "working_tree_changes": []
 }

@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "fc8542eb284b39b13a3f85186f9edb9948b1ebe1",
+  "built_at_commit": "7b73b5bf8deee9936cb02d86e72f0135006479ff",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -186076,7 +186076,7 @@
       "relation": "method",
       "source": "server_session_category_store_sessioncategorystore",
       "source_file": "server/session-category-store.ts",
-      "source_location": "L418",
+      "source_location": "L422",
       "target": "server_session_category_store_sessioncategorystore_persist",
       "weight": 1.0
     },
@@ -186248,7 +186248,7 @@
       "relation": "calls",
       "source": "server_session_category_store_sessioncategorystore_commit",
       "source_file": "server/session-category-store.ts",
-      "source_location": "L402",
+      "source_location": "L406",
       "target": "server_session_category_store_refused",
       "weight": 1.0
     },
@@ -186272,7 +186272,7 @@
       "relation": "calls",
       "source": "server_session_category_store_sessioncategorystore_commit",
       "source_file": "server/session-category-store.ts",
-      "source_location": "L406",
+      "source_location": "L410",
       "target": "server_session_category_store_sessioncategorystore_persist",
       "weight": 1.0
     },
@@ -318295,7 +318295,7 @@
       "relation": "calls",
       "source": "src_use_session_categories_usesessioncategories",
       "source_file": "src/use-session-categories.ts",
-      "source_location": "L101",
+      "source_location": "L111",
       "target": "src_api_savesessioncategorychange",
       "weight": 1.0
     },
@@ -318307,7 +318307,7 @@
       "relation": "calls",
       "source": "src_use_session_categories_usesessioncategories",
       "source_file": "src/use-session-categories.ts",
-      "source_location": "L91",
+      "source_location": "L101",
       "target": "src_use_session_categories_message",
       "weight": 1.0
     },
@@ -382127,7 +382127,7 @@
       "label": ".persist()",
       "norm_label": ".persist()",
       "source_file": "server/session-category-store.ts",
-      "source_location": "L418"
+      "source_location": "L422"
     },
     {
       "_callable": true,

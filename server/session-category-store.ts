@@ -7,6 +7,7 @@ import {
   isSessionCategoryId,
   isSessionCategoryKey,
   sessionCategoryName,
+  sessionCategoryNameKey,
   type SessionCategoriesSnapshot,
   type SessionCategory,
   type SessionCategoryChange,
@@ -66,7 +67,8 @@ function validName(name: unknown): name is string {
  */
 function parseState(parsed: Fields): { state: CategoryState; extra: Fields; categoryExtra: Map<string, Fields> } | undefined {
   const { version: _version, revision = 0, categories, closed = {}, ...extra } = parsed
-  if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) return undefined
+  // One that could not be written past is no more usable than a negative one.
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision + 1) || revision < 0) return undefined
   if (!Array.isArray(categories) || !isRecord(closed)) return undefined
   const loaded: SessionCategory[] = []
   const categoryExtra = new Map<string, Fields>()
@@ -76,13 +78,13 @@ function parseState(parsed: Fields): { state: CategoryState; extra: Fields; cate
     if (!isRecord(entry)) return undefined
     const { id, name, collapsed, sessions, ...rest } = entry
     if (typeof id !== 'string' || !isSessionCategoryId(id) || categoryExtra.has(id)) return undefined
-    if (!validName(name) || names.has(name.toLocaleLowerCase())) return undefined
+    if (!validName(name) || names.has(sessionCategoryNameKey(name))) return undefined
     if (typeof collapsed !== 'boolean' || !Array.isArray(sessions)) return undefined
     for (const member of sessions) {
       if (typeof member !== 'string' || !isSessionCategoryKey(member) || members.has(member)) return undefined
       members.add(member)
     }
-    names.add(name.toLocaleLowerCase())
+    names.add(sessionCategoryNameKey(name))
     categoryExtra.set(id, rest)
     loaded.push({ id, name, collapsed, sessions: sessions as string[] })
   }

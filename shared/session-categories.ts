@@ -108,10 +108,15 @@ function existing(categories: readonly SessionCategory[], id: string): number {
   return index
 }
 
+/** Folded alike in every locale, so a browser and the hub agree on what clashes. */
+export function sessionCategoryNameKey(name: string): string {
+  return name.toLowerCase()
+}
+
 function unclaimed(categories: readonly SessionCategory[], name: string, except?: string): void {
-  const folded = name.toLocaleLowerCase()
+  const folded = sessionCategoryNameKey(name)
   if (categories.some((category) =>
-    category.id !== except && category.name.toLocaleLowerCase() === folded)) {
+    category.id !== except && sessionCategoryNameKey(category.name) === folded)) {
     throw new SessionCategoryRefusal(`A category named ${name} already exists`, 409)
   }
 }

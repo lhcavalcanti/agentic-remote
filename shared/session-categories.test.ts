@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   SESSION_CATEGORY_LIMIT,
   SESSION_CATEGORY_NAME_MAX_LENGTH,
@@ -50,6 +50,20 @@ describe('session category changes', () => {
       id: `c${index}`, name: `Category ${index}`, collapsed: false, sessions: [],
     }))
     expect(refusal(full, { type: 'create', id: 'other', name: 'Other' }).status).toBe(409)
+  })
+
+  it('tells names apart in the same way whatever the locale, as the hub and a browser may differ', () => {
+    // A Turkish locale lowers I to a dotless ı, so locale folding would let
+    // a browser and the hub disagree about whether two names clash.
+    const locale = vi.spyOn(String.prototype, 'toLocaleLowerCase').mockImplementation(function (this: string) {
+      return this.replace(/I/g, 'ı').toLowerCase()
+    })
+    try {
+      const iris = [{ id: 'iris', name: 'iris', collapsed: false, sessions: [] }]
+      expect(refusal(iris, { type: 'create', id: 'other', name: 'IRIS' }).status).toBe(409)
+    } finally {
+      locale.mockRestore()
+    }
   })
 
   it('renames, collapses and moves a category, leaving its sessions where they are', () => {

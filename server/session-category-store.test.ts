@@ -258,6 +258,9 @@ describe('SessionCategoryStore', () => {
         closed: { 'hub:a': 'last week' },
       },
       { revision: -1, categories: [] },
+      // Neither could be written past: the next revision would not be a safe integer.
+      { revision: 2 ** 53, categories: [] },
+      { revision: Number.MAX_SAFE_INTEGER, categories: [] },
     ]
     for (const shape of malformed) {
       const directory = await folder()

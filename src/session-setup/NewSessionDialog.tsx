@@ -35,6 +35,7 @@ import {
 import {
   agentModeName,
   computerProviders,
+  newSessionRuntimeInput,
   normalizedRuntimeSelection,
 } from './runtime-presentation'
 import type {
@@ -300,13 +301,6 @@ export function NewSessionDialog({
         throw new Error('Choose an available computer and wait for its folder to load.')
       }
       if (mode === 'new') {
-        const defaultRuntime = providerRuntimeModels
-          ? normalizedRuntimeSelection(
-              defaultRuntimes[provider],
-              providerRuntimeModels,
-            )
-          : undefined
-        const defaultModel = defaultRuntime?.model.trim()
         const createInTmux =
           computerProviders(
             available.find((computer) => computer.id === computerId),
@@ -327,20 +321,7 @@ export function NewSessionDialog({
             provider,
             terminalBacked: createInTmux,
             allowAllPermissions,
-            ...(defaultModel && defaultRuntime
-              ? {
-                  model: defaultModel,
-                  ...(defaultRuntime.reasoningEffort
-                    ? {
-                        reasoningEffort: defaultRuntime.reasoningEffort,
-                      }
-                    : {}),
-                  contextTier: defaultRuntime.contextTier,
-                }
-              : {}),
-            ...(defaultRuntimes[provider].mode
-              ? { mode: defaultRuntimes[provider].mode }
-              : {}),
+            ...newSessionRuntimeInput(defaultRuntimes[provider], providerRuntimeModels),
           }),
           pendingCreation,
         )

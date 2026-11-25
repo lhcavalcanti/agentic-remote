@@ -377,6 +377,30 @@ describe('SessionCategoryStore', () => {
       .toMatchObject({ revision: 2 })
   })
 
+  it('tells its listeners each commit once it is saved, whoever made it, and nothing else', async () => {
+    const { store: categories, directory } = await store()
+    const told: unknown[] = []
+    categories.on('changed', (snapshot) => told.push(snapshot))
+
+    const created = await categories.change(0, { type: 'create', id: 'lab', name: 'Homelab', sessions: ['hub:a'] }, everyone)
+    expect(told).toEqual([created])
+    // A change that changes nothing, a refused one, and a lifecycle event
+    // that leaves the categories alone are not news.
+    await categories.change(1, { type: 'update', categoryId: 'lab', collapsed: false })
+    await expect(categories.change(0, { type: 'delete', categoryId: 'lab' })).rejects.toMatchObject({ statusCode: 409 })
+    await categories.sessionListed('hub', 'b')
+    expect(told).toHaveLength(1)
+    // The hub's own lifecycle changes are told the same way.
+    const removed = await categories.removeSession('hub', 'a')
+    expect(told).toEqual([created, removed])
+
+    await rm(directory, { recursive: true, force: true })
+    await writeFile(directory, 'blocked')
+    await expect(categories.change(2, { type: 'update', categoryId: 'lab', collapsed: true })).rejects.toThrow()
+    await rm(directory, { force: true })
+    expect(told).toHaveLength(2)
+  })
+
   it('never touches the session order file beside it', async () => {
     const directory = await folder()
     const order = new SessionOrderStore(directory)

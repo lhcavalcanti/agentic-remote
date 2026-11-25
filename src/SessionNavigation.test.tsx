@@ -81,6 +81,7 @@ const categoryActions = {
   onMoveCategory: vi.fn(),
   onDeleteCategory: vi.fn(),
   onNewCategory: vi.fn(),
+  onNewSessionInCategory: vi.fn(),
 }
 const sessionHidden = vi.fn()
 const sessionUnread = vi.fn()
@@ -1062,16 +1063,16 @@ describe('session categories in the list', () => {
     fireEvent.click(trigger)
     const menu = screen.getByRole('menu', { name: 'Category actions for Homelab' })
     const items = within(menu).getAllByRole('menuitem')
-    expect(items.map((item) => item.textContent)).toEqual([
-      'Mark all as read', 'Rename…', 'Move up', 'Move down', 'Delete category…',
+    expect(items.map((item) => item.getAttribute('aria-label') ?? item.textContent)).toEqual([
+      'New session in Homelab', 'Mark all as read', 'Rename…', 'Move up', 'Move down', 'Delete category…',
     ])
     expect(within(menu).getByRole('menuitem', { name: 'Move up' })).toBeDisabled()
     expect(document.activeElement).toBe(items[0])
     fireEvent.keyDown(items[0], { key: 'ArrowDown' })
     expect(document.activeElement).toBe(items[1])
     fireEvent.keyDown(items[1], { key: 'End' })
-    expect(document.activeElement).toBe(items[4])
-    fireEvent.keyDown(items[4], { key: 'Escape' })
+    expect(document.activeElement).toBe(items[5])
+    fireEvent.keyDown(items[5], { key: 'Escape' })
     expect(screen.queryByRole('menu')).toBeNull()
     expect(document.activeElement).toBe(trigger)
 
@@ -1092,6 +1093,34 @@ describe('session categories in the list', () => {
     fireEvent.click(within(sectionNamed('Plans')).getByRole('button', { name: 'Category actions for Plans' }))
     expect(screen.getByRole('menuitem', { name: 'Mark all as read' })).toBeDisabled()
     expect(screen.getByRole('menuitem', { name: 'Move down' })).toBeDisabled()
+  })
+
+  it('offers a new session beside a category\'s latest session, and says why when it cannot', () => {
+    const latest = { ...worker, updatedAt: '2026-09-02T00:00:00Z', cwd: '/home/demo/build' }
+    const away = {
+      category: { id: 'away', name: 'Away', collapsed: true, sessions: ['travel:offline'] },
+      sessions: [offline],
+    }
+    render(<NavigationHarness categories={[lab([question, latest]), plans, away]} />)
+    const menu = (name: string) => {
+      fireEvent.click(within(sectionNamed(name)).getByRole('button', { name: `Category actions for ${name}` }))
+      return screen.getByRole('menu', { name: `Category actions for ${name}` })
+    }
+
+    const start = within(menu('Homelab')).getByRole('menuitem', { name: 'New session in Homelab' })
+    expect(start).toBeEnabled()
+    expect(start).toHaveAccessibleDescription('~/build on Build node')
+    expect(document.activeElement).toBe(start)
+    fireEvent.click(start)
+    expect(categoryActions.onNewSessionInCategory).toHaveBeenCalledWith('lab')
+
+    const empty = within(menu('Plans')).getByRole('menuitem', { name: 'New session in Plans' })
+    expect(empty).toBeDisabled()
+    expect(empty).toHaveAccessibleDescription('Needs a session in it first')
+    const offlineStart = within(menu('Away')).getByRole('menuitem', { name: 'New session in Away' })
+    expect(offlineStart).toBeDisabled()
+    expect(offlineStart).toHaveAccessibleDescription('Travel laptop is offline')
+    expect(categoryActions.onNewSessionInCategory).toHaveBeenCalledTimes(1)
   })
 
   it('opens a category\'s menu upward when the list has no room for it below', () => {

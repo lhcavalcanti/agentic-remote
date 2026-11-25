@@ -359,6 +359,30 @@ describe('workspace fixture hub protocol', () => {
     ])
     fixture.assertHealthy()
   })
+
+  it('starts a session as a hub does: named after its folder, and last under its computer', async () => {
+    const { fixture, openEvents, request, state } = await fixtureApi()
+    const sent = openEvents()
+    const started = await request<{ session: ManagedSession }>('/api/computers/fixture-build/sessions', 'POST', {
+      cwd: '/home/demo/workspace-checks', provider: 'copilot', terminalBacked: true, allowAllPermissions: true,
+    })
+    expect(started.status).toBe(201)
+    expect(started.body.session).toMatchObject({
+      id: 'fixture-started-1', computerId: 'fixture-build', title: 'workspace-checks', executionMode: 'tmux', isOpen: true,
+    })
+    expect(state.sessions.at(-1)).toEqual(started.body.session)
+    expect(state.sessionOrder.order['fixture-build'].at(-1)).toBe('fixture-build:fixture-started-1')
+    expect(sent).toEqual([
+      { type: 'session.upserted', session: started.body.session },
+      { type: 'session.order.updated', order: state.sessionOrder },
+    ])
+    fixture.assertHealthy()
+
+    // An offline computer starts nothing.
+    expect((await request('/api/computers/fixture-travel/sessions', 'POST', { cwd: '/home/demo/notes' })).status)
+      .toBe(501)
+    expect(fixture.failures).toEqual(['Unexpected fixture session creation'])
+  })
 })
 
 describe('workspace fixture composer routes', () => {

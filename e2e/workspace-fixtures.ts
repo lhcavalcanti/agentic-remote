@@ -35,6 +35,7 @@ import {
 } from '../shared/session-categories'
 import type {
   ActivityDetail,
+  AgentProvider,
   BackgroundTaskSnapshot,
   ChatMessage,
   ComputerSummary,
@@ -733,6 +734,7 @@ export const fixtureEndpoints = [
   'GET /api/knowledge/roots/:rootId/file?path=handbook/agent-workspace.md',
   'GET /api/computers/:computerId/directories?path=~&scope=all',
   'GET /api/computers/:computerId/providers/:provider/runtime',
+  'POST /api/computers/:computerId/sessions',
   'GET /api/computers/:computerId/sessions/:sessionId',
   'GET /api/computers/:computerId/sessions/:sessionId/commands',
   'GET /api/computers/:computerId/sessions/:sessionId/runtime',
@@ -920,6 +922,8 @@ export async function setupWorkspaceFixture(
     throw new Error('Use between 0 and 200 synthetic extra Knowledge files.')
   }
   const sessions = state.sessions
+  // Sessions this page starts, numbered so each has an id of its own.
+  let startedSessions = 0
   const selected = sessions.find(
     (session) => session.id === (options.selectedSessionId ?? SELECTED_SESSION_ID),
   )
@@ -1758,6 +1762,44 @@ export async function setupWorkspaceFixture(
       await respond({ launch: owned ? {
         launchId: owned.launchId, sessionId: owned.id, sessionStatus: owned.status, receipts: owned.promptReceipts || [],
       } : null })
+      return
+    }
+    // As the hub does: a session it starts is named after its folder, and
+    // is last under its computer before the hub answers.
+    const creation = path.match(/^\/api\/computers\/([^/]+)\/sessions$/)
+    if (method === 'POST' && creation) {
+      const owner = fixtureComputers.find((computer) => computer.id === decodeURIComponent(creation[1]!) && computer.online)
+      const input = request.postDataJSON() as { cwd?: unknown; provider?: AgentProvider; terminalBacked?: boolean }
+      if (!owner || typeof input.cwd !== 'string' || !input.cwd.startsWith('/home/demo')) {
+        await reject(route, 'Unexpected fixture session creation')
+        return
+      }
+      const started: ManagedSession = {
+        id: `fixture-started-${++startedSessions}`,
+        computerId: owner.id,
+        computerName: owner.name,
+        title: input.cwd.split('/').at(-1) || 'New session',
+        cwd: input.cwd,
+        provider: input.provider ?? 'copilot',
+        executionMode: input.terminalBacked ? 'tmux' : 'sdk',
+        revision: 1,
+        updatedAt: options.realClock ? new Date().toISOString() : FIXTURE_NOW,
+        status: 'idle',
+        isOpen: true,
+        messages: [],
+      }
+      sessions.push(started)
+      state.sessionOrder = {
+        ...state.sessionOrder,
+        revision: state.sessionOrder.revision + 1,
+        order: {
+          ...state.sessionOrder.order,
+          [owner.id]: [...(state.sessionOrder.order[owner.id] ?? []), `${owner.id}:${started.id}`],
+        },
+      }
+      emit({ type: 'session.upserted', session: started })
+      emit({ type: 'session.order.updated', order: state.sessionOrder })
+      await respond({ session: started }, 201)
       return
     }
     const match = path.match(

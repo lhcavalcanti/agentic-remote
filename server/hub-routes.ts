@@ -31,7 +31,7 @@ import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
 import type { SessionCategoryStore } from './session-category-store.js'
-import { registerSessionCategoryRoutes } from './session-category-routes.js'
+import { listedInSessionOrder, registerSessionCategoryRoutes } from './session-category-routes.js'
 import { SessionUnreadTracker } from './session-unread-tracker.js'
 import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
@@ -480,7 +480,6 @@ export async function registerHubRoutes(
   // skipped, which is what a client's own response already told it.
   let publishOrder: (snapshot: SessionOrderSnapshot) => void = () => {}
   let publishSettings: (settings: SettingsProfileSnapshot) => void = () => {}
-  let publishCategories: (snapshot: SessionCategoriesSnapshot) => void = () => {}
   const requireSessionOrder = (): SessionOrderStore => {
     if (!sessionOrder) {
       throw Object.assign(new Error('Session order is not available'), {
@@ -501,6 +500,20 @@ export async function registerHubRoutes(
     const snapshot = await change(store)
     if (snapshot.revision !== before) publishOrder(snapshot)
     return snapshot
+  }
+  // The order changes the hub makes as sessions come and go (`trackOrder`),
+  // queued so two lifecycle events cannot interleave their read-modify-write
+  // and lose one of them.
+  let orderWork: Promise<unknown> = Promise.resolve()
+  const queueOrderChange = (apply: (store: SessionOrderStore) => Promise<SessionOrderSnapshot>) => {
+    orderWork = orderWork
+      .then(() => commitOrder(apply))
+      .catch((error: unknown) => {
+        // The order is a preference. Losing one update must not take the
+        // event stream down with it.
+        app.log.error({ err: error }, 'Could not update the custom session order')
+      })
+    return orderWork
   }
   const readResource = resourceRequestHandler(app)
   app.addHook('onRequest', async (request, reply) => {
@@ -892,12 +905,7 @@ export async function registerHubRoutes(
   // only such a session may be hidden or marked unread.
   const categoryLifecycle = registerSessionCategoryRoutes(app, {
     store: sessionCategories,
-    listed: (key) => {
-      const separator = key.indexOf(':')
-      return Boolean(sessionOrder) &&
-        sessionOrder!.indexOf(key.slice(0, separator), key.slice(separator + 1)) >= 0
-    },
-    publish: (snapshot) => publishCategories(snapshot),
+    listed: listedInSessionOrder(sessionOrder),
     log: (error, message) => app.log.error({ err: error }, message),
   })
 
@@ -909,6 +917,19 @@ export async function registerHubRoutes(
       try { await provenance?.recordUserSession?.(session) }
       catch (error) { app.log.error({ err: error }, 'Session was created but its launch origin could not be saved') }
       manager.emit('event', { type: 'session.upserted', session })
+      // Listed in the custom order before the browser hears back, so what it
+      // does with the session next, such as putting it in a category, finds
+      // it. A seat the order could not save is tried once more, unless the
+      // session or its computer has gone since; one it still cannot save
+      // leaves the session created, and placing it refused with the reason.
+      await orderWork
+      if (
+        sessionOrder && sessionOrder.indexOf(session.computerId, session.id) < 0 &&
+        !retiredSessions.has(`${session.computerId}:${session.id}`) && !retiredComputers.has(session.computerId)
+      ) {
+        await queueOrderChange((store) =>
+          seatSession(store, session.computerId, session.id, session.replacedSessionIds))
+      }
       return reply.code(201).send({
         session,
       })
@@ -1458,17 +1479,16 @@ export async function registerHubRoutes(
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
   publishSettings = (settings) => broadcast({ type: 'settings.updated', settings })
-  publishCategories = (snapshot) =>
+  // Every commit, whether a browser's, Oracle's, or the hub's own lifecycle
+  // bookkeeping, reaches every browser the same way.
+  const publishCategories = (snapshot: SessionCategoriesSnapshot) =>
     broadcast({ type: 'session.categories.updated', categories: snapshot })
+  sessionCategories?.on('changed', publishCategories)
   /**
    * Keeps the saved order in step with session identity, which is the part a
    * browser cannot be trusted to do: a client that is closed, filtered, or
    * offline would otherwise never record the change.
-   *
-   * Changes are queued so two lifecycle events cannot interleave their
-   * read-modify-write and lose one of them.
    */
-  let orderWork: Promise<unknown> = Promise.resolve()
   // Identities retired since this hub started. Startup seeding works from a
   // listing taken before these arrived, so without them a session removed
   // mid-seed would be appended back after its removal was already applied.
@@ -1499,13 +1519,7 @@ export async function registerHubRoutes(
     if (!sessionOrder) return
     const finished = turns.observe(event)
     const change = (apply: (store: SessionOrderStore) => Promise<SessionOrderSnapshot>) => {
-      orderWork = orderWork
-        .then(() => commitOrder(apply))
-        .catch((error: unknown) => {
-          // The order is a preference. Losing one update must not take the
-          // event stream down with it.
-          app.log.error({ err: error }, 'Could not update the custom session order')
-        })
+      void queueOrderChange(apply)
     }
     if (event.type === 'session.upserted') {
       const { computerId, id, replacedSessionIds } = event.session
@@ -1585,6 +1599,7 @@ export async function registerHubRoutes(
     scheduleNotifications?.off('event', broadcast)
     manager.off('event', trackOrder)
     manager.off('event', trackCategories)
+    sessionCategories?.off('changed', publishCategories)
     // Drain in-flight order work so a closing app leaves no write behind it.
     await seeding
     await orderWork

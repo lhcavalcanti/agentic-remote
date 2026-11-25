@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ComputerSummary, ManagedSession, RuntimeModelOption } from '../shared/contracts.js'
 import type { ManagerMessageSource, ManagerSessionBackend } from '../shared/manager.js'
+import type { SessionCategoriesSnapshot, SessionCategory } from '../shared/session-categories.js'
 import type { NewSessionRuntimesSetting } from '../shared/settings-profile.js'
 import { ManagerMemory } from './manager-memory.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
@@ -15,6 +16,9 @@ import {
 } from './manager-tools.js'
 import * as managerToolsModule from './manager-tools.js'
 import { SchedulerStore } from './scheduler-store.js'
+import { sessionCategoryWriter, type SessionCategoryWriter } from './session-category-routes.js'
+import { SessionCategoryStore } from './session-category-store.js'
+import { SessionOrderStore } from './session-order-store.js'
 
 const computers: ComputerSummary[] = [
   {
@@ -1791,5 +1795,297 @@ describe('manager tools', () => {
     expect(sessions).toContain('Recently closed')
     expect(sessions).toContain('old99999-cccc')
     expect(String(await call('list_skills', {}))).toContain('brainstorming — Explore intent before building')
+  })
+
+  describe('session categories', () => {
+    const open = ['hub:abc12345-aaaa', 'hub:def67890-bbbb']
+    const CATEGORY_TOOLS = ['create_category', 'delete_category', 'list_categories', 'move_sessions', 'rename_category']
+    /** Every browser hears of a commit through these, as the hub routes tell them. */
+    let told: SessionCategoriesSnapshot[]
+
+    /** The hub's categories, changed through the same writer the hub gives Oracle. */
+    async function categories(seed: SessionCategory[] = [], directory = path.join(root, 'hub')) {
+      const order = new SessionOrderStore(directory)
+      await order.initialize()
+      await order.bootstrap({ hub: open })
+      const store = new SessionCategoryStore(directory)
+      await store.initialize()
+      for (const { collapsed, ...category } of seed) {
+        await store.change(store.snapshot().revision, { type: 'create', ...category })
+        if (collapsed) {
+          await store.change(store.snapshot().revision, { type: 'update', categoryId: category.id, collapsed: true })
+        }
+      }
+      told = []
+      store.on('changed', (snapshot) => told.push(snapshot))
+      const writer = sessionCategoryWriter(store, order)
+      host.sessionCategories = writer
+      tools = new Map(createManagerTools(host, (activity) => activities.push(activity)).map((tool) => [tool.name, tool]))
+      return { store, writer }
+    }
+
+    /** Another browser's change lands between Oracle reading the categories and changing them, `times` times. */
+    function interfere(writer: SessionCategoryWriter, times = 1) {
+      let left = times
+      host.sessionCategories = {
+        ...writer,
+        change: async (revision, change) => {
+          if (left > 0) {
+            left -= 1
+            const now = writer.snapshot()
+            await writer.change(now.revision, { type: 'create', id: `other${left}`, name: `Other ${left}` })
+          }
+          return writer.change(revision, change)
+        },
+      }
+      tools = new Map(createManagerTools(host, (activity) => activities.push(activity)).map((tool) => [tool.name, tool]))
+    }
+
+    const untouched = () => {
+      for (const method of ['createSession', 'sendMessage', 'renameSession', 'reopenSession', 'cancel', 'requestCloseConfirmation'] as const) {
+        expect(host[method], method).not.toHaveBeenCalled()
+      }
+    }
+
+    const reviews: SessionCategory = { id: 'reviews', name: 'Reviews', collapsed: false, sessions: open }
+
+    it('offers the category tools only on a hub that keeps categories, reading among the read-only ones', async () => {
+      expect(CATEGORY_TOOLS.filter((name) => tools.has(name))).toEqual([])
+      await categories()
+      expect(CATEGORY_TOOLS.filter((name) => tools.has(name))).toEqual(CATEGORY_TOOLS)
+      expect(CATEGORY_TOOLS.map((name) => managerToolsModule.managerToolMutability(name))).toEqual([
+        'mutation', 'mutation', 'read', 'mutation', 'mutation',
+      ])
+    })
+
+    it('lists the categories in order with each session\'s computer, id, and title', async () => {
+      await categories([
+        reviews,
+        { id: 'plans', name: 'Plans', collapsed: true, sessions: ['hub:old99999-cccc', 'hub:gone'] },
+      ])
+      const listed = String(await call('list_categories', {}))
+      expect(listed).toBe([
+        'Categories (2), top to bottom as the Sessions list shows them:',
+        '1. "Reviews" (id reviews) · expanded · 2 sessions',
+        '   - abc12345-aaaa · development (hub) · "Session abc12345-aaaa"',
+        '   - def67890-bbbb · development (hub) · "Session def67890-bbbb"',
+        '2. "Plans" (id plans) · collapsed · 2 sessions',
+        '   - old99999-cccc · development (hub) · "Session old99999-cccc" · closed; back here if reopened',
+        '   - gone · development (hub) · not in the session list',
+        'Open sessions in no category: 0. They are listed under their computers.',
+      ].join('\n'))
+      expect(told).toEqual([])
+      untouched()
+    })
+
+    it('says there are none, and how many sessions are in none', async () => {
+      await categories()
+      expect(await call('list_categories', {})).toBe(
+        'There are no categories. Open sessions in no category: 2. They are listed under their computers.',
+      )
+    })
+
+    it('creates a category, at a position when asked, and every browser hears of it', async () => {
+      const { store } = await categories([reviews])
+      const created = String(await call('create_category', { name: '  Field   work ' }))
+      const fieldWork = store.snapshot().categories[1]
+      expect(fieldWork).toMatchObject({ name: 'Field work', collapsed: false, sessions: [] })
+      expect(created).toBe(`Created category "Field work" (id ${fieldWork.id}) at position 2 of 2; move sessions into it with move_sessions.`)
+      expect(String(await call('create_category', { name: 'Urgent', position: 1 }))).toContain('at position 1 of 3')
+      expect(store.snapshot().categories.map(({ name }) => name)).toEqual(['Urgent', 'Reviews', 'Field work'])
+      expect(told).toEqual([
+        { revision: 2, categories: [reviews, fieldWork] },
+        store.snapshot(),
+      ])
+      expect(activities).toEqual([
+        { tool: 'create_category', content: 'Created category "Field work"' },
+        { tool: 'create_category', content: 'Created category "Urgent"' },
+      ])
+      // A name taken in another case is refused, and nothing is committed.
+      expect(await call('create_category', { name: 'reviews' })).toMatchObject({
+        resultType: 'failure', error: 'A category named reviews already exists',
+      })
+      expect(told).toHaveLength(2)
+      untouched()
+    })
+
+    it('renames a category named by its id or its name, in any case', async () => {
+      const { store } = await categories([reviews])
+      expect(await call('rename_category', { category: 'REVIEWS', name: 'Code reviews' }))
+        .toBe('Renamed category "Reviews" to "Code reviews" (id reviews).')
+      expect(await call('rename_category', { category: 'reviews', name: 'Code reviews' }))
+        .toBe('Category "Code reviews" (id reviews) already has that name; nothing changed.')
+      expect(store.snapshot().categories).toEqual([{ ...reviews, name: 'Code reviews' }])
+      expect(told).toEqual([store.snapshot()])
+      expect(activities).toEqual([{ tool: 'rename_category', content: 'Renamed category "Reviews" to "Code reviews"' }])
+      untouched()
+    })
+
+    it('deletes a category, and its sessions stay open where they were, under their computers', async () => {
+      const { store } = await categories([reviews, { id: 'plans', name: 'Plans', collapsed: false, sessions: [] }])
+      expect(await call('delete_category', { category: 'Reviews' })).toBe(
+        'Deleted category "Reviews" (id reviews); its 2 sessions are unchanged, listed under their computers again.',
+      )
+      expect(await call('delete_category', { category: 'plans' }))
+        .toBe('Deleted category "Plans" (id plans); it held no sessions.')
+      expect(store.snapshot()).toEqual({ revision: 4, categories: [] })
+      expect(told.map(({ revision }) => revision)).toEqual([3, 4])
+      expect(activities.map(({ content }) => content)).toEqual([
+        'Deleted category "Reviews"; its 2 sessions stay', 'Deleted category "Plans"',
+      ])
+      untouched()
+    })
+
+    it('moves sessions into a category at a position, and out of their categories again', async () => {
+      const { store } = await categories([{ id: 'plans', name: 'Plans', collapsed: false, sessions: [] }, { ...reviews, sessions: [] }])
+      await store.change(2, { type: 'move', sessions: ['hub:abc12345-aaaa'], categoryId: 'plans' })
+      told = []
+      const moved = String(await call('move_sessions', {
+        sessionIds: ['def67890', 'abc12345-aaaa'], category: 'reviews', position: 1,
+      }))
+      expect(moved).toBe(
+        'Moved 2 sessions into "Reviews" (id reviews): [Session def67890-bbbb](?computer=hub&session=def67890-bbbb), ' +
+        '[Session abc12345-aaaa](?computer=hub&session=abc12345-aaaa). Only where they are listed changed.',
+      )
+      expect(store.snapshot().categories.map(({ id, sessions }) => [id, sessions])).toEqual([
+        ['plans', []], ['reviews', ['hub:def67890-bbbb', 'hub:abc12345-aaaa']],
+      ])
+      expect(await call('move_sessions', { sessionIds: ['def67890-bbbb', 'abc12345-aaaa'], category: 'Reviews' }))
+        .toBe('Nothing changed: those sessions are already there.')
+      expect(await call('move_sessions', { sessionIds: ['def67890-bbbb'], category: null })).toBe(
+        'Took 1 session out of its category; it is listed under its computer again: ' +
+        '[Session def67890-bbbb](?computer=hub&session=def67890-bbbb).',
+      )
+      expect(store.snapshot().categories[1].sessions).toEqual(['hub:abc12345-aaaa'])
+      expect(told).toHaveLength(2)
+      expect(activities.map(({ tool, content }) => [tool, content])).toEqual([
+        ['move_sessions', 'Moved 2 sessions into "Reviews"'],
+        ['move_sessions', 'Took 1 session out of its category'],
+      ])
+      untouched()
+    })
+
+    it.each([
+      ['create_category', { name: 'Ideas', position: 1 }, (names: string[]) => expect(names[0]).toBe('Ideas')],
+      ['rename_category', { category: 'Reviews', name: 'Code reviews' }, (names: string[]) => expect(names).toContain('Code reviews')],
+      ['delete_category', { category: 'reviews' }, (names: string[]) => expect(names).not.toContain('Reviews')],
+      ['move_sessions', { sessionIds: ['abc12345'], category: null }, () => undefined],
+    ] as const)('makes %s again against the categories as they stand when another change lands first', async (name, args, check) => {
+      const { store, writer } = await categories([reviews])
+      interfere(writer)
+      const result = await call(name, args)
+      expect(typeof result, JSON.stringify(result)).toBe('string')
+      const names = store.snapshot().categories.map((category) => category.name)
+      expect(names).toContain('Other 0')
+      check(names)
+      if (name === 'move_sessions') expect(store.snapshot().categories[0].sessions).toEqual(['hub:def67890-bbbb'])
+      // Every commit reached the browsers: the other change and Oracle's.
+      expect(told).toEqual([expect.anything(), store.snapshot()])
+    })
+
+    it.each([
+      ['create_category', { name: 'Ideas' }],
+      ['rename_category', { category: 'Reviews', name: 'Code reviews' }],
+      ['delete_category', { category: 'reviews' }],
+      ['move_sessions', { sessionIds: ['abc12345'], category: null }],
+    ] as const)('tries %s only once more when the categories keep changing', async (name, args) => {
+      const { store, writer } = await categories([reviews])
+      interfere(writer, 2)
+      expect(await call(name, args)).toMatchObject({
+        resultType: 'failure',
+        error: 'The categories changed again while this ran, so nothing changed. Read them with list_categories and try again.',
+      })
+      expect(store.snapshot().categories.map(({ id, name: named, sessions }) => [id, named, sessions])).toEqual([
+        ['reviews', 'Reviews', open], ['other1', 'Other 1', []], ['other0', 'Other 0', []],
+      ])
+    })
+
+    it('refuses plainly while the hub cannot use its categories, and leaves their file alone', async () => {
+      const directory = path.join(root, 'newer')
+      await mkdir(directory, { recursive: true })
+      const file = path.join(directory, 'session-categories.json')
+      await writeFile(file, JSON.stringify({ version: 2, revision: 4, categories: [] }))
+      const { store } = await categories([], directory)
+      const reason = store.unavailableReason()!
+      expect(reason).toMatch(/newer release/)
+      for (const [name, args] of [
+        ['list_categories', {}],
+        ['create_category', { name: 'Ideas' }],
+        ['rename_category', { category: 'Reviews', name: 'Code reviews' }],
+        ['delete_category', { category: 'reviews' }],
+        ['move_sessions', { sessionIds: ['abc12345'], category: 'reviews' }],
+      ] as const) {
+        expect(await call(name, args), name).toMatchObject({
+          resultType: 'failure', error: `Categories are unavailable on this hub: ${reason}`,
+        })
+      }
+      expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ version: 2, revision: 4, categories: [] })
+      expect(told).toEqual([])
+    })
+
+    it('names what it cannot find: a category, a session, or a session the list does not hold', async () => {
+      const { store } = await categories([reviews, { id: 'plans', name: 'Plans', collapsed: false, sessions: [] }])
+      const choices = 'Categories: "Reviews" (id reviews), "Plans" (id plans).'
+      for (const [name, args, given] of [
+        ['rename_category', { category: 'Ideas', name: 'New ideas' }, 'Ideas'],
+        ['delete_category', { category: 'ideas' }, 'ideas'],
+        ['move_sessions', { sessionIds: ['abc12345'], category: 'Ideas' }, 'Ideas'],
+      ] as const) {
+        expect(await call(name, args), name).toMatchObject({
+          resultType: 'failure', error: `No category is named or has the id "${given}". ${choices}`,
+        })
+      }
+      expect(await call('move_sessions', { sessionIds: ['abc12345', 'zzz99999'], category: 'plans' })).toMatchObject({
+        resultType: 'failure', error: 'No open session matches zzz99999. Check the roster or call list_sessions.',
+      })
+      expect(await call('move_sessions', { sessionIds: ['abc12345'], category: null, position: 1 })).toMatchObject({
+        resultType: 'failure', error: 'position applies only when moving sessions into a category.',
+      })
+      // Open, but not yet in the list every browser shows, so not placed.
+      vi.mocked(host.listSessions).mockResolvedValueOnce([session('abc12345-aaaa'), session('fresh000-dddd')])
+      expect(await call('move_sessions', { sessionIds: ['fresh000-dddd'], category: 'plans' })).toMatchObject({
+        resultType: 'failure', error: expect.stringContaining('hub:fresh000-dddd is not in the session list'),
+      })
+      expect(told).toEqual([])
+      expect(store.snapshot().revision).toBe(2)
+      // With none at all, it says so.
+      await call('delete_category', { category: 'reviews' })
+      await call('delete_category', { category: 'plans' })
+      expect(await call('rename_category', { category: 'Ideas', name: 'New ideas' })).toMatchObject({
+        resultType: 'failure', error: 'No category is named or has the id "Ideas". There are no categories; create_category makes one.',
+      })
+    })
+
+    it.each([
+      ['an Ask message', 'typed', true, 'Ask mode'],
+      ['a voice turn', 'voice', true, 'voice'],
+      ['a proactive observation', 'proactive', false, 'proactive'],
+      ['a task turn', 'task', false, 'task'],
+    ] as const)('organizes nothing for %s, but still lists the categories', async (_label, kind, ask, said) => {
+      const { store } = await categories([reviews])
+      source = kind
+      answerOnly = ask
+      proactiveSessionIds = new Set(['abc12345-aaaa'])
+      for (const [name, args] of [
+        ['create_category', { name: 'Ideas' }],
+        ['rename_category', { category: 'Reviews', name: 'Code reviews' }],
+        ['delete_category', { category: 'reviews' }],
+        ['move_sessions', { sessionIds: ['abc12345'], category: null }],
+      ] as const) {
+        const result = await call(name, args)
+        expect(result, name).toMatchObject({ resultType: 'failure' })
+        expect(JSON.stringify(result), name).toContain(said)
+      }
+      const listed = String(await call('list_categories', {}))
+      expect(listed).toContain('"Reviews" (id reviews)')
+      // A proactive observation reads only the sessions in it.
+      if (kind === 'proactive') {
+        expect(listed).toContain('abc12345-aaaa')
+        expect(listed).not.toContain('def67890-bbbb')
+        expect(listed).toContain('   - 1 more, outside this observation')
+      }
+      expect(store.snapshot().revision).toBe(1)
+      expect(told).toEqual([])
+    })
   })
 })

@@ -46,9 +46,12 @@ export type SessionCategoryChange =
 
 /** A change the categories as they stand cannot take; `statusCode` is the HTTP answer. */
 export class SessionCategoryRefusal extends Error {
-  constructor(message: string, readonly statusCode: 400 | 404 | 409) {
+  readonly statusCode: 400 | 404 | 409
+
+  constructor(message: string, statusCode: 400 | 404 | 409) {
     super(message)
     this.name = 'SessionCategoryRefusal'
+    this.statusCode = statusCode
   }
 }
 

@@ -1,5 +1,6 @@
 import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
 import type { HubHealth } from '../shared/hub-health'
+import type { SessionCategoriesSnapshot, SessionCategoryChange } from '../shared/session-categories'
 import { skillSettingsSchema, type SkillSettingsSnapshot, type SkillToggle } from '../shared/skill-settings'
 
 export async function listComputerSkills(computerId: string, signal?: AbortSignal): Promise<SkillSettingsSnapshot> {
@@ -469,6 +470,56 @@ export async function bootstrapSessionOrder(
     { method: 'POST', body: JSON.stringify({ order }) },
   )
   return response.sessionOrder
+}
+
+/** The hub's session categories, shared by every browser connected to it. */
+export async function fetchSessionCategories(): Promise<SessionCategoriesSnapshot> {
+  const response = await request<{ sessionCategories: SessionCategoriesSnapshot }>(
+    '/api/session-categories',
+  )
+  return response.sessionCategories
+}
+
+function sessionRefs(keys: readonly string[]) {
+  return keys.map((key) => {
+    const separator = key.indexOf(':')
+    return { computerId: key.slice(0, separator), sessionId: key.slice(separator + 1) }
+  })
+}
+
+/**
+ * Sends one category change, made against the revision this browser holds.
+ * The hub refuses it once another change has moved the revision on.
+ */
+export async function saveSessionCategoryChange(
+  revision: number,
+  change: SessionCategoryChange,
+): Promise<SessionCategoriesSnapshot> {
+  const send = async (path: string, method: string, body?: object) =>
+    (await request<{ sessionCategories: SessionCategoriesSnapshot }>(path, {
+      method,
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    })).sessionCategories
+  const category = (id: string) => `/api/session-categories/${encodeURIComponent(id)}`
+  switch (change.type) {
+    case 'create':
+      return send('/api/session-categories', 'POST', {
+        revision, id: change.id, name: change.name, sessions: sessionRefs(change.sessions ?? []),
+      })
+    case 'update': {
+      const { type: _type, categoryId, ...fields } = change
+      return send(category(categoryId), 'PATCH', { revision, ...fields })
+    }
+    case 'delete':
+      return send(`${category(change.categoryId)}?revision=${revision}`, 'DELETE')
+    case 'move':
+      return send('/api/session-categories/move', 'POST', {
+        revision,
+        categoryId: change.categoryId,
+        ...(change.index === undefined ? {} : { index: change.index }),
+        sessions: sessionRefs(change.sessions),
+      })
+  }
 }
 
 /** Asks the hub something cheap only to learn whether the gateway still lets requests through. */

@@ -26,6 +26,8 @@ import {
   listSessionSkills,
   removeComputer,
   removeQueuedPrompt,
+  fetchSessionCategories,
+  saveSessionCategoryChange,
   removeManagerFile,
   readKnowledgeFile,
   request,
@@ -1012,5 +1014,51 @@ describe('Hub sign-in', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
     await expect(checkHubSignIn()).resolves.toBeUndefined()
     expect(hubSignInExpired()).toBe(true)
+  })
+})
+
+describe('session categories', () => {
+  it('reads the categories and sends each change to its route with its revision', async () => {
+    const snapshot = { revision: 3, categories: [] }
+    const fetchMock = vi.fn(async () => Response.json({ sessionCategories: snapshot }))
+    vi.stubGlobal('fetch', fetchMock)
+    const sent = () => {
+      const [path, init] = fetchMock.mock.calls.at(-1) as unknown as [string, RequestInit]
+      return { path, method: init.method ?? 'GET', body: init.body ? JSON.parse(String(init.body)) : undefined }
+    }
+
+    await expect(fetchSessionCategories()).resolves.toEqual(snapshot)
+    expect(sent()).toEqual({ path: '/api/session-categories', method: 'GET', body: undefined })
+
+    await expect(saveSessionCategoryChange(3, {
+      type: 'create', id: 'lab', name: 'Homelab', sessions: ['hub:a', 'node-1:b:c'],
+    })).resolves.toEqual(snapshot)
+    expect(sent()).toEqual({
+      path: '/api/session-categories',
+      method: 'POST',
+      body: {
+        revision: 3, id: 'lab', name: 'Homelab',
+        sessions: [{ computerId: 'hub', sessionId: 'a' }, { computerId: 'node-1', sessionId: 'b:c' }],
+      },
+    })
+
+    await saveSessionCategoryChange(4, { type: 'update', categoryId: 'a/b', collapsed: true })
+    expect(sent()).toEqual({
+      path: '/api/session-categories/a%2Fb', method: 'PATCH', body: { revision: 4, collapsed: true },
+    })
+
+    await saveSessionCategoryChange(5, { type: 'delete', categoryId: 'lab' })
+    expect(sent()).toEqual({ path: '/api/session-categories/lab?revision=5', method: 'DELETE', body: undefined })
+
+    await saveSessionCategoryChange(6, { type: 'move', sessions: ['hub:a'], categoryId: null })
+    expect(sent()).toEqual({
+      path: '/api/session-categories/move',
+      method: 'POST',
+      body: { revision: 6, categoryId: null, sessions: [{ computerId: 'hub', sessionId: 'a' }] },
+    })
+    await saveSessionCategoryChange(7, { type: 'move', sessions: ['hub:a'], categoryId: 'lab', index: 2 })
+    expect(sent().body).toEqual({
+      revision: 7, categoryId: 'lab', index: 2, sessions: [{ computerId: 'hub', sessionId: 'a' }],
+    })
   })
 })

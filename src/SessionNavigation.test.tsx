@@ -650,7 +650,7 @@ describe('session navigation', () => {
     // The dot repeats what the name already says, so it is not announced.
     const dot = unread.querySelector('.session-item__unread-dot')
     expect(dot).toHaveAttribute('aria-hidden', 'true')
-    expect(open.querySelector('strong')).toContainElement(dot as HTMLElement)
+    expect(open).toContainElement(dot as HTMLElement)
     // The status keeps its own dot and label.
     expect(within(open).getByText('Idle')).toBeVisible()
 
@@ -664,6 +664,29 @@ describe('session navigation', () => {
     const both = row('Parked planning')
     expect(both).toHaveClass('session-item--unread', 'session-item--hidden')
     expect(within(both).getByText('Hidden')).toBeVisible()
+  })
+
+  it('keeps a long title whole in its tooltip and name, with the unread dot beside it rather than in it', () => {
+    const long = 'Collect the review notes and the handbook drafts nobody has opened yet'
+    render(
+      <NavigationHarness
+        initialUnread={['studio:notes']}
+        sessions={new Map([['studio', [{ ...session, id: 'notes', title: long }, question]]])}
+      />,
+    )
+    // The row shows the title on one line; pointing at it or a screen reader gets all of it.
+    const open = screen.getByRole('button', { name: new RegExp(`^${long}, unread, `) })
+    expect(open.getAttribute('title')?.split('\n')[0]).toBe(long)
+    const title = open.querySelector('.session-item__text > strong')
+    expect(title?.textContent).toBe(long)
+
+    // The dot sits in the row's gutter, so the title starts where a read one does.
+    const dot = sessionRow(long).querySelector('.session-item__unread-dot')
+    expect(dot).toHaveAttribute('aria-hidden', 'true')
+    expect(open).toContainElement(dot as HTMLElement)
+    expect(title).not.toContainElement(dot as HTMLElement)
+    const read = screen.getByRole('button', { name: /^Choose a direction,/ })
+    expect(read.querySelector('.session-item__text > strong')?.textContent).toBe('Choose a direction')
   })
 
   it('marks a session read or unread beside Hide, without opening it', () => {

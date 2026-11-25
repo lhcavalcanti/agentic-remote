@@ -289,10 +289,8 @@ function SortableSessionItem({
                 ? null
                 : <SessionState presentation={presentation} />}
             </span>
-            <strong>
-              {unread ? <span aria-hidden="true" className="session-item__unread-dot" /> : null}
-              {session.title}
-            </strong>
+            {unread ? <span aria-hidden="true" className="session-item__unread-dot" /> : null}
+            <strong>{session.title}</strong>
             <small className="session-item__where">
               {showComputer ? <span className="session-item__computer">{computerName}</span> : null}
               <span className="session-item__cwd">{shortPath(session.cwd)}</span>

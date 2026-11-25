@@ -1350,11 +1350,15 @@ test.describe('phone touch targets', () => {
 
 const LONG_ROW_TITLE = 'Collect the review notes and the handbook drafts nobody has opened yet'
 const LONG_TASKS_TITLE = 'Audit the release links across every handbook chapter and the archive'
+/** Titles too long for one line in any row. */
+const longTitles = new Set([
+  LONG_ROW_TITLE, LONG_TASKS_TITLE, 'Review the complete field guide and the scheduled recovery checklist',
+])
 
 /**
- * Rows with one-line and two-line titles, each with and without the Tasks
- * label, besides an unread row and a listed hidden one, whose controls read
- * Mark as read and Show.
+ * Rows with short titles and titles too long for one line, each with and
+ * without the Tasks label, besides an unread row and a listed hidden one,
+ * whose controls read Mark as read and Show.
  */
 function sessionRowsState() {
   const state = createWorkspaceFixtureState()
@@ -1389,6 +1393,9 @@ function sessionRowLayout(row: Element) {
   return {
     title: title.textContent ?? '',
     lines: Math.round(title.getBoundingClientRect().height / Number.parseFloat(getComputedStyle(title).lineHeight)),
+    // Cut short with an ellipsis rather than wrapped.
+    clipped: title.scrollWidth > title.clientWidth && getComputedStyle(title).textOverflow === 'ellipsis',
+    borders: px('border-top-width') + px('border-bottom-width'),
     row: box,
     content: {
       top: box.top + px('border-top-width') + px('padding-top'),
@@ -1403,6 +1410,81 @@ function sessionRowLayout(row: Element) {
     hide: control(/^(Hide|Show) /),
     read: control(/^Mark .+ as (read|unread)$/),
   }
+}
+
+/**
+ * Where a row's badges, title text and folder line start, the middle of the
+ * title's line, its unread dot, and the inner edge of the row's leading bar,
+ * where the gutter for that dot begins.
+ */
+function sessionRowText(row: Element) {
+  const title = row.querySelector('.session-item__text > strong')!
+  const walker = document.createTreeWalker(title, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node && !node.textContent?.trim()) node = walker.nextNode()
+  const range = document.createRange()
+  range.selectNodeContents(node!)
+  const line = range.getClientRects()[0]
+  const left = (selector: string) => row.querySelector(selector)!.getBoundingClientRect().left
+  const dot = row.querySelector('.session-item__unread-dot')?.getBoundingClientRect()
+  return {
+    name: title.textContent ?? '',
+    badges: left('.session-item__badges > :first-child'),
+    title: line.left,
+    titleMiddle: (line.top + line.bottom) / 2,
+    folder: left('.session-item__where > :first-child'),
+    gutter: row.getBoundingClientRect().left + Number.parseFloat(getComputedStyle(row).borderLeftWidth),
+    dot: dot ? { left: dot.left, right: dot.right, top: dot.top, bottom: dot.bottom } : undefined,
+  }
+}
+
+/** The rows of `sessionRowsState`, in the list a phone opens first. */
+async function openSessionRows(page: Page, baseURL: string, touch: boolean) {
+  const fixture = await setupWorkspaceFixture(page, {
+    baseUrl: baseURL,
+    knowledgeMode: 'hidden',
+    state: sessionRowsState(),
+    taskSnapshots: { 'fixture-build:fixture-audit-links': fixtureBackgroundTasks[BACKGROUND_SESSION_ID] },
+  })
+  await page.goto(fixture.url)
+  if (touch) await page.getByRole('button', { name: 'Open sessions', exact: true }).click()
+  return fixture
+}
+
+/** How far the list's first session sits below its top, and how tall each control above it is. */
+function sessionListChrome(nav: Element) {
+  const heights = (selector: string) => [...nav.querySelectorAll(selector)].map((element) => element.getBoundingClientRect().height)
+  return {
+    chrome: nav.querySelector('.session-item')!.getBoundingClientRect().top - nav.getBoundingClientRect().top,
+    controls: {
+      'header buttons': heights('.session-list__actions > button'),
+      order: heights('.session-sort select'),
+      search: heights('.session-search'),
+      filters: heights('.session-filter'),
+      'New category': heights('.session-categories__new'),
+      'category toggles': heights('.session-category__toggle'),
+      'category menus': heights('.session-category__menu-button'),
+      'more sessions': heights('.session-category__more'),
+    },
+  }
+}
+
+/** Each control's height above the sessions, which tightening the chrome leaves alone. */
+const chromeTargets = {
+  desktop: {
+    'header buttons': 30, order: 36, search: 36, filters: 32,
+    'New category': 28, 'category toggles': 30, 'category menus': 28, 'more sessions': 28,
+  },
+  phone: {
+    'header buttons': 44, order: 40, search: 44, filters: 40,
+    'New category': 40, 'category toggles': 40, 'category menus': 40, 'more sessions': 40,
+  },
+}
+
+/** The most room above the first session (#700): 199/154px on a desktop and 249/188px on a phone before. */
+const chromeBudget = {
+  desktop: { 'session-list': 180, 'session-categories': 147 },
+  phone: { 'session-list': 230, 'session-categories': 181 },
 }
 
 for (const viewport of [uiViewports[0], phone]) {
@@ -1534,6 +1616,62 @@ for (const viewport of [uiViewports[0], phone]) {
       })
     }
 
+    // #700: every row keeps a gutter for the unread dot, so a title, its
+    // badges and its folder start at one x whether it is read or not, in a
+    // computer's group, an open category and a closed one's summary.
+    for (const setup of ['computer groups', 'categories'] as const) {
+      test(`start every row's text at one x past the unread gutter in ${setup}`, async ({ page, baseURL }) => {
+        const fixture = setup === 'categories'
+          ? await openScene(page, baseURL, 'session-categories')
+          : await openSessionRows(page, baseURL!, viewport.hasTouch)
+        try {
+          const items = page.getByRole('navigation', { name: 'Sessions', exact: true }).locator('.session-item')
+          await expect(items.first()).toBeVisible()
+          const rows: ReturnType<typeof sessionRowText>[] = []
+          for (const item of await items.all()) rows.push(await item.evaluate(sessionRowText))
+          expect(rows.length, 'rows').toBeGreaterThan(3)
+          const x = rows[0].badges
+          for (const row of rows) {
+            for (const part of ['badges', 'title', 'folder'] as const) {
+              expect(Math.abs(row[part] - x), `${row.name}: ${part} in line`).toBeLessThanOrEqual(0.5)
+            }
+          }
+          const unread = rows.filter((row) => row.dot)
+          expect(unread.map((row) => row.name)).toEqual(['Draft the weekly summary'])
+          for (const { name, dot, gutter, titleMiddle } of unread) {
+            // Clear of the bar and the text, centred between them, on the title's line.
+            expect(dot!.left - gutter, `${name}: dot clear of the bar`).toBeGreaterThanOrEqual(2)
+            expect(x - dot!.right, `${name}: dot clear of the text`).toBeGreaterThanOrEqual(2)
+            expect(Math.abs((dot!.left + dot!.right) / 2 - (gutter + x) / 2), `${name}: dot centred in the gutter`)
+              .toBeLessThanOrEqual(0.5)
+            expect(Math.abs((dot!.top + dot!.bottom) / 2 - titleMiddle), `${name}: dot on the title's line`)
+              .toBeLessThanOrEqual(1)
+          }
+        } finally { fixture.assertHealthy() }
+      })
+    }
+
+    // The header, search, filters, New category and the group or category
+    // header above the first session take less room (#700), and every control
+    // among them keeps its size.
+    for (const scene of ['session-list', 'session-categories'] as const) {
+      test(`keep the chrome above the first session within its budget in ${scene}`, async ({ page, baseURL }) => {
+        const fixture = await openScene(page, baseURL, scene)
+        try {
+          const { chrome, controls } = await page.getByRole('navigation', { name: 'Sessions', exact: true })
+            .evaluate(sessionListChrome)
+          const device = viewport.hasTouch ? 'phone' : 'desktop'
+          expect(chrome, 'chrome above the first session').toBeLessThanOrEqual(chromeBudget[device][scene])
+          for (const [name, heights] of Object.entries(controls)) {
+            for (const height of heights) {
+              expect(height, `${name} height`).toBeGreaterThanOrEqual(chromeTargets[device][name as keyof typeof controls] - 0.5)
+            }
+          }
+          expect(controls['category toggles'].length, 'category headers').toBe(scene === 'session-categories' ? 2 : 0)
+        } finally { fixture.assertHealthy() }
+      })
+    }
+
     // Close, Hide, then Mark as read or unread, as the keyboard reaches them.
     // A mouse gets one column of 22px controls that leaves the title more room;
     // touch keeps Close beside Hide over Read, since a column of 40px targets
@@ -1542,14 +1680,7 @@ for (const viewport of [uiViewports[0], phone]) {
       test(`${viewport.hasTouch ? 'keep Close beside Hide over Read' : 'stack Close, Hide and Read in one column'} in ${setup} rows without making them taller`, async ({ page, baseURL }) => {
         let fixture: Awaited<ReturnType<typeof setupWorkspaceFixture>>
         if (setup === 'plain') {
-          fixture = await setupWorkspaceFixture(page, {
-            baseUrl: baseURL!,
-            knowledgeMode: 'hidden',
-            state: sessionRowsState(),
-            taskSnapshots: { 'fixture-build:fixture-audit-links': fixtureBackgroundTasks[BACKGROUND_SESSION_ID] },
-          })
-          await page.goto(fixture.url)
-          if (viewport.hasTouch) await page.getByRole('button', { name: 'Open sessions', exact: true }).click()
+          fixture = await openSessionRows(page, baseURL!, viewport.hasTouch)
         } else {
           fixture = await openScene(page, baseURL, 'session-origin-tasks')
         }
@@ -1578,8 +1709,8 @@ for (const viewport of [uiViewports[0], phone]) {
             const { title, row: box, content, rest, parts, close, hide, read, ...layout } = await row.evaluate(sessionRowLayout)
             lines.add(layout.lines)
             for (const control of [close, hide, read]) {
-              // A one-line row with the Tasks label is 69.2px, 0.8px short of the
-              // desktop column, which reaches 0.4px into the 2px between rows.
+              // The desktop column is as tall as the row, so it reaches the
+              // row's edges and no further.
               expect(control.top, `${title}: control top`).toBeGreaterThanOrEqual(box.top - 0.5)
               expect(control.bottom, `${title}: control bottom`).toBeLessThanOrEqual(box.bottom + 0.5)
               expect(control.right, `${title}: control right`).toBeLessThanOrEqual(box.right)
@@ -1614,15 +1745,22 @@ for (const viewport of [uiViewports[0], phone]) {
               expect(Math.abs((close.top + read.bottom) / 2 - (content.top + content.bottom) / 2), `${title}: centred on the row`)
                 .toBeLessThanOrEqual(1)
             }
-            // The row is as tall as its content, or a phone's two targets, and
-            // no taller.
-            expect(content.bottom - content.top, `${title}: row height`).toBeCloseTo(Math.max(rest, controlsHeight), 0)
+            // As tall as its controls and no taller (#700): with a mouse their
+            // column reaches the row's edges, and on touch the two targets sit
+            // inside its borders. Only a schedule's run link and Tasks label,
+            // 40px targets of their own, make a row taller.
+            const controls = viewport.hasTouch ? read.bottom - hide.top + layout.borders : read.bottom - close.top
+            expect(box.height, `${title}: row height`).toBeCloseTo(Math.max(controls, rest + layout.borders), 0)
+            if (setup === 'plain' && !viewport.hasTouch) {
+              expect(box.height, `${title}: desktop row height`).toBeLessThanOrEqual(70.5)
+            }
+            // A long title is cut short on its one line rather than wrapped.
+            if (longTitles.has(title)) expect(layout.clipped, `${title}: clipped with an ellipsis`).toBe(true)
           }
           if (viewport.hasTouch) {
             await expectTouchTargets(await rows.getByRole('button', { name: /^(Close |Hide |Show |Mark )/ }).all())
           }
-          // Titles of one and two lines are both measured.
-          if (setup === 'plain') expect([...lines].sort()).toEqual([1, 2])
+          expect([...lines], 'title lines').toEqual([1])
           await assertNoHorizontalOverflow(page)
         } finally { fixture.assertHealthy() }
       })

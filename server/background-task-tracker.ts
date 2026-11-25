@@ -2,6 +2,7 @@ import type {
   BackgroundTask,
   BackgroundTaskSnapshot,
 } from '../shared/contracts.js'
+import type { SessionService } from './session-service.js'
 
 export interface BackgroundTaskUpdate {
   snapshot: BackgroundTaskSnapshot
@@ -37,6 +38,29 @@ export function backgroundTaskSnapshot(
   }
 }
 
+/** Answered `404`: the task is not, or no longer, in its session's list. */
+export function backgroundTaskNotFound(): Error {
+  return Object.assign(new Error('Background task not found'), { statusCode: 404 })
+}
+
+/** One task of a list, or `backgroundTaskNotFound`. */
+export function listedBackgroundTask(snapshot: BackgroundTaskSnapshot, taskId: string): BackgroundTask {
+  const task = snapshot.tasks.find((candidate) => candidate.id === taskId)
+  if (!task) throw backgroundTaskNotFound()
+  return task
+}
+
+/** One task whole from a service, or from a fresh list when it cannot read one. */
+export async function readBackgroundTaskFrom(
+  service: Pick<SessionService, 'listBackgroundTasks' | 'readBackgroundTask'>,
+  sessionId: string,
+  taskId: string,
+): Promise<BackgroundTask> {
+  return service.readBackgroundTask
+    ? service.readBackgroundTask(sessionId, taskId)
+    : listedBackgroundTask(await service.listBackgroundTasks(sessionId), taskId)
+}
+
 export class BackgroundTaskTracker {
   private readonly snapshots = new Map<string, BackgroundTaskSnapshot>()
 
@@ -45,6 +69,17 @@ export class BackgroundTaskTracker {
       this.snapshots.get(sessionId) ||
         backgroundTaskSnapshot([], false),
     )
+  }
+
+  /** Whether a list has been published for the session since it was last removed. */
+  has(sessionId: string): boolean {
+    return this.snapshots.has(sessionId)
+  }
+
+  /** A copy of one task as last published, without copying the rest. */
+  task(sessionId: string, taskId: string): BackgroundTask | undefined {
+    const task = this.snapshots.get(sessionId)?.tasks.find((candidate) => candidate.id === taskId)
+    return task && structuredClone(task)
   }
 
   replace(

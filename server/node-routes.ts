@@ -38,6 +38,8 @@ import {
 } from './file-upload-routes.js'
 import { NodeIdentityStore } from './node-identity.js'
 import type { SessionService } from './session-service.js'
+import { summarizeBackgroundTasks } from '../shared/background-tasks.js'
+import { readBackgroundTaskFrom } from './background-task-tracker.js'
 import { pageWholeSession, windowSession } from '../shared/transcript-window.js'
 import { sessionReadOptions, transcriptPageQuerySchema } from './transcript-window-query.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
@@ -1006,10 +1008,22 @@ export async function registerNodeRoutes(
         },
       )
 
-      node.get<{ Params: { sessionId: string } }>(
+      node.get<{ Params: { sessionId: string }; Querystring: { summary?: string } }>(
         '/sessions/:sessionId/tasks',
-        async (request) =>
-          service.listBackgroundTasks(request.params.sessionId),
+        async (request) => {
+          const snapshot = await service.listBackgroundTasks(request.params.sessionId)
+          // `?summary=1` asks for summaries; a hub from before them never does.
+          return request.query.summary === '1' ? summarizeBackgroundTasks(snapshot) : snapshot
+        },
+      )
+
+      node.get<{ Params: { sessionId: string; taskId: string } }>(
+        '/sessions/:sessionId/tasks/:taskId',
+        async (request, reply) => {
+          // Task output can carry anything a command printed; keep it out of caches.
+          reply.header('cache-control', 'no-store')
+          return readBackgroundTaskFrom(service, request.params.sessionId, request.params.taskId)
+        },
       )
 
       node.get<{ Params: { sessionId: string; toolCallId: string } }>(

@@ -5,8 +5,9 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type WebSocket from 'ws'
 import type {
-  ComputerSummary, HubEvent, HubWireEvent, ManagedSession, ServerEvent, SessionDetail,
+  BackgroundTask, ComputerSummary, HubEvent, HubWireEvent, ManagedSession, ServerEvent, SessionDetail,
 } from '../shared/contracts.js'
+import { summarizeBackgroundTask, summarizeBackgroundTasks } from '../shared/background-tasks.js'
 import { buildApp } from './app.js'
 import type { ComputerManager } from './computer-manager.js'
 import type { NodeIdentityStore } from './node-identity.js'
@@ -215,6 +216,56 @@ describe('/api/events session patches', () => {
     ])
     const whole = await app.inject({ method: 'GET', url: '/api/sessions', headers: trusted })
     expect(whole.json().sessions).toEqual([long, summary])
+  })
+
+  it('sends a socket that asks for task changes summaries and then changes, and any other socket whole lists', async () => {
+    const { app, manager } = await fixture()
+    const changes = await app.injectWS('/api/events?patches=1&window=500&tasks=changes', { headers: trusted })
+    const alone = await app.injectWS('/api/events?tasks=changes', { headers: trusted })
+    const windowed = await app.injectWS('/api/events?patches=1&window=500', { headers: trusted })
+    try {
+      const received = inbox(changes)
+      const separately = inbox(alone)
+      const whole = inbox(windowed)
+      const task = (id: string, recentOutput: string): BackgroundTask => ({
+        id, type: 'shell', description: `Task ${id}`, status: 'running', startedAt: '2026-11-24T12:00:00.000Z',
+        canCancel: false, command: 'pnpm vitest run '.repeat(100), progress: { type: 'shell', recentOutput },
+      })
+      const listed = (tasks: BackgroundTask[]): HubEvent => ({
+        type: 'session.tasks.updated', computerId: 'hub', sessionId: 'one', tasks, runningCount: tasks.length, supported: true,
+      })
+      const first = listed([task('a', 'PASS '.repeat(1_000)), task('b', 'ok')])
+      const second = listed([task('a', 'PASS '.repeat(1_001)), task('b', 'ok')])
+      manager.emit('event', first)
+      manager.emit('event', second)
+      const [summaries, change] = await received.next(2)
+      expect(summaries).toEqual({
+        type: 'session.tasks.updated', computerId: 'hub', sessionId: 'one',
+        ...summarizeBackgroundTasks({ tasks: [task('a', 'PASS '.repeat(1_000)), task('b', 'ok')], runningCount: 2, supported: true }),
+        patchVersion: 1,
+      })
+      expect(change).toEqual({
+        type: 'session.tasks.patched', computerId: 'hub', sessionId: 'one', runningCount: 2, supported: true,
+        patch: { from: 1, to: 2, count: 2, tasks: [summarizeBackgroundTask(task('a', 'PASS '.repeat(1_001)))], removed: [] },
+      })
+      expect((await separately.next(2)).map((event) => event.type)).toEqual(['session.tasks.updated', 'session.tasks.patched'])
+      expect(await whole.next(2)).toEqual([first, second])
+
+      // Asked for again, the latest list comes whole; anything else is ignored.
+      changes.send(JSON.stringify({ type: 'session.tasks.resync', computerId: 'hub', sessionId: 'one', padding: 'x'.repeat(2_000) }))
+      changes.send(JSON.stringify({ type: 'session.tasks.resync', computerId: 'hub', sessionId: 7 }))
+      changes.send(JSON.stringify({ type: 'session.tasks.resync', computerId: 'hub', sessionId: 'one' }))
+      const [, , resynced] = await received.next(3)
+      expect(resynced).toMatchObject({ type: 'session.tasks.updated', summary: true, patchVersion: 2 })
+      windowed.send(JSON.stringify({ type: 'session.tasks.resync', computerId: 'hub', sessionId: 'one' }))
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(received.events).toHaveLength(3)
+      expect(whole.events).toHaveLength(2)
+    } finally {
+      changes.terminate()
+      alone.terminate()
+      windowed.terminate()
+    }
   })
 
   it('still refuses an untrusted origin that asks for patches', async () => {

@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type {
+  BackgroundTask,
+  BackgroundTaskSnapshot,
   ChatMessage,
   HubEvent,
   HubResyncRequest,
+  HubTasksResyncRequest,
   HubWireEvent,
   ManagedSession,
 } from '../shared/contracts.js'
+import { BACKGROUND_TASK_TAIL, summarizeBackgroundTask, summarizeBackgroundTasks } from '../shared/background-tasks.js'
 import { SessionPatchReceiver } from '../src/session-patches.js'
 import { diffMessages, type PatchSocket, SessionPublications } from './session-patches.js'
 
@@ -33,7 +37,8 @@ function session(id: string, messages: ChatMessage[], extra: Partial<ManagedSess
 class Browser {
   readonly sent: string[] = []
   readonly seen = new Map<string, ManagedSession>()
-  readonly resyncs: HubResyncRequest[] = []
+  readonly taskLists = new Map<string, BackgroundTaskSnapshot>()
+  readonly resyncs: Array<HubResyncRequest | HubTasksResyncRequest> = []
   resyncCount = 0
   readonly receiver = new SessionPatchReceiver((request) => {
     this.resyncCount += 1
@@ -43,12 +48,13 @@ class Browser {
   dropNext = false
   readonly socket: PatchSocket
 
-  constructor(patches: boolean, window?: number) {
+  constructor(patches: boolean, window?: number, taskChanges = false) {
     this.socket = {
       readyState: 1,
       send: (payload) => this.deliver(payload),
       ...(patches ? { patchVersions: new Map<string, number>() } : {}),
       ...(window === undefined ? {} : { transcriptWindow: window }),
+      ...(taskChanges ? { taskVersions: new Map<string, number>() } : {}),
     }
   }
 
@@ -65,6 +71,22 @@ class Browser {
       this.seen.set(`${event.session.computerId}:${event.session.id}`, event.session)
     } else if (event?.type === 'session.removed') {
       this.seen.delete(`${event.computerId}:${event.sessionId}`)
+      this.taskLists.delete(`${event.computerId}:${event.sessionId}`)
+    } else if (event?.type === 'session.tasks.updated') {
+      expect(event).not.toHaveProperty('patchVersion')
+      const { type: _type, computerId, sessionId, ...snapshot } = event
+      this.taskLists.set(`${computerId}:${sessionId}`, snapshot)
+    }
+  }
+
+  /** Asks for what it could not apply, as the page does, and is answered in order. */
+  resyncWith(publications: SessionPublications): void {
+    for (const request of this.resyncs.splice(0)) {
+      if (request.type === 'session.tasks.resync') {
+        publications.resyncTasks(this.socket, request.computerId, request.sessionId)
+      } else {
+        publications.resync(this.socket, request.computerId, request.sessionId)
+      }
     }
   }
 }
@@ -485,9 +507,356 @@ describe('windowed session publications', () => {
   })
 })
 
+describe('task publications', () => {
+  const task = (id: string, change: Partial<BackgroundTask> = {}): BackgroundTask => ({
+    id, type: 'shell', description: `Task ${id}`, status: 'completed', startedAt: at, completedAt: at,
+    executionMode: 'background', attachmentMode: 'detached', canCancel: false,
+    command: 'pnpm vitest run '.repeat(60), progress: { type: 'shell', recentOutput: 'PASS '.repeat(400) },
+    ...change,
+  })
+  const running = (id: string, change: Partial<BackgroundTask> = {}) =>
+    task(id, { status: 'running', completedAt: undefined, ...change })
+  const listed = (tasks: BackgroundTask[], sessionId = 'a'): Extract<HubEvent, { type: 'session.tasks.updated' }> => ({
+    type: 'session.tasks.updated', computerId: 'local', sessionId, tasks,
+    runningCount: tasks.filter((entry) => entry.status === 'running').length, supported: true,
+  })
+  const summaries = (event: Extract<HubEvent, { type: 'session.tasks.updated' }>) => {
+    const { type: _type, computerId: _computer, sessionId: _session, ...snapshot } = event
+    return summarizeBackgroundTasks(snapshot)
+  }
+  const frames = (browser: Browser) => browser.sent.map((payload) => JSON.parse(payload) as HubWireEvent)
+  const hundred = () => Array.from({ length: 100 }, (_, index) => index < 10 ? running(`t${index}`) : task(`t${index}`))
+
+  it('sends sockets that did not ask for task changes the whole list, as before', () => {
+    const publications = new SessionPublications()
+    const legacy = new Browser(false)
+    const windowed = new Browser(true, 500)
+    const changes = new Browser(true, 500, true)
+    for (const browser of [legacy, windowed, changes]) publications.add(browser.socket)
+    const first = listed(hundred())
+    const second = listed([running('t-new'), ...hundred()])
+    publications.broadcast(first)
+    publications.broadcast(second)
+    expect(legacy.sent).toEqual([JSON.stringify(first), JSON.stringify(second)])
+    expect(windowed.sent).toEqual(legacy.sent)
+  })
+
+  it('sends a socket that asked the summaries first, then only the tasks that changed or went', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(true, 500, true)
+    publications.add(browser.socket)
+    const tasks = hundred()
+    publications.broadcast(listed(tasks))
+    // A running task prints another line.
+    const printed = tasks.map((entry, index) => index === 3
+      ? { ...entry, progress: { type: 'shell' as const, recentOutput: `${entry.progress!.recentOutput}\nPASS one more` } }
+      : entry)
+    publications.broadcast(listed(printed))
+    // The oldest leaves the list as a new one starts.
+    const turned = [running('t100'), ...printed.slice(0, 99)]
+    publications.broadcast(listed(turned))
+
+    const [first, progress, turnover] = frames(browser)
+    expect(first).toEqual({
+      type: 'session.tasks.updated', computerId: 'local', sessionId: 'a', ...summaries(listed(tasks)), patchVersion: 1,
+    })
+    expect(progress).toEqual({
+      type: 'session.tasks.patched', computerId: 'local', sessionId: 'a', runningCount: 10, supported: true,
+      patch: { from: 1, to: 2, count: 100, tasks: [summarizeBackgroundTask(printed[3])], removed: [] },
+    })
+    expect(turnover).toEqual({
+      type: 'session.tasks.patched', computerId: 'local', sessionId: 'a', runningCount: 11, supported: true,
+      patch: { from: 2, to: 3, count: 100, tasks: [summarizeBackgroundTask(turned[0])], removed: ['t99'] },
+    })
+    // A change to one task costs one summary -- two cut texts and its fields --
+    // however long the list.
+    expect(browser.sent[0].length).toBeLessThan(30_000)
+    expect(browser.sent[1].length).toBeLessThan(2 * BACKGROUND_TASK_TAIL + 600)
+    expect(browser.taskLists.get('local:a')).toEqual(summaries(listed(turned)))
+    expect(browser.resyncCount).toBe(0)
+  })
+
+  it('sends a task whose whole changed though its summary did not, and nothing when nothing changed', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(false, undefined, true)
+    publications.add(browser.socket)
+    const tasks = [task('done'), running('live')]
+    publications.broadcast(listed(tasks))
+    publications.broadcast(listed(structuredClone(tasks)))
+    expect(browser.sent).toHaveLength(1)
+    // Its result arrives after it finished: a reader who has it open reads it again.
+    const resulted = [{ ...tasks[0], result: 'All 42 tests passed' }, tasks[1]]
+    publications.broadcast(listed(resulted))
+    expect(frames(browser)[1]).toMatchObject({
+      type: 'session.tasks.patched', patch: { from: 1, to: 2, tasks: [summarizeBackgroundTask(tasks[0])], removed: [] },
+    })
+    // Counts alone are a change too.
+    publications.broadcast({ ...listed(resulted), runningCount: 0 })
+    expect(frames(browser)[2]).toMatchObject({
+      type: 'session.tasks.patched', runningCount: 0, patch: { from: 2, to: 3, tasks: [], removed: [] },
+    })
+    expect(browser.taskLists.get('local:a')?.runningCount).toBe(0)
+  })
+
+  it('sends the whole list again when every task in it changed', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(false, undefined, true)
+    publications.add(browser.socket)
+    publications.broadcast(listed([running('a'), running('b')]))
+    const finished = listed([task('a'), task('b')])
+    publications.broadcast(finished)
+    expect(frames(browser)[1]).toEqual({
+      type: 'session.tasks.updated', computerId: 'local', sessionId: 'a', ...summaries(finished), patchVersion: 2,
+    })
+  })
+
+  it('keeps the published order, sending the whole list when a change cannot reproduce it', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(false, undefined, true)
+    publications.add(browser.socket)
+    const [a, b, c, d] = [running('a'), task('b'), task('c'), task('d')]
+    publications.broadcast(listed([a, b, c, d]))
+    // The same tasks in another order are a change.
+    publications.broadcast(listed([b, a, c, d]))
+    // A task that turns up below the newest cannot be placed by a change.
+    publications.broadcast(listed([b, a, task('older'), c, d]))
+    // A new task on top, and one gone, can.
+    publications.broadcast(listed([running('newest'), b, a, task('older'), c]))
+    expect(frames(browser).map((frame) => frame.type)).toEqual([
+      'session.tasks.updated', 'session.tasks.updated', 'session.tasks.updated', 'session.tasks.patched',
+    ])
+    expect(browser.taskLists.get('local:a')?.tasks.map((entry) => entry.id))
+      .toEqual(['newest', 'b', 'a', 'older', 'c'])
+  })
+
+  it('answers a task resync with the latest list, and a socket that joins later with the whole list', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(true, 500, true)
+    publications.add(browser.socket)
+    publications.broadcast(listed([running('a'), task('b')]))
+    publications.broadcast(listed([running('a', { pid: 7 }), task('b')]))
+    publications.resyncTasks(browser.socket, 'local', 'a')
+    expect(frames(browser)[2]).toEqual({
+      type: 'session.tasks.updated', computerId: 'local', sessionId: 'a',
+      ...summaries(listed([running('a', { pid: 7 }), task('b')])), patchVersion: 2,
+    })
+    const late = new Browser(true, 500, true)
+    publications.add(late.socket)
+    publications.broadcast(listed([running('a', { pid: 8 }), task('b')]))
+    expect(frames(late)).toEqual([{
+      type: 'session.tasks.updated', computerId: 'local', sessionId: 'a',
+      ...summaries(listed([running('a', { pid: 8 }), task('b')])), patchVersion: 3,
+    }])
+    expect(frames(browser)[3]).toMatchObject({ type: 'session.tasks.patched', patch: { from: 2, to: 3 } })
+    // Nothing is answered for a session never published, or to a socket that did not ask.
+    const legacy = new Browser(true)
+    publications.add(legacy.socket)
+    publications.resyncTasks(browser.socket, 'local', 'missing')
+    publications.resyncTasks(legacy.socket, 'local', 'a')
+    expect(browser.sent).toHaveLength(4)
+    expect(legacy.sent).toHaveLength(0)
+  })
+
+  it('forgets task lists with their session, their computer, and the last socket that asked', () => {
+    const publications = new SessionPublications()
+    const browser = new Browser(false, undefined, true)
+    publications.add(browser.socket)
+    publications.broadcast(listed([running('a')]))
+    publications.broadcast({ type: 'session.removed', computerId: 'local', sessionId: 'a' })
+    publications.broadcast(listed([running('a')]))
+    publications.broadcast(listed([running('b')], 'b'))
+    publications.broadcast({ type: 'computer.removed', computerId: 'local' })
+    publications.broadcast(listed([running('b')], 'b'))
+    expect(frames(browser).map((frame) => frame.type)).toEqual([
+      'session.tasks.updated', 'session.removed', 'session.tasks.updated',
+      'session.tasks.updated', 'computer.removed', 'session.tasks.updated',
+    ])
+    expect(frames(browser).filter((frame) => frame.type === 'session.tasks.updated')
+      .map((frame) => 'patchVersion' in frame && frame.patchVersion)).toEqual([1, 1, 1, 1])
+    publications.delete(browser.socket)
+    expect((publications as unknown as { taskPublications: Map<string, unknown> }).taskPublications.size).toBe(0)
+  })
+
+  it('converges every browser on the tasks last published, whatever happens in between', () => {
+    let patched = 0
+    let resynced = 0
+    for (let seed = seedOffset + 1; seed <= seedOffset + 150; seed += 1) {
+      const next = random(seed)
+      const publications = new SessionPublications()
+      const browsers: Browser[] = []
+      const latest = new Map<string, Extract<HubEvent, { type: 'session.tasks.updated' }>>()
+      const join = () => {
+        const browser = new Browser(next() < 0.5, 500, next() < 0.8)
+        browsers.push(browser)
+        publications.add(browser.socket)
+        // A new page lists every session's tasks before it relies on events.
+        for (const [key, value] of latest) {
+          browser.taskLists.set(key, browser.socket.taskVersions ? summaries(value) : (({ type: _t, computerId: _c, sessionId: _s, ...rest }) => rest)(value))
+        }
+      }
+      join()
+      let made = 0
+      for (let step = 0; step < 120; step += 1) {
+        const choice = next()
+        const id = `s${Math.floor(next() * 3)}`
+        const key = `local:${id}`
+        if (choice < 0.04) {
+          join()
+          continue
+        }
+        if (choice < 0.07 && browsers.length > 1) {
+          const leaving = browsers.splice(Math.floor(next() * browsers.length), 1)[0]
+          leaving.socket.readyState = 3
+          publications.delete(leaving.socket)
+          continue
+        }
+        if (choice < 0.1) {
+          latest.delete(key)
+          publications.broadcast({ type: 'session.removed', computerId: 'local', sessionId: id })
+          continue
+        }
+        if (choice < 0.13) {
+          const flagged = browsers.filter((browser) => browser.socket.taskVersions)
+          if (flagged.length) flagged[Math.floor(next() * flagged.length)].dropNext = true
+        }
+        let tasks = structuredClone(latest.get(key)?.tasks ?? [])
+        const edit = next()
+        if (edit < 0.3 || !tasks.length) {
+          made += 1
+          tasks.unshift(running(`t${made}`, { command: `run ${made}` }))
+          if (tasks.length > 12) tasks = tasks.slice(0, 12)
+        } else if (edit < 0.6) {
+          const index = Math.floor(next() * tasks.length)
+          const progress = tasks[index].progress ?? { type: 'shell' as const }
+          tasks[index] = { ...tasks[index], progress: { ...progress, recentOutput: `${progress.recentOutput ?? ''} line ${step}` } }
+        } else if (edit < 0.75) {
+          const index = Math.floor(next() * tasks.length)
+          tasks[index] = { ...tasks[index], status: 'completed', completedAt: at, canCancel: false }
+        } else if (edit < 0.82) {
+          const index = Math.floor(next() * tasks.length)
+          tasks[index] = { ...tasks[index], result: `result ${step}` }
+        } else if (edit < 0.88) {
+          tasks.splice(Math.floor(next() * tasks.length), 1)
+        } else if (edit < 0.92) {
+          // An older task turns up below the newest, or two trade places.
+          made += 1
+          const index = Math.floor(next() * tasks.length)
+          if (next() < 0.5) {
+            tasks.splice(index, 0, task(`t${made}`))
+          } else {
+            const other = Math.floor(next() * tasks.length)
+            ;[tasks[index], tasks[other]] = [tasks[other], tasks[index]]
+          }
+        }
+        // Otherwise the same list again, as a node's resync sends it.
+        const published = listed(tasks, id)
+        latest.set(key, published)
+        publications.broadcast(published)
+        for (const browser of browsers) browser.resyncWith(publications)
+      }
+      // One last change everywhere, so a lost frame cannot go unnoticed.
+      for (const [key, value] of latest) {
+        const settled = listed([running(`settle-${key}`), ...value.tasks], value.sessionId)
+        latest.set(key, settled)
+        publications.broadcast(settled)
+        for (const browser of browsers) browser.resyncWith(publications)
+      }
+      for (const [key, value] of latest) {
+        const { type: _type, computerId: _computer, sessionId: _session, ...whole } = value
+        for (const browser of browsers) {
+          // In the published order, too.
+          expect(browser.taskLists.get(key), `seed ${seed} ${key}`)
+            .toEqual(browser.socket.taskVersions ? summaries(value) : JSON.parse(JSON.stringify(whole)))
+        }
+      }
+      for (const browser of browsers) {
+        for (const key of browser.taskLists.keys()) expect(latest.has(key), `seed ${seed} removed ${key}`).toBe(true)
+        patched += browser.sent.filter((payload) => payload.startsWith('{"type":"session.tasks.patched"')).length
+        resynced += browser.resyncCount
+      }
+    }
+    // Not vacuous: most deliveries were changes, and lost frames were recovered.
+    expect(patched).toBeGreaterThan(2_000)
+    expect(resynced).toBeGreaterThan(50)
+  })
+})
+
+describe('task patch receiver', () => {
+  const task = (id: string, change: Partial<BackgroundTask> = {}): BackgroundTask => ({
+    id, type: 'shell', description: id, status: 'running', startedAt: at, canCancel: false, ...change,
+  })
+  const whole = (tasks: BackgroundTask[], patchVersion?: number): HubWireEvent => ({
+    type: 'session.tasks.updated', computerId: 'local', sessionId: 'a', tasks, runningCount: tasks.length,
+    supported: true, summary: true, ...(patchVersion === undefined ? {} : { patchVersion }),
+  })
+  const patch = (from: number, to: number, change: Partial<{ count: number; tasks: BackgroundTask[]; removed: string[] }> = {}): HubWireEvent => ({
+    type: 'session.tasks.patched', computerId: 'local', sessionId: 'a', runningCount: 1, supported: true,
+    patch: { from, to, count: 2, tasks: [], removed: [], ...change },
+  })
+
+  it('applies changed and removed tasks to the list it holds, keeping the unchanged ones as they were', () => {
+    const receiver = new SessionPatchReceiver(() => { throw new Error('no resync expected') })
+    const held = [task('a'), task('b'), task('c')]
+    receiver.receive(whole(held, 4))
+    const changed = task('b', { status: 'completed', completedAt: at })
+    const event = receiver.receive(patch(4, 5, { count: 3, tasks: [task('d'), changed], removed: ['c'] }))
+    expect(event).toEqual({
+      type: 'session.tasks.updated', computerId: 'local', sessionId: 'a',
+      tasks: [task('d'), held[0], changed], runningCount: 1, supported: true, summary: true,
+    })
+    // What did not change is the very same task, so an open one is not read again.
+    expect(event?.type === 'session.tasks.updated' && event.tasks[1]).toBe(held[0])
+    expect(receiver.receive(patch(5, 6, { count: 3 }))).toMatchObject({ type: 'session.tasks.updated', runningCount: 1 })
+  })
+
+  it('asks once for a list whose change does not apply, and drops changes until it arrives', () => {
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
+    const receiver = new SessionPatchReceiver((request) => requests.push(request))
+    expect(receiver.receive(patch(1, 2))).toBeUndefined()
+    expect(receiver.receive(patch(2, 3))).toBeUndefined()
+    expect(requests).toEqual([{ type: 'session.tasks.resync', computerId: 'local', sessionId: 'a' }])
+    expect(receiver.receive(whole([task('a'), task('b')], 7))).toEqual(whole([task('a'), task('b')]))
+    expect(receiver.receive(patch(6, 8))).toBeUndefined()
+    expect(requests).toHaveLength(2)
+  })
+
+  it('rejects a change whose count does not add up', () => {
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
+    const receiver = new SessionPatchReceiver((request) => requests.push(request))
+    receiver.receive(whole([task('a'), task('b')], 1))
+    expect(receiver.receive(patch(1, 2, { count: 3, tasks: [task('a', { pid: 1 })] }))).toBeUndefined()
+    expect(requests).toEqual([{ type: 'session.tasks.resync', computerId: 'local', sessionId: 'a' }])
+  })
+
+  it('passes a whole list without a version through, and holds no base for it', () => {
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
+    const receiver = new SessionPatchReceiver((request) => requests.push(request))
+    receiver.receive(whole([task('a')], 1))
+    // A hub from before task changes, or one that sent this socket whole lists.
+    const old: HubWireEvent = {
+      type: 'session.tasks.updated', computerId: 'local', sessionId: 'a', tasks: [task('a')], runningCount: 1, supported: true,
+    }
+    expect(receiver.receive(old)).toEqual(old)
+    expect(receiver.receive(patch(1, 2, { count: 1 }))).toBeUndefined()
+    expect(requests).toHaveLength(1)
+  })
+
+  it('forgets the lists of a removed session and of a removed computer', () => {
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
+    const receiver = new SessionPatchReceiver((request) => requests.push(request))
+    receiver.receive(whole([task('a'), task('b')], 1))
+    receiver.receive({ type: 'session.removed', computerId: 'local', sessionId: 'a' })
+    expect(receiver.receive(patch(1, 2))).toBeUndefined()
+    receiver.receive(whole([task('a'), task('b')], 3))
+    receiver.receive({ type: 'computer.removed', computerId: 'local' })
+    expect(receiver.receive(patch(3, 4))).toBeUndefined()
+    expect(requests).toHaveLength(2)
+  })
+})
+
 describe('session patch receiver', () => {
   it('asks once for a session whose patch does not apply, and drops patches until it arrives', () => {
-    const requests: HubResyncRequest[] = []
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
     const receiver = new SessionPatchReceiver((request) => requests.push(request))
     const { messages: _messages, ...summary } = session('a', [])
     const patch = (from: number, to: number): HubWireEvent => ({
@@ -504,7 +873,7 @@ describe('session patch receiver', () => {
   })
 
   it('rejects a patch whose counts do not add up', () => {
-    const requests: HubResyncRequest[] = []
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
     const receiver = new SessionPatchReceiver((request) => requests.push(request))
     receiver.receive({ type: 'session.upserted', session: session('a', []), patchVersion: 1 })
     const { messages: _messages, ...summary } = session('a', [])
@@ -515,7 +884,7 @@ describe('session patch receiver', () => {
   })
 
   it('treats a whole session without a version as having no base', () => {
-    const requests: HubResyncRequest[] = []
+    const requests: Array<HubResyncRequest | HubTasksResyncRequest> = []
     const receiver = new SessionPatchReceiver((request) => requests.push(request))
     receiver.receive({ type: 'session.upserted', session: session('a', []), patchVersion: 1 })
     receiver.receive({ type: 'session.upserted', session: session('a', []) })

@@ -223,6 +223,16 @@ describe('SessionCategoryStore', () => {
     }
   })
 
+  it('starts with categories unavailable rather than failing when its file cannot be read', async () => {
+    const directory = await folder()
+    await mkdir(path.join(directory, 'session-categories.json'))
+    const { store: categories } = await store(directory)
+
+    expect(categories.unavailableReason()).toMatch(/cannot be read/)
+    await expect(categories.change(0, { type: 'create', id: 'lab', name: 'Homelab' }))
+      .rejects.toMatchObject({ statusCode: 503 })
+  })
+
   it('keeps the last committed categories when a write fails', async () => {
     const { store: categories, directory } = await store()
     await categories.change(0, { type: 'create', id: 'lab', name: 'Homelab' })

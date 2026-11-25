@@ -100,7 +100,11 @@ export class SessionCategoryStore {
     try {
       raw = await readFile(this.statePath, 'utf8')
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        this.unavailable = `Session categories at ${this.statePath} cannot be read (${
+          (error as NodeJS.ErrnoException).code ?? 'unknown error'}); categories are unavailable until it can be`
+        return
+      }
       await this.persist()
       return
     }
@@ -142,9 +146,17 @@ export class SessionCategoryStore {
       categories: loaded,
       closed: remembered,
     }
-    if (this.expire(this.state)) {
-      this.state.revision += 1
-      await this.persist()
+    // Closed sessions that expired while the hub was down leave their
+    // categories now; if that cannot be saved, the next commit tries again.
+    const loadedState = this.state
+    const pruned: CategoryState = { ...loadedState, closed: { ...loadedState.closed } }
+    if (this.expire(pruned)) {
+      this.state = { ...pruned, revision: loadedState.revision + 1 }
+      try {
+        await this.persist()
+      } catch {
+        this.state = loadedState
+      }
     }
   }
 

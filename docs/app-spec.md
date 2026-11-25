@@ -284,7 +284,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   reconnect, and foreground return MUST refresh authoritative session state;
   they MUST NOT issue a second resume mutation or present continuity before
   the owner reports recovery complete.
-  Explicit Close and Delete permanently MUST stay user-confirmed (§3.3).
+  Close and Delete permanently MUST remain explicit user actions (§3.3).
   See [Session retention](session-retention.md) for settings and cleanup cadence.
 - An open new-session dialog MUST preserve user choices across computer status
   updates. If its computer becomes unavailable, it MUST select an available
@@ -520,7 +520,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   leaves the list, custom order, and hidden set; discovery, restart recovery, and
   provider listings MUST NOT list it as open, and sends to it are refused until
   it is reopened. A computer that does not advertise recoverable close offers
-  only Delete permanently.
+  only Delete permanently. The confirmation MUST open with the focus on
+  **Close session**, so Enter closes the session to Recently closed; when
+  Delete permanently is its only action, the dialog itself takes the focus, so
+  Enter never deletes a session for good.
 - Sessions are no longer suspended. When a computer loads a session an older
   release suspended, it MUST close it as Close records it, except that the
   work still waiting for it (queued messages, a failed send, a context brief)
@@ -530,7 +533,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   archived stays as it was, and loading again changes nothing.
 - **Recently closed**, in the Sessions header between Refresh and New session,
   MUST list closed sessions newest first with when each closed and will be
-  deleted, its context, **Reopen**, and a confirmed **Delete permanently**.
+  deleted, its context, **Reopen**, and **Delete permanently**, which deletes
+  at once without asking again.
   The context MUST show three lines each of the prompts and the last reply,
   with **Show more** only when that cuts something. A desktop puts Reopen and
   Delete permanently beside each card's title and the prompts beside the
@@ -539,8 +543,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   computer MUST delete a closed session permanently 14 days after it closed,
   checking at startup and hourly; a failed deletion is logged and retried at
   the next check.
-- **Delete permanently** MUST close the owning provider process/session after
-  confirmation and remove Agentic Remote state and session uploads. A session
+- **Delete permanently** MUST close the owning provider process/session and
+  remove Agentic Remote state and session uploads. A session
   selected while another one is closing MUST stay selected; only a reader
   still on the closed session moves to a remaining one.
 

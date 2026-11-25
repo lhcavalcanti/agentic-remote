@@ -285,6 +285,42 @@ for (const device of devices) {
       }
     })
 
+    test('Close opens on Close session, so Enter closes, and only the keyboard shows that focus', async ({ page }, testInfo) => {
+      const { fixture, list } = await open(page, testInfo.project.use.baseURL!, phone)
+      const title = 'Draft the weekly summary'
+      const focusShown = (button: Locator) => button.evaluate((element) => element.matches(':focus-visible'))
+      try {
+        const confirmation = await closeFromRow(list, title)
+        const close = confirmation.getByRole('button', { name: 'Close session', exact: true })
+        await expect(close).toBeFocused()
+        expect(await focusShown(close)).toBe(false)
+        await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+        await expect(confirmation).toHaveCount(0)
+
+        const opener = row(list, title).getByRole('button', { name: `Close ${title}` })
+        await opener.focus()
+        await page.keyboard.press('Enter')
+        await expect(close).toBeFocused()
+        expect(await focusShown(close)).toBe(true)
+        await page.keyboard.press('Escape')
+        await expect(confirmation).toHaveCount(0)
+        await expect(opener).toBeFocused()
+
+        await page.keyboard.press('Enter')
+        await expect(close).toBeFocused()
+        await page.keyboard.press('Enter')
+        await expect(confirmation).toHaveCount(0)
+        await expect(row(await sessions(page, phone), title)).toHaveCount(0)
+        expect(fixture.requests).toContainEqual({
+          method: 'POST',
+          path: '/api/computers/fixture-studio/sessions/fixture-draft-summary/close',
+        })
+        expect(fixture.requests.filter((request) => request.method === 'DELETE')).toEqual([])
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+
     test('Delete permanently removes a session at once, from either place', async ({ page }, testInfo) => {
       const { fixture, list } = await open(page, testInfo.project.use.baseURL!, phone)
       try {
@@ -302,9 +338,14 @@ for (const device of devices) {
 
         await current.getByRole('button', { name: 'Recently closed, 1 session' }).click()
         const recent = page.getByRole('dialog', { name: 'Recently closed' })
-        page.once('dialog', (prompt) => void prompt.accept())
+        const prompts: string[] = []
+        page.on('dialog', (prompt) => {
+          prompts.push(prompt.message())
+          void prompt.dismiss()
+        })
         await recent.getByRole('button', { name: 'Delete Profile the nightly sync permanently' }).click()
         await expect(recent).toContainText('Nothing closed in the last 14 days.')
+        expect(prompts).toEqual([])
         expect(fixture.requests.filter((request) => request.method === 'DELETE')).toEqual([
           { method: 'DELETE', path: '/api/computers/fixture-studio/sessions/fixture-draft-summary' },
           { method: 'DELETE', path: '/api/computers/fixture-build/sessions/fixture-profile-sync' },

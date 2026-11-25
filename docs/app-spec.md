@@ -104,7 +104,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   open session marked unread MUST stay unread until it is opened again or the
   app becomes visible again. Unread rows MUST carry a bold title, an accent dot,
   a bar on each side in the dot's colour, and "unread" in their accessible
-  name, distinct from the status, attention, and hidden cues.
+  name, distinct from the status, attention, and hidden cues. The dot MUST sit
+  in a gutter every row reserves before its text, so a title, its badges and
+  its folder start at the same place whether the session is read or not.
   Unread state is hub-owned and shared by every browser like hidden state: it
   MUST follow Clear and Recover replacements and MUST be dropped on close,
   delete, and unpair. The Unread filter MUST show its count, counting hidden
@@ -240,7 +242,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   **Mark as read**/**Mark as unread**, in that order for the keyboard too,
   without making the row taller: in one column where the pointer can hover,
   and on a touch screen with Close in a column of its own beside Hide over
-  Mark as read. Close MUST use the same confirmation, close lifecycle
+  Mark as read. A row's title MUST take one line, ending in an ellipsis where
+  it does not fit; the row's tooltip and accessible name keep the whole title.
+  Close MUST use the same confirmation, close lifecycle
   (§3.3), and owning-computer route as **Close session**.
   Hide and Show MUST stay available while the owning computer is offline, since
   the hub keeps them.

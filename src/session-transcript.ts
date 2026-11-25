@@ -1,6 +1,15 @@
 import type { ChatMessage, ManagedSession } from '../shared/contracts'
 import { TRANSCRIPT_CARRIED_LIMIT, type TranscriptPage } from '../shared/transcript-window'
 
+/**
+ * Whether the browser already holds this session's transcript: messages the
+ * event socket pushed or a read brought, or an answer saying it is empty. A
+ * listing's summary holds none.
+ */
+export function holdsTranscript(session: ManagedSession): boolean {
+  return session.messages.length > 0 || session.messagesTotal !== undefined
+}
+
 function isRunning(message: ChatMessage): boolean {
   return message.role === 'activity' && message.activityStatus === 'running'
 }

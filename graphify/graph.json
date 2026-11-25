@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "c0ebac913daafbad3676ea800fe0c294dc444eec",
+  "built_at_commit": "5844fa81c167f9d0479c2792eb122c8141cdd9a5",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -96311,7 +96311,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1408",
+      "source_location": "L1428",
       "target": "server_client_presence_clientpresence_remove",
       "weight": 1.0
     },
@@ -96323,7 +96323,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1404",
+      "source_location": "L1424",
       "target": "server_client_presence_clientpresence_update",
       "weight": 1.0
     },
@@ -96335,7 +96335,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L933",
+      "source_location": "L953",
       "target": "server_computer_manager_computermanager_activatesession",
       "weight": 1.0
     },
@@ -96347,7 +96347,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1245",
+      "source_location": "L1265",
       "target": "server_computer_manager_computermanager_asksession",
       "weight": 1.0
     },
@@ -96359,7 +96359,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1235",
+      "source_location": "L1255",
       "target": "server_computer_manager_computermanager_cancel",
       "weight": 1.0
     },
@@ -96371,7 +96371,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1300",
+      "source_location": "L1320",
       "target": "server_computer_manager_computermanager_cancelbackgroundtask",
       "weight": 1.0
     },
@@ -96383,7 +96383,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1228",
+      "source_location": "L1248",
       "target": "server_computer_manager_computermanager_cancelwithack",
       "weight": 1.0
     },
@@ -96395,7 +96395,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L579",
+      "source_location": "L589",
       "target": "server_computer_manager_computermanager_capturecomputerregistration",
       "weight": 1.0
     },
@@ -96407,7 +96407,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1063",
+      "source_location": "L1083",
       "target": "server_computer_manager_computermanager_clearconversation",
       "weight": 1.0
     },
@@ -96419,7 +96419,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1314",
+      "source_location": "L1334",
       "target": "server_computer_manager_computermanager_closesession",
       "weight": 1.0
     },
@@ -96431,7 +96431,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L961",
+      "source_location": "L981",
       "target": "server_computer_manager_computermanager_configureretention",
       "weight": 1.0
     },
@@ -96443,7 +96443,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1120",
+      "source_location": "L1140",
       "target": "server_computer_manager_computermanager_configureruntime",
       "weight": 1.0
     },
@@ -96455,7 +96455,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L906",
+      "source_location": "L916",
       "target": "server_computer_manager_computermanager_createsession",
       "weight": 1.0
     },
@@ -96467,7 +96467,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1328",
+      "source_location": "L1348",
       "target": "server_computer_manager_computermanager_deletesession",
       "weight": 1.0
     },
@@ -96479,7 +96479,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1146",
+      "source_location": "L1166",
       "target": "server_computer_manager_computermanager_dispatchqueuedprompt",
       "weight": 1.0
     },
@@ -96491,7 +96491,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1187",
+      "source_location": "L1207",
       "target": "server_computer_manager_computermanager_executecommand",
       "weight": 1.0
     },
@@ -96503,7 +96503,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L748",
+      "source_location": "L758",
       "target": "server_computer_manager_computermanager_getsession",
       "weight": 1.0
     },
@@ -96515,7 +96515,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1260",
+      "source_location": "L1280",
       "target": "server_computer_manager_computermanager_listbackgroundtasks",
       "weight": 1.0
     },
@@ -96527,7 +96527,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L563",
+      "source_location": "L573",
       "target": "server_computer_manager_computermanager_listclosedsessions",
       "weight": 1.0
     },
@@ -96539,7 +96539,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L819",
+      "source_location": "L829",
       "target": "server_computer_manager_computermanager_listcommands",
       "weight": 1.0
     },
@@ -96551,7 +96551,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L533",
+      "source_location": "L543",
       "target": "server_computer_manager_computermanager_listcomputers",
       "weight": 1.0
     },
@@ -96563,7 +96563,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L714",
+      "source_location": "L724",
       "target": "server_computer_manager_computermanager_listdirectories",
       "weight": 1.0
     },
@@ -96575,7 +96575,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L559",
+      "source_location": "L569",
       "target": "server_computer_manager_computermanager_listhistory",
       "weight": 1.0
     },
@@ -96587,7 +96587,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L604",
+      "source_location": "L614",
       "target": "server_computer_manager_computermanager_listknowledge",
       "weight": 1.0
     },
@@ -96599,7 +96599,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L840",
+      "source_location": "L850",
       "target": "server_computer_manager_computermanager_listmcpservers",
       "weight": 1.0
     },
@@ -96611,7 +96611,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1546",
+      "source_location": "L1560",
       "target": "server_computer_manager_computermanager_listsessions",
       "weight": 1.0
     },
@@ -96623,7 +96623,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L556",
+      "source_location": "L566",
       "target": "server_computer_manager_computermanager_listsessionswithauthority",
       "weight": 1.0
     },
@@ -96635,7 +96635,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L831",
+      "source_location": "L841",
       "target": "server_computer_manager_computermanager_listskills",
       "weight": 1.0
     },
@@ -96647,7 +96647,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L776",
+      "source_location": "L786",
       "target": "server_computer_manager_computermanager_listworkspace",
       "weight": 1.0
     },
@@ -96659,7 +96659,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1099",
+      "source_location": "L1119",
       "target": "server_computer_manager_computermanager_movetoterminal",
       "weight": 1.0
     },
@@ -96671,7 +96671,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L924",
+      "source_location": "L944",
       "target": "server_computer_manager_computermanager_providerruntimeoptions",
       "weight": 1.0
     },
@@ -96683,7 +96683,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1286",
+      "source_location": "L1306",
       "target": "server_computer_manager_computermanager_readactivitydetail",
       "weight": 1.0
     },
@@ -96695,7 +96695,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1272",
+      "source_location": "L1292",
       "target": "server_computer_manager_computermanager_readbackgroundtask",
       "weight": 1.0
     },
@@ -96707,7 +96707,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L697",
+      "source_location": "L707",
       "target": "server_computer_manager_computermanager_readknowledgefile",
       "weight": 1.0
     },
@@ -96719,7 +96719,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L762",
+      "source_location": "L772",
       "target": "server_computer_manager_computermanager_readmessages",
       "weight": 1.0
     },
@@ -96731,7 +96731,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L743",
+      "source_location": "L753",
       "target": "server_computer_manager_computermanager_readsession",
       "weight": 1.0
     },
@@ -96743,7 +96743,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L792",
+      "source_location": "L802",
       "target": "server_computer_manager_computermanager_readworkspacefile",
       "weight": 1.0
     },
@@ -96755,7 +96755,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1218",
+      "source_location": "L1238",
       "target": "server_computer_manager_computermanager_reconcilelaunch",
       "weight": 1.0
     },
@@ -96767,7 +96767,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1079",
+      "source_location": "L1099",
       "target": "server_computer_manager_computermanager_recoverconversation",
       "weight": 1.0
     },
@@ -96779,7 +96779,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L538",
+      "source_location": "L548",
       "target": "server_computer_manager_computermanager_registercomputer",
       "weight": 1.0
     },
@@ -96791,7 +96791,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L545",
+      "source_location": "L555",
       "target": "server_computer_manager_computermanager_removecomputer",
       "weight": 1.0
     },
@@ -96803,7 +96803,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1133",
+      "source_location": "L1153",
       "target": "server_computer_manager_computermanager_removequeuedprompt",
       "weight": 1.0
     },
@@ -96815,7 +96815,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L947",
+      "source_location": "L967",
       "target": "server_computer_manager_computermanager_renamesession",
       "weight": 1.0
     },
@@ -96827,7 +96827,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1173",
+      "source_location": "L1193",
       "target": "server_computer_manager_computermanager_reorderqueuedprompts",
       "weight": 1.0
     },
@@ -96839,7 +96839,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1341",
+      "source_location": "L1361",
       "target": "server_computer_manager_computermanager_replypermission",
       "weight": 1.0
     },
@@ -96851,7 +96851,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1358",
+      "source_location": "L1378",
       "target": "server_computer_manager_computermanager_replyuserinput",
       "weight": 1.0
     },
@@ -96863,7 +96863,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1089",
+      "source_location": "L1109",
       "target": "server_computer_manager_computermanager_restartsession",
       "weight": 1.0
     },
@@ -96875,7 +96875,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1109",
+      "source_location": "L1129",
       "target": "server_computer_manager_computermanager_runtimeoptions",
       "weight": 1.0
     },
@@ -96887,7 +96887,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L807",
+      "source_location": "L817",
       "target": "server_computer_manager_computermanager_searchworkspace",
       "weight": 1.0
     },
@@ -96899,7 +96899,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1200",
+      "source_location": "L1220",
       "target": "server_computer_manager_computermanager_sendmessage",
       "weight": 1.0
     },
@@ -96911,7 +96911,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1159",
+      "source_location": "L1179",
       "target": "server_computer_manager_computermanager_updatequeuedprompt",
       "weight": 1.0
     },
@@ -96923,7 +96923,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L594",
+      "source_location": "L604",
       "target": "server_computer_manager_computermanager_validateknowledgeroot",
       "weight": 1.0
     },
@@ -96935,7 +96935,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L727",
+      "source_location": "L737",
       "target": "server_computer_manager_computermanager_validatesessiondirectory",
       "weight": 1.0
     },
@@ -96947,7 +96947,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L518",
+      "source_location": "L528",
       "target": "server_hub_routes_hostallowed",
       "weight": 1.0
     },
@@ -96959,7 +96959,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1580",
+      "source_location": "L1594",
       "target": "server_hub_routes_managereventsource_off",
       "weight": 1.0
     },
@@ -96971,7 +96971,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1383",
+      "source_location": "L1403",
       "target": "server_hub_routes_managereventsource_on",
       "weight": 1.0
     },
@@ -96983,7 +96983,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L519",
+      "source_location": "L529",
       "target": "server_hub_routes_originallowed",
       "weight": 1.0
     },
@@ -96995,7 +96995,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L681",
+      "source_location": "L691",
       "target": "server_hub_routes_scopedknowledgepath",
       "weight": 1.0
     },
@@ -97007,7 +97007,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L703",
+      "source_location": "L713",
       "target": "server_hub_routes_scopeknowledgefile",
       "weight": 1.0
     },
@@ -97019,7 +97019,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L684",
+      "source_location": "L694",
       "target": "server_hub_routes_scopeknowledgelisting",
       "weight": 1.0
     },
@@ -97031,7 +97031,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1022",
+      "source_location": "L1042",
       "target": "server_hub_routes_sessionmutecarrier_setsessionmuted",
       "weight": 1.0
     },
@@ -97043,7 +97043,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L980",
+      "source_location": "L1000",
       "target": "server_hub_routes_sessionmutecarrier_settings",
       "weight": 1.0
     },
@@ -97055,7 +97055,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L673",
+      "source_location": "L683",
       "target": "server_knowledge_store_knowledgestore_getroot",
       "weight": 1.0
     },
@@ -97067,7 +97067,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L587",
+      "source_location": "L597",
       "target": "server_knowledge_store_knowledgestore_getrootconfinement",
       "weight": 1.0
     },
@@ -97079,7 +97079,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L567",
+      "source_location": "L577",
       "target": "server_knowledge_store_knowledgestore_listroots",
       "weight": 1.0
     },
@@ -97091,7 +97091,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L662",
+      "source_location": "L672",
       "target": "server_knowledge_store_knowledgestore_removeroot",
       "weight": 1.0
     },
@@ -97103,7 +97103,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L550",
+      "source_location": "L560",
       "target": "server_knowledge_store_knowledgestore_removerootsforcomputer",
       "weight": 1.0
     },
@@ -97115,7 +97115,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L633",
+      "source_location": "L643",
       "target": "server_knowledge_store_knowledgestore_reserveroot",
       "weight": 1.0
     },
@@ -97127,7 +97127,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1419",
+      "source_location": "L1439",
       "target": "server_notification_center_service_notificationcenterservice_admission",
       "weight": 1.0
     },
@@ -97151,7 +97151,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L524",
+      "source_location": "L534",
       "target": "server_oracle_voice_routes_registeroraclevoiceroutes",
       "weight": 1.0
     },
@@ -97163,7 +97163,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L576",
+      "source_location": "L586",
       "target": "server_refusal_metrics_noterefusalreason",
       "weight": 1.0
     },
@@ -97175,7 +97175,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L898",
+      "source_location": "L908",
       "target": "server_session_category_routes_listedinsessionorder",
       "weight": 1.0
     },
@@ -97187,7 +97187,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L896",
+      "source_location": "L906",
       "target": "server_session_category_routes_registersessioncategoryroutes",
       "weight": 1.0
     },
@@ -97199,7 +97199,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L527",
+      "source_location": "L537",
       "target": "server_session_knowledge_routes_registersessionknowledgeroutes",
       "weight": 1.0
     },
@@ -97211,7 +97211,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1496",
+      "source_location": "L1516",
       "target": "server_session_order_store_sessionorderstore_appendsession",
       "weight": 1.0
     },
@@ -97223,7 +97223,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L888",
+      "source_location": "L898",
       "target": "server_session_order_store_sessionorderstore_bootstrap",
       "weight": 1.0
     },
@@ -97235,7 +97235,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L994",
+      "source_location": "L927",
       "target": "server_session_order_store_sessionorderstore_indexof",
       "weight": 1.0
     },
@@ -97247,7 +97247,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1533",
+      "source_location": "L1547",
       "target": "server_session_order_store_sessionorderstore_removecomputer",
       "weight": 1.0
     },
@@ -97259,7 +97259,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1526",
+      "source_location": "L1540",
       "target": "server_session_order_store_sessionorderstore_removesession",
       "weight": 1.0
     },
@@ -97271,7 +97271,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L861",
+      "source_location": "L871",
       "target": "server_session_order_store_sessionorderstore_replacelane",
       "weight": 1.0
     },
@@ -97283,7 +97283,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1033",
+      "source_location": "L1053",
       "target": "server_session_order_store_sessionorderstore_replacesession",
       "weight": 1.0
     },
@@ -97295,7 +97295,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L876",
+      "source_location": "L886",
       "target": "server_session_order_store_sessionorderstore_setsessionhidden",
       "weight": 1.0
     },
@@ -97307,7 +97307,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L877",
+      "source_location": "L887",
       "target": "server_session_order_store_sessionorderstore_setsessionunread",
       "weight": 1.0
     },
@@ -97319,7 +97319,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L851",
+      "source_location": "L861",
       "target": "server_session_order_store_sessionorderstore_setvisibility",
       "weight": 1.0
     },
@@ -97331,7 +97331,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L503",
+      "source_location": "L499",
       "target": "server_session_order_store_sessionorderstore_snapshot",
       "weight": 1.0
     },
@@ -97343,7 +97343,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1368",
+      "source_location": "L1388",
       "target": "server_session_patches_sessionpublications",
       "weight": 1.0
     },
@@ -97355,7 +97355,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1405",
+      "source_location": "L1425",
       "target": "server_session_patches_sessionpublications_add",
       "weight": 1.0
     },
@@ -97367,7 +97367,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1460",
+      "source_location": "L1480",
       "target": "server_session_patches_sessionpublications_broadcast",
       "weight": 1.0
     },
@@ -97379,7 +97379,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1407",
+      "source_location": "L1427",
       "target": "server_session_patches_sessionpublications_delete",
       "weight": 1.0
     },
@@ -97391,7 +97391,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1396",
+      "source_location": "L1416",
       "target": "server_session_patches_sessionpublications_resync",
       "weight": 1.0
     },
@@ -97403,7 +97403,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1398",
+      "source_location": "L1418",
       "target": "server_session_patches_sessionpublications_resynctasks",
       "weight": 1.0
     },
@@ -97439,7 +97439,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L510",
+      "source_location": "L520",
       "target": "server_session_resources_issessionresourceroute",
       "weight": 1.0
     },
@@ -97451,7 +97451,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L508",
+      "source_location": "L518",
       "target": "server_session_resources_resourcerequesthandler",
       "weight": 1.0
     },
@@ -97463,7 +97463,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1479",
+      "source_location": "L1499",
       "target": "server_session_unread_tracker_sessionunreadtracker",
       "weight": 1.0
     },
@@ -97475,7 +97475,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1500",
+      "source_location": "L1520",
       "target": "server_session_unread_tracker_sessionunreadtracker_observe",
       "weight": 1.0
     },
@@ -97487,7 +97487,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L892",
+      "source_location": "L902",
       "target": "server_settings_profile_routes_registersettingsprofileroutes",
       "weight": 1.0
     },
@@ -97499,7 +97499,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L740",
+      "source_location": "L750",
       "target": "server_transcript_window_query_sessionreadoptions",
       "weight": 1.0
     },
@@ -97523,7 +97523,7 @@
       "relation": "calls",
       "source": "server_hub_routes_registerhubroutes",
       "source_file": "server/hub-routes.ts",
-      "source_location": "L1305",
+      "source_location": "L1325",
       "target": "shared_background_tasks_summarizebackgroundtasks",
       "weight": 1.0
     },
@@ -186263,7 +186263,7 @@
       "relation": "contains",
       "source": "server_session_category_routes_test",
       "source_file": "server/session-category-routes.test.ts",
-      "source_location": "L296",
+      "source_location": "L317",
       "target": "server_session_category_routes_test_fakemanager",
       "weight": 1.0
     },
@@ -186296,7 +186296,7 @@
       "relation": "contains",
       "source": "server_session_category_routes_test",
       "source_file": "server/session-category-routes.test.ts",
-      "source_location": "L306",
+      "source_location": "L327",
       "target": "server_session_category_routes_test_inbox",
       "weight": 1.0
     },
@@ -186318,7 +186318,7 @@
       "relation": "contains",
       "source": "server_session_category_routes_test",
       "source_file": "server/session-category-routes.test.ts",
-      "source_location": "L315",
+      "source_location": "L336",
       "target": "server_session_category_routes_test_starthub",
       "weight": 1.0
     },
@@ -186498,7 +186498,7 @@
       "relation": "references",
       "source": "server_session_category_routes_test_fakemanager",
       "source_file": "server/session-category-routes.test.ts",
-      "source_location": "L297",
+      "source_location": "L318",
       "target": "shared_contracts_computersummary",
       "weight": 1.0
     },
@@ -186546,7 +186546,7 @@
       "relation": "calls",
       "source": "server_session_category_routes_test_starthub",
       "source_file": "server/session-category-routes.test.ts",
-      "source_location": "L327",
+      "source_location": "L348",
       "target": "server_app_buildapp",
       "weight": 1.0
     },
@@ -383346,7 +383346,7 @@
       "label": "inbox()",
       "norm_label": "inbox()",
       "source_file": "server/session-category-routes.test.ts",
-      "source_location": "L306"
+      "source_location": "L327"
     },
     {
       "_callable": true,
@@ -383370,7 +383370,7 @@
       "label": "startHub()",
       "norm_label": "starthub()",
       "source_file": "server/session-category-routes.test.ts",
-      "source_location": "L315"
+      "source_location": "L336"
     },
     {
       "_callable": true,

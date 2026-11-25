@@ -194,8 +194,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   as a session the sheet starts, and put the session in the category once it
   exists. It MUST be disabled, saying why, while the category lists no session,
   or while that computer is offline or lacks Copilot. A hub MUST list a
-  session it creates in its custom order before answering, so the session can
-  go into a category at once.
+  session it creates in its custom order before answering, trying a seat it
+  could not save once more, so the session can go into a category at once; a
+  session it still cannot list stays created, and the browser MUST report why
+  it could not go into the category.
 - Category changes are revisioned: each names the revision it was made against
   and the hub MUST refuse one made against a revision it has moved past. A
   browser MAY show a change at once, MUST send its changes one at a time, and

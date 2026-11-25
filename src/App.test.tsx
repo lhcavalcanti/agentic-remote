@@ -23608,6 +23608,29 @@ describe('App', () => {
         expect(saveSessionCategoryChange).not.toHaveBeenCalled()
         expect(hubCategories.categories[0].sessions).toEqual([key(other)])
       })
+
+      it('says why when the hub cannot put the started session in the category, and keeps it open', async () => {
+        listed([session, other])
+        hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other])] }
+        const started = { ...other, id: 'started', title: 'Started', messages: [] }
+        vi.mocked(createSession).mockResolvedValue(started)
+        vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+          [session, other, started].find((candidate) => candidate.id === id) ?? session)
+        vi.mocked(saveSessionCategoryChange).mockRejectedValueOnce(new SubmissionError(
+          'Session computer-1:started is not in the session list; reload the session list', 409))
+
+        render(<App />)
+        await screen.findByLabelText('Message')
+        fireEvent.click(await startIn('Homelab'))
+
+        expect(await within(screen.getByRole('main')).findByText(
+          'Could not put Started in Homelab: Session computer-1:started is not in the session list; reload the session list',
+        )).toBeVisible()
+        expect(hubCategories.categories[0].sessions).toEqual([key(other)])
+        openList()
+        expect(within(region(computer.name)).getByRole('button', { name: /^Started,/ }))
+          .toHaveAttribute('aria-current', 'page')
+      })
     })
   })
 

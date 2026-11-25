@@ -288,6 +288,27 @@ describe('hub session category routes', () => {
     expect(members(owned.categories)).toEqual([['lab', ['hub:a', 'hub:new']]])
     await app.close()
   })
+
+  it('tries a created session\'s seat once more when the order could not save it, before answering', async () => {
+    const owned = await stores({ hub: ['hub:a'] })
+    await owned.categories.change(0, { type: 'create', id: 'lab', name: 'Lab', sessions: ['hub:a'] })
+    vi.spyOn(owned.sessionOrder, 'appendSession').mockRejectedValueOnce(new Error('No space left on device'))
+    const { app } = await hub(owned, {
+      createSession: async () => ({ id: 'new', computerId: 'hub', title: 'New', cwd: '/tmp/work' }),
+    })
+
+    const created = await app.inject({
+      method: 'POST', url: '/api/computers/hub/sessions', headers: host, payload: { cwd: '/tmp/work' },
+    })
+    expect(created.statusCode).toBe(201)
+    expect(owned.sessionOrder.indexOf('hub', 'new')).toBe(1)
+    const moved = await app.inject({
+      method: 'POST', url: '/api/session-categories/move', headers: host,
+      payload: { revision: 1, categoryId: 'lab', sessions: [{ computerId: 'hub', sessionId: 'new' }] },
+    })
+    expect(moved.statusCode).toBe(200)
+    await app.close()
+  })
 })
 
 describe('session.categories.updated', () => {

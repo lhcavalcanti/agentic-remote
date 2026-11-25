@@ -4,10 +4,13 @@ import type {
   ManagedSession,
 } from '../shared/contracts'
 import type { SessionCategory } from '../shared/session-categories'
+import { DEFAULT_SESSION_PROVIDER } from '../shared/settings-profile'
+import { computerProviders } from './session-setup/runtime-presentation'
 import {
   matchesSessionSearch,
   sessionKey,
   sessionPresentation,
+  sortSessionView,
   taskSnapshot,
 } from './session-presentation'
 
@@ -32,6 +35,36 @@ export interface SessionCategorySection {
   working: boolean
   /** Collapsed, how many of its sessions are not shown. */
   more: number
+  /**
+   * The most recently active of its sessions the list includes, whether or
+   * not it is shown: a new session in the category starts beside it.
+   */
+  latest?: ManagedSession
+}
+
+/** Where a new session in a category starts, or why one cannot start there now. */
+export type CategoryNewSession =
+  | { computer: ComputerSummary; cwd: string }
+  | { unavailable: string }
+
+/**
+ * A new session in a category starts on the computer and in the folder of
+ * its most recently active session, with the New session dialog's default
+ * provider, which that computer has to be online and offer.
+ */
+export function categoryNewSession(
+  latest: ManagedSession | undefined,
+  computers: ReadonlyMap<string, ComputerSummary>,
+): CategoryNewSession {
+  if (!latest) return { unavailable: 'Needs a session in it first' }
+  const computer = computers.get(latest.computerId)
+  if (!computer) return { unavailable: 'Its computer is no longer paired' }
+  if (!computer.online) return { unavailable: `${computer.name} is offline` }
+  const provider = computerProviders(computer).find((entry) => entry.id === DEFAULT_SESSION_PROVIDER)
+  if (!provider?.available) {
+    return { unavailable: `${provider?.name ?? 'GitHub Copilot'} is unavailable on ${computer.name}` }
+  }
+  return { computer, cwd: latest.cwd }
 }
 
 export interface CategorizedSessions {
@@ -122,6 +155,7 @@ export function sessionNavigationView(
       attention: included.filter(({ state }) => state.needsAttention).length,
       unread: included.filter((entry) => entry.unread).length,
       working: included.some(({ state }) => state.working),
+      latest: sortSessionView(included.map(({ session }) => session), 'recent', backgroundTasks)[0],
     }
     if (filtering) {
       const shown = included.filter((entry) => matches(entry, entry.computer)).map(({ session }) => session)

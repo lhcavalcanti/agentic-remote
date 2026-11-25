@@ -251,6 +251,9 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 | `rename_session`, `cancel_session` | Rename it, or stop the current turn |
 | `close_session` | Ask you to close it; a closed session stays reopenable for 14 days. A request to pause or set aside sessions is handled this way. You confirm or decline in the app; the agent cannot confirm for you, so a prompt injected through a transcript cannot close anything. With `sessionClosePolicy: 'oracle-started'` it closes an idle session Oracle started, named by its full id, without asking, under the checks in [Closing without asking](#closing-without-asking) |
 | `reopen_session` | Reopen a recently closed session through the owning computer's reopen lifecycle, sending nothing; an offline computer is refused without asking it |
+| `list_categories` | The categories the Sessions list is organized into, top to bottom: each one's id, name, whether it is collapsed, and its sessions (id, computer, title; closed ones marked as kept for Reopen), and how many open sessions are in none. Read-only, so Ask and voice may use it; a proactive observation sees only its own sessions |
+| `create_category`, `rename_category`, `delete_category` | Make a category, at a position or last; rename one; or delete one, whose sessions stay under their computers. A category is named by its id or its name in any case |
+| `move_sessions` | Move up to 100 sessions, named as for the other session tools, into a category at a position or last, or out of their categories (`category: null`) |
 | `list_skills` | Your skills (name and description) through the runtime's `skills.discover`, so delegated prompts can name them |
 | `memory_list`, `memory_read`, `memory_write`, `memory_append`, `memory_delete` | The agent's memory |
 | `structured_memory_search` | Search active records in the exact scopes available to this Oracle turn |
@@ -259,6 +262,26 @@ hub's [settings profile](settings-profile.md), so it follows you to every device
 Sessions are addressed by ID; the computer is resolved from the live list. Tool
 errors return as tool results the model can read, never as thrown failures that
 end the turn.
+
+### Organizing sessions into categories
+
+The category tools exist on a hub that keeps categories, and Oracle uses them
+only when you ask, as in "group my sessions by project". They read and change
+the hub's `SessionCategoryStore`
+through the writer the hub routes use, so a change is held to a browser's
+rules: it names the revision it was planned against, and only a session the
+custom order lists can be placed. When another change lands first, the tool
+plans its change again on the categories as they then stand, once; a second
+miss changes nothing and says so. While the hub cannot use its categories
+file, every tool refuses with the store's reason. Each commit the store makes
+reaches every browser as `session.categories.updated`, the same event a
+browser's own change produces.
+
+Organizing only changes where sessions are listed: the tools never close,
+delete, interrupt, message, or otherwise touch a session. Changing categories
+counts as acting on sessions, so it is refused in Ask turns, and voice,
+proactive, and task turns refuse it with the other mutations; reading them is
+allowed in each.
 
 ### Closing without asking
 
@@ -456,9 +479,10 @@ The normal persisted `ManagerMessage` stores immutable `source: 'voice'`;
 historical user messages without a source load as typed. The store preserves
 the first source for a message ID across queued edits, retries, event updates,
 restart recovery, and compaction. At the manager tool handler, a centralized
-read-only allowlist permits voice to inspect computers, sessions, skills, and
-memory and to ask read-only side questions. Every other current or future tool
-fails closed for voice, including memory changes and `set_session_folder`.
+read-only allowlist permits voice to inspect computers, sessions, categories,
+skills, and memory and to ask read-only side questions. Every other current or
+future tool fails closed for voice, including memory changes, category changes,
+and `set_session_folder`.
 Typed Ask keeps its intentional memory/settings behavior and typed Delegate
 remains unchanged.
 
@@ -503,7 +527,10 @@ browser requirements, topology, and licences.
 
 - Unit tests for the store (path confinement, limits, journal rotation), the
   roster and context builder, the journal recorder (transitions only, removal,
-  replacement), and each tool against a fake host.
+  replacement), and each tool against a fake host. The category tools run
+  against a real category store: revisions, the retry after another change,
+  unavailable categories, unknown sessions and categories, and every commit
+  told to the hub's listeners.
 - Runtime tests with a fake SDK client: queueing, streaming, watchdog,
   rung-by-rung recovery, restart mid-turn, and exclusion from discovery.
 - Route tests: validation, `202`, Origin refusal, and WebSocket events.

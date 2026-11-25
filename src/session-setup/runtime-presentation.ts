@@ -3,6 +3,7 @@ import type {
   AgentProvider,
   AgentProviderCapability,
   ComputerSummary,
+  CreateSessionInput,
   RuntimeModelOption,
   RuntimeOptions,
   RuntimeReasoningEffort,
@@ -88,5 +89,28 @@ export function normalizedRuntimeSelection(
       ? selection.contextTier
       : 'default',
     mode: selection.mode,
+  }
+}
+
+/**
+ * The runtime a new session starts with from a provider's New-session
+ * setting: its model, once the provider's own list confirms it, with that
+ * model's effort and context size, and its mode.
+ */
+export function newSessionRuntimeInput(
+  selection: DefaultRuntimeSelection,
+  models: RuntimeModelOption[] | undefined,
+): Pick<CreateSessionInput, 'model' | 'reasoningEffort' | 'contextTier' | 'mode'> {
+  const runtime = models ? normalizedRuntimeSelection(selection, models) : undefined
+  const model = runtime?.model.trim()
+  return {
+    ...(model && runtime
+      ? {
+          model,
+          ...(runtime.reasoningEffort ? { reasoningEffort: runtime.reasoningEffort } : {}),
+          contextTier: runtime.contextTier,
+        }
+      : {}),
+    ...(selection.mode ? { mode: selection.mode } : {}),
   }
 }

@@ -10,6 +10,7 @@ import {
   type ManagerEvent,
 } from '../shared/manager.js'
 import type { OracleTask } from '../shared/oracle-task.js'
+import type { SessionCategoriesSnapshot } from '../shared/session-categories.js'
 import {
   ManagerAgent,
   type ManagerAgentOptions,
@@ -25,6 +26,9 @@ import { ManagerStore, registryKey } from './manager-store.js'
 import { ManagerStructuredMemoryRuntime } from './manager-structured-memory-runtime.js'
 import { ManagerStructuredMemoryStore } from './manager-structured-memory-store.js'
 import { unfinishedOracleTaskSessions } from './oracle-task-store.js'
+import { sessionCategoryWriter } from './session-category-routes.js'
+import { SessionCategoryStore } from './session-category-store.js'
+import { SessionOrderStore } from './session-order-store.js'
 
 type Behavior = (session: FakeSession, prompt: string) => void | Promise<void>
 
@@ -1483,6 +1487,40 @@ describe('ManagerAgent', () => {
     expect(input).toMatchObject({ provider: 'copilot' })
     expect(input).not.toHaveProperty('model')
     expect(input).not.toHaveProperty('mode')
+  })
+
+  it("organizes the hub's categories as a browser does, when given them, without touching a session", async () => {
+    const directory = path.join(root, 'hub')
+    const order = new SessionOrderStore(directory)
+    await order.initialize()
+    await order.bootstrap({ hub: ['hub:existing'] })
+    const categories = new SessionCategoryStore(directory)
+    await categories.initialize()
+    const told: SessionCategoriesSnapshot[] = []
+    categories.on('changed', (snapshot) => told.push(snapshot))
+    let results: unknown[] = []
+    sdk.behaviors.push(async (fakeSession) => {
+      results = [
+        await fakeSession.tool('create_category')({ name: 'Reviews' }),
+        await fakeSession.tool('move_sessions')({ sessionIds: ['existing'], category: 'Reviews' }),
+        await fakeSession.tool('list_categories')({}),
+      ]
+      reply('Grouped them.')(fakeSession, '')
+    })
+    await start({ sessionCategories: sessionCategoryWriter(categories, order) })
+    await agent!.send('group my sessions')
+    await settled()
+
+    expect(String(results[2])).toContain('   - existing · development (hub) · "Session existing"')
+    expect(categories.snapshot().categories).toEqual([
+      { id: expect.any(String), name: 'Reviews', collapsed: false, sessions: ['hub:existing'] },
+    ])
+    expect(told).toEqual([expect.anything(), categories.snapshot()])
+    expect(agent!.snapshot().messages.filter((message) => message.role === 'activity').map(({ content }) => content))
+      .toEqual(['Created category "Reviews"', 'Moved 1 session into "Reviews"'])
+    for (const method of ['createSession', 'sendMessage', 'renameSession', 'activateSession', 'cancel', 'closeSession'] as const) {
+      expect(hub[method], method).not.toHaveBeenCalled()
+    }
   })
 
   it('reads models from the hub catalog of the computer and provider asked about', async () => {

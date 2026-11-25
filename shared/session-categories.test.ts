@@ -34,6 +34,18 @@ describe('session category changes', () => {
     ])
   })
 
+  it('creates a category at a place among the others, an index past either end being that end', () => {
+    const urgent = { id: 'urgent', name: 'Urgent', collapsed: false, sessions: [] }
+    expect(applySessionCategoryChange([homelab, reviews], { type: 'create', id: 'urgent', name: 'Urgent', index: 0 }))
+      .toEqual([urgent, homelab, reviews])
+    expect(applySessionCategoryChange([homelab, reviews], { type: 'create', id: 'urgent', name: 'Urgent', index: 1 }))
+      .toEqual([homelab, urgent, reviews])
+    expect(applySessionCategoryChange([homelab, reviews], { type: 'create', id: 'urgent', name: 'Urgent', index: 9 }))
+      .toEqual([homelab, reviews, urgent])
+    expect(applySessionCategoryChange([homelab, reviews], { type: 'create', id: 'urgent', name: 'Urgent', index: -2 }))
+      .toEqual([urgent, homelab, reviews])
+  })
+
   it('refuses a category that is malformed, already exists, or one too many', () => {
     expect(refusal([homelab], { type: 'create', id: 'other', name: '   ' }).status).toBe(400)
     expect(refusal([homelab], {

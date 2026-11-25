@@ -199,6 +199,7 @@ import {
   type SessionCategoryChange,
 } from '../shared/session-categories'
 import {
+  categoryNewSession,
   reorderSessionLaneWithHiddenFollowers,
   sessionNavigationView,
   stepVisibleSession,
@@ -295,9 +296,11 @@ import {
   clearConversation,
   recoverConversation,
   configureRetention,
+  createSession,
   deleteSession,
   closeSession,
   executeCommand,
+  getProviderRuntimeOptions,
   getPushSettings,
   getSession,
   readSessionMessages,
@@ -372,6 +375,7 @@ import {
   oracleNotificationTags,
 } from '../shared/notifications'
 import {
+  DEFAULT_SESSION_PROVIDER,
   type AppearanceSetting,
   type NewSessionBackendSetting,
   type SettingsProfileKey,
@@ -439,6 +443,7 @@ import { RuntimeDialog } from './session-setup/RuntimeDialog'
 import {
   compactTokens,
   computerProviders,
+  newSessionRuntimeInput,
 } from './session-setup/runtime-presentation'
 import type {
   DefaultRuntimeSettings,
@@ -13312,6 +13317,54 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   }
 
   /**
+   * Starts a session where a category's latest work happens, on that
+   * session's computer and in its folder, as New session would with its
+   * defaults, and puts it in the category once it exists.
+   */
+  async function startSessionInCategory(categoryId: string) {
+    const category = sessionCategories.categories.find((entry) => entry.id === categoryId)
+    const section = navigationView.categories.find((entry) => entry.category.id === categoryId)
+    if (!category || !section) return
+    const target = categoryNewSession(section.latest, new Map(computers.map((entry) => [entry.id, entry])))
+    if ('unavailable' in target) return
+    const { computer, cwd } = target
+    const provider = DEFAULT_SESSION_PROVIDER
+    const terminalBacked = newSessionBackend !== 'sdk' &&
+      computerProviders(computer).find((entry) => entry.id === provider)?.terminalBacked === true
+    sessionCreationIntentRef.current += 1
+    const creation = sessionCreationStarted({
+      computerId: computer.id,
+      cwd,
+      executionMode: terminalBacked ? 'tmux' : 'sdk',
+      provider,
+    })
+    try {
+      const runtime = defaultRuntimes[provider]
+      // As in New session, a configured model is checked against the ones
+      // the provider offers on that computer.
+      const models = runtime.model.trim()
+        ? (await getProviderRuntimeOptions(computer.id, provider)).models
+        : undefined
+      await creation.turn
+      const session = await createSession(computer.id, {
+        cwd,
+        provider,
+        terminalBacked,
+        allowAllPermissions: true,
+        ...newSessionRuntimeInput(runtime, models),
+      })
+      created(session, creation)
+      changeCategories(
+        { type: 'move', sessions: [sessionKey(session)], categoryId },
+        `Could not put ${session.title} in ${category.name}`,
+        `Started ${session.title} in ${category.name}`,
+      )
+    } catch (caught) {
+      sessionCreationFailed(creation, caught instanceof Error ? caught.message : String(caught))
+    }
+  }
+
+  /**
    * A dragged session dropped on a category, on one of a category's sessions,
    * or, from a category, back under its own computer, where it takes the place
    * it kept there. Answers whether the drop was about categories at all: an
@@ -13395,6 +13448,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     },
     onDeleteCategory: (categoryId) => setCategoryDialog({ kind: 'delete', categoryId }),
     onNewCategory: () => setCategoryDialog({ kind: 'create' }),
+    onNewSessionInCategory: (categoryId) => void startSessionInCategory(categoryId),
   } : undefined
 
   function changeSessionSort(sort: SessionSort) {

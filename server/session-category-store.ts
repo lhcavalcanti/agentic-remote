@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { CLOSED_SESSION_RETENTION_MS } from '../shared/closed-sessions.js'
@@ -107,12 +108,14 @@ function parseState(parsed: Fields): { state: CategoryState; extra: Fields; cate
  * version, or one that cannot be read, is left untouched and categories are
  * unavailable rather than reset or allowed to stop the hub starting.
  *
- * Every commit increments `revision` and persists before it is reported. A
- * browser's change names the revision it was made against and is refused once
- * the hub has moved past it; lifecycle changes the hub observes itself apply
- * whatever the revision.
+ * Every commit increments `revision`, persists before it is reported, and is
+ * then told to the store's `changed` listeners, which the hub sends every
+ * browser: a browser's change, Oracle's, and one the hub makes itself all
+ * reach them alike. A browser's change names the revision it was made
+ * against and is refused once the hub has moved past it; lifecycle changes
+ * the hub observes itself apply whatever the revision.
  */
-export class SessionCategoryStore {
+export class SessionCategoryStore extends EventEmitter<{ changed: [snapshot: SessionCategoriesSnapshot] }> {
   private readonly statePath: string
   private readonly now: () => number
   private state: CategoryState = { revision: 0, categories: [], closed: {} }
@@ -139,6 +142,7 @@ export class SessionCategoryStore {
   private retired = new Map<string, { categoryId: string; index: number }>()
 
   constructor(private readonly directory: string, options: { now?: () => number } = {}) {
+    super()
     this.statePath = path.join(directory, 'session-categories.json')
     this.now = options.now ?? Date.now
   }
@@ -413,6 +417,7 @@ export class SessionCategoryStore {
         this.retired = retired
         throw error
       }
+      this.emit('changed', this.snapshot())
       return this.snapshot()
     })
     this.commits = run.catch(() => undefined)

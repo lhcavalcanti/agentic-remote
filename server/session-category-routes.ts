@@ -8,6 +8,7 @@ import {
   type SessionCategoryChange,
 } from '../shared/session-categories.js'
 import type { SessionCategoryStore } from './session-category-store.js'
+import type { SessionOrderStore } from './session-order-store.js'
 
 const revision = z.number().int().min(0)
 const sessionRefs = z.array(z.object({
@@ -59,11 +60,50 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
 const keys = (sessions: readonly { computerId: string; sessionId: string }[]) =>
   sessions.map(({ computerId, sessionId }) => `${computerId}:${sessionId}`)
 
+/**
+ * Whether the custom order lists `computerId:sessionId`. Only such a session
+ * may be placed in a category, as only such a session may be hidden or
+ * marked unread; without an order, none is listed.
+ */
+export function listedInSessionOrder(
+  order: Pick<SessionOrderStore, 'indexOf'> | undefined,
+): (sessionKey: string) => boolean {
+  return (sessionKey) => {
+    const separator = sessionKey.indexOf(':')
+    return Boolean(order) && order!.indexOf(sessionKey.slice(0, separator), sessionKey.slice(separator + 1)) >= 0
+  }
+}
+
+/** The hub's categories as anything on the hub itself changes them, such as Oracle. */
+export interface SessionCategoryWriter {
+  /** Why categories cannot be used on this hub, when they cannot. */
+  unavailableReason(): string | undefined
+  snapshot(): SessionCategoriesSnapshot
+  /** A change made against `revision`, held to the rules a browser's is. */
+  change(revision: number, change: SessionCategoryChange): Promise<SessionCategoriesSnapshot>
+}
+
+/**
+ * Changes the categories as a browser does: against a revision, placing only
+ * a session the custom order lists. Its commits reach every browser as
+ * theirs do, through the store's `changed` listeners.
+ */
+export function sessionCategoryWriter(
+  store: SessionCategoryStore,
+  order: Pick<SessionOrderStore, 'indexOf'> | undefined,
+): SessionCategoryWriter {
+  const listed = listedInSessionOrder(order)
+  return {
+    unavailableReason: () => store.unavailableReason(),
+    snapshot: () => store.snapshot(),
+    change: (revision, change) => store.change(revision, change, listed),
+  }
+}
+
 export interface SessionCategoryRouteOptions {
   store?: SessionCategoryStore
   /** Whether the session list holds `computerId:sessionId`; only such a session may be placed. */
   listed: (sessionKey: string) => boolean
-  publish: (snapshot: SessionCategoriesSnapshot) => void
   log: (error: unknown, message: string) => void
 }
 
@@ -81,14 +121,14 @@ export interface SessionCategoryLifecycle {
 /**
  * The hub's session categories. Registered from the hub routes so the Host
  * and Origin policy guards them like every other `/api/` route. Each change
- * names the revision it was made against, and a committed change is told to
- * every browser as `session.categories.updated`.
+ * names the revision it was made against; the hub routes tell every browser
+ * each commit the store makes as `session.categories.updated`.
  */
 export function registerSessionCategoryRoutes(
   app: FastifyInstance,
   options: SessionCategoryRouteOptions,
 ): SessionCategoryLifecycle | undefined {
-  const { store, listed, publish, log } = options
+  const { store, listed, log } = options
   const requireStore = (): SessionCategoryStore => {
     if (!store) {
       throw Object.assign(new Error('Categories are not available on this hub'), { statusCode: 503 })
@@ -97,18 +137,8 @@ export function registerSessionCategoryRoutes(
     if (reason) throw Object.assign(new Error(reason), { statusCode: 503 })
     return store
   }
-  /** A change that moved nothing keeps its revision, so it is not news to anyone. */
-  const commit = async (
-    apply: (categories: SessionCategoryStore) => Promise<SessionCategoriesSnapshot>,
-  ): Promise<SessionCategoriesSnapshot> => {
-    const categories = requireStore()
-    const before = categories.snapshot().revision
-    const snapshot = await apply(categories)
-    if (snapshot.revision !== before) publish(snapshot)
-    return snapshot
-  }
   const change = async (at: number, update: SessionCategoryChange) => ({
-    sessionCategories: await commit((categories) => categories.change(at, update, listed)),
+    sessionCategories: await requireStore().change(at, update, listed),
   })
 
   app.get('/api/session-categories', async () => ({ sessionCategories: requireStore().snapshot() }))
@@ -152,7 +182,7 @@ export function registerSessionCategoryRoutes(
   // failure is logged rather than taking the event stream down with it.
   let work: Promise<unknown> = Promise.resolve()
   const queue = (apply: (categories: SessionCategoryStore) => Promise<SessionCategoriesSnapshot>) => {
-    const queued = work.then(() => commit(apply))
+    const queued = work.then(() => apply(requireStore()))
     work = queued.catch(() => undefined)
     return queued.then(() => undefined)
   }

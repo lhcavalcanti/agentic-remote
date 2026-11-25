@@ -59,6 +59,7 @@ import { SessionStore } from './session-store.js'
 import { SessionKnowledgeStore } from './session-knowledge-store.js'
 import { SessionOrderStore } from './session-order-store.js'
 import { SessionCategoryStore } from './session-category-store.js'
+import { sessionCategoryWriter } from './session-category-routes.js'
 import { SettingsProfileStore } from './settings-profile-store.js'
 import { ClientPresence } from './client-presence.js'
 import type { SessionService } from './session-service.js'
@@ -572,6 +573,9 @@ export async function buildApp(
           if (!oracleTaskStore) throw new Error('Oracle tasks are unavailable.')
           return unfinishedOracleTaskSessions(oracleTaskStore.snapshot().tasks, messages)
         },
+        // Changed as a browser changes them; the hub routes tell every
+        // browser each commit.
+        sessionCategories: sessionCategoryWriter(sessionCategoryStore, sessionOrderStore),
       })
       // Before the session service starts, so its first discovery already
       // leaves the manager's own conversations out.

@@ -42,10 +42,11 @@ import {
   taskSnapshot,
 } from './session-presentation'
 import type { SessionPresentation, SessionSort } from './session-presentation'
-import type {
-  SessionCategorySection,
-  SessionFilter,
-  SessionNavigationView,
+import {
+  categoryNewSession,
+  type SessionCategorySection,
+  type SessionFilter,
+  type SessionNavigationView,
 } from './session-navigation-view'
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
@@ -527,10 +528,14 @@ export interface SessionCategoryActions {
   onMoveCategory: (categoryId: string, direction: -1 | 1) => void
   onDeleteCategory: (categoryId: string) => void
   onNewCategory: () => void
+  /** Starts a session beside the category's most recently active one, and puts it in the category. */
+  onNewSessionInCategory: (categoryId: string) => void
 }
 
 interface CategoryMenuItem {
   label: string
+  /** A second line: what the action will do, or why it cannot now. */
+  detail?: string
   onSelect: () => void
   disabled?: boolean
   danger?: boolean
@@ -619,25 +624,36 @@ function CategoryMenu({ name, items }: { name: string; items: CategoryMenuItem[]
           ref={menuRef}
           role="menu"
         >
-          {items.map((item) => (
-            <button
-              className={`session-category__menu-item${item.danger ? ' session-category__menu-item--danger' : ''}`}
-              disabled={item.disabled}
-              key={item.label}
-              onClick={() => {
-                setOpen(false)
-                // Back on the button before the action runs, so a dialog it
-                // opens returns the focus there when it closes.
-                triggerRef.current?.focus()
-                item.onSelect()
-              }}
-              role="menuitem"
-              tabIndex={-1}
-              type="button"
-            >
-              {item.label}
-            </button>
-          ))}
+          {items.map((item, index) => {
+            const detailId = item.detail ? `${menuId}-detail-${index}` : undefined
+            return (
+              <button
+                aria-describedby={detailId}
+                aria-label={item.detail ? item.label : undefined}
+                className={`session-category__menu-item${item.detail ? ' session-category__menu-item--detailed' : ''}${
+                  item.danger ? ' session-category__menu-item--danger' : ''}`}
+                disabled={item.disabled}
+                key={item.label}
+                onClick={() => {
+                  setOpen(false)
+                  // Back on the button before the action runs, so a dialog it
+                  // opens returns the focus there when it closes.
+                  triggerRef.current?.focus()
+                  item.onSelect()
+                }}
+                role="menuitem"
+                tabIndex={-1}
+                type="button"
+              >
+                {item.detail ? (
+                  <>
+                    <span className="session-category__menu-label">{item.label}</span>
+                    <small className="session-category__menu-detail" id={detailId} title={item.detail}>{item.detail}</small>
+                  </>
+                ) : item.label}
+              </button>
+            )
+          })}
         </div>
       ) : null}
     </div>
@@ -690,6 +706,7 @@ function SessionCategorySectionView({
 }) {
   const { category } = section
   const listId = useId()
+  const start = categoryNewSession(section.latest, computers)
   // A session dropped anywhere on the category, header included, goes into it.
   const { setNodeRef } = useDroppable({ id: `category:${category.id}` })
   const { active, over } = useDndContext()
@@ -742,6 +759,12 @@ function SessionCategorySectionView({
         </button>
         <CategoryMenu
           items={[
+            {
+              label: `New session in ${category.name}`,
+              detail: 'unavailable' in start ? start.unavailable : `${shortPath(start.cwd)} on ${start.computer.name}`,
+              disabled: 'unavailable' in start,
+              onSelect: () => categoryActions.onNewSessionInCategory(category.id),
+            },
             {
               label: 'Mark all as read',
               disabled: section.unread === 0,

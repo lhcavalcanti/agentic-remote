@@ -254,8 +254,9 @@ for (const device of devices) {
           await expect(offline.getByText('Offline', { exact: true })).toBeVisible()
           await expect(offline.locator('.session-item__unread-dot')).toBeVisible()
 
-          // Close beside Read over Hide: the row keeps its height and nothing
-          // spills sideways.
+          // Close, Hide, then Read, in one column with a mouse and with Close
+          // beside Hide over Read on a touch screen: the row keeps its height
+          // and nothing spills sideways.
           await unread.hover()
           const close = await bounds(unread.getByRole('button', { name: 'Close Draft the weekly summary' }))
           const markRead = unread.getByRole('button', { name: 'Mark Draft the weekly summary as read' })
@@ -263,11 +264,17 @@ for (const device of devices) {
           const read = await bounds(markRead)
           const hide = await bounds(unread.getByRole('button', { name: 'Hide Draft the weekly summary from the list' }))
           const item = await bounds(unread)
-          expect(Math.abs(read.x - hide.x)).toBeLessThan(1)
-          expect(read.x).toBeGreaterThanOrEqual(close.x + close.width)
-          expect(read.y + read.height).toBeLessThanOrEqual(hide.y)
-          expect(close.y).toBeGreaterThanOrEqual(read.y)
-          expect(close.y + close.height).toBeLessThanOrEqual(hide.y + hide.height)
+          if (device.hasTouch) {
+            expect(hide.x).toBeGreaterThanOrEqual(close.x + close.width)
+            expect(Math.abs(read.x - hide.x)).toBeLessThan(1)
+            expect(close.y).toBeGreaterThanOrEqual(hide.y)
+            expect(close.y + close.height).toBeLessThanOrEqual(read.y + read.height)
+          } else {
+            expect(Math.abs(hide.x - close.x)).toBeLessThan(1)
+            expect(Math.abs(read.x - close.x)).toBeLessThan(1)
+            expect(close.y + close.height).toBeLessThanOrEqual(hide.y)
+          }
+          expect(hide.y + hide.height).toBeLessThanOrEqual(read.y)
           for (const control of [close, read, hide]) {
             expect(control.width).toBeGreaterThanOrEqual(device.target)
             expect(control.height).toBeGreaterThanOrEqual(device.target)

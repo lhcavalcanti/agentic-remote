@@ -399,7 +399,7 @@ function SortableComputerGroup({
   total: number
   /** Sessions left out of the list because they are hidden. */
   hidden: number
-  /** Its sessions listed in categories instead. */
+  /** Its open sessions in categories, listed there or hidden. */
   categorized?: number
   filtering: boolean
   reorderDisabled: boolean

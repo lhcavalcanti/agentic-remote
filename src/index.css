@@ -8875,23 +8875,19 @@ button {
 }
 
 /* Sits at the end of the row, out of the way of the title but reachable
-   without opening the conversation. Close has the first column to itself.
-   Read and Hide, which only change how the list treats the session, share a
-   second column: a third control under the first two would make every row
-   taller. */
+   without opening the conversation: Close, Hide, then Read, top to bottom as
+   the keyboard reaches them, in one narrow column that leaves the title room.
+   It takes no height of its own, so it never makes a row taller: centred on
+   the row, it reaches into a one-line row's padding instead. */
 .session-item__controls {
   grid-column: 3;
   grid-row: 1;
   align-self: center;
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: auto auto;
+  display: flex;
+  height: 0;
+  flex-direction: column;
+  justify-content: center;
   gap: 2px;
-}
-
-.session-item__close {
-  grid-row: 1 / span 2;
-  align-self: center;
 }
 
 .session-item__close,
@@ -8983,6 +8979,21 @@ button {
   .session-item__unread:disabled,
   .session-item__hide:disabled {
     opacity: 0.3;
+  }
+
+  /* Three 40px targets in one column would make every row taller, so Close
+     keeps a column of its own beside Hide over Read, two targets tall as
+     before. */
+  .session-item__controls {
+    display: grid;
+    height: auto;
+    grid-auto-flow: column;
+    grid-template-rows: auto auto;
+  }
+
+  .session-item__close {
+    grid-row: 1 / span 2;
+    align-self: center;
   }
 }
 

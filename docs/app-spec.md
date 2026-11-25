@@ -100,7 +100,7 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   it, including after a hub restart or an upgrade. Opening a session while the
   app is visible, returning to the app with it open, and its turn ending while
   it is open and visible MUST mark it read; Oracle and other background reads
-  MUST NOT. Each row MUST offer Mark as read or Mark as unread beside Hide; an
+  MUST NOT. Each row MUST offer Mark as read or Mark as unread under Hide; an
   open session marked unread MUST stay unread until it is opened again or the
   app becomes visible again. Unread rows MUST carry a bold title, an accent dot,
   a bar on each side in the dot's colour, and "unread" in their accessible
@@ -164,9 +164,11 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   listing MUST NOT be treated as evidence that an entry is gone. A
   browser-local order from before the hub owned it MAY seed an empty hub once,
   after which the hub snapshot is authoritative.
-- Each session row MUST offer **Close** in a column of its own, with
-  **Mark as read**/**Mark as unread** above **Hide**/**Show** beside it, so the
-  row does not grow. Close MUST use the same confirmation, close lifecycle
+- Each session row MUST offer **Close**, **Hide**/**Show**, and
+  **Mark as read**/**Mark as unread**, in that order for the keyboard too,
+  without making the row taller: in one column where the pointer can hover,
+  and on a touch screen with Close in a column of its own beside Hide over
+  Mark as read. Close MUST use the same confirmation, close lifecycle
   (§3.3), and owning-computer route as **Close session**.
   Hide and Show MUST stay available while the owning computer is offline, since
   the hub keeps them.

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Check } from 'lucide-react'
-import { SESSION_CATEGORY_NAME_MAX_LENGTH, type SessionCategory } from '../shared/session-categories'
+import type { SessionCategory } from '../shared/session-categories'
 import { DialogFrame } from './components/DialogFrame'
 
 /**
@@ -17,7 +17,6 @@ function CategoryNameField({ name, onChange }: { name: string; onChange: (name: 
       <input
         autoFocus
         className="dialog-input"
-        maxLength={SESSION_CATEGORY_NAME_MAX_LENGTH}
         onChange={(event) => onChange(event.target.value)}
         value={name}
       />

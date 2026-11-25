@@ -151,6 +151,7 @@ const slowTests = [
   'src/ReaderWorkspace.test.tsx',
   'src/RecentlyClosed.test.tsx',
   'src/SessionActions.test.tsx',
+  'src/SessionCategoryDialogs.test.tsx',
   'src/SessionNavigation.test.tsx',
   'src/SessionResources.test.tsx',
   'src/SessionRetentionSettings.test.tsx',

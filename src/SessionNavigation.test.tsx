@@ -1028,6 +1028,20 @@ describe('session categories in the list', () => {
     expect(screen.queryByRole('region', { name: 'Category Plans' })).toBeNull()
   })
 
+  it('moves no category while the list is filtered, which lists only some of them', () => {
+    const design = {
+      category: { id: 'design', name: 'Design', collapsed: false, sessions: ['studio:question'] },
+      sessions: [question],
+    }
+    render(<NavigationHarness categories={[lab([worker]), design]} />)
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), { target: { value: 'notes' } })
+
+    expect(screen.getAllByRole('region', { name: /^Category / })).toHaveLength(2)
+    fireEvent.click(within(sectionNamed('Homelab')).getByRole('button', { name: 'Category actions for Homelab' }))
+    expect(screen.getByRole('menuitem', { name: 'Move up' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Move down' })).toBeDisabled()
+  })
+
   it('leaves categories out on a hub without them', () => {
     render(<NavigationHarness />)
     expect(within(list()).queryByRole('button', { name: 'New category' })).toBeNull()

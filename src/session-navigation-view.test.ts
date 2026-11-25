@@ -277,6 +277,14 @@ describe('categories in the session navigation view', () => {
       .categories[0].sessions).toEqual([first, tucked, waiting])
   })
 
+  it('counts a computer\'s hidden sessions in categories among those it has in categories', () => {
+    const tucked = session('tucked')
+    const view = sessionNavigationView(computers, new Map([['one', [tucked]]]), {}, '', 'all',
+      { keys: new Set(['one:tucked']), shown: false }, undefined, { categories: [lab([tucked])] })
+    expect(view.groups[0]).toMatchObject({ sessions: [], total: 0, hidden: 0, categorized: 1 })
+    expect(view.categories[0]).toMatchObject({ sessions: [], total: 0 })
+  })
+
   it('keeps an empty category listed until it is filtered', () => {
     const empty = { category: { id: 'empty', name: 'Plans', collapsed: false, sessions: [] }, sessions: [] }
     expect(sessionNavigationView(computers, grouped, {}, '', 'all', undefined, undefined, { categories: [empty] })

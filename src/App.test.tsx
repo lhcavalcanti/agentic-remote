@@ -23452,6 +23452,47 @@ describe('App', () => {
       expect(within(region(computer.name)).getByRole('button', { name: /^Third work,/ })).toBeVisible()
     })
 
+    it('says each category change the hub commits, again when it repeats', async () => {
+      listed([session, other])
+      hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other])] }
+      const announced = () => document.querySelector('.session-category-announcement')
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      fireEvent.click(await screen.findByRole('button', { name: 'Homelab, 1 session' }))
+      await waitFor(() => expect(announced()).toHaveTextContent('Closed Homelab'))
+      fireEvent.click(screen.getByRole('button', { name: 'Homelab, 1 session' }))
+      await waitFor(() => expect(announced()).toHaveTextContent('Opened Homelab'))
+      fireEvent.click(screen.getByRole('button', { name: 'Homelab, 1 session' }))
+      // The same words are cleared first, so a screen reader says them again.
+      await waitFor(() => expect(announced()).toHaveTextContent(''))
+      await waitFor(() => expect(announced()).toHaveTextContent('Closed Homelab'))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Category actions for Homelab' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Rename…' }))
+      const dialog = screen.getByRole('dialog', { name: 'Rename category' })
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Category name' }), { target: { value: 'Home lab' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Rename category' }))
+      await waitFor(() => expect(announced()).toHaveTextContent('Renamed Homelab to Home lab'))
+    })
+
+    it('counts a category\'s closed sessions among those that stay when it is deleted', async () => {
+      listed([session, other])
+      hubCategories = {
+        revision: 1,
+        categories: [category('lab', 'Homelab', [{ ...other, id: 'closed-work' }])],
+      }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      fireEvent.click(await screen.findByRole('button', { name: 'Category actions for Homelab' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Delete category…' }))
+      expect(screen.getByRole('dialog', { name: 'Delete category' }))
+        .toHaveTextContent('Delete Homelab? Its 1 session stays, under its computer.')
+    })
+
     it('marks every unread session in a category read from its menu', async () => {
       listed([session, other, third], [other, third])
       hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other, third])] }

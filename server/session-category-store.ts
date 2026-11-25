@@ -4,7 +4,9 @@ import { CLOSED_SESSION_RETENTION_MS } from '../shared/closed-sessions.js'
 import {
   SessionCategoryRefusal,
   applySessionCategoryChange,
+  isSessionCategoryId,
   isSessionCategoryKey,
+  sessionCategoryName,
   type SessionCategoriesSnapshot,
   type SessionCategory,
   type SessionCategoryChange,
@@ -45,6 +47,49 @@ function remember<T>(entries: Map<string, T>, entryKey: string, value: T, limit:
 
 function refused(message: string, statusCode: number): Error {
   return Object.assign(new Error(message), { statusCode })
+}
+
+function validName(name: unknown): name is string {
+  if (typeof name !== 'string') return false
+  try {
+    return sessionCategoryName(name) === name
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The state a version 1 file holds, with what each category carries that this
+ * release does not know, or nothing when the file does not have the shape
+ * this release writes. Such a file is left alone rather than repaired, which
+ * would quietly drop whatever did not fit.
+ */
+function parseState(parsed: Fields): { state: CategoryState; extra: Fields; categoryExtra: Map<string, Fields> } | undefined {
+  const { version: _version, revision = 0, categories, closed = {}, ...extra } = parsed
+  if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 0) return undefined
+  if (!Array.isArray(categories) || !isRecord(closed)) return undefined
+  const loaded: SessionCategory[] = []
+  const categoryExtra = new Map<string, Fields>()
+  const members = new Set<string>()
+  const names = new Set<string>()
+  for (const entry of categories) {
+    if (!isRecord(entry)) return undefined
+    const { id, name, collapsed, sessions, ...rest } = entry
+    if (typeof id !== 'string' || !isSessionCategoryId(id) || categoryExtra.has(id)) return undefined
+    if (!validName(name) || names.has(name.toLocaleLowerCase())) return undefined
+    if (typeof collapsed !== 'boolean' || !Array.isArray(sessions)) return undefined
+    for (const member of sessions) {
+      if (typeof member !== 'string' || !isSessionCategoryKey(member) || members.has(member)) return undefined
+      members.add(member)
+    }
+    names.add(name.toLocaleLowerCase())
+    categoryExtra.set(id, rest)
+    loaded.push({ id, name, collapsed, sessions: sessions as string[] })
+  }
+  for (const [member, closedAt] of Object.entries(closed)) {
+    if (!members.has(member) || typeof closedAt !== 'string') return undefined
+  }
+  return { state: { revision, categories: loaded, closed: { ...closed } as Record<string, string> }, extra, categoryExtra }
 }
 
 /**
@@ -122,30 +167,14 @@ export class SessionCategoryStore {
       this.unavailable = `Session categories at ${this.statePath} were saved by a newer release; categories are unavailable until it is running again`
       return
     }
-    const { version: _version, revision, categories, closed, ...extra } = parsed
-    this.extra = extra
-    const loaded: SessionCategory[] = []
-    const seen = new Set<string>()
-    for (const entry of Array.isArray(categories) ? categories : []) {
-      if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.name !== 'string') continue
-      if (loaded.some((category) => category.id === entry.id)) continue
-      const { id, name, collapsed, sessions, ...rest } = entry
-      // A session is in one category; a duplicate would give it two.
-      const members = (Array.isArray(sessions) ? sessions : []).filter((member): member is string =>
-        typeof member === 'string' && isSessionCategoryKey(member) && !seen.has(member))
-      for (const member of members) seen.add(member)
-      loaded.push({ id, name, collapsed: collapsed === true, sessions: members })
-      this.categoryExtra.set(id, rest)
+    const loaded = parseState(parsed)
+    if (!loaded) {
+      this.unavailable = `Session categories at ${this.statePath} are not readable as this release writes them; categories are unavailable until the file is repaired`
+      return
     }
-    const remembered: Record<string, string> = {}
-    for (const [member, closedAt] of Object.entries(isRecord(closed) ? closed : {})) {
-      if (seen.has(member) && typeof closedAt === 'string') remembered[member] = closedAt
-    }
-    this.state = {
-      revision: typeof revision === 'number' && Number.isInteger(revision) && revision >= 0 ? revision : 0,
-      categories: loaded,
-      closed: remembered,
-    }
+    this.state = loaded.state
+    this.extra = loaded.extra
+    this.categoryExtra = loaded.categoryExtra
     // Closed sessions that expired while the hub was down leave their
     // categories now; if that cannot be saved, the next commit tries again.
     const loadedState = this.state
@@ -225,8 +254,9 @@ export class SessionCategoryStore {
         return true
       }
       if (state.categories.some((category) => category.sessions.includes(listedKey))) return false
-      const ancestor = replacedSessionIds
-        .map((previous) => key(computerId, previous))
+      const ancestors = replacedSessionIds.map((previous) => key(computerId, previous))
+      for (const ancestor of ancestors) remember(this.departedSessions, ancestor, true, DEPARTED_LIMIT)
+      const ancestor = ancestors
         .find((previous) => state.categories.some((category) => category.sessions.includes(previous)))
       return ancestor ? this.replaced(state, ancestor, listedKey) : false
     })
@@ -239,10 +269,12 @@ export class SessionCategoryStore {
     nextSessionId: string,
   ): Promise<SessionCategoriesSnapshot> {
     if (previousSessionId === nextSessionId) return this.snapshot()
+    const previousKey = key(computerId, previousSessionId)
     const nextKey = key(computerId, nextSessionId)
+    // The predecessor no longer exists, whatever a stale view still shows.
+    remember(this.departedSessions, previousKey, true, DEPARTED_LIMIT)
     this.departedSessions.delete(nextKey)
-    return this.lifecycle((state) =>
-      this.replaced(state, key(computerId, previousSessionId), nextKey))
+    return this.lifecycle((state) => this.replaced(state, previousKey, nextKey))
   }
 
   /** Close keeps the session where it is, out of sight, for Reopen to give back. */
@@ -356,8 +388,9 @@ export class SessionCategoryStore {
         categories: previous.categories,
         closed: { ...previous.closed },
       }
-      const changed = mutate(staged)
+      // Expired first, so nothing can reclaim a place that has already lapsed.
       const expired = this.expire(staged)
+      const changed = mutate(staged)
       if (!changed && !expired) return this.snapshot()
       this.state = { ...staged, revision: previous.revision + 1 }
       try {
@@ -374,8 +407,6 @@ export class SessionCategoryStore {
   }
 
   private async persist(): Promise<void> {
-    const ids = new Set(this.state.categories.map((category) => category.id))
-    for (const id of [...this.categoryExtra.keys()]) if (!ids.has(id)) this.categoryExtra.delete(id)
     const snapshot = JSON.stringify({
       ...this.extra,
       version: STATE_VERSION,
@@ -389,5 +420,8 @@ export class SessionCategoryStore {
     const temporary = `${this.statePath}.tmp`
     await writeFile(temporary, snapshot, { mode: 0o600 })
     await rename(temporary, this.statePath)
+    // Only once the write stands: a category whose deletion failed keeps them.
+    const ids = new Set(this.state.categories.map((category) => category.id))
+    for (const id of [...this.categoryExtra.keys()]) if (!ids.has(id)) this.categoryExtra.delete(id)
   }
 }

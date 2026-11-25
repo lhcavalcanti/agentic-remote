@@ -54,7 +54,7 @@ export interface SessionNavigationView {
     total: number
     /** Sessions left out of the list because they are hidden. */
     hidden: number
-    /** Its sessions the list shows in categories instead. */
+    /** Its open sessions in categories, listed there or hidden. */
     categorized: number
   }[]
   counts: Record<SessionFilter, number> & { hidden: number }
@@ -155,7 +155,7 @@ export function sessionNavigationView(
       computer,
       total: classified.filter(own).length,
       hidden: states.filter(own).length - classified.filter(own).length,
-      categorized: classified.length - classified.filter(own).length,
+      categorized: states.length - states.filter(own).length,
       sessions: classified.filter((entry) => own(entry) && matches(entry, computer)).map(({ session }) => session),
     }
   })

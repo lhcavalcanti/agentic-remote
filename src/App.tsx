@@ -13240,10 +13240,16 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     })()
   }
 
+  /** Says `message` to a screen reader, clearing it first so a repeat is said again. */
+  function announceCategory(message: string) {
+    setCategoryAnnouncement('')
+    window.setTimeout(() => setCategoryAnnouncement(message), 100)
+  }
+
   /** Shows a category change at once and sends it; `done` is announced once the hub commits it. */
-  function changeCategories(change: SessionCategoryChange, failure: string, done?: string) {
+  function changeCategories(change: SessionCategoryChange, failure: string, done: string) {
     void sessionCategories.change(change, failure).then((committed) => {
-      if (committed && done) setCategoryAnnouncement(done)
+      if (committed) announceCategory(done)
     })
   }
 
@@ -13281,7 +13287,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     if (refused) return refused
     const before = sessionCategories.categories.find((category) => category.id === categoryId)?.name
     setCategoryDialog(undefined)
-    changeCategories(change, `Could not rename ${before ?? 'the category'}`)
+    changeCategories(
+      change,
+      `Could not rename ${before ?? 'the category'}`,
+      `Renamed ${before ?? 'the category'} to ${sessionCategoryName(name)}`,
+    )
     return undefined
   }
 
@@ -13357,13 +13367,18 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       changeCategories(
         { type: 'update', categoryId, collapsed },
         `Could not ${collapsed ? 'close' : 'open'} ${category.name}`,
+        `${collapsed ? 'Closed' : 'Opened'} ${category.name}`,
       )
     },
     onMarkCategoryRead: (categoryId) => {
+      const category = sessionCategories.categories.find((entry) => entry.id === categoryId)
       const members = categorizedSessions.find((entry) => entry.category.id === categoryId)?.sessions ?? []
-      for (const session of members) {
-        if (listedUnreadKeys.has(sessionKey(session))) changeSessionUnread(session, false, true)
-      }
+      const unread = members.filter((session) => listedUnreadKeys.has(sessionKey(session)))
+      void Promise.all(unread.map((session) => changeSessionUnread(session, false, true))).then((saved) => {
+        if (category && saved.length > 0 && saved.every(Boolean)) {
+          announceCategory(`Marked ${unread.length} session${unread.length === 1 ? '' : 's'} in ${category.name} as read`)
+        }
+      })
     },
     onRenameCategory: (categoryId) => setCategoryDialog({ kind: 'rename', categoryId }),
     onMoveCategory: (categoryId, direction) => {
@@ -13435,14 +13450,16 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // Shown at once; a refusal puts back what the hub last committed. Only a
   // change you asked for reports one: a read that fails on its own just
   // leaves the session unread.
-  function changeSessionUnread(session: ManagedSession, unread: boolean, requested: boolean) {
+  /** Answers whether the hub took the change; one already on its way is not sent again. */
+  function changeSessionUnread(session: ManagedSession, unread: boolean, requested: boolean): Promise<boolean> {
     const key = sessionKey(session)
-    if (unreadSavesRef.current.has(key)) return
+    if (unreadSavesRef.current.has(key)) return Promise.resolve(false)
     unreadSavesRef.current.set(key, unread)
     setUnreadSaves(new Map(unreadSavesRef.current))
-    void (async () => {
+    return (async () => {
       try {
         applySessionOrderSnapshot(await saveSessionUnread(session.computerId, session.id, unread))
+        return true
       } catch (caught) {
         void syncSessionOrderRef.current()
         if (requested) {
@@ -13456,6 +13473,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         } else {
           console.warn('Unable to mark the open session read:', caught)
         }
+        return false
       } finally {
         unreadSavesRef.current.delete(key)
         setUnreadSaves(new Map(unreadSavesRef.current))
@@ -13773,7 +13791,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 categoryActions={categoryActions}
               />
             </DndContext>
-            <p aria-live="polite" className="visually-hidden" role="status">{categoryAnnouncement}</p>
+            <p aria-live="polite" className="visually-hidden session-category-announcement" role="status">
+              {categoryAnnouncement}
+            </p>
         </div>
         {knowledgeMode !== 'hidden' ? (
           <div className="sidebar-knowledge">
@@ -14964,8 +14984,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               `Deleted ${dialogCategory.name}; its sessions are under their computers`,
             )
           }}
-          sessions={categorizedSessions.find((entry) => entry.category.id === dialogCategory.id)
-            ?.sessions.filter((session) => session.isOpen !== false).length ?? 0}
+          sessions={dialogCategory.sessions.length}
         />
       ) : null}
       {categoryDialog?.kind === 'move' ? (

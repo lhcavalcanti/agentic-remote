@@ -739,12 +739,13 @@ function SessionCategorySectionView({
             { label: 'Rename…', onSelect: () => categoryActions.onRenameCategory(category.id) },
             {
               label: 'Move up',
-              disabled: position === 0,
+              // Filtering lists only some categories, so places among them mean nothing.
+              disabled: reorderDisabled || position === 0,
               onSelect: () => categoryActions.onMoveCategory(category.id, -1),
             },
             {
               label: 'Move down',
-              disabled: position === count - 1,
+              disabled: reorderDisabled || position === count - 1,
               onSelect: () => categoryActions.onMoveCategory(category.id, 1),
             },
             {

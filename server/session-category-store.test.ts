@@ -233,6 +233,89 @@ describe('SessionCategoryStore', () => {
       .rejects.toMatchObject({ statusCode: 503 })
   })
 
+  it('leaves a file it can read but does not recognize alone, rather than repair it', async () => {
+    const malformed = [
+      { categories: 'none' },
+      { categories: [{ id: 'lab', sessions: [] }] },
+      { categories: [{ id: 'has space', name: 'Lab', collapsed: false, sessions: [] }] },
+      { categories: [{ id: 'lab', name: 'Lab', collapsed: 'yes', sessions: [] }] },
+      { categories: [{ id: 'lab', name: 'Lab', collapsed: false, sessions: ['hub:a', 'no-colon'] }] },
+      {
+        categories: [
+          { id: 'lab', name: 'Lab', collapsed: false, sessions: ['hub:a'] },
+          { id: 'other', name: 'Other', collapsed: false, sessions: ['hub:a'] },
+        ],
+      },
+      {
+        categories: [
+          { id: 'lab', name: 'Lab', collapsed: false, sessions: [] },
+          { id: 'lab', name: 'Again', collapsed: false, sessions: [] },
+        ],
+      },
+      { categories: [], closed: { 'hub:a': '2026-11-01T00:00:00Z' } },
+      { revision: -1, categories: [] },
+    ]
+    for (const shape of malformed) {
+      const directory = await folder()
+      const file = path.join(directory, 'session-categories.json')
+      const contents = JSON.stringify({ version: 1, revision: 2, closed: {}, ...shape })
+      await writeFile(file, contents)
+      const { store: categories } = await store(directory)
+
+      expect(categories.unavailableReason()).toMatch(/not readable/)
+      await categories.sessionListed('hub', 'a')
+      await categories.removeComputer('hub')
+      expect(await readFile(file, 'utf8')).toBe(contents)
+    }
+  })
+
+  it('keeps what a category it could not delete holds that it does not know', async () => {
+    const directory = await folder()
+    const file = path.join(directory, 'session-categories.json')
+    await writeFile(file, JSON.stringify({
+      version: 1, revision: 1, closed: {},
+      categories: [{ id: 'lab', name: 'Homelab', collapsed: false, sessions: [], color: 'teal' }],
+    }))
+    const { store: categories } = await store(directory)
+
+    await rm(directory, { recursive: true, force: true })
+    await writeFile(directory, 'blocked')
+    await expect(categories.change(1, { type: 'delete', categoryId: 'lab' })).rejects.toThrow()
+    await rm(directory, { force: true })
+    await mkdir(directory)
+
+    await categories.change(1, { type: 'update', categoryId: 'lab', collapsed: true })
+    expect(JSON.parse(await readFile(file, 'utf8')).categories).toEqual([
+      { id: 'lab', name: 'Homelab', collapsed: true, sessions: [], color: 'teal' },
+    ])
+  })
+
+  it('refuses to place a session that a clear or recovery has just replaced', async () => {
+    const { store: categories } = await store()
+    await categories.change(0, { type: 'create', id: 'lab', name: 'Homelab', sessions: ['hub:a'] }, everyone)
+    await categories.change(1, { type: 'create', id: 'other', name: 'Other', sessions: ['hub:old'] }, everyone)
+
+    await categories.replaceSession('hub', 'a', 'a2')
+    await categories.sessionListed('hub', 'new', ['old'])
+    const revision = categories.snapshot().revision
+    for (const gone of ['hub:a', 'hub:old']) {
+      await expect(categories.change(revision, { type: 'move', sessions: [gone], categoryId: 'lab' }, everyone))
+        .rejects.toMatchObject({ statusCode: 409 })
+    }
+    expect(await categories.change(revision, { type: 'move', sessions: ['hub:new'], categoryId: 'lab' }, everyone))
+      .toMatchObject({ revision: revision + 1 })
+  })
+
+  it('does not give a category back to a session reopened after it could no longer be', async () => {
+    let now = Date.parse('2026-11-01T00:00:00Z')
+    const { store: categories } = await store(undefined, () => now)
+    await categories.change(0, { type: 'create', id: 'lab', name: 'Homelab', sessions: ['hub:a', 'hub:b'] }, everyone)
+    await categories.sessionClosed('hub', 'b')
+
+    now += CLOSED_SESSION_RETENTION_MS + DAY + 1
+    expect((await categories.sessionListed('hub', 'b')).categories[0].sessions).toEqual(['hub:a'])
+  })
+
   it('keeps the last committed categories when a write fails', async () => {
     const { store: categories, directory } = await store()
     await categories.change(0, { type: 'create', id: 'lab', name: 'Homelab' })

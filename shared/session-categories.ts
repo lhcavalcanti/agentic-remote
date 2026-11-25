@@ -62,6 +62,10 @@ export function newSessionCategoryId(): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
+export function isSessionCategoryId(id: string): boolean {
+  return SESSION_CATEGORY_ID.test(id)
+}
+
 export function isSessionCategoryKey(key: string): boolean {
   const separator = key.indexOf(':')
   return separator > 0 && separator < key.length - 1 && key.length <= SESSION_KEY_MAX_LENGTH
@@ -140,7 +144,7 @@ export function applySessionCategoryChange(
   const current = categories as SessionCategory[]
   switch (change.type) {
     case 'create': {
-      if (!SESSION_CATEGORY_ID.test(change.id)) {
+      if (!isSessionCategoryId(change.id)) {
         throw new SessionCategoryRefusal('A category id is 1 to 64 letters, digits, - or _', 400)
       }
       const name = sessionCategoryName(change.name)

@@ -396,6 +396,11 @@ export class SessionCategoryStore {
       const expired = this.expire(staged)
       const changed = mutate(staged)
       if (!changed && !expired) return this.snapshot()
+      // Past this, revisions would stop telling one snapshot from the next.
+      if (!Number.isSafeInteger(previous.revision + 1)) {
+        this.retired = retired
+        throw refused('Categories have reached the last revision this release can count; they cannot change', 503)
+      }
       this.state = { ...staged, revision: previous.revision + 1 }
       try {
         await this.persist()

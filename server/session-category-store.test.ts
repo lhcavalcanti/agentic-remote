@@ -276,6 +276,24 @@ describe('SessionCategoryStore', () => {
     }
   })
 
+  it('stops at the last revision it can count rather than repeat one', async () => {
+    const directory = await folder()
+    const file = path.join(directory, 'session-categories.json')
+    const last = Number.MAX_SAFE_INTEGER
+    await writeFile(file, JSON.stringify({
+      version: 1, revision: last - 1, closed: {},
+      categories: [{ id: 'lab', name: 'Homelab', collapsed: false, sessions: [] }],
+    }))
+    const { store: categories } = await store(directory)
+
+    expect(await categories.change(last - 1, { type: 'update', categoryId: 'lab', collapsed: true }))
+      .toMatchObject({ revision: last })
+    await expect(categories.change(last, { type: 'update', categoryId: 'lab', collapsed: false }))
+      .rejects.toMatchObject({ statusCode: 503 })
+    await expect(categories.removeComputer('hub')).resolves.toMatchObject({ revision: last })
+    expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ revision: last, categories: [{ collapsed: true }] })
+  })
+
   it('keeps what a category it could not delete holds that it does not know', async () => {
     const directory = await folder()
     const file = path.join(directory, 'session-categories.json')

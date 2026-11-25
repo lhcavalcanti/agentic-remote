@@ -28,6 +28,16 @@ import type {
 } from '../shared/manager.js'
 import type { ManagerStructuredMemoryScope } from '../shared/manager-structured-memory.js'
 import { ORACLE_TASK_EXECUTION_PROMPT_MAX_LENGTH } from '../shared/oracle-task.js'
+import {
+  SESSION_CATEGORY_LIMIT,
+  SESSION_CATEGORY_NAME_MAX_LENGTH,
+  newSessionCategoryId,
+  sessionCategoryName,
+  sessionCategoryNameKey,
+  type SessionCategoriesSnapshot,
+  type SessionCategory,
+  type SessionCategoryChange,
+} from '../shared/session-categories.js'
 import { DEFAULT_SESSION_PROVIDER, type NewSessionRuntime } from '../shared/settings-profile.js'
 import { CLOSED_SESSION_RETENTION_DAYS, closedSessionExpiresAt } from '../shared/closed-sessions.js'
 import { quoted, rosterLine } from './manager-context.js'
@@ -39,6 +49,7 @@ import type { ManagerStructuredMemoryStore } from './manager-structured-memory-s
 import { registryKey, type ManagerRegistry } from './manager-store.js'
 import { oracleHostStatus } from './host-telemetry/oracle-status.js'
 import type { HostTelemetryTarget } from './host-telemetry/service.js'
+import type { SessionCategoryWriter } from './session-category-routes.js'
 import {
   SessionLauncher,
   SessionLaunchPreparationError,
@@ -141,6 +152,12 @@ export interface ManagerToolHost {
   sessionBackend(): ManagerSessionBackend
   /** Keeps how Oracle opens the sessions it starts; gives back what was kept. */
   setSessionBackend(backend: ManagerSessionBackend): Promise<ManagerSessionBackend>
+  /**
+   * The categories the hub's Sessions list is organized into, changed as a
+   * browser changes them; every commit reaches every browser. Absent on a
+   * hub that keeps none.
+   */
+  sessionCategories?: SessionCategoryWriter
   memory: ManagerMemory
   structuredMemory?: ManagerStructuredMemoryStore
   structuredMemoryScopes?(): ManagerStructuredMemoryScope[]
@@ -208,6 +225,7 @@ const VOICE_READ_ONLY_TOOLS = new Set([
   'list_models',
   'list_sessions',
   'list_closed_sessions',
+  'list_categories',
   'get_session',
   'ask_session',
   'list_skills',
@@ -351,6 +369,10 @@ function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit)}… (truncated)` : text
 }
 
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`
+}
+
 const APPROVE_WORDS = new Set(['allow', 'approve', 'accept', 'yes', 'trust', 'ok', 'continue'])
 const DECLINE_WORDS = new Set(['deny', 'reject', 'decline', 'no', 'stop', 'cancel'])
 
@@ -448,7 +470,7 @@ export function createManagerTools(
     return delivered ? { promptId: delivered.id } : undefined
   }
 
-  function proactiveSessionAllowed(session: ManagedSession): boolean {
+  function proactiveSessionAllowed(session: Pick<ManagedSession, 'computerId' | 'id'>): boolean {
     if (host.messageSource() !== 'proactive') return true
     return host.proactiveSessionRefs().some(
       (reference) =>
@@ -523,7 +545,7 @@ export function createManagerTools(
   async function resolveSession(
     sessionId: string,
     computer?: string,
-    options: { history?: boolean; taskOwned?: boolean } = {},
+    options: { history?: boolean; taskOwned?: boolean; open?: ManagedSession[] } = {},
   ): Promise<ManagedSession> {
     const computerId = computer ? requireComputer(computer, false).id : undefined
     const match = (sessions: ManagedSession[]) => {
@@ -545,7 +567,7 @@ export function createManagerTools(
       }
       return prefixed[0]
     }
-    const open = match(await host.listSessions())
+    const open = match(options.open ?? await host.listSessions())
     if (open) return open
     if (options.history) {
       const closed = match(await host.listHistory())
@@ -614,12 +636,12 @@ export function createManagerTools(
           managerToolMutability(name) !== 'read' &&
           !TASK_EXECUTION_MUTATION_TOOLS.has(name)
         ) {
-          return failure('This task turn may execute its durable task, but unrelated session settings, naming, reopening, closure, proactive outcomes, and memory mutations are not allowed.')
+          return failure('This task turn may execute its durable task, but unrelated session settings, naming, organizing, reopening, closure, proactive outcomes, and memory mutations are not allowed.')
         }
         // Enforced here rather than only asked of the model, so an Ask mode
         // message can never start, steer, or stop a session.
         if (options.actsOnSessions && host.answerOnly()) {
-          return failure('The user asked this in Ask mode, so no session may be started, messaged, renamed, reopened, stopped, or closed. Answer from what you can read and ask instead; switching Oracle to Delegate lets you do it.')
+          return failure('The user asked this in Ask mode, so no session may be started, messaged, renamed, organized, reopened, stopped, or closed. Answer from what you can read and ask instead; switching Oracle to Delegate lets you do it.')
         }
         const parsed = schema.safeParse(args ?? {})
         if (!parsed.success) {
@@ -903,6 +925,231 @@ export function createManagerTools(
           })
           return `${result.idempotent ? 'Already forgot' : 'Forgot'} structured memory record ${recordId}.`
         },
+      ),
+    ]
+  }
+
+  /**
+   * The categories the Sessions list is organized into, changed exactly as a
+   * browser changes them. Organizing only moves where sessions are listed:
+   * none of these tools touches a session itself.
+   */
+  function categoryTools(): ManagerTool[] {
+    const categories = host.sessionCategories
+    if (!categories) return []
+    const keyOf = (session: Pick<ManagedSession, 'computerId' | 'id'>) => `${session.computerId}:${session.id}`
+    const named = (category: Pick<SessionCategory, 'id' | 'name'>) =>
+      `${JSON.stringify(category.name)} (id ${category.id})`
+    /** The categories as they stand, or why this hub cannot use them. */
+    const current = (): SessionCategoriesSnapshot => {
+      const reason = categories.unavailableReason()
+      if (reason) throw new ToolFailure(`Categories are unavailable on this hub: ${reason}`)
+      return categories.snapshot()
+    }
+    /** A category by its id, else by its name in any case. */
+    const find = (snapshot: SessionCategoriesSnapshot, wanted: string): SessionCategory => {
+      let folded: string | undefined
+      try {
+        folded = sessionCategoryNameKey(sessionCategoryName(wanted))
+      } catch {
+        folded = undefined
+      }
+      const found = snapshot.categories.find((category) => category.id === wanted) ??
+        snapshot.categories.find((category) => sessionCategoryNameKey(category.name) === folded)
+      if (found) return found
+      throw new ToolFailure(`No category is named or has the id ${JSON.stringify(wanted)}. ${snapshot.categories.length
+        ? `Categories: ${snapshot.categories.map(named).join(', ')}.`
+        : 'There are no categories; create_category makes one.'}`)
+    }
+    /**
+     * Commits a change planned on the categories as they stand, against their
+     * revision, as a browser's is. If the hub has moved past that revision by
+     * then, it is planned again on the categories as they then stand, once.
+     */
+    const commit = async (plan: (snapshot: SessionCategoriesSnapshot) => SessionCategoryChange) => {
+      for (let attempt = 0; ; attempt += 1) {
+        const before = current()
+        const change = plan(before)
+        try {
+          return { before, after: await categories.change(before.revision, change) }
+        } catch (error) {
+          if (categories.snapshot().revision === before.revision) throw error
+          if (attempt > 0) {
+            throw new ToolFailure('The categories changed again while this ran, so nothing changed. Read them with list_categories and try again.')
+          }
+        }
+      }
+    }
+    const categoryField = z.string().trim().min(1).max(SESSION_CATEGORY_NAME_MAX_LENGTH * 4)
+      .describe("The category's id from list_categories, or its name.")
+    // Generous: names are trimmed and held to the real limit when applied.
+    const nameField = z.string().trim().min(1).max(SESSION_CATEGORY_NAME_MAX_LENGTH * 4)
+      .describe(`At most ${SESSION_CATEGORY_NAME_MAX_LENGTH} characters, unique on the hub ignoring case.`)
+
+    return [
+      define(
+        'list_categories',
+        "List the categories the user's Sessions list is organized into, top to bottom, each with its id, whether it is collapsed, and its sessions: id, computer, and title. Sessions in no category are listed under their computers. Read-only.",
+        z.object({}),
+        async () => {
+          const snapshot = current()
+          const open = await host.listSessions()
+          const listed = new Map(open.map((session) => [keyOf(session), session]))
+          const shown = (member: string) => {
+            const separator = member.indexOf(':')
+            return proactiveSessionAllowed({ computerId: member.slice(0, separator), id: member.slice(separator + 1) })
+          }
+          const members = new Set(snapshot.categories.flatMap((category) => category.sessions))
+          // Members that are not open are closed ones kept for Reopen, or gone.
+          const closed = [...members].some((member) => shown(member) && !listed.has(member))
+            ? new Map((await host.listHistory()).map((session) => [keyOf(session), session]))
+            : new Map<string, ManagedSession>()
+          const unplaced = open.filter((session) => proactiveSessionAllowed(session) && !members.has(keyOf(session))).length
+          const footer = `Open sessions in no category: ${unplaced}. They are listed under their computers.`
+          if (!snapshot.categories.length) return `There are no categories. ${footer}`
+          const line = (member: string) => {
+            const separator = member.indexOf(':')
+            const computerId = member.slice(0, separator)
+            const session = listed.get(member) ?? closed.get(member)
+            const parts = [
+              member.slice(separator + 1),
+              `${session?.computerName ?? host.findComputer(computerId)?.name ?? computerId} (${computerId})`,
+            ]
+            if (session) parts.push(quoted(session.title, 80))
+            if (!listed.has(member)) parts.push(session ? 'closed; back here if reopened' : 'not in the session list')
+            return `   - ${parts.join(' · ')}`
+          }
+          return [
+            `Categories (${snapshot.categories.length}), top to bottom as the Sessions list shows them:`,
+            ...snapshot.categories.flatMap((category, index) => {
+              const visible = category.sessions.filter(shown)
+              const hidden = category.sessions.length - visible.length
+              return [
+                `${index + 1}. ${named(category)} · ${category.collapsed ? 'collapsed' : 'expanded'} · ${plural(category.sessions.length, 'session')}`,
+                ...visible.map(line),
+                ...(hidden ? [`   - ${hidden} more, outside this observation`] : []),
+              ]
+            }),
+            footer,
+          ].join('\n')
+        },
+      ),
+      define(
+        'create_category',
+        "Create a category in the user's Sessions list, only when the user asks you to organize their sessions. It starts empty and expanded; move_sessions puts sessions in it. position is its place among the categories, 1 for the top; without one it goes last.",
+        z.object({
+          name: nameField,
+          position: z.number().int().min(1).max(SESSION_CATEGORY_LIMIT).optional()
+            .describe('1 puts it at the top; omitted puts it last.'),
+        }),
+        async ({ name, position }) => {
+          const id = newSessionCategoryId()
+          const { after } = await commit(() => ({
+            type: 'create', id, name, ...(position === undefined ? {} : { index: position - 1 }),
+          }))
+          const index = after.categories.findIndex((category) => category.id === id)
+          const created = after.categories[index]
+          onActivity({ tool: 'create_category', content: `Created category ${JSON.stringify(created.name)}` })
+          return `Created category ${named(created)} at position ${index + 1} of ${after.categories.length}; move sessions into it with move_sessions.`
+        },
+        { actsOnSessions: true },
+      ),
+      define(
+        'rename_category',
+        "Rename a category in the user's Sessions list when the user asks.",
+        z.object({ category: categoryField, name: nameField }),
+        async ({ category, name }) => {
+          let target!: SessionCategory
+          const { before, after } = await commit((snapshot) => {
+            target = find(snapshot, category)
+            return { type: 'update', categoryId: target.id, name }
+          })
+          const renamed = after.categories.find((entry) => entry.id === target.id) ?? target
+          if (after.revision === before.revision) {
+            return `Category ${named(renamed)} already has that name; nothing changed.`
+          }
+          onActivity({
+            tool: 'rename_category',
+            content: `Renamed category ${JSON.stringify(target.name)} to ${JSON.stringify(renamed.name)}`,
+          })
+          return `Renamed category ${JSON.stringify(target.name)} to ${named(renamed)}.`
+        },
+        { actsOnSessions: true },
+      ),
+      define(
+        'delete_category',
+        "Delete a category from the user's Sessions list when the user asks. Its sessions stay exactly as they are, listed under their computers again in no category.",
+        z.object({ category: categoryField }),
+        async ({ category }) => {
+          let target!: SessionCategory
+          await commit((snapshot) => {
+            target = find(snapshot, category)
+            return { type: 'delete', categoryId: target.id }
+          })
+          const held = target.sessions.length
+          onActivity({
+            tool: 'delete_category',
+            content: `Deleted category ${JSON.stringify(target.name)}${held === 0 ? ''
+              : held === 1 ? '; its 1 session stays' : `; its ${held} sessions stay`}`,
+          })
+          return held === 0
+            ? `Deleted category ${named(target)}; it held no sessions.`
+            : held === 1
+              ? `Deleted category ${named(target)}; its 1 session is unchanged, listed under its computer again.`
+              : `Deleted category ${named(target)}; its ${held} sessions are unchanged, listed under their computers again.`
+        },
+        { actsOnSessions: true },
+      ),
+      define(
+        'move_sessions',
+        "Move sessions into a category, or out of their categories with category null, when the user asks you to organize their sessions. A session is in at most one category, so moving it into one takes it out of any other; taken out, it is listed under its own computer again, where it was. Sessions from different computers can share a category. Only where they are listed changes: they keep running exactly as before.",
+        z.object({
+          sessionIds: z.array(sessionIdField).min(1).max(100)
+            .describe('Session ids from the roster; a unique prefix of at least 6 characters also works.'),
+          computer: computerField.optional(),
+          category: categoryField.nullable()
+            .describe("The category's id from list_categories, or its name; null takes the sessions out of their categories."),
+          position: z.number().int().min(1).max(10_000).optional()
+            .describe('Where they go in the category, 1 for first; omitted puts them last.'),
+        }),
+        async ({ sessionIds, computer, category, position }) => {
+          if (category === null && position !== undefined) {
+            throw new ToolFailure('position applies only when moving sessions into a category.')
+          }
+          current()
+          const open = await host.listSessions()
+          const sessions: ManagedSession[] = []
+          for (const sessionId of sessionIds) {
+            const session = await resolveSession(sessionId, computer, { open })
+            if (!sessions.some((entry) => keyOf(entry) === keyOf(session))) sessions.push(session)
+          }
+          let target: SessionCategory | undefined
+          const { before, after } = await commit((snapshot) => {
+            target = category === null ? undefined : find(snapshot, category)
+            return {
+              type: 'move',
+              sessions: sessions.map(keyOf),
+              categoryId: target?.id ?? null,
+              ...(position === undefined ? {} : { index: position - 1 }),
+            }
+          })
+          if (after.revision === before.revision) {
+            return target
+              ? 'Nothing changed: those sessions are already there.'
+              : 'Nothing changed: those sessions are in no category already.'
+          }
+          const count = plural(sessions.length, 'session')
+          const links = sessions.map(link).join(', ')
+          if (target) {
+            onActivity({ tool: 'move_sessions', content: `Moved ${count} into ${JSON.stringify(target.name)}` })
+            return `Moved ${count} into ${named(target)}: ${links}. Only where they are listed changed.`
+          }
+          const one = sessions.length === 1
+          onActivity({ tool: 'move_sessions', content: `Took ${count} out of ${one ? 'its category' : 'their categories'}` })
+          return `Took ${count} out of ${one ? 'its category; it is' : 'their categories; they are'} listed under ${
+            one ? 'its computer' : 'their computers'} again: ${links}.`
+        },
+        { actsOnSessions: true },
       ),
     ]
   }
@@ -1654,6 +1901,7 @@ export function createManagerTools(
       },
       { actsOnSessions: true }
     ),
+    ...categoryTools(),
     define(
       'list_skills',
       "List the user's skills (name and description), so delegated prompts can name the ones that apply.",

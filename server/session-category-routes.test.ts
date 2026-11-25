@@ -13,6 +13,7 @@ import type { KnowledgeStore } from './knowledge-store.js'
 import type { NodeIdentityStore } from './node-identity.js'
 import type { PushNotificationService } from './push-notification-service.js'
 import { registerHubRoutes } from './hub-routes.js'
+import { sessionCategoryWriter } from './session-category-routes.js'
 import { SessionCategoryStore } from './session-category-store.js'
 import { SessionOrderStore } from './session-order-store.js'
 import type { SessionService } from './session-service.js'
@@ -239,6 +240,54 @@ describe('hub session category routes', () => {
     expect(members(owned.categories)).toEqual([['lab', ['hub:new']]])
     await app.close()
   })
+
+  it('changes categories on the hub itself as a browser does, placing only a session the list holds', async () => {
+    const owned = await stores({ hub: ['hub:a'] })
+    const writer = sessionCategoryWriter(owned.categories, owned.sessionOrder)
+
+    expect(writer.snapshot()).toEqual({ revision: 0, categories: [] })
+    expect(writer.unavailableReason()).toBeUndefined()
+    await expect(writer.change(0, { type: 'create', id: 'lab', name: 'Lab', sessions: ['hub:unlisted'] }))
+      .rejects.toMatchObject({ statusCode: 409 })
+    expect(await writer.change(0, { type: 'create', id: 'lab', name: 'Lab', sessions: ['hub:a'] })).toEqual({
+      revision: 1, categories: [{ id: 'lab', name: 'Lab', collapsed: false, sessions: ['hub:a'] }],
+    })
+    await expect(writer.change(0, { type: 'move', sessions: ['hub:a'], categoryId: null }))
+      .rejects.toMatchObject({ statusCode: 409 })
+    // Without a session order nothing is listed, so nothing can be placed.
+    await expect(sessionCategoryWriter(owned.categories, undefined)
+      .change(1, { type: 'move', sessions: ['hub:a'], categoryId: 'lab', index: 0 }))
+      .rejects.toMatchObject({ statusCode: 409 })
+  })
+
+  it('lists a session it creates before answering, so it can go into a category at once', async () => {
+    const owned = await stores({ hub: ['hub:a'] })
+    await owned.categories.change(0, { type: 'create', id: 'lab', name: 'Lab', sessions: ['hub:a'] })
+    // A slow order write, as on a busy disk: the session takes a while to be listed.
+    let listNow!: () => void
+    const slow = new Promise<void>((resolve) => { listNow = resolve })
+    const append = owned.sessionOrder.appendSession.bind(owned.sessionOrder)
+    vi.spyOn(owned.sessionOrder, 'appendSession').mockImplementation(async (computerId, sessionId) => {
+      await slow
+      return append(computerId, sessionId)
+    })
+    const { app } = await hub(owned, {
+      createSession: async () => ({ id: 'new', computerId: 'hub', title: 'New', cwd: '/tmp/work' }),
+    })
+
+    const creating = app.inject({
+      method: 'POST', url: '/api/computers/hub/sessions', headers: host, payload: { cwd: '/tmp/work' },
+    })
+    setTimeout(listNow, 50)
+    expect((await creating).statusCode).toBe(201)
+    const moved = await app.inject({
+      method: 'POST', url: '/api/session-categories/move', headers: host,
+      payload: { revision: 1, categoryId: 'lab', sessions: [{ computerId: 'hub', sessionId: 'new' }] },
+    })
+    expect(moved.statusCode).toBe(200)
+    expect(members(owned.categories)).toEqual([['lab', ['hub:a', 'hub:new']]])
+    await app.close()
+  })
 })
 
 describe('session.categories.updated', () => {
@@ -263,7 +312,7 @@ describe('session.categories.updated', () => {
     return events
   }
 
-  it('brings every connected browser to the same categories', async () => {
+  async function startHub() {
     vi.stubEnv('AGENTIC_REMOTE_ALLOWED_ORIGINS', 'https://hub.example.test')
     const directory = path.join(process.cwd(), `.session-category-routes-test-${randomUUID()}`)
     directories.push(directory)
@@ -275,7 +324,7 @@ describe('session.categories.updated', () => {
       listSessions: vi.fn((): SessionDetail[] => []),
       listHistory: vi.fn((): SessionDetail[] => []),
     })
-    const { app } = await buildApp({
+    const built = await buildApp({
       dataDirectory: directory,
       logger: false,
       managerAgent: false,
@@ -297,7 +346,12 @@ describe('session.categories.updated', () => {
       } as unknown as PushNotificationService,
       transcriptionService: { initialize: async () => undefined, stop: async () => undefined, transcribe: vi.fn() },
     })
-    await app.ready()
+    await built.app.ready()
+    return { ...built, manager }
+  }
+
+  it('brings every connected browser to the same categories', async () => {
+    const { app, manager } = await startHub()
     const first = await app.injectWS('/api/events', { headers: trusted })
     const second = await app.injectWS('/api/events', { headers: trusted })
     try {
@@ -327,6 +381,34 @@ describe('session.categories.updated', () => {
         type: 'session.categories.updated',
         categories: { revision: 2, categories: [{ id: 'lab', name: 'Lab', collapsed: false, sessions: [] }] },
       })
+    } finally {
+      first.terminate()
+      second.terminate()
+      await app.close()
+    }
+  })
+
+  it('brings every browser to a change made on the hub itself, as Oracle makes them', async () => {
+    const { app, manager, sessionCategoryStore, sessionOrderStore } = await startHub()
+    const first = await app.injectWS('/api/events', { headers: trusted })
+    const second = await app.injectWS('/api/events', { headers: trusted })
+    try {
+      const firstEvents = inbox(first)
+      const secondEvents = inbox(second)
+      await until(() => manager.listSessions.mock.calls.length > 0 && sessionOrderStore!.indexOf('hub', 'a') >= 0)
+      const writer = sessionCategoryWriter(sessionCategoryStore!, sessionOrderStore)
+
+      const committed = await writer.change(0, { type: 'create', id: 'lab', name: 'Lab', sessions: ['hub:a'] })
+      await until(() => firstEvents.length === 1 && secondEvents.length === 1)
+      expect(firstEvents).toEqual([{ type: 'session.categories.updated', categories: committed }])
+      expect(secondEvents).toEqual(firstEvents)
+
+      const renamed = await writer.change(1, { type: 'update', categoryId: 'lab', name: 'Home lab' })
+      await until(() => firstEvents.length === 2 && secondEvents.length === 2)
+      expect(secondEvents[1]).toEqual({ type: 'session.categories.updated', categories: renamed })
+      // Each commit is said once.
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(firstEvents).toHaveLength(2)
     } finally {
       first.terminate()
       second.terminate()

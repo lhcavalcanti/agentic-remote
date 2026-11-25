@@ -32,8 +32,8 @@ export interface SessionCategoriesSnapshot {
 }
 
 export type SessionCategoryChange =
-  /** Appended last and expanded; its sessions leave any other category. */
-  | { type: 'create'; id: string; name: string; sessions?: string[] }
+  /** Expanded, at `index` among the categories (last when omitted); its sessions leave any other category. */
+  | { type: 'create'; id: string; name: string; sessions?: string[]; index?: number }
   /** Omitted fields keep their value; `index` is the category's new place. */
   | { type: 'update'; categoryId: string; name?: string; collapsed?: boolean; index?: number }
   /** Its sessions stay, in no category. */
@@ -161,7 +161,9 @@ export function applySessionCategoryChange(
       if (categories.length >= SESSION_CATEGORY_LIMIT) {
         throw new SessionCategoryRefusal(`A hub keeps at most ${SESSION_CATEGORY_LIMIT} categories`, 409)
       }
-      return [...without(categories, sessions), { id: change.id, name, collapsed: false, sessions }]
+      const next = without(categories, sessions)
+      next.splice(clamp(change.index ?? next.length, next.length), 0, { id: change.id, name, collapsed: false, sessions })
+      return next
     }
     case 'update': {
       const from = existing(categories, change.categoryId)

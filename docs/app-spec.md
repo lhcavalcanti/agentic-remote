@@ -174,9 +174,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   and while the computer is offline. **New category** MUST also be offered where
   the categories end (the first row when there are none) rather than in the
   Sessions header, which stays one row on a phone, and not while filtering. Each
-  category's own menu MUST offer **Mark all as read**, **Rename…**, **Move up**,
-  **Move down**, and **Delete category…**, which asks once and says its sessions
-  stay: deleting a category leaves its sessions listed under their computers.
+  category's own menu MUST offer **New session in** the category, **Mark all as
+  read**, **Rename…**, **Move up**, **Move down**, and **Delete category…**,
+  which asks once and says its sessions stay: deleting a category leaves its
+  sessions listed under their computers.
   The menu MUST take the focus when it opens, move it with the arrow keys, Home,
   and End, and give it back to its button on Escape or after an action; keyboard
   users reorder inside a category with the row's keyboard handle and move
@@ -184,12 +185,24 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   announced politely, even one made from the session's actions while the list is
   out of sight. Category controls MUST be at least 40 px on touch screens. Names
   are 1 to 60 characters and unique on the hub, ignoring case.
+- **New session in** a category MUST start a session on the computer and in the
+  folder of the most recently active session the category lists, with what the
+  New session sheet would start there by default (§3.2): Copilot, in tmux
+  unless App settings chooses the SDK, every permission allowed, and App
+  settings' model, effort, context size, and mode. It MUST say under its name
+  where the session will start, go through the same pending row and selection
+  as a session the sheet starts, and put the session in the category once it
+  exists. It MUST be disabled, saying why, while the category lists no session,
+  or while that computer is offline or lacks Copilot. A hub MUST list a
+  session it creates in its custom order before answering, so the session can
+  go into a category at once.
 - Category changes are revisioned: each names the revision it was made against
   and the hub MUST refuse one made against a revision it has moved past. A
   browser MAY show a change at once, MUST send its changes one at a time, and
   on a refusal MUST restore the categories the hub last committed, read them
-  again, and report the failure. Committed changes MUST reach every browser as
-  `session.categories.updated` and survive a hub restart.
+  again, and report the failure. Every change the hub commits, whether a
+  browser's, Oracle's (§3.7), or its own lifecycle bookkeeping, MUST reach
+  every browser as `session.categories.updated` and survive a hub restart.
 - Clear and Recover MUST keep a session's category and its place there; the
   replacement takes its predecessor's place. Close MUST remember the category
   and Reopen restore it, until the closed session can no longer be reopened.
@@ -928,6 +941,16 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   one when you ask; reopening sends nothing.
 - Asked to pause or set aside sessions, Oracle closes them with its close
   tool under the same rules as any other close, and reopens one when you ask.
+- Asked to organize your sessions, for example "group my sessions by project",
+  and only then, Oracle MAY list, create, rename, and delete categories
+  (§3.1) and move sessions into one, at a position, or out of their
+  category. It changes them as a browser does, against their revision, once
+  more against the categories as they then stand if another change landed
+  first, and every browser shows the result. Organizing MUST NOT close,
+  delete, interrupt, or otherwise touch a session; deleting a category leaves
+  its sessions under their computers. While the hub cannot use its
+  categories, Oracle MUST say why rather than change anything. Reading them is
+  allowed in **Ask** and by voice; changing them is not.
 - **Ask** is the panel's conversational mode: you ask Oracle about your
   sessions while their work carries on. Oracle answers from the current state,
   reading sessions as they are recorded and asking side questions that fork a
@@ -935,7 +958,7 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   turn added so its answer is not mistaken for the whole story, and MUST NOT
   interrupt, cancel, redirect, prompt,
   or otherwise change any session or its work. The hub refuses every tool that
-  would start, message, rename, reopen, stop, or close a session for
+  would start, message, rename, organize, reopen, stop, or close a session for
   that message, and Oracle's reads never open, resume, or reconcile a session.
   Oracle's memory and settings are its own and stay writable. Under the message
   bar, an **Ask |
@@ -2667,6 +2690,9 @@ Every material release SHOULD preserve:
 - Synced settings matching across devices on the same hub, with no theme flash
 - Session categories matching across browsers on the same hub, through Clear,
   Recover, Close and Reopen, with `session-order.json` untouched
+- A session started from a category's menu, beside its latest session, landing
+  in that category; and Oracle organizing sessions into categories on request,
+  seen by every browser, without touching a session
 
 ## 17. Authoritative implementation areas
 
@@ -2674,7 +2700,7 @@ Every material release SHOULD preserve:
 | --- | --- |
 | UI, composer, workspace, Knowledge | `src/App.tsx`, `src/index.css` |
 | Session search, filters, and state labels | `src/SessionNavigation.tsx`, `src/session-presentation.ts` |
-| Session categories | `shared/session-categories.ts`, `server/session-category-store.ts`, `server/session-category-routes.ts`, `src/use-session-categories.ts`, `src/session-navigation-view.ts`, `src/SessionCategoryDialogs.tsx` |
+| Session categories | `shared/session-categories.ts`, `server/session-category-store.ts`, `server/session-category-routes.ts`, `src/use-session-categories.ts`, `src/session-navigation-view.ts`, `src/SessionCategoryDialogs.tsx`; Oracle's category tools in `server/manager-tools.ts` |
 | Session-actions disclosure | `src/SessionActions.tsx` |
 | Side questions | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
 | Oracle (session manager agent) | `src/ManagerAssistant.tsx`, `src/OracleSettings.tsx`, `src/use-oracle-settings.ts`, `server/manager-*.ts`, `shared/manager.ts` |

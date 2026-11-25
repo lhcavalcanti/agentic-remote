@@ -201,6 +201,16 @@ describe('manager turn context', () => {
     expect(MANAGER_SYSTEM_PROMPT).not.toMatch(/suspend|resume_session/i)
   })
 
+  it('organizes sessions into categories only when asked, and never touches a session doing so', () => {
+    const rule = MANAGER_SYSTEM_PROMPT.split('\n').find((line) => line.includes('move_sessions'))
+    expect(rule).toBeDefined()
+    expect(rule).toMatch(/only when the user asks, for example "group my sessions by project"/)
+    expect(rule).toMatch(/list_categories[^\n]*create_category[^\n]*rename_category[^\n]*delete_category/)
+    expect(rule).toMatch(/never closes, deletes, interrupts, or otherwise touches a session/)
+    // Ask mode refuses it with the other session changes.
+    expect(MANAGER_SYSTEM_PROMPT).toMatch(/Ask mode[^\n]*Do not start, message, rename, organize, reopen, stop, or close any session/)
+  })
+
   it('tells Oracle closing keeps a session reopenable, and how to find and reopen one', () => {
     const rule = MANAGER_SYSTEM_PROMPT.split('\n').find((line) => line.includes('list_closed_sessions'))
     expect(rule).toBeDefined()

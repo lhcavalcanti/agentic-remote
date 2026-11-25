@@ -2,6 +2,7 @@ import { expect, test, type Browser, type Locator, type Page } from '@playwright
 import {
   BACKGROUND_SESSION_ID,
   IDLE_SESSION_ID,
+  OFFLINE_SESSION_ID,
   PENDING_SESSION_ID,
   PERMISSION_SESSION_ID,
   SELECTED_SESSION_ID,
@@ -201,10 +202,10 @@ for (const device of devices) {
         const actions = reviews.getByRole('button', { name: 'Category actions for Reviews' })
         await actions.click()
         const menu = page.getByRole('menu', { name: 'Category actions for Reviews' })
-        await expect(menu.getByRole('menuitem', { name: 'Mark all as read' })).toBeFocused()
+        await expect(menu.getByRole('menuitem', { name: 'New session in Reviews' })).toBeFocused()
         await expect(menu.getByRole('menuitem', { name: 'Move up' })).toBeDisabled()
         await page.keyboard.press('ArrowDown')
-        await expect(menu.getByRole('menuitem', { name: 'Rename…' })).toBeFocused()
+        await expect(menu.getByRole('menuitem', { name: 'Mark all as read' })).toBeFocused()
         if (device.name === 'phone') {
           for (const item of await menu.getByRole('menuitem').all()) {
             expect((await bounds(item)).height).toBeGreaterThanOrEqual(device.target)
@@ -236,6 +237,56 @@ for (const device of devices) {
         await expect(reviews.getByRole('button', { name: 'Reviews, 5 sessions' })).toHaveAttribute('aria-expanded', 'true')
         await expect(reviews.getByRole('button', { name: /^Check handbook links,/ })).toBeVisible()
         await expect.poll(() => state.sessionCategories.categories[0].collapsed).toBe(false)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
+
+    test('starts a session in a category beside its latest one, and says why one cannot start', async ({ page }, testInfo) => {
+      const state = categorizedState()
+      state.sessionCategories = {
+        revision: 4,
+        categories: [
+          ...state.sessionCategories.categories,
+          { id: 'away', name: 'Away', collapsed: false, sessions: [`fixture-travel:${OFFLINE_SESSION_ID}`] },
+        ],
+      }
+      const fixture = await open(page, testInfo.project.use.baseURL!, state)
+      try {
+        let list = await sessionList(page)
+        await list.getByRole('region', { name: 'Category Plans' })
+          .getByRole('button', { name: 'Category actions for Plans' }).click()
+        const menu = page.getByRole('menu', { name: 'Category actions for Plans' })
+        const start = menu.getByRole('menuitem', { name: 'New session in Plans' })
+        await expect(start).toBeFocused()
+        await expect(start).toHaveAccessibleDescription('~/field-notes on Studio')
+        expect((await bounds(start)).height).toBeGreaterThanOrEqual(device.target)
+        // The wider menu stays on screen.
+        const panel = await bounds(menu)
+        expect(panel.x).toBeGreaterThanOrEqual(0)
+        expect(panel.x + panel.width).toBeLessThanOrEqual(device.viewport.width)
+        await screenshot(page, `${device.name}-new-session-menu`)
+        await start.click()
+
+        // Where Plans' latest session works, with New session's defaults, and in Plans.
+        await expect.poll(() => state.sessions.find(({ id }) => id === 'fixture-started-1'))
+          .toMatchObject({ computerId: 'fixture-studio', cwd: '/home/demo/field-notes', provider: 'copilot', executionMode: 'tmux' })
+        await expect.poll(() => state.sessionCategories.categories.find(({ id }) => id === 'plans')?.sessions)
+          .toEqual([studio(SELECTED_SESSION_ID), studio('fixture-started-1')])
+        await expect(page.getByRole('status').filter({ hasText: 'Started field-notes in Plans' })).toHaveCount(1)
+        list = await sessionList(page)
+        await expect(list.getByRole('region', { name: 'Category Plans' }).getByRole('button', { name: /^field-notes,/ }))
+          .toHaveAttribute('aria-current', 'page')
+        await screenshot(page, `${device.name}-new-session-started`)
+
+        // Away's latest session is on a computer that is offline.
+        await list.getByRole('region', { name: 'Category Away' })
+          .getByRole('button', { name: 'Category actions for Away' }).click()
+        const offline = page.getByRole('menu', { name: 'Category actions for Away' })
+          .getByRole('menuitem', { name: 'New session in Away' })
+        await expect(offline).toBeDisabled()
+        await expect(offline).toHaveAccessibleDescription('Travel laptop is offline')
+        await screenshot(page, `${device.name}-new-session-offline`)
       } finally {
         fixture.assertHealthy()
       }

@@ -23506,6 +23506,109 @@ describe('App', () => {
       expect(saveSessionUnread).toHaveBeenCalledWith(computer.id, third.id, false)
       expect(saveSessionUnread).toHaveBeenCalledTimes(2)
     })
+
+    describe('starting a session in a category', () => {
+      const startIn = async (name: string) => {
+        openList()
+        fireEvent.click(await screen.findByRole('button', { name: `Category actions for ${name}` }))
+        return screen.getByRole('menuitem', { name: `New session in ${name}` })
+      }
+
+      it('starts it on the computer and in the folder of the category\'s latest session, and puts it there', async () => {
+        const latest = { ...other, cwd: '/home/tester/src/lab', updatedAt: '2026-07-23T00:00:00.000Z' }
+        listed([session, latest, third])
+        hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [third, latest])] }
+        const started = { ...session, id: 'started', title: 'lab', cwd: '/home/tester/src/lab', messages: [] }
+        vi.mocked(createSession).mockResolvedValue(started)
+        vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+          [session, latest, third, started].find((candidate) => candidate.id === id) ?? session)
+
+        render(<App />)
+        await screen.findByLabelText('Message')
+        const start = await startIn('Homelab')
+        expect(start).toHaveAccessibleDescription('~/src/lab on development')
+        fireEvent.click(start)
+
+        // The New session dialog's defaults: Copilot, in tmux, every permission allowed.
+        await waitFor(() => expect(createSession).toHaveBeenCalledWith(computer.id, {
+          cwd: '/home/tester/src/lab', provider: 'copilot', terminalBacked: true, allowAllPermissions: true,
+        }))
+        await waitFor(() => expect(saveSessionCategoryChange)
+          .toHaveBeenCalledWith(1, { type: 'move', sessions: [key(started)], categoryId: 'lab' }))
+        expect(hubCategories.categories[0].sessions).toEqual([key(third), key(latest), key(started)])
+        await waitFor(() => expect(document.querySelector('.session-category-announcement'))
+          .toHaveTextContent('Started lab in Homelab'))
+        // It opens, as a session the dialog starts does, in its category.
+        openList()
+        const row = within(region('Category Homelab')).getByRole('button', { name: /^lab,/ })
+        expect(row).toHaveAttribute('aria-current', 'page')
+        expect(within(region(computer.name)).queryByRole('button', { name: /^lab,/ })).toBeNull()
+      })
+
+      it('starts it with the model, mode, and backend New session uses', async () => {
+        seedHubSettings({
+          newSessionBackend: 'sdk',
+          newSessionRuntimes: {
+            copilot: { model: 'fixture-model', reasoningEffort: 'high', contextTier: 'long_context', mode: 'plan' },
+          },
+        })
+        listed([session, other])
+        hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other])] }
+        const started = { ...other, id: 'started', title: 'Started', messages: [] }
+        vi.mocked(createSession).mockResolvedValue(started)
+        vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+          [session, other, started].find((candidate) => candidate.id === id) ?? session)
+
+        render(<App />)
+        await screen.findByLabelText('Message')
+        fireEvent.click(await startIn('Homelab'))
+
+        await waitFor(() => expect(createSession).toHaveBeenCalledWith(computer.id, {
+          cwd: other.cwd, provider: 'copilot', terminalBacked: false, allowAllPermissions: true,
+          model: 'fixture-model', reasoningEffort: 'high', contextTier: 'long_context', mode: 'plan',
+        }))
+        expect(getProviderRuntimeOptions).toHaveBeenCalledWith(computer.id, 'copilot')
+        await waitFor(() => expect(hubCategories.categories[0].sessions).toEqual([key(other), `${computer.id}:started`]))
+      })
+
+      it('says why an empty category or one whose computer is offline cannot start one', async () => {
+        const away = { ...secondComputer, online: false }
+        const remote = { ...other, computerId: away.id, computerName: away.name }
+        vi.mocked(listComputers).mockResolvedValue([computer, away])
+        listed([session, remote])
+        hubCategories = {
+          revision: 1,
+          categories: [category('away', 'Away', [remote]), category('empty', 'Empty', [])],
+        }
+
+        render(<App />)
+        await screen.findByLabelText('Message')
+        const offline = await startIn('Away')
+        expect(offline).toBeDisabled()
+        expect(offline).toHaveAccessibleDescription('worker-node is offline')
+        fireEvent.click(offline)
+        const empty = await startIn('Empty')
+        expect(empty).toBeDisabled()
+        expect(empty).toHaveAccessibleDescription('Needs a session in it first')
+        fireEvent.click(empty)
+        expect(createSession).not.toHaveBeenCalled()
+        expect(saveSessionCategoryChange).not.toHaveBeenCalled()
+      })
+
+      it('reports a start that fails, and puts nothing in the category', async () => {
+        listed([session, other])
+        hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other])] }
+        vi.mocked(createSession).mockRejectedValue(new Error('That folder no longer exists'))
+
+        render(<App />)
+        await screen.findByLabelText('Message')
+        fireEvent.click(await startIn('Homelab'))
+
+        expect(await screen.findByText('That folder no longer exists')).toBeVisible()
+        expect(saveSessionCategoryChange).not.toHaveBeenCalled()
+        expect(hubCategories.categories[0].sessions).toEqual([key(other)])
+      })
+    })
   })
 
   it('shows hidden sessions on every device, and keeps the committed choice when saving fails', async () => {

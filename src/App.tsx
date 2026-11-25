@@ -14138,7 +14138,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               onKnowledge={() => setKnowledgeMode('docked')}
             />
           ) : loadingTranscript &&
-          selected.messages.length === 0 &&
+          // An empty window is an answer: a session read ahead, or opened
+          // before, as empty is drawn as empty while it is read again.
+          !holdsTranscript(selected) &&
           selectedPendingEchoes.length === 0 ? (
             <div className="empty-chat">
               <span className="typing-indicator" aria-label="Loading conversation">

@@ -1302,7 +1302,9 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   dropped when anything was heard about its session or computer after it was
   asked for, or when the session has meanwhile gone or come to hold a
   transcript. The event socket keeps what was read fresh; nothing is polled.
-  Opening a session read ahead still reads it as before, which marks it read.
+  Opening a session read ahead MUST draw what was read at once — an empty one
+  as empty, not as loading — and still reads it as before, which marks it
+  read.
 - Sent messages and ArrowUp recall cover the messages held. While earlier
   ones are not, Sent messages MUST say how many and offer to load them.
   Readers that do not ask for a window — browsers from before windows,

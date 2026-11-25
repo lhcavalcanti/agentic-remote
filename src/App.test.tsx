@@ -6911,6 +6911,19 @@ describe('App', () => {
       expect(getSession).toHaveBeenLastCalledWith('computer-1', 'session-2')
     })
 
+    it('opens an empty session read ahead at once, without waiting on its own read', async () => {
+      const { ahead, openSocket } = await renderWithReads()
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      await act(async () => ahead()[0].resolve(windowOf(secondSession)))
+      // The next read going out means the empty answer is in.
+      await waitFor(() => expect(ahead()).toHaveLength(2))
+
+      open('Second chat')
+      expect(screen.queryByLabelText('Loading conversation')).not.toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'What should we work on?' })).toBeInTheDocument()
+    })
+
     it('abandons a read ahead when the reader opens a session, and reads it again once that is drawn', async () => {
       const { reads, ahead, openSocket } = await renderWithReads()
       openSocket()

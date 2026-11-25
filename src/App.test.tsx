@@ -6925,6 +6925,27 @@ describe('App', () => {
       expect(screen.getByRole('heading', { name: 'What should we work on?' })).toBeInTheDocument()
     })
 
+    it('keeps an empty session read ahead as empty when a summary of it arrives later', async () => {
+      const { ahead, openSocket } = await renderWithReads()
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      await act(async () => ahead()[0].resolve(windowOf(secondSession)))
+      await waitFor(() => expect(ahead()).toHaveLength(2))
+      // A node's roster, which never read the transcript.
+      act(() => {
+        MockWebSocket.instances.at(-1)?.onmessage?.({
+          data: JSON.stringify({
+            type: 'session.upserted', summary: true,
+            session: { ...secondSession, title: 'Renamed on the node' },
+          }),
+        } as MessageEvent)
+      })
+
+      open('Renamed on the node')
+      expect(screen.queryByLabelText('Loading conversation')).not.toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'What should we work on?' })).toBeInTheDocument()
+    })
+
     it('abandons a read ahead when the reader opens a session, and reads it again once that is drawn', async () => {
       const { reads, ahead, openSocket } = await renderWithReads()
       openSocket()

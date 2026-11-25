@@ -1,5 +1,6 @@
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import { sessionKey } from './session-presentation'
+import { holdsTranscript } from './session-transcript'
 
 /**
  * Reading ahead: once the page has settled, the latest window of the sessions
@@ -40,15 +41,6 @@ export interface PrefetchSkips {
   computers: readonly Pick<ComputerSummary, 'id' | 'online' | 'isLocal' | 'version'>[]
   /** Whether a read of this session is already on its way. */
   inFlight: (session: ManagedSession) => boolean
-}
-
-/**
- * Whether the browser already holds this session's transcript: messages the
- * event socket pushed or a read brought, or an answer saying it is empty. A
- * listing's summary holds none.
- */
-export function holdsTranscript(session: ManagedSession): boolean {
-  return session.messages.length > 0 || session.messagesTotal !== undefined
 }
 
 /**

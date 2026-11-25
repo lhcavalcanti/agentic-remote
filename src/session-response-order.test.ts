@@ -123,6 +123,12 @@ describe('Snapshot transcripts', () => {
     expect(row).toMatchObject({ title: 'Renamed', messages: held, messagesStart: 40, messagesTotal: 41, carriedMessages: carried })
   })
 
+  it('keeps an empty window when a summary carries no transcript', () => {
+    const empty = { ...session, messages: [], messagesStart: 0, messagesTotal: 0, carriedMessages: [] }
+    const [row] = carrySnapshotTranscripts([{ ...session, title: 'Renamed', messages: [] }], [empty])
+    expect(row).toMatchObject({ title: 'Renamed', messages: [], messagesStart: 0, messagesTotal: 0 })
+  })
+
   it('keeps the earlier rows held under a snapshot row that carries a window lining up with them', () => {
     const line = (index: number) => ({ id: `w${index}`, role: 'assistant' as const, content: `line ${index}`, createdAt: session.updatedAt })
     const paged = { ...session, messages: [10, 11, 12, 13].map(line), messagesStart: 10, messagesTotal: 14, carriedMessages: [] }

@@ -1,5 +1,5 @@
 import type { ManagedSession } from '../shared/contracts'
-import { mergeTranscriptWindow } from './session-transcript'
+import { holdsTranscript, mergeTranscriptWindow } from './session-transcript'
 
 let eventSequence = 0
 const responseSequences = new WeakMap<object, number>()
@@ -78,8 +78,9 @@ export function projectSessionResponse(
  * built from it can arrive.
  *
  * A held window comes along whole: where it starts, how long the transcript
- * is, and the rows it carries from before it. A row that brings a window of
- * its own keeps the earlier rows held that line up with it.
+ * is, and the rows it carries from before it -- an empty one too, since it
+ * says the conversation is empty where a summary says nothing. A row that
+ * brings a window of its own keeps the earlier rows held that line up with it.
  */
 export function carrySnapshotTranscripts(
   rows: ManagedSession[],
@@ -90,7 +91,7 @@ export function carrySnapshotTranscripts(
   }
   const held = new Map(
     existing
-      .filter((entry) => entry.messages.length > 0)
+      .filter(holdsTranscript)
       .map((entry) => [`${entry.computerId}:${entry.id}`, entry]),
   )
   if (held.size === 0) {

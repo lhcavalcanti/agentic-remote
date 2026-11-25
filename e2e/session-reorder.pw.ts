@@ -28,6 +28,11 @@ async function open(page: Page, baseUrl: string, onPhone: boolean, state = creat
   if (onPhone) await page.getByRole('button', { name: 'Open sessions', exact: true }).click()
   const list = page.getByRole('navigation', { name: 'Sessions', exact: true })
   await expect(list.locator('.session-item').first()).toBeVisible()
+  // Once its event socket opens, the app refreshes everything with a notice
+  // above the rows. Wait that out, so rows stay where a test measures them.
+  const freshness = list.getByRole('status', { name: 'Session data freshness', exact: true })
+  await freshness.waitFor({ timeout: 2_000 }).catch(() => undefined)
+  await expect(freshness).toHaveCount(0)
   return { fixture, list }
 }
 

@@ -532,6 +532,8 @@ interface CategoryMenuItem {
  */
 function CategoryMenu({ name, items }: { name: string; items: CategoryMenuItem[] }) {
   const [open, setOpen] = useState(false)
+  // Opens upward when the list has no room for it below the button.
+  const [upward, setUpward] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -585,7 +587,12 @@ function CategoryMenu({ name, items }: { name: string; items: CategoryMenuItem[]
         aria-haspopup="menu"
         aria-label={label}
         className="session-category__menu-button"
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          const button = triggerRef.current?.getBoundingClientRect()
+          const list = triggerRef.current?.closest('.session-list__scroll')?.getBoundingClientRect()
+          setUpward(Boolean(button && list && list.bottom - button.bottom < 220 && button.top - list.top > list.bottom - button.bottom))
+          setOpen(!open)
+        }}
         ref={triggerRef}
         title={label}
         type="button"
@@ -595,7 +602,7 @@ function CategoryMenu({ name, items }: { name: string; items: CategoryMenuItem[]
       {open ? (
         <div
           aria-label={label}
-          className="session-category__menu-panel"
+          className={`session-category__menu-panel${upward ? ' session-category__menu-panel--upward' : ''}`}
           id={menuId}
           onKeyDown={moveFocus}
           ref={menuRef}

@@ -989,6 +989,22 @@ describe('session categories in the list', () => {
     expect(screen.getByRole('menuitem', { name: 'Move down' })).toBeDisabled()
   })
 
+  it('opens a category\'s menu upward when the list has no room for it below', () => {
+    render(<NavigationHarness categories={[lab([worker])]} />)
+    const trigger = within(sectionNamed('Homelab')).getByRole('button', { name: 'Category actions for Homelab' })
+    const scroll = trigger.closest('.session-list__scroll') as HTMLElement
+    const rect = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 300, width: 300, height: bottom - top, x: 0, y: top, toJSON: () => ({}) })
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(rect(0, 600))
+    const place = vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(rect(540, 568))
+
+    fireEvent.click(trigger)
+    expect(screen.getByRole('menu')).toHaveClass('session-category__menu-panel--upward')
+    fireEvent.click(trigger)
+    place.mockReturnValue(rect(40, 68))
+    fireEvent.click(trigger)
+    expect(screen.getByRole('menu')).not.toHaveClass('session-category__menu-panel--upward')
+  })
+
   it('offers New category where the categories end, and not while the list is filtered', () => {
     render(<NavigationHarness categories={[]} />)
     const create = within(list()).getByRole('button', { name: 'New category' })

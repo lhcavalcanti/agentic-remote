@@ -197,10 +197,12 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   discovery MUST NOT place a session in one.
 - Categories MUST be kept in their own hub file, `session-categories.json`,
   never in the session order file: a release that predates categories ignores
-  the file, so rolling back leaves them alone and rolling forward restores
-  them. Fields the release does not know MUST be written back unchanged; a file
-  it cannot read, or one from a newer release, MUST leave categories
-  unavailable without changing the file or stopping the hub.
+  the file, so rolling back leaves them alone and rolling forward restores them.
+  Fields the release does not know MUST be written back unchanged; a file it
+  cannot read, or one from a newer release, MUST leave categories unavailable
+  without changing the file or stopping the hub. A browser on a hub without
+  categories MUST list every session under its computer and say so if a change
+  is attempted.
 - Search, the three primary filters, the selected session, and session-list
   scroll position MUST survive browser reloads and responsive layout changes.
   Sessions MUST expose one accessible **Refresh** action that reloads

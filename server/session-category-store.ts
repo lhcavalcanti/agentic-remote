@@ -396,6 +396,10 @@ export class SessionCategoryStore {
       const expired = this.expire(staged)
       const changed = mutate(staged)
       if (!changed && !expired) return this.snapshot()
+      // A closed mark only keeps a member's place, and this release reads no
+      // file with one left over once no category holds that session.
+      const members = new Set(staged.categories.flatMap((category) => category.sessions))
+      for (const member of Object.keys(staged.closed)) if (!members.has(member)) delete staged.closed[member]
       // Past this, revisions would stop telling one snapshot from the next.
       if (!Number.isSafeInteger(previous.revision + 1)) {
         this.retired = retired

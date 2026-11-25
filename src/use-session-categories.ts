@@ -78,13 +78,23 @@ export function useSessionCategories({ onError }: {
       apply(await fetchSessionCategories())
     } catch (error) {
       const status = (error as { statusCode?: unknown }).statusCode
-      // A hub from before categories, or one that cannot use its file.
-      if (status === 404 || status === 503) setAvailable(false)
+      // A hub from before categories, or one that cannot use its file: no
+      // session is in a category there, and nothing queued can be sent.
+      if (status === 404 || status === 503) {
+        generation.current += 1
+        pending.current = []
+        acknowledged.current = nothing
+        setAvailable(false)
+        render()
+      }
     }
-  }, [apply])
+  }, [apply, render])
 
   const change = useCallback((update: SessionCategoryChange, failure: string): Promise<boolean> => {
-    if (acknowledged.current.revision < 0) return Promise.resolve(false)
+    if (acknowledged.current.revision < 0) {
+      onErrorRef.current(`${failure}: This hub is not keeping categories`)
+      return Promise.resolve(false)
+    }
     try {
       applySessionCategoryChange(shown.current, update)
     } catch (error) {

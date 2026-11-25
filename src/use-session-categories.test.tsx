@@ -168,4 +168,28 @@ describe('useSessionCategories', () => {
       expect(saveSessionCategoryChange).not.toHaveBeenCalled()
     }
   })
+
+  it('lets go of the categories it showed once the hub stops keeping them', async () => {
+    for (const status of [404, 503]) {
+      const { hook, onError } = await loaded()
+      expect(hook.result.current.categories).toEqual([lab])
+      vi.mocked(saveSessionCategoryChange).mockRejectedValueOnce(new SubmissionError('Unavailable', status))
+      vi.mocked(fetchSessionCategories).mockRejectedValueOnce(new SubmissionError('Unavailable', status))
+      let saved: Promise<boolean> | undefined
+      act(() => { saved = hook.result.current.change({ type: 'update', categoryId: 'lab', collapsed: true }, 'Could not collapse Homelab') })
+      await act(async () => { expect(await saved).toBe(false) })
+      await waitFor(() => expect(hook.result.current.available).toBe(false))
+      // Its sessions go back under their computers rather than out of sight.
+      expect(hook.result.current.categories).toEqual([])
+
+      vi.mocked(saveSessionCategoryChange).mockClear()
+      let later: Promise<boolean> | undefined
+      act(() => { later = hook.result.current.change({ type: 'create', id: 'x', name: 'X' }, 'Could not create X') })
+      expect(await later).toBe(false)
+      expect(saveSessionCategoryChange).not.toHaveBeenCalled()
+      // Said, rather than dropped, from a dialog still open when it happened.
+      expect(onError).toHaveBeenLastCalledWith('Could not create X: This hub is not keeping categories')
+      hook.unmount()
+    }
+  })
 })

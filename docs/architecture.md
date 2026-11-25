@@ -43,13 +43,13 @@ not know, and leaves a newer or unreadable file untouched with categories
 unavailable rather than stopping the hub. Membership is keyed
 `computerId:sessionId` like order, hidden and unread, and a session keeps its
 place in its computer's lane while it is in a category. The hub keeps it in step
-with session events, never with discovery: a replacement takes its
-predecessor's category and place (from the removal's `replacedBy`, the Clear
-or Recover response of an older node, or `replacedSessionIds` lineage), a close
-is remembered for Reopen until the closed session expires, and a delete or an
-unpairing removes it. Writes under `/api/session-categories` name the revision
-they were made against, and every committed change is broadcast as
-`session.categories.updated`. Nodes keep neither file.
+with session events, never with discovery: a replacement takes its predecessor's
+category and place (from the removal's `replacedBy`, the Clear or Recover
+response of an older node, or `replacedSessionIds` lineage), a close is
+remembered for Reopen until the closed session expires or no category holds it,
+and a delete or an unpairing removes it. Writes under `/api/session-categories`
+name the revision they were made against, and every committed change is
+broadcast as `session.categories.updated`. Nodes keep neither file.
 
 Closing a session routes deletion to its owning node. That node disconnects any
 active SDK session, deletes the session from provider storage, removes its local

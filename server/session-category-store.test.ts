@@ -162,6 +162,26 @@ describe('SessionCategoryStore', () => {
     expect((await later.sessionListed('hub', 'b')).categories[0].sessions).toEqual(['hub:a'])
   })
 
+  it('drops the closed mark of a session no category holds any more, so its file still loads', async () => {
+    const { store: categories, directory } = await store()
+    await categories.change(0, { type: 'create', id: 'lab', name: 'Homelab', sessions: ['hub:a'] }, everyone)
+    await categories.change(1, { type: 'create', id: 'ops', name: 'Ops', sessions: ['hub:b'] }, everyone)
+    await categories.sessionClosed('hub', 'a')
+    await categories.sessionClosed('hub', 'b')
+    await categories.change(4, { type: 'delete', categoryId: 'lab' })
+    await categories.change(5, { type: 'move', sessions: ['hub:b'], categoryId: null })
+
+    const { store: restarted } = await store(directory)
+    expect(restarted.unavailableReason()).toBeUndefined()
+    expect(restarted.snapshot()).toEqual({
+      revision: 6,
+      categories: [{ id: 'ops', name: 'Ops', collapsed: false, sessions: [] }],
+    })
+    // Reopened, neither has a place to take back.
+    await restarted.sessionListed('hub', 'a')
+    expect((await restarted.sessionListed('hub', 'b')).categories[0].sessions).toEqual([])
+  })
+
   it('takes a deleted session and an unpaired computer\'s sessions out of their categories', async () => {
     const { store: categories } = await store()
     await categories.change(0, {

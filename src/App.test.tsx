@@ -23567,6 +23567,42 @@ describe('App', () => {
     expect(titles()).toEqual(['Bravo', 'Alpha'])
   })
 
+  it('picks a session row up after a long press, and lets a swipe across it scroll the list', async () => {
+    render(<App />)
+    await screen.findByLabelText('Message')
+    fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+    const open = screen.getByRole('button', { name: /^Project chat,/ })
+    const row = open.closest('.session-item')
+    const title = within(open).getByText('Project chat')
+    // A finger arrives as a pointer and as a touch, and moves as both.
+    const finger = (type: 'Down' | 'Move' | 'Up', y: number) => {
+      fireEvent[`pointer${type}`](title, {
+        pointerType: 'touch', isPrimary: true, button: 0, clientX: 60, clientY: y,
+      })
+      const touches = [{ clientX: 60, clientY: y }]
+      if (type === 'Down') fireEvent.touchStart(title, { touches })
+      else if (type === 'Move') fireEvent.touchMove(title, { touches })
+      else fireEvent.touchEnd(title, { touches: [], changedTouches: touches })
+    }
+    vi.useFakeTimers()
+    try {
+      finger('Down', 30)
+      finger('Move', 70)
+      act(() => { vi.advanceTimersByTime(400) })
+      expect(row).not.toHaveClass('sortable-dragging')
+      finger('Up', 70)
+
+      finger('Down', 30)
+      act(() => { vi.advanceTimersByTime(400) })
+      expect(row).toHaveClass('sortable-dragging')
+      finger('Up', 30)
+      act(() => { vi.runOnlyPendingTimers() })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(row).not.toHaveClass('sortable-dragging')
+  })
+
   it('sends only the dragged computer lane to the hub', async () => {
     vi.mocked(listComputers).mockResolvedValue([computer, secondComputer])
     vi.mocked(listSessions).mockResolvedValue([session, secondSession])

@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest'
 import { useState } from 'react'
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { DndContext } from '@dnd-kit/core'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   BackgroundTaskSnapshot,
   ComputerSummary,
   ManagedSession,
 } from '../shared/contracts'
 import { SessionNavigation, type PendingSessionCreation } from './SessionNavigation'
+import { useSessionListSensors } from './session-list-sensors'
 import type { SessionSort } from './session-presentation'
 import { sessionNavigationView, type SessionFilter } from './session-navigation-view'
 
@@ -75,6 +76,8 @@ const actions = {
 const hiddenVisibility = vi.fn()
 const sessionHidden = vi.fn()
 const sessionUnread = vi.fn()
+/** The id of whatever a press picked up. */
+const pickedUp = vi.fn()
 
 function NavigationHarness({
   sessions = sessionsByComputer,
@@ -118,8 +121,10 @@ function NavigationHarness({
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set(initialHidden))
   const [showHidden, setShowHidden] = useState(initialShowHidden)
   const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set(initialUnread))
+  // The ones the app's list uses, so a press here behaves as it does there.
+  const sensors = useSessionListSensors()
   return (
-    <DndContext>
+    <DndContext onDragStart={({ active }) => pickedUp(active.id)} sensors={sensors}>
       <SessionNavigation
         {...actions}
         closingSessions={closingSessions}
@@ -180,6 +185,55 @@ function NavigationHarness({
 
 function navigation(sessions = sessionsByComputer, sort: SessionSort = 'custom') {
   return <NavigationHarness sessions={sessions} sort={sort} />
+}
+
+type Point = { x: number; y: number }
+
+// A browser reports one press as a pointer event and then a mouse or touch
+// one, so each helper sends both, the way the list receives them.
+function mousePress(target: Element, at: Point = { x: 40, y: 20 }) {
+  fireEvent.pointerDown(target, {
+    pointerType: 'mouse', isPrimary: true, button: 0, clientX: at.x, clientY: at.y,
+  })
+  fireEvent.mouseDown(target, { button: 0, clientX: at.x, clientY: at.y })
+}
+
+function mouseMove(target: Element, to: Point) {
+  fireEvent.pointerMove(target, { pointerType: 'mouse', isPrimary: true, clientX: to.x, clientY: to.y })
+  fireEvent.mouseMove(target, { clientX: to.x, clientY: to.y })
+}
+
+function mouseRelease(target: Element, at: Point) {
+  fireEvent.pointerUp(target, {
+    pointerType: 'mouse', isPrimary: true, button: 0, clientX: at.x, clientY: at.y,
+  })
+  fireEvent.mouseUp(target, { button: 0, clientX: at.x, clientY: at.y })
+}
+
+function touchStart(target: Element, at: Point) {
+  fireEvent.pointerDown(target, {
+    pointerType: 'touch', isPrimary: true, button: 0, clientX: at.x, clientY: at.y,
+  })
+  fireEvent.touchStart(target, { touches: [{ clientX: at.x, clientY: at.y }] })
+}
+
+function touchMove(target: Element, to: Point) {
+  fireEvent.pointerMove(target, { pointerType: 'touch', isPrimary: true, clientX: to.x, clientY: to.y })
+  fireEvent.touchMove(target, { touches: [{ clientX: to.x, clientY: to.y }] })
+}
+
+function touchEnd(target: Element, at: Point) {
+  fireEvent.pointerUp(target, {
+    pointerType: 'touch', isPrimary: true, button: 0, clientX: at.x, clientY: at.y,
+  })
+  fireEvent.touchEnd(target, { touches: [], changedTouches: [{ clientX: at.x, clientY: at.y }] })
+}
+
+/** The session row whose open button is named after this title. */
+function sessionRow(title: string) {
+  const row = screen.getByRole('button', { name: new RegExp(`^${title},`) }).closest('.session-item')
+  if (!(row instanceof HTMLElement)) throw new Error(`No row for ${title}`)
+  return row
 }
 
 afterEach(() => {
@@ -904,5 +958,191 @@ describe('session navigation', () => {
     expect(screen.getByRole('status', { name: 'Session filter results' })).toHaveTextContent('2 of 4 sessions')
     expect(screen.getByRole('button', { name: /^Review the release,/ })).toHaveAccessibleName(/Renamed Studio/)
     expect(session.computerName).toBe('Studio')
+  })
+})
+
+describe('picking a row up to reorder it', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    // A sensor stops swallowing clicks 50 ms after its press ends.
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+    vi.useRealTimers()
+  })
+
+  it('picks a session up when the mouse presses anywhere on it and moves, and a click opens it', () => {
+    render(navigation())
+    const review = sessionRow('Review the release')
+    const parts = [
+      within(review).getByText('Review the release'),
+      within(review).getByText('Copilot'),
+      within(review).getByText('~/notes'),
+    ]
+    for (const part of parts) {
+      mousePress(part, { x: 40, y: 20 })
+      mouseMove(part, { x: 40, y: 27 })
+      expect(pickedUp).toHaveBeenLastCalledWith('session:studio:review')
+      expect(review).toHaveClass('sortable-dragging')
+      mouseRelease(part, { x: 40, y: 27 })
+      act(() => {
+        vi.advanceTimersByTime(60)
+      })
+      expect(review).not.toHaveClass('sortable-dragging')
+    }
+    expect(pickedUp).toHaveBeenCalledTimes(parts.length)
+
+    // A press that moves less than a drag's few pixels is a click.
+    mousePress(parts[0], { x: 40, y: 20 })
+    mouseMove(parts[0], { x: 42, y: 22 })
+    mouseRelease(parts[0], { x: 42, y: 22 })
+    fireEvent.click(parts[0])
+    expect(pickedUp).toHaveBeenCalledTimes(parts.length)
+    expect(actions.onSelectSession).toHaveBeenCalledWith(session)
+  })
+
+  it('leaves a press on one of the row’s own buttons to that button', () => {
+    render(navigation())
+    // Hide goes last: the row leaves the list once it is hidden.
+    const controls = [
+      screen.getByRole('button', { name: 'Close Review the release' }),
+      screen.getByRole('button', { name: 'Mark Review the release as unread' }),
+      screen.getByRole('button', { name: 'View background tasks for Build docs' }),
+      screen.getByRole('button', { name: 'Hide Review the release from the list' }),
+    ]
+    for (const control of controls) {
+      mousePress(control)
+      mouseMove(control, { x: 40, y: 60 })
+      mouseRelease(control, { x: 40, y: 60 })
+      touchStart(control, { x: 40, y: 20 })
+      act(() => {
+        vi.advanceTimersByTime(400)
+      })
+      touchEnd(control, { x: 40, y: 20 })
+      fireEvent.click(control)
+    }
+    expect(pickedUp).not.toHaveBeenCalled()
+    expect(actions.onCloseSession).toHaveBeenCalledWith(session)
+    expect(sessionUnread).toHaveBeenCalledWith(session)
+    expect(actions.onOpenSessionTasks).toHaveBeenCalledWith(worker)
+    expect(sessionHidden).toHaveBeenCalledWith(session)
+  })
+
+  it('picks a session up after a long press on touch, while a tap opens it and a swipe passes it by', () => {
+    render(navigation())
+    const review = sessionRow('Review the release')
+    const title = within(review).getByText('Review the release')
+
+    // A swipe is the list scrolling under the finger.
+    touchStart(title, { x: 60, y: 30 })
+    touchMove(title, { x: 60, y: 70 })
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    touchEnd(title, { x: 60, y: 70 })
+    touchStart(title, { x: 60, y: 30 })
+    act(() => {
+      vi.advanceTimersByTime(100)
+    })
+    touchEnd(title, { x: 60, y: 30 })
+    fireEvent.click(title)
+    expect(actions.onSelectSession).toHaveBeenCalledWith(session)
+    expect(pickedUp).not.toHaveBeenCalled()
+
+    touchStart(title, { x: 60, y: 30 })
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    expect(pickedUp).toHaveBeenCalledWith('session:studio:review')
+    expect(review).toHaveClass('sortable-dragging')
+    touchEnd(title, { x: 60, y: 30 })
+  })
+
+  it('keeps Enter and Space on the row for opening it, and reorders from its keyboard handle', () => {
+    const scrollIntoView = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = vi.fn()
+    try {
+      render(navigation())
+      const review = sessionRow('Review the release')
+      const open = screen.getByRole('button', { name: /^Review the release,/ })
+      open.focus()
+      for (const key of [{ key: 'Enter', code: 'Enter' }, { key: ' ', code: 'Space' }]) {
+        // Not cancelled, so the browser still activates the button.
+        expect(fireEvent.keyDown(open, key)).toBe(true)
+        expect(fireEvent.keyDown(review, key)).toBe(true)
+      }
+      expect(pickedUp).not.toHaveBeenCalled()
+
+      const handle = screen.getByRole('button', { name: 'Reorder Review the release' })
+      expect(handle).toHaveAttribute('tabindex', '0')
+      expect(review).not.toHaveAttribute('tabindex')
+      handle.focus()
+      fireEvent.keyDown(handle, { key: ' ', code: 'Space' })
+      expect(pickedUp).toHaveBeenCalledWith('session:studio:review')
+      expect(handle).toHaveAttribute('aria-pressed', 'true')
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      fireEvent.keyDown(handle, { key: 'Escape', code: 'Escape' })
+      expect(handle).not.toHaveAttribute('aria-pressed')
+    } finally {
+      Element.prototype.scrollIntoView = scrollIntoView
+    }
+  })
+
+  it('picks a computer up from anywhere on its header', () => {
+    render(navigation())
+    const studio = screen.getByRole('region', { name: 'Studio' })
+    const name = within(studio).getByText('Studio', { selector: 'strong' })
+    mousePress(name)
+    mouseMove(name, { x: 40, y: 28 })
+    expect(pickedUp).toHaveBeenLastCalledWith('computer:studio')
+    expect(studio).toHaveClass('sortable-dragging')
+    mouseRelease(name, { x: 40, y: 28 })
+    act(() => {
+      vi.advanceTimersByTime(60)
+    })
+
+    const count = within(studio).getByLabelText('2 of 2 sessions')
+    touchStart(count, { x: 200, y: 10 })
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    expect(pickedUp).toHaveBeenLastCalledWith('computer:studio')
+    touchEnd(count, { x: 200, y: 10 })
+    expect(pickedUp).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Reorder Studio' })).toHaveAttribute('tabindex', '0')
+  })
+
+  it('picks up nothing that a computed order or a filter holds in place', () => {
+    const sorted = render(navigation(sessionsByComputer, 'attention'))
+    const title = screen.getByText('Review the release')
+    mousePress(title)
+    mouseMove(title, { x: 40, y: 60 })
+    mouseRelease(title, { x: 40, y: 60 })
+    touchStart(title, { x: 40, y: 20 })
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    touchEnd(title, { x: 40, y: 20 })
+    expect(pickedUp).not.toHaveBeenCalled()
+    sorted.unmount()
+
+    render(navigation())
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), {
+      target: { value: 'review' },
+    })
+    for (const part of [
+      screen.getByText('Review the release'),
+      within(screen.getByRole('region', { name: 'Studio' })).getByText('Studio', { selector: 'strong' }),
+    ]) {
+      mousePress(part)
+      mouseMove(part, { x: 40, y: 60 })
+      mouseRelease(part, { x: 40, y: 60 })
+    }
+    expect(pickedUp).not.toHaveBeenCalled()
   })
 })

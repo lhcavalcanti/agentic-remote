@@ -392,10 +392,15 @@ async function phone(page: Page, fixture: WorkspaceFixture) {
   await page.getByRole('button', { name: 'Open sessions', exact: true }).click()
   await expect(sessionButton(page, SELECTED_SESSION_ID)).toBeVisible()
   if (phase === 'after') {
-    for (const name of ['Reorder Studio', 'Reorder Plan the knowledge workspace']) {
-      const target = await page.getByRole('button', { name, exact: true }).boundingBox()
-      expect(target?.width).toBeGreaterThanOrEqual(40)
-      expect(target?.height).toBeGreaterThanOrEqual(40)
+    // A long press anywhere on a computer's header or a session's row picks
+    // it up; its Reorder handle is for the keyboard.
+    const sessions = page.getByRole('navigation', { name: 'Sessions', exact: true })
+    for (const target of [
+      sessions.getByRole('region', { name: 'Studio', exact: true }).locator('.computer-session-group__header'),
+      sessions.locator('.session-item').first(),
+    ]) {
+      const box = await target.boundingBox()
+      expect(box?.height).toBeGreaterThanOrEqual(40)
     }
   }
   await capture(page, fixture, 'phone-sessions')

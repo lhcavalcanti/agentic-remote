@@ -131,6 +131,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   sessions share the same revisioned hub snapshot;
   computer-group order, sort mode, search, and the four primary filters remain
   browser-local.
+- A session row, and a computer's group by its header, MUST be draggable from
+  anywhere on it: a mouse press that moves a few pixels, or a long press on
+  touch. A click or tap MUST still open the session, a swipe MUST still scroll
+  the list, and the row's own buttons MUST keep their presses. Enter and Space
+  on a row MUST open it rather than pick it up; keyboard reordering MUST use
+  each row's and computer's focusable **Reorder** handle, which MAY stay out of
+  sight until it has keyboard focus.
 - Search, the three primary filters, the selected session, and session-list
   scroll position MUST survive browser reloads and responsive layout changes.
   Sessions MUST expose one accessible **Refresh** action that reloads

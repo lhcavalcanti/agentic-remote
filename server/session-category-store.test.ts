@@ -253,6 +253,10 @@ describe('SessionCategoryStore', () => {
         ],
       },
       { categories: [], closed: { 'hub:a': '2026-11-01T00:00:00Z' } },
+      {
+        categories: [{ id: 'lab', name: 'Lab', collapsed: false, sessions: ['hub:a'] }],
+        closed: { 'hub:a': 'last week' },
+      },
       { revision: -1, categories: [] },
     ]
     for (const shape of malformed) {

@@ -87,7 +87,9 @@ function parseState(parsed: Fields): { state: CategoryState; extra: Fields; cate
     loaded.push({ id, name, collapsed, sessions: sessions as string[] })
   }
   for (const [member, closedAt] of Object.entries(closed)) {
-    if (!members.has(member) || typeof closedAt !== 'string') return undefined
+    if (!members.has(member) || typeof closedAt !== 'string' || !Number.isFinite(Date.parse(closedAt))) {
+      return undefined
+    }
   }
   return { state: { revision, categories: loaded, closed: { ...closed } as Record<string, string> }, extra, categoryExtra }
 }

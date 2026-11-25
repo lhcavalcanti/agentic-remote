@@ -165,24 +165,24 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - With Custom order and no search or filter, a session MAY be dragged, from
   anywhere on its row as above, onto any category header, open or closed, or
   into a category's list at a position, and a categorized session dragged back
-  to its own computer's group MUST leave its category and take the place it
-  kept there; it never moves between computers. Category headers are not
-  dragged: a press on one opens or closes it, and a category moves with **Move
-  up** and **Move down** in its menu. **Move to category…** in the open session's actions MUST list the
-  categories, **No category**, and **New category…**, which creates a category
-  with the session in it in one step, and works in every view and while the
-  computer is offline. **New category** MUST also be offered where the
-  categories end (the first row when there are none) rather than in the
-  Sessions header, which stays one row on a phone, and not while filtering.
-  Each category's own menu MUST offer **Mark all as read**, **Rename…**,
-  **Move up**, **Move down**, and **Delete category…**, which asks once and
-  says its sessions stay: deleting a category leaves its sessions listed under
-  their computers. The menu MUST take the focus when it opens, move it with the
-  arrow keys, Home, and End, and give it back to its button on Escape or after
-  an action; keyboard users reorder inside a category with the row handle and
-  move between categories with the menu. Category controls MUST be at least
-  40 px on touch screens. Names are 1 to 60 characters and unique on the hub,
-  ignoring case.
+  to its own computer's group MUST leave its category and take the place it kept
+  there; it never moves between computers. Category headers are not dragged: a
+  press on one opens or closes it, and a category moves with **Move up** and
+  **Move down** in its menu. **Move to category…** in the open session's actions
+  MUST list the categories, **No category**, and **New category…**, which
+  creates a category with the session in it in one step, and works in every view
+  and while the computer is offline. **New category** MUST also be offered where
+  the categories end (the first row when there are none) rather than in the
+  Sessions header, which stays one row on a phone, and not while filtering. Each
+  category's own menu MUST offer **Mark all as read**, **Rename…**, **Move up**,
+  **Move down**, and **Delete category…**, which asks once and says its sessions
+  stay: deleting a category leaves its sessions listed under their computers.
+  The menu MUST take the focus when it opens, move it with the arrow keys, Home,
+  and End, and give it back to its button on Escape or after an action; keyboard
+  users reorder inside a category with the row's keyboard handle and move
+  between categories with the menu. Category controls MUST be at least 40 px on
+  touch screens. Names are 1 to 60 characters and unique on the hub, ignoring
+  case.
 - Category changes are revisioned: each names the revision it was made against
   and the hub MUST refuse one made against a revision it has moved past. A
   browser MAY show a change at once, MUST send its changes one at a time, and

@@ -206,8 +206,11 @@ test.describe('reordering with a mouse', () => {
       for (const handle of [studioHandle, planHandle]) {
         expect((await handle.boundingBox())?.width ?? 0).toBeLessThanOrEqual(1)
       }
-      // The keyboard reaches each handle, which only then shows.
+      // The keyboard reaches each handle, which only then shows, past New
+      // category where the categories would begin.
       await list.getByRole('button', { name: 'Unread', exact: true }).focus()
+      await page.keyboard.press('Tab')
+      await expect(list.getByRole('button', { name: 'New category', exact: true })).toBeFocused()
       await page.keyboard.press('Tab')
       await expect(studioHandle).toBeFocused()
       expect((await studioHandle.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(16)

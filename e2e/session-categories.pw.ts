@@ -70,14 +70,38 @@ async function screenshot(page: Page, name: string) {
   }
 }
 
-/** Drags a session row onto a target with a mouse, picking it up by its title as anywhere on it would. */
-async function drag(page: Page, row: Locator, target: Locator) {
-  const from = await bounds(row.locator('.session-item__open strong'))
-  const to = await bounds(target)
-  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+type Point = { x: number; y: number }
+
+function middle(box: { x: number; y: number; width: number; height: number }): Point {
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+}
+
+/**
+ * Carries a session row onto a target and holds it there, picked up by its
+ * title as anywhere on it would be: with a long press on a touch screen and a
+ * press and a short move with a mouse. Resolves to what lets it go.
+ */
+async function drag(page: Page, device: typeof devices[number], row: Locator, target: Locator) {
+  const from = middle(await bounds(row.locator('.session-item__open strong')))
+  const to = middle(await bounds(target))
+  if (device.hasTouch) {
+    // Through Chromium's own touch input, so the long press is a real one.
+    const cdp = await page.context().newCDPSession(page)
+    const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', points: Point[]) =>
+      cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points })
+    await touch('touchStart', [from])
+    await page.waitForTimeout(400)
+    await expect(row).toHaveClass(/sortable-dragging/)
+    for (let step = 1; step <= 16; step += 1) {
+      await touch('touchMove', [{ x: from.x + (to.x - from.x) * step / 16, y: from.y + (to.y - from.y) * step / 16 }])
+    }
+    return () => touch('touchEnd', [])
+  }
+  await page.mouse.move(from.x, from.y)
   await page.mouse.down()
-  await page.mouse.move(from.x + from.width / 2 + 4, from.y + from.height / 2 + 12, { steps: 4 })
-  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 16 })
+  await page.mouse.move(from.x + 4, from.y + 12, { steps: 4 })
+  await page.mouse.move(to.x, to.y, { steps: 16 })
+  return () => page.mouse.up()
 }
 
 async function secondPage(browser: Browser, device: typeof devices[number], baseUrl: string, state: WorkspaceFixtureState) {
@@ -194,9 +218,9 @@ for (const device of devices) {
         await expect(list).toBeVisible()
 
         const plans = list.getByRole('region', { name: 'Category Plans' })
-        await drag(page, plans.locator('.session-item').filter({ hasText: 'Plan the knowledge workspace' }), header)
+        const release = await drag(page, device, plans.locator('.session-item').filter({ hasText: 'Plan the knowledge workspace' }), header)
         await expect(reviews).toHaveClass(/session-category--drop-target/)
-        await page.mouse.up()
+        await release()
 
         await expect.poll(() => state.sessionCategories.categories.map(({ id, sessions }) => [id, sessions])).toEqual([
           ['reviews', [studio(PENDING_SESSION_ID), build(BACKGROUND_SESSION_ID), studio(IDLE_SESSION_ID),

@@ -199,6 +199,8 @@ export interface ManagerAgentOptions {
    * Without it, Oracle always asks before closing a session.
    */
   unfinishedTaskSessions?: (messages: readonly ManagerMessage[]) => Array<{ computerId: string; sessionId: string }>
+  /** The hub's session categories, which Oracle organizes when asked; absent, it has no category tools. */
+  sessionCategories?: ManagerToolHost['sessionCategories']
 }
 
 class TurnError extends Error {
@@ -359,6 +361,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
   private readonly tools: ManagerTool[]
   private readonly hostTelemetryTarget?: ManagerToolHost['hostTelemetryTarget']
   private readonly scheduler?: ManagerToolHost['scheduler']
+  private readonly sessionCategories?: ManagerToolHost['sessionCategories']
   private readonly schedulerAllowAllForOracle?: () => boolean
   private client?: ManagerSdkClient
   private session?: ManagerSdkSession
@@ -440,6 +443,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
     this.hostTelemetryTarget = options.hostTelemetryTarget
     this.scheduler = options.scheduler
     this.schedulerAllowAllForOracle = options.schedulerAllowAllForOracle
+    this.sessionCategories = options.sessionCategories
     // A call keeps the turn it started in, so one that outlives a stopped
     // turn is filed under that turn and cannot act for the next one.
     this.tools = createManagerTools(this.toolHost(), (activity) => this.recordActivity(activity))
@@ -1244,6 +1248,7 @@ export class ManagerAgent extends EventEmitter<{ event: [ManagerEvent] }> {
         (await this.updateSettings({ sessionFolders: { [computerId]: folder ?? null } })).sessionFolders?.[computerId],
       sessionBackend: () => this.sessionBackend(),
       setSessionBackend: async (backend) => (await this.updateSettings({ sessionBackend: backend })).sessionBackend ?? 'sdk',
+      sessionCategories: this.sessionCategories,
       memory: this.store.memory,
       // Shadow must look exactly like off to the model, so only on exposes tools.
       ...(this.structuredMemory?.mode === 'on' && this.structuredMemory.store

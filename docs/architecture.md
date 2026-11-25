@@ -47,9 +47,11 @@ with session events, never with discovery: a replacement takes its predecessor's
 category and place (from the removal's `replacedBy`, the Clear or Recover
 response of an older node, or `replacedSessionIds` lineage), a close is
 remembered for Reopen until the closed session expires or no category holds it,
-and a delete or an unpairing removes it. Writes under `/api/session-categories`
-name the revision they were made against, and every committed change is
-broadcast as `session.categories.updated`. Nodes keep neither file.
+and a delete or an unpairing removes it. Writes under `/api/session-categories`,
+and Oracle's category tools, name the revision they were made against, and the
+store tells the hub routes every change it commits, from either or from the
+hub's own bookkeeping, which they broadcast as `session.categories.updated`.
+Nodes keep neither file.
 
 Closing a session routes deletion to its owning node. That node disconnects any
 active SDK session, deletes the session from provider storage, removes its local

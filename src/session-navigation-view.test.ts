@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
 import {
+  categoryNewSession,
   reorderSessionLaneWithHiddenFollowers,
   sessionNavigationView,
   stepVisibleSession,
@@ -291,5 +292,43 @@ describe('categories in the session navigation view', () => {
       .categories).toMatchObject([{ sessions: [], total: 0, more: 0 }])
     expect(sessionNavigationView(computers, grouped, {}, '', 'unread', undefined, undefined, { categories: [empty] })
       .categories).toEqual([])
+  })
+
+  it('keeps the most recently active session a category lists, closed, filtered, or open alike', () => {
+    const older = session('older', { updatedAt: '2026-09-01T00:00:00Z' })
+    const newest = session('newest', { computerId: 'two', computerName: 'Build node', cwd: '/home/demo/build', updatedAt: '2026-09-03T00:00:00Z' })
+    const tucked = session('tucked', { updatedAt: '2026-09-04T00:00:00Z' })
+    const undated = session('undated', { updatedAt: 'not a time' })
+    const sessions = new Map([['one', [older, tucked, undated]], ['two', [newest]]])
+    const categories = [lab([older, undated, newest, tucked], true)]
+    const hiddenTucked = { keys: new Set(['one:tucked']), shown: false }
+
+    const view = sessionNavigationView(computers, sessions, {}, '', 'all', hiddenTucked, undefined, { categories })
+    // A hidden session the list leaves out is not where its work goes on.
+    expect(view.categories[0].latest).toBe(newest)
+    expect(sessionNavigationView(computers, sessions, {}, '', 'all', { ...hiddenTucked, shown: true }, undefined, { categories })
+      .categories[0].latest).toBe(tucked)
+    // A filter that shows only some of its sessions does not change it.
+    expect(sessionNavigationView(computers, sessions, {}, 'older', 'all', hiddenTucked, undefined, { categories })
+      .categories[0]).toMatchObject({ sessions: [older], latest: newest })
+    expect(sessionNavigationView(computers, sessions, {}, '', 'all', undefined, undefined, {
+      categories: [{ category: { id: 'empty', name: 'Plans', collapsed: false, sessions: [] }, sessions: [] }],
+    }).categories[0].latest).toBeUndefined()
+  })
+
+  it('starts a category\'s new session beside its latest one, while that computer and its provider can', () => {
+    const byId = new Map(computers.map((computer) => [computer.id, computer]))
+    expect(categoryNewSession(undefined, byId)).toEqual({ unavailable: 'Needs a session in it first' })
+    expect(categoryNewSession(first, byId)).toEqual({ computer: computers[0], cwd: '/home/demo/notes' })
+    expect(categoryNewSession({ ...first, computerId: 'offline' }, byId)).toEqual({ unavailable: 'Travel laptop is offline' })
+    const withoutCopilot = new Map<string, ComputerSummary>([['one', {
+      ...computers[0],
+      providers: [
+        { id: 'copilot', name: 'GitHub Copilot', available: false, terminalBacked: true, unavailableReason: 'Sign in to Copilot' },
+        { id: 'claude', name: 'Claude Agent', available: true, terminalBacked: false },
+      ],
+    }]])
+    expect(categoryNewSession(first, withoutCopilot)).toEqual({ unavailable: 'GitHub Copilot is unavailable on Studio' })
+    expect(categoryNewSession(first, new Map())).toEqual({ unavailable: 'Its computer is no longer paired' })
   })
 })

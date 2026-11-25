@@ -661,13 +661,7 @@ describe('session navigation', () => {
         markingUnreadSessions={new Set(['worker:build'])}
       />,
     )
-    const close = screen.getByRole('button', { name: 'Close Review the release' })
     const markRead = screen.getByRole('button', { name: 'Mark Review the release as read' })
-    const hide = screen.getByRole('button', { name: 'Hide Review the release from the list' })
-    expect(close.compareDocumentPosition(markRead) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy()
-    expect(markRead.compareDocumentPosition(hide) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy()
     expect(markRead.closest('.session-item__open')).toBeNull()
     expect(markRead).toHaveAttribute('title', 'Mark as read')
     expect(markRead.querySelector('svg.lucide-mail-open')).toHaveAttribute('aria-hidden', 'true')
@@ -691,6 +685,40 @@ describe('session navigation', () => {
     expect(saving).toBeDisabled()
     expect(saving).toHaveAttribute('aria-busy', 'true')
     expect(saving).toHaveAttribute('title', 'Marking this session as read')
+  })
+
+  it('orders every row\'s controls Close, Hide, then Read, as they are shown', () => {
+    render(
+      <NavigationHarness
+        initialHidden={['studio:question']}
+        initialShowHidden
+        initialUnread={['studio:review']}
+      />,
+    )
+    const controls = (title: string) => {
+      const row = screen.getByRole('button', { name: new RegExp(`^${title},`) })
+        .closest<HTMLElement>('.session-item')
+      const group = row?.querySelector<HTMLElement>('.session-item__controls')
+      if (!group) throw new Error(`No controls for ${title}`)
+      return within(group).getAllByRole('button').map((button) => button.getAttribute('aria-label'))
+    }
+
+    expect(controls('Review the release')).toEqual([
+      'Close Review the release',
+      'Hide Review the release from the list',
+      'Mark Review the release as read',
+    ])
+    expect(controls('Choose a direction')).toEqual([
+      'Close Choose a direction',
+      'Show Choose a direction in the list',
+      'Mark Choose a direction as unread',
+    ])
+    // A disabled Close keeps its place, so the order is the same offline.
+    expect(controls('Last known work')).toEqual([
+      'Close Last known work',
+      'Hide Last known work from the list',
+      'Mark Last known work as unread',
+    ])
   })
 
   it('offers an Unread filter with its count, counting hidden sessions only while shown', () => {

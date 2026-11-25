@@ -139,13 +139,20 @@ for (const device of devices) {
         const hidden = await bounds(hide)
         const item = await bounds(draft)
 
-        // Close has a column to itself, and Hide comes under Read in the next
-        // one, beside Close rather than under it: the row keeps its height.
-        expect(hidden.x).toBeGreaterThanOrEqual(close.x + close.width)
-        expect(Math.abs(read.x - hidden.x)).toBeLessThan(1)
-        expect(read.y + read.height).toBeLessThanOrEqual(hidden.y)
-        expect(close.y).toBeGreaterThanOrEqual(read.y)
-        expect(close.y + close.height).toBeLessThanOrEqual(hidden.y + hidden.height)
+        // Close, then Hide, then Read: one column with a mouse, and on a touch
+        // screen Close in a column of its own with Hide over Read beside it,
+        // so the row keeps its height either way.
+        if (device.hasTouch) {
+          expect(hidden.x).toBeGreaterThanOrEqual(close.x + close.width)
+          expect(Math.abs(read.x - hidden.x)).toBeLessThan(1)
+          expect(close.y).toBeGreaterThanOrEqual(hidden.y)
+          expect(close.y + close.height).toBeLessThanOrEqual(read.y + read.height)
+        } else {
+          expect(Math.abs(hidden.x - close.x)).toBeLessThan(1)
+          expect(Math.abs(read.x - close.x)).toBeLessThan(1)
+          expect(close.y + close.height).toBeLessThanOrEqual(hidden.y)
+        }
+        expect(hidden.y + hidden.height).toBeLessThanOrEqual(read.y)
         for (const control of [close, read, hidden]) {
           expect(control.width).toBeGreaterThanOrEqual(device.target)
           expect(control.height).toBeGreaterThanOrEqual(device.target)

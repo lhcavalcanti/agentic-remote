@@ -1898,6 +1898,11 @@ test.describe('browser interaction contracts', () => {
     await handleButton.focus()
     await page.keyboard.press('Space')
     await expect(handleButton).toHaveAttribute('aria-pressed', 'true')
+    // The drop targets are measured a frame or two after the pickup; an arrow
+    // pressed sooner on a loaded host finds none and moves the item over itself.
+    await page.evaluate(() => new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    ))
     await page.keyboard.press('ArrowDown')
     await expect(page.getByRole('region', { name: 'Queued prompts' }).getByRole('status'))
       .toContainText(`over droppable area queued:${ids[1]}`)

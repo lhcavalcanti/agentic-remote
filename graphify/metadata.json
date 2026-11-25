@@ -806,7 +806,7 @@
     "e2e/shell-fixtures.ts": "75d818141cbf8c849a212885fd945ff37ed70c54d2e3b7de15acce7dc08aabd8",
     "e2e/sign-in-expired.pw.ts": "424766f9ae7b84aebd4aa059b0fb98d2cfe6804e6a88b07f74cba09d87b2abac",
     "e2e/transcript-window.pw.ts": "632c41b6d9abf768fe06b7818941d1a41965765a42f8edba45599577362a910e",
-    "e2e/ui-locks.pw.ts": "d6aa6e63e9501925a9a60f62121ebbab82e51691ce9259beb1fb0609200dd599",
+    "e2e/ui-locks.pw.ts": "29e3aaf5886d471a9ab68d73cb3bb4aa3b30f853c88aaf2ad9a9de4aedfc9fe0",
     "e2e/ui-locks.pw.ts-snapshots/desktop-app-settings-chromium-linux.png": "41acafc24f415efc5889db54bdb77117ba0d6bb4f0b597cc94e050df3f5ec7b1",
     "e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-chromium-linux.png": "313f183f90efe1a580343c4480d7fd8d6b73712729896300cf50b58d7d4aafe1",
     "e2e/ui-locks.pw.ts-snapshots/desktop-background-tasks-expanded-chromium-linux.png": "26df6865031d2cbbb87cf39c47dbc427062da6ced9b9036348c7f2c3516e42d0",
@@ -1927,13 +1927,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "de5c92038a2b3edf98e9e4a9efcfdcb30b9acdd4a4d7ed75baa86266a241b26b",
+    "GRAPH_REPORT.md": "75993dc4286dd9884b38bfab2c67a547192f0350d3d9e4e1389ecf5ac7b7fd01",
     "communities.json": "c775ca10fe059da5a28bef84ec6a011d7e3f3aab55c2d24c03041513adbf06f4",
-    "graph.html": "bb575b517cd2fe6ed678c055d980cc3ffa3230feed56ceb327bf6fbf46b5d2e8",
-    "graph.json": "5ff67ce3ea1335bb36df779944fece8b8b4ed1f2908901dd08db4f67bc47ab18"
+    "graph.html": "1bbbcf33f12d251f675c6e2aa01beb8b71cd84dbbd8838660337250a5e633d7e",
+    "graph.json": "ec43bb030b0d91b602cc42a2692f5085de641296cc4612e905c92b4d2e0d6308"
   },
   "schema_version": 1,
-  "source_commit": "7b73b5bf8deee9936cb02d86e72f0135006479ff",
-  "source_fingerprint": "5cbd34084945fe8c91732f62517bb0cbd62630ede6d7c46143c9514b0a6a4a24",
-  "working_tree_changes": []
+  "source_commit": "f659feb27ccb932d5a15b0abbc7c9628cdff9673",
+  "source_fingerprint": "2afe786e553e635308fa689d09d900173b720284d342640f40fa49663879f908",
+  "working_tree_changes": [
+    "e2e/ui-locks.pw.ts"
+  ]
 }

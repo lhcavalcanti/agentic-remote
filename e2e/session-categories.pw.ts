@@ -70,10 +70,9 @@ async function screenshot(page: Page, name: string) {
   }
 }
 
-/** Drags a session row by its handle onto a target, as a mouse does. */
+/** Drags a session row onto a target with a mouse, picking it up by its title as anywhere on it would. */
 async function drag(page: Page, row: Locator, target: Locator) {
-  await row.hover()
-  const from = await bounds(row.locator('.drag-handle'))
+  const from = await bounds(row.locator('.session-item__open strong'))
   const to = await bounds(target)
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
   await page.mouse.down()

@@ -50,6 +50,7 @@ import type {
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
 import { sessionOriginDescription } from './session-origin'
+import { dragsRow, splitRowListeners } from './session-list-sensors'
 import type { ScheduleLink } from './notifications/schedule-link'
 
 export type PendingSessionCreation = Pick<
@@ -125,13 +126,6 @@ function PendingSessionItem({
       role="status"
       title={description}
     >
-      <span aria-hidden="true" className="session-item__creating-mark">
-        <span className="session-creation-dots">
-          <i className="session-creation-dot" />
-          <i className="session-creation-dot" />
-          <i className="session-creation-dot" />
-        </span>
-      </span>
       <span className="session-item__text">
         <span className="session-item__badges">
           <em className="provider-badge">
@@ -140,7 +134,14 @@ function PendingSessionItem({
           <em className="provider-badge session-mode-badge">
             {executionModeName(creation.executionMode)}
           </em>
-          <span className="session-state session-state--running">Creating</span>
+          <span className="session-state session-state--running">
+            <span aria-hidden="true" className="session-creation-dots">
+              <i className="session-creation-dot" />
+              <i className="session-creation-dot" />
+              <i className="session-creation-dot" />
+            </span>
+            Creating
+          </span>
         </span>
         <strong>Creating session</strong>
         <small className="session-item__where">
@@ -188,6 +189,7 @@ function SortableSessionItem({
   const {
     attributes,
     listeners,
+    setActivatorNodeRef,
     setNodeRef,
     transform,
     transition,
@@ -196,6 +198,7 @@ function SortableSessionItem({
     id: `session:${sessionKey(session)}`,
     disabled: reorderDisabled || sorting,
   })
+  const { press, keys } = splitRowListeners(listeners)
   const presentation = sessionPresentation(session, backgroundTasks, online)
   const activity = sessionActivityTime(session.updatedAt)
   const runningBackgroundTasks = backgroundTasks?.runningCount || 0
@@ -222,12 +225,15 @@ function SortableSessionItem({
       } ${closing ? 'session-item--closing' : ''} ${isDragging ? 'sortable-dragging' : ''}`}
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
+      {...press}
     >
       <span
         aria-label={`Reorder ${session.title}`}
         className="drag-handle"
+        ref={setActivatorNodeRef}
         {...attributes}
-        {...listeners}
+        {...keys}
+        {...dragsRow}
       >
         <GripVertical size={14} />
       </span>
@@ -254,6 +260,7 @@ function SortableSessionItem({
           onClick={() => onSelectSession(session)}
           title={`${session.title}\n${computerName} · ${session.cwd}\n${presentation.description}`}
           type="button"
+          {...dragsRow}
         >
           <span className="session-item__text">
             <span className="session-item__badges">
@@ -410,11 +417,13 @@ function SortableComputerGroup({
   const {
     attributes,
     listeners,
+    setActivatorNodeRef,
     setNodeRef,
     transform,
     transition,
     isDragging,
   } = useSortable({ id: `computer:${computer.id}`, disabled: reorderDisabled })
+  const { press, keys } = splitRowListeners(listeners)
   const shownKeys = new Set(sessions.map(sessionKey))
   const rows: ({ session: ManagedSession } | { creation: PendingSessionCreation })[] = [
     ...sessions.flatMap((session) => [
@@ -436,12 +445,14 @@ function SortableComputerGroup({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
     >
-      <header className="computer-session-group__header">
+      <header className="computer-session-group__header" {...press}>
         <span
           aria-label={`Reorder ${computer.name}`}
           className="drag-handle"
+          ref={setActivatorNodeRef}
           {...attributes}
-          {...listeners}
+          {...keys}
+          {...dragsRow}
         >
           <GripVertical size={14} />
         </span>

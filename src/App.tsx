@@ -183,6 +183,7 @@ import {
   type PendingSessionCreation,
   type SessionCategoryActions,
 } from './SessionNavigation'
+import { useSessionListSensors } from './session-list-sensors'
 import {
   CategoryNameDialog,
   DeleteCategoryDialog,
@@ -6743,6 +6744,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
+  const sessionListSensors = useSessionListSensors()
   const dialogCategory = categoryDialog && 'categoryId' in categoryDialog
     ? sessionCategories.categories.find((category) => category.id === categoryDialog.categoryId)
     : undefined
@@ -13744,7 +13746,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               onDragStart={() => {
                 sortableDragActiveRef.current = true
               }}
-              sensors={sensors}
+              sensors={sessionListSensors}
             >
               <SessionNavigation
                 onOpenScheduleRun={(target) => {

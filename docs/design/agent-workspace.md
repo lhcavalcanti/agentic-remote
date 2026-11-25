@@ -268,8 +268,9 @@ primary interaction and active work; retain amber attention, red errors, blue
 background tasks, and computer identity colors.
 
 Computer groups are labels rather than nested cards. Provider and runtime
-badges remain above the title; folder context stays visible. Drag handles are
-quiet for a mouse but revealed on focus and remain available on touch.
+badges remain above the title; folder context stays visible. Rows and computer
+headers are dragged from anywhere on them, by a long press on touch; their
+Reorder handles stay out of sight until the keyboard reaches them.
 Each session card keeps Close at its trailing edge, beside Read over Hide.
 Close keeps a session reopenable under Recently closed for 14 days.
 New session is a compact action in the Sessions heading, leaving Send visually

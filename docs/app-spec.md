@@ -132,6 +132,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   revisioned snapshot of their own (below);
   computer-group order, sort mode, search, and the four primary filters remain
   browser-local.
+- A session row, and a computer's group by its header, MUST be draggable from
+  anywhere on it: a mouse press that moves a few pixels, or a long press on
+  touch. A click or tap MUST still open the session, a swipe MUST still scroll
+  the list, and the row's own buttons MUST keep their presses. Enter and Space
+  on a row MUST open it rather than pick it up; keyboard reordering MUST use
+  each row's and computer's focusable **Reorder** handle, which MAY stay out of
+  sight until it has keyboard focus.
 - Sessions MAY be organised into **categories**: named, ordered, collapsible
   groups the hub keeps and every browser on it shares, as it does hidden and
   unread state. A category MAY hold sessions from any computer; each session
@@ -155,11 +162,13 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   cleared. Keyboard next/previous navigation and reading sessions ahead MUST
   follow the displayed order, categories first, a closed category contributing
   only the rows it shows.
-- With Custom order and no search or filter, a session MAY be dragged onto any
-  category header, open or closed, or into a category's list at a position,
-  and a categorized session dragged back to its own computer's group MUST leave
-  its category and take the place it kept there; it never moves between
-  computers. **Move to category…** in the open session's actions MUST list the
+- With Custom order and no search or filter, a session MAY be dragged, from
+  anywhere on its row as above, onto any category header, open or closed, or
+  into a category's list at a position, and a categorized session dragged back
+  to its own computer's group MUST leave its category and take the place it
+  kept there; it never moves between computers. Category headers are not
+  dragged: a press on one opens or closes it, and a category moves with **Move
+  up** and **Move down** in its menu. **Move to category…** in the open session's actions MUST list the
   categories, **No category**, and **New category…**, which creates a category
   with the session in it in one step, and works in every view and while the
   computer is offline. **New category** MUST also be offered where the

@@ -666,6 +666,10 @@ export type HubEvent =
       type: 'session.order.updated'
       order: SessionOrderSnapshot
     }
+  | {
+      type: 'session.categories.updated'
+      categories: import('./session-categories.js').SessionCategoriesSnapshot
+    }
   | { type: 'settings.updated'; settings: SettingsProfileSnapshot }
   | {
       type: 'session.knowledge.updated'

@@ -58,6 +58,7 @@ import {
 import { SessionStore } from './session-store.js'
 import { SessionKnowledgeStore } from './session-knowledge-store.js'
 import { SessionOrderStore } from './session-order-store.js'
+import { SessionCategoryStore } from './session-category-store.js'
 import { SettingsProfileStore } from './settings-profile-store.js'
 import { ClientPresence } from './client-presence.js'
 import type { SessionService } from './session-service.js'
@@ -123,6 +124,7 @@ export interface BuildAppOptions {
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
+  sessionCategoryStore?: SessionCategoryStore
   settingsProfileStore?: SettingsProfileStore
   /** Injected speech-engine construction seam; buildApp never starts it. */
   voiceEngineFactory?: VoiceEngineFactory
@@ -167,6 +169,7 @@ export async function buildApp(
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
+  sessionCategoryStore?: SessionCategoryStore
   settingsProfileStore?: SettingsProfileStore
   managerAgent?: ManagerAgent
   managerStructuredMemory: ManagerStructuredMemoryRuntime
@@ -368,6 +371,7 @@ export async function buildApp(
   let knowledgeStore: KnowledgeStore | undefined
   let sessionKnowledgeStore: SessionKnowledgeStore | undefined
   let sessionOrderStore: SessionOrderStore | undefined
+  let sessionCategoryStore: SessionCategoryStore | undefined
   let settingsProfileStore: SettingsProfileStore | undefined
   let managerAgent: ManagerAgent | undefined
   let managerStore: ManagerStore | undefined
@@ -417,6 +421,12 @@ export async function buildApp(
     // Hub-only: a node serves no UI, so it has no ordering to remember.
     sessionOrderStore = options.sessionOrderStore ?? new SessionOrderStore(dataDirectory)
     await sessionOrderStore.initialize()
+    // Its own file: categories never go into session-order.json, which an
+    // older release rewrites from the fields it knows.
+    sessionCategoryStore = options.sessionCategoryStore ?? new SessionCategoryStore(dataDirectory)
+    await sessionCategoryStore.initialize()
+    const categoriesUnavailable = sessionCategoryStore.unavailableReason()
+    if (categoriesUnavailable) app.log.warn(categoriesUnavailable)
     settingsProfileStore = options.settingsProfileStore ?? new SettingsProfileStore(dataDirectory)
     await settingsProfileStore.initialize()
     pushService =
@@ -793,6 +803,7 @@ export async function buildApp(
       scheduleNotifications,
       isScheduledSession,
       managerStoreReady ? managerStore : undefined,
+      sessionCategoryStore,
     )
     if (!notificationCenter && managerAgent) pushService.attachOracle(managerAgent)
     app.get('/api/features', async (_request, reply) => {
@@ -945,6 +956,7 @@ export async function buildApp(
     knowledgeStore,
     sessionKnowledgeStore,
     sessionOrderStore,
+    sessionCategoryStore,
     settingsProfileStore,
     managerAgent,
     managerStructuredMemory,

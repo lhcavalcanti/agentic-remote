@@ -190,3 +190,98 @@ describe('shared session navigation view', () => {
     ])
   })
 })
+
+describe('categories in the session navigation view', () => {
+  const session = (id: string, change: Partial<ManagedSession> = {}): ManagedSession =>
+    ({ ...first, id, title: `Session ${id}`, ...change })
+  const asking = { pendingUserInput: { requestId: 'q', question: 'Which file?', choices: ['One'], allowFreeform: true } }
+  const lab = (sessions: ManagedSession[], collapsed = false) => ({
+    category: { id: 'lab', name: 'Homelab', collapsed, sessions: sessions.map((entry) => `${entry.computerId}:${entry.id}`) },
+    sessions,
+  })
+
+  it('lists categorized sessions in their category above the computers, and out of their computer', () => {
+    const remote = session('remote', { computerId: 'two', computerName: 'Build node' })
+    const kept = session('kept')
+    const grouped = new Map([['one', [first, kept]], ['two', [remote, last]]])
+
+    const view = sessionNavigationView(computers, grouped, {}, '', 'all', undefined, undefined, {
+      categories: [lab([remote, kept])],
+    })
+    expect(view.categories).toMatchObject([
+      { category: { id: 'lab', name: 'Homelab' }, collapsed: false, sessions: [remote, kept], total: 2 },
+    ])
+    expect(view.groups.map((group) => [group.computer.id, group.sessions, group.total, group.categorized])).toEqual([
+      ['one', [first], 1, 1], ['two', [last], 1, 1], ['offline', [], 0, 0],
+    ])
+    expect(view.visible).toEqual([remote, kept, first, last])
+    expect(view.counts).toMatchObject({ all: 4, attention: 1 })
+  })
+
+  it('sums up a collapsed category and keeps what needs you, unread, and the open session in sight', () => {
+    const members = [
+      session('quiet-1'),
+      session('unread-1'),
+      session('asking-1', asking),
+      session('working', { status: 'running' }),
+      session('unread-2'),
+      session('asking-2', { status: 'error' }),
+      session('open'),
+      session('quiet-2'),
+    ]
+    const unread = new Set(['one:unread-1', 'one:unread-2'])
+
+    const view = sessionNavigationView(computers, new Map([['one', members]]), {}, '', 'all', undefined, unread, {
+      categories: [lab(members, true)], selectedKey: 'one:open',
+    })
+    const [section] = view.categories
+    expect(section).toMatchObject({ collapsed: true, total: 8, attention: 2, unread: 2, working: true, more: 4 })
+    // Needs you comes first, up to three, then the open session, in the category's order.
+    expect(section.sessions.map((entry) => entry.id)).toEqual(['unread-1', 'asking-1', 'asking-2', 'open'])
+    expect(view.visible.map((entry) => entry.id)).toEqual(['unread-1', 'asking-1', 'asking-2', 'open'])
+    expect(stepVisibleSession(view.visible, 'one:asking-2', 1)?.id).toBe('open')
+
+    const quiet = sessionNavigationView(computers, new Map([['one', [first]]]), {}, '', 'all', undefined, undefined, {
+      categories: [lab([first], true)],
+    })
+    expect(quiet.categories[0]).toMatchObject({ sessions: [], total: 1, attention: 0, unread: 0, working: false, more: 1 })
+  })
+
+  it('shows matches inside their categories, expanded, and leaves out categories without any', () => {
+    const match = session('match', { title: 'Backup the router' })
+    const other = session('other', { title: 'Plan the week' })
+    const view = sessionNavigationView(computers, new Map([['one', [match, other, first]]]), {}, 'router', 'all',
+      undefined, undefined, {
+        categories: [
+          lab([match, other], true),
+          { category: { id: 'empty', name: 'Plans', collapsed: false, sessions: ['one:first'] }, sessions: [first] },
+        ],
+      })
+    expect(view.categories).toMatchObject([{ collapsed: false, sessions: [match], total: 2, more: 0 }])
+    expect(view.visible).toEqual([match])
+    expect(view.reorderDisabled).toBe(true)
+    expect(view.counts.all).toBe(3)
+  })
+
+  it('leaves a hidden session out of its category unless it needs you or hidden sessions are shown', () => {
+    const tucked = session('tucked')
+    const waiting = session('waiting', asking)
+    const keys = new Set(['one:tucked', 'one:waiting'])
+    const sessions = new Map([['one', [first, tucked, waiting]]])
+    const categories = [lab([first, tucked, waiting])]
+
+    const view = sessionNavigationView(computers, sessions, {}, '', 'all', { keys, shown: false }, undefined, { categories })
+    expect(view.categories[0]).toMatchObject({ sessions: [first, waiting], total: 2 })
+    expect(view.counts.hidden).toBe(2)
+    expect(sessionNavigationView(computers, sessions, {}, '', 'all', { keys, shown: true }, undefined, { categories })
+      .categories[0].sessions).toEqual([first, tucked, waiting])
+  })
+
+  it('keeps an empty category listed until it is filtered', () => {
+    const empty = { category: { id: 'empty', name: 'Plans', collapsed: false, sessions: [] }, sessions: [] }
+    expect(sessionNavigationView(computers, grouped, {}, '', 'all', undefined, undefined, { categories: [empty] })
+      .categories).toMatchObject([{ sessions: [], total: 0, more: 0 }])
+    expect(sessionNavigationView(computers, grouped, {}, '', 'unread', undefined, undefined, { categories: [empty] })
+      .categories).toEqual([])
+  })
+})

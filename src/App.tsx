@@ -290,6 +290,7 @@ import {
   listComputers,
   listCommands,
   listBackgroundTasks,
+  readBackgroundTask,
   listKnowledgeEntries,
   listKnowledgeRoots,
   addKnowledgeRoot,
@@ -7732,9 +7733,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       // patches only apply to what this socket was itself sent, so every new
       // socket starts from whole sessions; an older hub ignores the request.
       // A window, too: each session arrives as its latest messages, so a long
-      // one is never sent whole to a page that may not even show it.
+      // one is never sent whole to a page that may not even show it. Task
+      // lists arrive as summaries, then as the tasks that changed.
       const current = new WebSocket(
-        `${protocol}//${window.location.host}/api/events?patches=1&window=${TRANSCRIPT_WINDOW}`,
+        `${protocol}//${window.location.host}/api/events?patches=1&window=${TRANSCRIPT_WINDOW}&tasks=changes`,
       )
       socket = current
       eventSocketRef.current = current
@@ -7922,6 +7924,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             tasks: event.tasks,
             runningCount: event.runningCount,
             supported: event.supported,
+            ...(event.summary ? { summary: true as const } : {}),
           },
           }))
         } else if (event.type === 'computer.updated') {
@@ -14764,6 +14767,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           onRefresh={() => void loadBackgroundTasks(selected, true)}
           open={backgroundTasksOpen}
           ownerKey={sessionKey(selected)}
+          readTask={(taskId) => readBackgroundTask(selected.computerId, selected.id, taskId)}
           sessionTitle={selected.title}
           snapshot={
             selectedBackgroundTasks || {

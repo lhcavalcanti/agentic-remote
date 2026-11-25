@@ -10,6 +10,7 @@ import type {
   HubEvent,
   ManagedSession,
   HubResyncRequest,
+  HubTasksResyncRequest,
   SessionOrderSnapshot,
   WorkspaceFile,
   WorkspaceListing,
@@ -39,6 +40,7 @@ import type { ManagerStore } from './manager-store.js'
 import { sessionProvenanceProjection } from './session-provenance.js'
 import { isSessionResourceRoute, resourceRequestHandler } from './session-resources.js'
 import { type PatchSocket, SessionPublications } from './session-patches.js'
+import { summarizeBackgroundTasks } from '../shared/background-tasks.js'
 import { sessionReadOptions, transcriptPageQuerySchema, transcriptWindowParam } from './transcript-window-query.js'
 import { windowSession } from '../shared/transcript-window.js'
 import { sessionRetentionPatchSchema } from './session-retention.js'
@@ -1224,13 +1226,29 @@ export async function registerHubRoutes(
     },
   )
 
-  app.get<{ Params: SessionParams }>(
+  // `?summary=1` asks for summaries, as the browser does; without it every
+  // task is whole, as browsers from before summaries expect.
+  app.get<{ Params: SessionParams; Querystring: { summary?: string } }>(
     '/api/computers/:computerId/sessions/:sessionId/tasks',
     async (request) =>
       manager.listBackgroundTasks(
         request.params.computerId,
         request.params.sessionId,
+        { summary: request.query.summary === '1' },
       ),
+  )
+
+  app.get<{ Params: SessionParams & { taskId: string } }>(
+    '/api/computers/:computerId/sessions/:sessionId/tasks/:taskId',
+    async (request, reply) => {
+      // Task output can carry anything a command printed; keep it out of caches.
+      reply.header('cache-control', 'no-store')
+      return manager.readBackgroundTask(
+        request.params.computerId,
+        request.params.sessionId,
+        request.params.taskId,
+      )
+    },
   )
 
   app.get<{ Params: SessionParams & { toolCallId: string } }>(
@@ -1249,14 +1267,17 @@ export async function registerHubRoutes(
 
   app.post<{
     Params: SessionParams & { taskId: string }
+    Querystring: { summary?: string }
   }>(
     '/api/computers/:computerId/sessions/:sessionId/tasks/:taskId/cancel',
-    async (request) =>
-      manager.cancelBackgroundTask(
+    async (request) => {
+      const snapshot = await manager.cancelBackgroundTask(
         request.params.computerId,
         request.params.sessionId,
         request.params.taskId,
-      ),
+      )
+      return request.query.summary === '1' ? summarizeBackgroundTasks(snapshot) : snapshot
+    },
   )
 
   // Recoverable: the owning computer keeps the session to reopen. DELETE
@@ -1328,23 +1349,27 @@ export async function registerHubRoutes(
       // them; anything that is not a window size leaves the socket as it was.
       const window = transcriptWindowParam(query.window)
       if (window !== undefined) target.transcriptWindow = window
+    }
+    // `tasks=changes` asks for task summaries, then only the tasks that
+    // changed, in place of every task list whole.
+    if (query?.tasks === 'changes') target.taskVersions = new Map()
+    if (target.patchVersions || target.taskVersions) {
       socket.on('message', (data: Buffer, binary: boolean) => {
         // A resync request is one of the two messages a browser sends here.
         // Anything else, or anything too large to be one, is ignored rather
         // than parsed.
         if (binary || data.length > 1_024) return
-        let request: Partial<HubResyncRequest>
+        let request: Partial<HubResyncRequest | HubTasksResyncRequest>
         try {
-          request = JSON.parse(data.toString('utf8')) as Partial<HubResyncRequest>
+          request = JSON.parse(data.toString('utf8')) as Partial<HubResyncRequest | HubTasksResyncRequest>
         } catch {
           return
         }
-        if (
-          request?.type === 'session.resync' &&
-          typeof request.computerId === 'string' &&
-          typeof request.sessionId === 'string'
-        ) {
+        if (typeof request?.computerId !== 'string' || typeof request.sessionId !== 'string') return
+        if (request.type === 'session.resync') {
           publications.resync(target, request.computerId, request.sessionId)
+        } else if (request.type === 'session.tasks.resync') {
+          publications.resyncTasks(target, request.computerId, request.sessionId)
         }
       })
     }

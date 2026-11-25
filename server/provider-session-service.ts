@@ -5,6 +5,7 @@ import type {
   AgentMode,
   AgentProvider,
   AgentProviderCapability,
+  BackgroundTask,
   BackgroundTaskSnapshot,
   ConfigureRuntimeInput,
   DirectoryListing,
@@ -27,6 +28,7 @@ import type {
   SideQuestionExchange,
 } from '../shared/contracts.js'
 import type { SessionService } from './session-service.js'
+import { readBackgroundTaskFrom } from './background-task-tracker.js'
 import type { SessionKnowledgeBaseLocation } from './session-directory.js'
 import {
   readSessionSkills,
@@ -472,6 +474,10 @@ export class ProviderSessionService
 
   listBackgroundTasks(sessionId: string): Promise<BackgroundTaskSnapshot> {
     return this.serviceFor(sessionId).listBackgroundTasks(sessionId)
+  }
+
+  readBackgroundTask(sessionId: string, taskId: string): Promise<BackgroundTask> {
+    return readBackgroundTaskFrom(this.serviceFor(sessionId), sessionId, taskId)
   }
 
   cancelBackgroundTask(

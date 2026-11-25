@@ -18,6 +18,7 @@ import {
   getRuntimeOptions,
   HUB_SNAPSHOT_TIMEOUT_MS,
   listBackgroundTasks,
+  readBackgroundTask,
   listComputers,
   listHistory,
   listKnowledgeEntries,
@@ -531,14 +532,15 @@ describe('API request headers', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
-  it('lists background tasks for one owning session', async () => {
+  it('lists summaries of the background tasks of one owning session', async () => {
     const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
-      expect(path).toBe('/api/computers/computer/sessions/session/tasks')
+      expect(path).toBe('/api/computers/computer/sessions/session/tasks?summary=1')
       expect(init?.method).toBeUndefined()
       return Response.json({
         tasks: [],
         runningCount: 0,
         supported: true,
+        summary: true,
       })
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -547,13 +549,29 @@ describe('API request headers', () => {
       tasks: [],
       runningCount: 0,
       supported: true,
+      summary: true,
     })
+  })
+
+  it('reads one background task whole from its owning session without caching it', async () => {
+    const task = {
+      id: 'task/id', type: 'agent', description: 'Review', status: 'running',
+      startedAt: '2026-11-24T12:00:00.000Z', prompt: 'Review the change', canCancel: false,
+    }
+    const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
+      expect(path).toBe('/api/computers/computer/sessions/session/tasks/task%2Fid')
+      expect(init?.cache).toBe('no-store')
+      return Response.json(task)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(readBackgroundTask('computer', 'session', 'task/id')).resolves.toEqual(task)
   })
 
   it('cancels a background task through its owning session', async () => {
     const fetchMock = vi.fn(async (path: string, init?: RequestInit) => {
       expect(path).toBe(
-        '/api/computers/computer/sessions/session/tasks/task%2Fid/cancel',
+        '/api/computers/computer/sessions/session/tasks/task%2Fid/cancel?summary=1',
       )
       expect(init?.method).toBe('POST')
       expect(init?.body).toBe('{}')

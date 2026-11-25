@@ -247,6 +247,12 @@ Do not weaken these without an explicit product decision.
   resume nothing and mark nothing read, never send them to a node older than
   1.15.1 (it ignores `?passive=1` and opens the session), and never poll: the
   event socket keeps them fresh.
+- The browser holds background-task summaries (`summarizeBackgroundTask`):
+  lists come with `?summary=1`, its socket adds `&tasks=changes` and is sent
+  only the tasks that changed, and an opened task is read whole through
+  `…/tasks/:taskId`, which the owner answers from its tracker's last list
+  without asking the runtime again. Sockets and requests that do not ask, and
+  hub-side readers (Oracle, the scheduler), still get whole tasks.
 - `SessionStore.persist` writes compact JSON and coalesces writes queued behind
   an in-flight write; the snapshot is taken when the write starts, so every
   caller's mutation is still durable when its promise resolves.

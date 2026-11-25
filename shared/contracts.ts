@@ -30,6 +30,8 @@ export interface AgentProviderCapability {
   supportsSideQuestions?: boolean
   /** Reads a tool call's complete arguments and output from the session's event log. */
   supportsActivityDetails?: boolean
+  /** Reads one background task whole (`…/tasks/:taskId`), and lists summaries on request. */
+  supportsBackgroundTaskDetails?: boolean
   supportsLaunchIdentity?: boolean
   unavailableReason?: string
 }
@@ -341,6 +343,12 @@ export interface BackgroundTaskSnapshot {
   tasks: BackgroundTask[]
   runningCount: number
   supported: boolean
+  /**
+   * Set when `tasks` are summaries (`summarizeBackgroundTask`), as a browser
+   * that asks is sent: a task's long text is cut or left out, and
+   * `GET …/tasks/:taskId` reads it whole. Absent, every task is whole.
+   */
+  summary?: true
 }
 
 export interface RuntimeModelOption {
@@ -680,6 +688,8 @@ export type HubEvent =
       tasks: BackgroundTask[]
       runningCount: number
       supported: boolean
+      /** See `BackgroundTaskSnapshot.summary`. */
+      summary?: true
     }
   | { type: 'computer.updated'; computer: ComputerSummary }
   | { type: 'computer.removed'; computerId: string }
@@ -712,6 +722,26 @@ export interface SessionMessagesPatch {
 }
 
 /**
+ * What changed in a session's task list since the publication a socket was
+ * last sent: the summaries of the tasks that are new or changed, and the ids
+ * of those no longer listed. Every other task is as the socket holds it.
+ * Applied, the list is the new tasks in the order given, then the held ones in
+ * their order; a change that would order the list otherwise is not sent as one.
+ */
+export interface BackgroundTasksPatch {
+  /** The publication this applies to. */
+  from: number
+  /** The publication this produces. */
+  to: number
+  /** How many tasks the list has once applied. */
+  count: number
+  tasks: BackgroundTask[]
+  removed: string[]
+}
+
+type SessionTasksUpdated = Extract<HubEvent, { type: 'session.tasks.updated' }>
+
+/**
  * The browser event stream. A socket opened with `?patches=1` is sent a
  * session it already holds as `session.patched`, and every whole session
  * with the `patchVersion` patches build on. One that adds `&window=n` is sent
@@ -719,19 +749,40 @@ export interface SessionMessagesPatch {
  * `messagesTotal`, `carriedMessages`), and patches that count from the start
  * of the whole transcript. Any other socket is sent whole sessions only,
  * exactly as before.
+ *
+ * A socket opened with `tasks=changes` is sent each session's task list as
+ * summaries with the `patchVersion` changes build on, then only what changed
+ * as `session.tasks.patched`. Any other socket is sent whole lists of whole
+ * tasks, exactly as before.
  */
 export type HubWireEvent =
-  | Exclude<HubEvent, { type: 'session.upserted' }>
+  | Exclude<HubEvent, { type: 'session.upserted' } | SessionTasksUpdated>
   | { type: 'session.upserted'; session: ManagedSession; patchVersion?: number; summary?: true }
   | {
       type: 'session.patched'
       session: Omit<ManagedSession, 'messages'>
       patch: SessionMessagesPatch
     }
+  | (SessionTasksUpdated & { patchVersion?: number })
+  | {
+      type: 'session.tasks.patched'
+      computerId: string
+      sessionId: string
+      runningCount: number
+      supported: boolean
+      patch: BackgroundTasksPatch
+    }
 
 /** Sent by a socket whose patch did not apply, for the whole session again. */
 export interface HubResyncRequest {
   type: 'session.resync'
+  computerId: string
+  sessionId: string
+}
+
+/** Sent by a socket whose task change did not apply, for the whole list again. */
+export interface HubTasksResyncRequest {
+  type: 'session.tasks.resync'
   computerId: string
   sessionId: string
 }

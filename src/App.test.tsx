@@ -6933,6 +6933,27 @@ describe('App', () => {
       expect(getSession).toHaveBeenLastCalledWith('computer-1', 'session-2')
     })
 
+    it('reads ahead in the order the sidebar shows, categories first, skipping what a closed one keeps out of sight', async () => {
+      const fourth: ManagedSession = { ...secondSession, id: 'session-4', title: 'Fourth chat' }
+      hubCategories = {
+        revision: 1,
+        categories: [
+          { id: 'lab', name: 'Lab', collapsed: false, sessions: [`computer-1:${third.id}`] },
+          { id: 'quiet', name: 'Quiet', collapsed: true, sessions: [`computer-1:${fourth.id}`] },
+        ],
+      }
+      const { ahead, openSocket } = await renderWithReads([session, secondSession, third, fourth])
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      expect(ahead()[0].sessionId).toBe('session-3')
+      await act(async () => ahead()[0].resolve(windowOf(third)))
+      await waitFor(() => expect(ahead()).toHaveLength(2))
+      expect(ahead()[1].sessionId).toBe('session-2')
+      await act(async () => ahead()[1].resolve(windowOf(secondSession)))
+      await pause()
+      expect(ahead().map((read) => read.sessionId)).toEqual(['session-3', 'session-2'])
+    })
+
     it('opens an empty session read ahead at once, without waiting on its own read', async () => {
       const { ahead, openSocket } = await renderWithReads()
       openSocket()

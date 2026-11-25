@@ -285,6 +285,7 @@ import {
   getPushSettings,
   getSession,
   readSessionMessages,
+  sessionReadInFlight,
   SessionKnowledgeRequestError,
   listComputers,
   listCommands,
@@ -405,7 +406,9 @@ import { useMarkdownDocument } from './markdown-document/use-markdown-document'
 import { PauseFollowingContext } from './sent-message'
 import { SentMessageContent } from './SentMessageContent'
 import { SessionPatchReceiver } from './session-patches'
-import { mergeTranscriptWindow, prependTranscriptPage } from './session-transcript'
+import { holdsTranscript, mergeTranscriptWindow, prependTranscriptPage } from './session-transcript'
+import { prefetchCandidates } from './session-prefetch'
+import { useSessionPrefetch } from './use-session-prefetch'
 import { TRANSCRIPT_WINDOW } from '../shared/transcript-window'
 import { BackgroundTasksDialog } from './features/background-tasks/BackgroundTasksDialog'
 import { BackgroundTasksStatus } from './features/background-tasks/BackgroundTasksStatus'
@@ -4226,6 +4229,14 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [movingToTmux, setMovingToTmux] = useState(false)
   const [movingSessionFolder, setMovingSessionFolder] = useState(false)
   const [loadingTranscript, setLoadingTranscript] = useState(false)
+  // The open session whose read has been answered and drawn, or '' with none
+  // open: reading other sessions ahead waits for it, and does not start while
+  // it could not be read.
+  const [drawnSessionKey, setDrawnSessionKey] = useState<string>()
+  // Whether that read came back as a window. A hub from before windows answers
+  // with whole transcripts, and reading ahead there would bring long ones whole.
+  const [windowedHub, setWindowedHub] = useState(false)
+  const [eventSocketOpen, setEventSocketOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarView, setSidebarView] = useState<'sessions' | 'knowledge'>('sessions')
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
@@ -5530,6 +5541,43 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const selectedComputerOnline = computers.some(
     (computer) => computer.id === selectedComputerId && computer.online,
   )
+  // Reading ahead: once the open session is drawn and the event socket is
+  // there to keep them fresh, the next sessions in the sidebar are read
+  // passively while the page is idle, so opening one draws it at once.
+  const prefetchStarts = useRef(new Map<string, number>())
+  const interruptPrefetch = useSessionPrefetch({
+    ready: !loading && windowedHub && eventSocketOpen && !sending && queueActionId === undefined &&
+      drawnSessionKey === (selected ? sessionKey(selected) : ''),
+    candidates: () => prefetchCandidates(navigationView.visible, {
+      selectedKey,
+      hiddenKeys: listedHiddenKeys,
+      computers,
+      inFlight: (session) => sessionReadInFlight(session.computerId, session.id),
+    }),
+    read: (session, signal) => {
+      prefetchStarts.current.set(sessionKey(session), eventSequenceRef.current)
+      return getSession(session.computerId, session.id, signal, { passive: true })
+    },
+    install: (answer) => {
+      const key = sessionKey(answer)
+      const startedAt = prefetchStarts.current.get(key)
+      prefetchStarts.current.delete(key)
+      const current = sessionsRef.current.find((entry) => sessionKey(entry) === key)
+      // Anything heard about the session or its computer -- removed, paired
+      // again, gone offline -- since the read began is newer than what it
+      // read, and a transcript held by now came some other way, so the answer
+      // is dropped rather than merged. Nor is a session that has gone
+      // meanwhile brought back.
+      if (
+        startedAt === undefined || !current || holdsTranscript(current) ||
+        (sessionEventSequenceRef.current.get(key) || 0) > startedAt ||
+        (computerEventSequenceRef.current.get(answer.computerId) || 0) > startedAt ||
+        (computerRecordSequenceRef.current.get(answer.computerId) || 0) > startedAt
+      ) return
+      sessionsRef.current = upsertSession(sessionsRef.current, answer)
+      setSessions((list) => upsertSession(list, answer))
+    },
+  })
   // An interrupted or archived record is read-only until it is reopened; the
   // server refuses these actions too.
   const selectedRetained = Boolean(selected?.interruption || selected?.archivedAt)
@@ -7123,6 +7171,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     if (!selectedComputerId || !selectedSessionId) {
       setCommands([])
       setCommandsKey(selectedKey)
+      setDrawnSessionKey('')
       return
     }
     let active = true
@@ -7131,6 +7180,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       .then((session) => {
         if (active) {
           setSessions((current) => upsertSession(current, session))
+          setWindowedHub(session.messagesTotal !== undefined)
+          setDrawnSessionKey(`${selectedComputerId}:${selectedSessionId}`)
         }
       })
       .catch((caught: unknown) => {
@@ -7693,6 +7744,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         if (current.readyState === WebSocket.OPEN) current.send(JSON.stringify(request))
       })
       socket.onopen = () => {
+        setEventSocketOpen(true)
         publishFeatureEvent({ type: 'hub.connected' })
         reportOraclePresenceRef.current()
         reconnectDelay = 1_000
@@ -7938,7 +7990,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         }
       }
       socket.onclose = () => {
-        if (eventSocketRef.current === current) eventSocketRef.current = undefined
+        if (eventSocketRef.current === current) {
+          eventSocketRef.current = undefined
+          setEventSocketOpen(false)
+        }
         if (!stopped) {
           // A WebSocket the gateway refused fails without saying why.
           void checkHubSignIn()
@@ -8022,6 +8077,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         window.clearTimeout(retry)
       }
       socket?.close()
+      setEventSocketOpen(false)
     }
   }, [loadBackgroundTasks, settingsClient, upsertSession])
 
@@ -10951,6 +11007,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       submissionsInFlight.current.add(targetKey)
       submissionAnchors.current.add(targetKey)
       setSending(true)
+      // The send goes out alone; reading ahead picks up again once it is answered.
+      interruptPrefetch()
       const sendOptions = terminalSendOptions({
         status: selected.status,
         provider: selected.provider,
@@ -12184,6 +12242,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       })
     }
     try {
+      interruptPrefetch()
       const result = await dispatchQueuedPrompt(target.computerId, target.id, promptId, content)
       if (!composerMounted.current) return result.outcome === 'sent'
       if (result.session && stillListed(result.session)) applySession(result.session)
@@ -14079,7 +14138,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               onKnowledge={() => setKnowledgeMode('docked')}
             />
           ) : loadingTranscript &&
-          selected.messages.length === 0 &&
+          // An empty window is an answer: a session read ahead, or opened
+          // before, as empty is drawn as empty while it is read again.
+          !holdsTranscript(selected) &&
           selectedPendingEchoes.length === 0 ? (
             <div className="empty-chat">
               <span className="typing-indicator" aria-label="Loading conversation">

@@ -13793,9 +13793,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 categoryActions={categoryActions}
               />
             </DndContext>
-            <p aria-live="polite" className="visually-hidden session-category-announcement" role="status">
-              {categoryAnnouncement}
-            </p>
         </div>
         {knowledgeMode !== 'hidden' ? (
           <div className="sidebar-knowledge">
@@ -14061,6 +14058,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         </div>
         {desktopRail && !desktopLayout ? shellNavigation : null}
       </aside>
+
+      {/* Outside the sidebar, which a phone hides while its drawer shows
+          Knowledge, so a change from the session's actions is still said. */}
+      <div aria-live="polite" className="visually-hidden session-category-announcement" role="status">
+        {categoryAnnouncement}
+      </div>
 
       {sidebarOpen ? (
         <button

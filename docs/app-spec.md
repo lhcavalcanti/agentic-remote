@@ -180,9 +180,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   The menu MUST take the focus when it opens, move it with the arrow keys, Home,
   and End, and give it back to its button on Escape or after an action; keyboard
   users reorder inside a category with the row's keyboard handle and move
-  between categories with the menu. Category controls MUST be at least 40 px on
-  touch screens. Names are 1 to 60 characters and unique on the hub, ignoring
-  case.
+  between categories with the menu. Each category change the hub commits MUST be
+  announced politely, even one made from the session's actions while the list is
+  out of sight. Category controls MUST be at least 40 px on touch screens. Names
+  are 1 to 60 characters and unique on the hub, ignoring case.
 - Category changes are revisioned: each names the revision it was made against
   and the hub MUST refuse one made against a revision it has moved past. A
   browser MAY show a change at once, MUST send its changes one at a time, and

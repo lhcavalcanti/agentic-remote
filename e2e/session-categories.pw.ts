@@ -305,3 +305,32 @@ for (const device of devices) {
     })
   })
 }
+
+test.describe('on a phone showing Knowledge', () => {
+  test.use({ hasTouch: true, viewport: devices[0].viewport })
+
+  test('still says a move made from the session actions while the list is out of sight', async ({ page }, testInfo) => {
+    const state = categorizedState()
+    const fixture = await setupWorkspaceFixture(page, { baseUrl: testInfo.project.use.baseURL!, knowledgeMode: 'docked', state })
+    try {
+      await page.goto(fixture.url)
+      // A phone opens on the docked reader. Its files are the drawer's
+      // Knowledge view, which stays the drawer's view back in the conversation.
+      await page.getByRole('complementary', { name: 'Session knowledge' })
+        .getByRole('button', { name: 'Back to files', exact: true }).click()
+      await page.getByRole('button', { name: 'Close files', exact: true }).click()
+      await page.getByRole('button', { name: 'Return to conversation', exact: true }).click()
+      await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeVisible()
+      await expect(page.locator('.app-shell')).toHaveAttribute('data-sidebar-view', 'knowledge')
+
+      await page.getByRole('button', { name: 'Session actions', exact: true }).click()
+      await page.getByRole('group', { name: 'Session actions' }).getByRole('button', { name: 'Move to category…' }).click()
+      await page.getByRole('dialog', { name: 'Move to category' }).getByRole('button', { name: 'Reviews', exact: true }).click()
+      await expect.poll(() => state.sessionCategories.categories[0].sessions).toContain(studio(SELECTED_SESSION_ID))
+      await expect(page.getByRole('status').filter({ hasText: 'Moved Plan the knowledge workspace to Reviews' }))
+        .toHaveCount(1)
+    } finally {
+      fixture.assertHealthy()
+    }
+  })
+})

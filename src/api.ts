@@ -757,6 +757,14 @@ export async function searchWorkspace(
   )
 }
 
+/** `computerId:sessionId` of each session read now on its way, and how many. */
+const sessionReads = new Map<string, number>()
+
+/** Whether a read of this session is on its way. */
+export function sessionReadInFlight(computerId: string, sessionId: string): boolean {
+  return sessionReads.has(`${computerId}:${sessionId}`)
+}
+
 /**
  * A session with the latest window of its transcript. A hub from before
  * windows answers with the whole transcript, which reads the same way.
@@ -770,11 +778,19 @@ export async function getSession(
   const query = new URLSearchParams()
   if (options.passive) query.set('passive', '1')
   query.set('window', String(TRANSCRIPT_WINDOW))
-  const response = await request<{ session: ManagedSession }>(
-    `${sessionPath(computerId, sessionId)}?${query}`,
-    { signal, cache: 'no-store' },
-  )
-  return response.session
+  const key = `${computerId}:${sessionId}`
+  sessionReads.set(key, (sessionReads.get(key) ?? 0) + 1)
+  try {
+    const response = await request<{ session: ManagedSession }>(
+      `${sessionPath(computerId, sessionId)}?${query}`,
+      { signal, cache: 'no-store' },
+    )
+    return response.session
+  } finally {
+    const left = (sessionReads.get(key) ?? 1) - 1
+    if (left > 0) sessionReads.set(key, left)
+    else sessionReads.delete(key)
+  }
 }
 
 /**

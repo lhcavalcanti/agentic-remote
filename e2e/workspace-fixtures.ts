@@ -771,6 +771,8 @@ export interface WorkspaceFixtureOptions {
   activityDetails?: Record<string, ActivityDetail>
   /** Use a native event socket only on the already-validated local fixture origin. */
   nativeLocalEvents?: boolean
+  /** List sessions as a hub lists its own: summaries, without their transcripts. */
+  summaryListing?: boolean
   realClock?: boolean
 }
 
@@ -1405,6 +1407,7 @@ export async function setupWorkspaceFixture(
     // As the hub does for a browser that holds windows: a listing carries at
     // most a window of each transcript.
     const listed = () => {
+      if (options.summaryListing) return sessions.map((session) => ({ ...session, messages: [] }))
       const window = Number(request.headers()['x-transcript-window'])
       return Number.isInteger(window) && window > 0
         ? sessions.map((session) => session.messages.length ? windowSession(session, window) : session)

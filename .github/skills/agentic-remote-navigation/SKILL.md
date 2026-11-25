@@ -94,6 +94,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Main UI, dialogs, workflow state | `src/App.tsx` |
 | Styling, safe areas, mobile breakpoints | `src/index.css` |
 | Browser API client | `src/api.ts` |
+| Reading sessions ahead | `src/session-prefetch.ts`, `src/use-session-prefetch.ts` |
 | Shared request/response types | `shared/contracts.ts` |
 | Copilot session lifecycle, transcript recovery | `server/agent-service.ts` |
 | Claude Agent lifecycle | `server/claude-agent-service.ts` |
@@ -241,6 +242,12 @@ Do not weaken these without an explicit product decision.
   each transcript (`shared/transcript-window.ts`) and pages earlier rows, and
   its event socket (`?patches=1&window=500`) is never sent a whole long
   session. Server-side readers still read whole transcripts.
+- The browser reads ahead (`src/session-prefetch.ts`) the windows of the
+  sidebar's top 8 sessions it holds no transcript for, one at a time while the
+  page is idle and at most about 2 MB a pass. Keep those reads passive, so they
+  resume nothing and mark nothing read, never send them to a node older than
+  1.15.1 (it ignores `?passive=1` and opens the session), and never poll: the
+  event socket keeps them fresh.
 - The browser holds background-task summaries (`summarizeBackgroundTask`):
   lists come with `?summary=1`, its socket adds `&tasks=changes` and is sent
   only the tasks that changed, and an opened task is read whole through

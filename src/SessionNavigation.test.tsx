@@ -1173,6 +1173,30 @@ describe('picking a row up to reorder it', () => {
     expect(actions.onSelectSession).toHaveBeenCalledWith(session)
   })
 
+  it('picks a row up from anywhere in a category too, but leaves a category header to open and close', () => {
+    const lab = {
+      category: { id: 'lab', name: 'Homelab', collapsed: false, sessions: ['worker:build'] },
+      sessions: [worker],
+    }
+    render(<NavigationHarness categories={[lab]} />)
+    const row = sessionRow('Build docs')
+    mousePress(within(row).getByText('Build docs'), { x: 40, y: 20 })
+    mouseMove(within(row).getByText('Build docs'), { x: 40, y: 27 })
+    expect(pickedUp).toHaveBeenLastCalledWith('session:worker:build')
+    mouseRelease(within(row).getByText('Build docs'), { x: 40, y: 27 })
+    act(() => {
+      vi.advanceTimersByTime(60)
+    })
+
+    const header = screen.getByRole('button', { name: 'Homelab, 1 session' })
+    mousePress(header, { x: 40, y: 20 })
+    mouseMove(header, { x: 40, y: 40 })
+    mouseRelease(header, { x: 40, y: 40 })
+    fireEvent.click(header)
+    expect(pickedUp).toHaveBeenCalledTimes(1)
+    expect(categoryActions.onToggleCategory).toHaveBeenCalledWith('lab', true)
+  })
+
   it('leaves a press on one of the row’s own buttons to that button', () => {
     render(navigation())
     // Hide goes last: the row leaves the list once it is hidden.

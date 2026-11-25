@@ -143,9 +143,9 @@ test.describe('reordering with a mouse', () => {
       await page.mouse.up()
 
       await expect.poll(() => titles(list, 'Studio')).toEqual([DRAFT, PLAN, REVIEW])
-      expect(laneSaves(fixture)).toEqual([{ method: 'PUT', path: '/api/session-order/fixture-studio' }])
-      expect(state.sessionOrder.order['fixture-studio'])
+      await expect.poll(() => state.sessionOrder.order['fixture-studio'])
         .toEqual(studioLane(IDLE_SESSION_ID, SELECTED_SESSION_ID, PENDING_SESSION_ID))
+      expect(laneSaves(fixture)).toEqual([{ method: 'PUT', path: '/api/session-order/fixture-studio' }])
       // Letting go of a drag opens nothing.
       await expect(page).toHaveURL(/session=fixture-plan-workspace/)
 
@@ -220,7 +220,7 @@ test.describe('reordering with a mouse', () => {
         .toContainText(`session:fixture-studio:${PENDING_SESSION_ID}`)
       await page.keyboard.press('Space')
       await expect.poll(() => titles(list, 'Studio')).toEqual([REVIEW, PLAN, DRAFT])
-      expect(state.sessionOrder.order['fixture-studio'])
+      await expect.poll(() => state.sessionOrder.order['fixture-studio'])
         .toEqual(studioLane(PENDING_SESSION_ID, SELECTED_SESSION_ID, IDLE_SESSION_ID))
       await expect(planHandle).toBeFocused()
 
@@ -277,7 +277,7 @@ test.describe('reordering on a phone', () => {
       await touch.up()
 
       await expect.poll(() => titles(list, 'Studio')).toEqual([DRAFT, PLAN, REVIEW])
-      expect(state.sessionOrder.order['fixture-studio'])
+      await expect.poll(() => state.sessionOrder.order['fixture-studio'])
         .toEqual(studioLane(IDLE_SESSION_ID, SELECTED_SESSION_ID, PENDING_SESSION_ID))
       // The list stays open on the session that was already open.
       await expect(list).toBeInViewport()

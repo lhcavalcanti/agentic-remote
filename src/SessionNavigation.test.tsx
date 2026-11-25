@@ -967,7 +967,7 @@ describe('picking a row up to reorder it', () => {
     }
     expect(pickedUp).toHaveBeenCalledTimes(parts.length)
 
-    // Pressing and letting go where it started is a click.
+    // A press that moves less than a drag's few pixels is a click.
     mousePress(parts[0], { x: 40, y: 20 })
     mouseMove(parts[0], { x: 42, y: 22 })
     mouseRelease(parts[0], { x: 42, y: 22 })

@@ -128,7 +128,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   the last acknowledged order and report the failure rather than claim a local
   save. A drag MUST submit only the dragged computer's lane, and a session MUST
   NOT move between computers. Hidden sessions, Hidden visibility, and unread
-  sessions share the same revisioned hub snapshot;
+  sessions share the same revisioned hub snapshot; categories have a
+  revisioned snapshot of their own (below);
   computer-group order, sort mode, search, and the four primary filters remain
   browser-local.
 - A session row, and a computer's group by its header, MUST be draggable from
@@ -138,6 +139,70 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   on a row MUST open it rather than pick it up; keyboard reordering MUST use
   each row's and computer's focusable **Reorder** handle, which MAY stay out of
   sight until it has keyboard focus.
+- Sessions MAY be organised into **categories**: named, ordered, collapsible
+  groups the hub keeps and every browser on it shares, as it does hidden and
+  unread state. A category MAY hold sessions from any computer; each session
+  stays on its own computer and is in at most one category. Category sections
+  MUST appear above the computer groups, and sessions in no category MUST stay
+  under their computer, below them; every computer MUST stay listed, saying
+  how many of its sessions are in categories when none is left under it. A row
+  in a category MUST name its computer when the hub has more than one.
+- Each category header MUST be a button that opens and closes it
+  (`aria-expanded`); whether it is closed is hub state. Open, the header MUST
+  show only the category's total. Closed, it MUST show how many of its sessions
+  need you (◆, in the attention colour) and how many are unread (●, in the
+  accent), and a ring while any of them is working, and MUST keep in sight up
+  to three of its sessions that need you or are unread (needs you first), the
+  open session, and then "N more", which opens it. The header's accessible
+  name MUST carry those counts in words. Hidden sessions follow the hidden
+  rules inside categories too.
+- Search and the Needs you, Working, and Unread filters MUST show matches
+  inside their categories, opened, and leave out categories without any; the
+  headers cannot be closed, and nothing can be reordered, until they are
+  cleared. Keyboard next/previous navigation and reading sessions ahead MUST
+  follow the displayed order, categories first, a closed category contributing
+  only the rows it shows.
+- With Custom order and no search or filter, a session MAY be dragged, from
+  anywhere on its row as above, onto any category header, open or closed, or
+  into a category's list at a position, and a categorized session dragged back
+  to its own computer's group MUST leave its category and take the place it kept
+  there; it never moves between computers. Category headers are not dragged: a
+  press on one opens or closes it, and a category moves with **Move up** and
+  **Move down** in its menu. **Move to category…** in the open session's actions
+  MUST list the categories, **No category**, and **New category…**, which
+  creates a category with the session in it in one step, and works in every view
+  and while the computer is offline. **New category** MUST also be offered where
+  the categories end (the first row when there are none) rather than in the
+  Sessions header, which stays one row on a phone, and not while filtering. Each
+  category's own menu MUST offer **Mark all as read**, **Rename…**, **Move up**,
+  **Move down**, and **Delete category…**, which asks once and says its sessions
+  stay: deleting a category leaves its sessions listed under their computers.
+  The menu MUST take the focus when it opens, move it with the arrow keys, Home,
+  and End, and give it back to its button on Escape or after an action; keyboard
+  users reorder inside a category with the row's keyboard handle and move
+  between categories with the menu. Each category change the hub commits MUST be
+  announced politely, even one made from the session's actions while the list is
+  out of sight. Category controls MUST be at least 40 px on touch screens. Names
+  are 1 to 60 characters and unique on the hub, ignoring case.
+- Category changes are revisioned: each names the revision it was made against
+  and the hub MUST refuse one made against a revision it has moved past. A
+  browser MAY show a change at once, MUST send its changes one at a time, and
+  on a refusal MUST restore the categories the hub last committed, read them
+  again, and report the failure. Committed changes MUST reach every browser as
+  `session.categories.updated` and survive a hub restart.
+- Clear and Recover MUST keep a session's category and its place there; the
+  replacement takes its predecessor's place. Close MUST remember the category
+  and Reopen restore it, until the closed session can no longer be reopened.
+  Delete and unpairing a computer MUST take sessions out of their category, and
+  discovery MUST NOT place a session in one.
+- Categories MUST be kept in their own hub file, `session-categories.json`,
+  never in the session order file: a release that predates categories ignores
+  the file, so rolling back leaves them alone and rolling forward restores them.
+  Fields the release does not know MUST be written back unchanged; a file it
+  cannot read, or one from a newer release, MUST leave categories unavailable
+  without changing the file or stopping the hub. A browser on a hub without
+  categories MUST list every session under its computer and say so if a change
+  is attempted.
 - Search, the three primary filters, the selected session, and session-list
   scroll position MUST survive browser reloads and responsive layout changes.
   Sessions MUST expose one accessible **Refresh** action that reloads
@@ -2600,6 +2665,8 @@ Every material release SHOULD preserve:
 - Dynamic Island and home-indicator safe areas
 - Bundle-only PWA update detection
 - Synced settings matching across devices on the same hub, with no theme flash
+- Session categories matching across browsers on the same hub, through Clear,
+  Recover, Close and Reopen, with `session-order.json` untouched
 
 ## 17. Authoritative implementation areas
 
@@ -2607,6 +2674,7 @@ Every material release SHOULD preserve:
 | --- | --- |
 | UI, composer, workspace, Knowledge | `src/App.tsx`, `src/index.css` |
 | Session search, filters, and state labels | `src/SessionNavigation.tsx`, `src/session-presentation.ts` |
+| Session categories | `shared/session-categories.ts`, `server/session-category-store.ts`, `server/session-category-routes.ts`, `src/use-session-categories.ts`, `src/session-navigation-view.ts`, `src/SessionCategoryDialogs.tsx` |
 | Session-actions disclosure | `src/SessionActions.tsx` |
 | Side questions | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
 | Oracle (session manager agent) | `src/ManagerAssistant.tsx`, `src/OracleSettings.tsx`, `src/use-oracle-settings.ts`, `server/manager-*.ts`, `shared/manager.ts` |

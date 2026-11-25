@@ -12,7 +12,7 @@ import type {
 import { SessionNavigation, type PendingSessionCreation } from './SessionNavigation'
 import { useSessionListSensors } from './session-list-sensors'
 import type { SessionSort } from './session-presentation'
-import { sessionNavigationView, type SessionFilter } from './session-navigation-view'
+import { sessionNavigationView, type CategorizedSessions, type SessionFilter } from './session-navigation-view'
 
 const computers: ComputerSummary[] = [
   { id: 'studio', name: 'Studio', isLocal: true, online: true },
@@ -74,6 +74,14 @@ const actions = {
   onNewSession: vi.fn(),
 }
 const hiddenVisibility = vi.fn()
+const categoryActions = {
+  onToggleCategory: vi.fn(),
+  onMarkCategoryRead: vi.fn(),
+  onRenameCategory: vi.fn(),
+  onMoveCategory: vi.fn(),
+  onDeleteCategory: vi.fn(),
+  onNewCategory: vi.fn(),
+}
 const sessionHidden = vi.fn()
 const sessionUnread = vi.fn()
 /** The id of whatever a press picked up. */
@@ -97,7 +105,9 @@ function NavigationHarness({
   recentlyClosedCount,
   onOpenRecentlyClosed,
   onRefresh,
+  categories,
 }: {
+  categories?: CategorizedSessions['categories']
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
   computerList?: ComputerSummary[]
@@ -159,7 +169,9 @@ function NavigationHarness({
           filter,
           { keys: hidden, shown: showHidden },
           unread,
+          categories ? { categories, selectedKey: 'studio:review' } : undefined,
         )}
+        categoryActions={categories ? categoryActions : undefined}
         query={query}
         filter={filter}
         showHidden={showHidden}
@@ -961,6 +973,163 @@ describe('session navigation', () => {
   })
 })
 
+describe('session categories in the list', () => {
+  const lab = (sessions: ManagedSession[], collapsed = false) => ({
+    category: { id: 'lab', name: 'Homelab', collapsed, sessions: sessions.map((entry) => `${entry.computerId}:${entry.id}`) },
+    sessions,
+  })
+  const plans = { category: { id: 'plans', name: 'Plans', collapsed: false, sessions: [] }, sessions: [] }
+  const list = () => screen.getByRole('navigation', { name: 'Sessions' })
+  const sectionNamed = (name: string) => screen.getByRole('region', { name: `Category ${name}` })
+
+  it('lists categories above the computers, each under a header that opens and closes it', () => {
+    render(<NavigationHarness categories={[lab([worker, question]), plans]} />)
+
+    const homelab = sectionNamed('Homelab')
+    const toggle = within(homelab).getByRole('button', { name: 'Homelab, 2 sessions' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(within(homelab).getByRole('button', { name: /^Build docs,/ })).toBeVisible()
+    expect(within(homelab).getByRole('button', { name: /^Choose a direction,/ })).toBeVisible()
+    // Rows from several computers sit together there, so each names its own.
+    expect(within(homelab).getByText('Build node', { selector: '.session-item__computer' })).toBeVisible()
+    expect(within(homelab).getByText('Studio', { selector: '.session-item__computer' })).toBeVisible()
+    // Each session is listed once: under its category rather than its computer.
+    const studio = screen.getByRole('region', { name: 'Studio' })
+    expect(within(studio).queryByRole('button', { name: /^Choose a direction,/ })).toBeNull()
+    expect(within(studio).getByRole('button', { name: /^Review the release,/ })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Build node' })).toHaveTextContent('1 session in a category')
+    expect(homelab.compareDocumentPosition(studio) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(sectionNamed('Plans')).getByText('Drag sessions here, or use Move to category in a session\'s actions'))
+      .toBeVisible()
+
+    fireEvent.click(toggle)
+    expect(categoryActions.onToggleCategory).toHaveBeenCalledWith('lab', true)
+  })
+
+  it('sums up a closed category and keeps what needs you in sight, with how many more it holds', () => {
+    const quiet = { ...worker, id: 'quiet', title: 'Quiet work' }
+    const busy = { ...worker, id: 'busy', title: 'Busy work', status: 'running' as const }
+    render(<NavigationHarness
+      categories={[lab([quiet, question, busy, worker], true)]}
+      initialUnread={['worker:build']}
+      sessions={new Map([['studio', [session, question]], ['worker', [quiet, busy, worker]], ['travel', []]])}
+    />)
+
+    const homelab = sectionNamed('Homelab')
+    const toggle = within(homelab).getByRole('button', {
+      name: 'Homelab, 1 needs you, 1 unread, working, 4 sessions',
+    })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(homelab).getByRole('button', { name: /^Choose a direction,/ })).toBeVisible()
+    expect(within(homelab).getByRole('button', { name: /^Build docs, unread,/ })).toBeVisible()
+    expect(within(homelab).queryByRole('button', { name: /^Quiet work,/ })).toBeNull()
+    expect(homelab.querySelector('.session-category__signal--attention')).toHaveTextContent('1')
+    expect(homelab.querySelector('.session-category__signal--unread')).toHaveTextContent('1')
+    expect(homelab.querySelector('.session-category__ring')).not.toBeNull()
+
+    fireEvent.click(within(homelab).getByRole('button', { name: 'Show 2 more sessions in Homelab' }))
+    expect(categoryActions.onToggleCategory).toHaveBeenCalledWith('lab', false)
+  })
+
+  it('offers a category\'s actions in a menu that keeps the focus with it', () => {
+    render(<NavigationHarness categories={[lab([worker]), plans]} initialUnread={['worker:build']} />)
+
+    const trigger = within(sectionNamed('Homelab')).getByRole('button', { name: 'Category actions for Homelab' })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    fireEvent.click(trigger)
+    const menu = screen.getByRole('menu', { name: 'Category actions for Homelab' })
+    const items = within(menu).getAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Mark all as read', 'Rename…', 'Move up', 'Move down', 'Delete category…',
+    ])
+    expect(within(menu).getByRole('menuitem', { name: 'Move up' })).toBeDisabled()
+    expect(document.activeElement).toBe(items[0])
+    fireEvent.keyDown(items[0], { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(items[1])
+    fireEvent.keyDown(items[1], { key: 'End' })
+    expect(document.activeElement).toBe(items[4])
+    fireEvent.keyDown(items[4], { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Move down' }))
+    expect(categoryActions.onMoveCategory).toHaveBeenCalledWith('lab', 1)
+    expect(document.activeElement).toBe(trigger)
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Mark all as read' }))
+    expect(categoryActions.onMarkCategoryRead).toHaveBeenCalledWith('lab')
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename…' }))
+    expect(categoryActions.onRenameCategory).toHaveBeenCalledWith('lab')
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete category…' }))
+    expect(categoryActions.onDeleteCategory).toHaveBeenCalledWith('lab')
+
+    fireEvent.click(within(sectionNamed('Plans')).getByRole('button', { name: 'Category actions for Plans' }))
+    expect(screen.getByRole('menuitem', { name: 'Mark all as read' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Move down' })).toBeDisabled()
+  })
+
+  it('opens a category\'s menu upward when the list has no room for it below', () => {
+    render(<NavigationHarness categories={[lab([worker])]} />)
+    const trigger = within(sectionNamed('Homelab')).getByRole('button', { name: 'Category actions for Homelab' })
+    const scroll = trigger.closest('.session-list__scroll') as HTMLElement
+    const rect = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 300, width: 300, height: bottom - top, x: 0, y: top, toJSON: () => ({}) })
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue(rect(0, 600))
+    const place = vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(rect(540, 568))
+
+    fireEvent.click(trigger)
+    expect(screen.getByRole('menu')).toHaveClass('session-category__menu-panel--upward')
+    fireEvent.click(trigger)
+    place.mockReturnValue(rect(40, 68))
+    fireEvent.click(trigger)
+    expect(screen.getByRole('menu')).not.toHaveClass('session-category__menu-panel--upward')
+  })
+
+  it('offers New category where the categories end, and not while the list is filtered', () => {
+    render(<NavigationHarness categories={[]} />)
+    const create = within(list()).getByRole('button', { name: 'New category' })
+    fireEvent.click(create)
+    expect(categoryActions.onNewCategory).toHaveBeenCalledTimes(1)
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), { target: { value: 'docs' } })
+    expect(within(list()).queryByRole('button', { name: 'New category' })).toBeNull()
+  })
+
+  it('shows matches inside their categories, open, and leaves out categories with none', () => {
+    render(<NavigationHarness categories={[lab([worker, question], true), plans]} />)
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), { target: { value: 'docs' } })
+
+    const homelab = sectionNamed('Homelab')
+    const toggle = within(homelab).getByRole('button', { name: 'Homelab, 1 of 2 sessions' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle).toBeDisabled()
+    expect(within(homelab).getByRole('button', { name: /^Build docs,/ })).toBeVisible()
+    expect(within(homelab).queryByRole('button', { name: /^Choose a direction,/ })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Category Plans' })).toBeNull()
+  })
+
+  it('moves no category while the list is filtered, which lists only some of them', () => {
+    const design = {
+      category: { id: 'design', name: 'Design', collapsed: false, sessions: ['studio:question'] },
+      sessions: [question],
+    }
+    render(<NavigationHarness categories={[lab([worker]), design]} />)
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search sessions' }), { target: { value: 'notes' } })
+
+    expect(screen.getAllByRole('region', { name: /^Category / })).toHaveLength(2)
+    fireEvent.click(within(sectionNamed('Homelab')).getByRole('button', { name: 'Category actions for Homelab' }))
+    expect(screen.getByRole('menuitem', { name: 'Move up' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Move down' })).toBeDisabled()
+  })
+
+  it('leaves categories out on a hub without them', () => {
+    render(<NavigationHarness />)
+    expect(within(list()).queryByRole('button', { name: 'New category' })).toBeNull()
+  })
+})
+
 describe('picking a row up to reorder it', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -1002,6 +1171,30 @@ describe('picking a row up to reorder it', () => {
     fireEvent.click(parts[0])
     expect(pickedUp).toHaveBeenCalledTimes(parts.length)
     expect(actions.onSelectSession).toHaveBeenCalledWith(session)
+  })
+
+  it('picks a row up from anywhere in a category too, but leaves a category header to open and close', () => {
+    const lab = {
+      category: { id: 'lab', name: 'Homelab', collapsed: false, sessions: ['worker:build'] },
+      sessions: [worker],
+    }
+    render(<NavigationHarness categories={[lab]} />)
+    const row = sessionRow('Build docs')
+    mousePress(within(row).getByText('Build docs'), { x: 40, y: 20 })
+    mouseMove(within(row).getByText('Build docs'), { x: 40, y: 27 })
+    expect(pickedUp).toHaveBeenLastCalledWith('session:worker:build')
+    mouseRelease(within(row).getByText('Build docs'), { x: 40, y: 27 })
+    act(() => {
+      vi.advanceTimersByTime(60)
+    })
+
+    const header = screen.getByRole('button', { name: 'Homelab, 1 session' })
+    mousePress(header, { x: 40, y: 20 })
+    mouseMove(header, { x: 40, y: 40 })
+    mouseRelease(header, { x: 40, y: 40 })
+    fireEvent.click(header)
+    expect(pickedUp).toHaveBeenCalledTimes(1)
+    expect(categoryActions.onToggleCategory).toHaveBeenCalledWith('lab', true)
   })
 
   it('leaves a press on one of the row’s own buttons to that button', () => {

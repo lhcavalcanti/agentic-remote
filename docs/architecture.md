@@ -30,6 +30,27 @@ new-session defaults, sort, computer order) live in the hub's
 `settings-profile.json`, also mode `0600`. Nodes keep none. See
 [the settings profile](design/settings-profile.md).
 
+The hub also keeps the Sessions list every browser shares, in two files of its
+own data directory, each with its own version and revision: the custom order,
+hidden and unread sessions in `session-order.json` (`SessionOrderStore`), and
+session categories in `session-categories.json` (`SessionCategoryStore`).
+Categories have a file of their own because a release rewrites
+`session-order.json` from the fields it knows and refuses a newer version: kept
+there, a rollback would drop them on its next write, or fail to start. A release
+that predates categories never opens the new file, so rolling back leaves them
+alone and rolling forward finds them again; the store writes back fields it does
+not know, and leaves a newer or unreadable file untouched with categories
+unavailable rather than stopping the hub. Membership is keyed
+`computerId:sessionId` like order, hidden and unread, and a session keeps its
+place in its computer's lane while it is in a category. The hub keeps it in step
+with session events, never with discovery: a replacement takes its predecessor's
+category and place (from the removal's `replacedBy`, the Clear or Recover
+response of an older node, or `replacedSessionIds` lineage), a close is
+remembered for Reopen until the closed session expires or no category holds it,
+and a delete or an unpairing removes it. Writes under `/api/session-categories`
+name the revision they were made against, and every committed change is
+broadcast as `session.categories.updated`. Nodes keep neither file.
+
 Closing a session routes deletion to its owning node. That node disconnects any
 active SDK session, deletes the session from provider storage, removes its local
 rendered-history cache, and emits a removal event.

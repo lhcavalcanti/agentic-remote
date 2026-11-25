@@ -1852,6 +1852,355 @@ button {
   gap: 2px;
 }
 
+/* Categories: groups of sessions you name, above the computers. Their names
+   read stronger than a computer's, since you chose them, and the chevron is
+   what opens and closes one. A rule below them sets them apart from the
+   computers, whose sessions in no category follow. */
+.session-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-category {
+  border-radius: var(--radius-small);
+}
+
+/* Where a dragged session would land. */
+.session-category--drop-target {
+  background: var(--accent-tint);
+  box-shadow: inset 0 0 0 1px var(--accent-border-strong);
+}
+
+.session-category__header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.session-category__toggle {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  color: var(--muted);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-category__toggle:hover:not(:disabled) {
+  background: var(--panel-raised);
+}
+
+.session-category__toggle:focus-visible,
+.session-category__menu-button:focus-visible,
+.session-category__more:focus-visible,
+.session-categories__new:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: 1px;
+}
+
+/* Open while the list is filtered, and nothing to do about it until then. */
+.session-category__toggle:disabled {
+  cursor: default;
+}
+
+.session-category__chevron {
+  flex: 0 0 auto;
+  transition: transform 120ms ease;
+}
+
+.session-category__toggle[aria-expanded='true'] .session-category__chevron {
+  transform: rotate(90deg);
+}
+
+.session-category__name {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Expanded, the total; closed, what needs you, what is unread, and a ring
+   while anything in it works. The header's name says all of it in words. */
+.session-category__summary {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-category__signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-weight: 650;
+}
+
+.session-category__signal--attention {
+  color: var(--warning);
+}
+
+.session-category__signal--unread {
+  color: var(--accent-foreground);
+}
+
+.session-category__glyph {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.session-category__ring {
+  width: 11px;
+  height: 11px;
+  border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: activity-spin 1.6s linear infinite;
+}
+
+.session-category__menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.session-category__menu-button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  color: var(--muted);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.session-category__menu-button:hover,
+.session-category__menu-button[aria-expanded='true'] {
+  color: var(--text);
+  background: var(--panel-raised);
+}
+
+.session-category__menu-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  min-width: 180px;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: var(--panel);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
+}
+
+.session-category__menu-panel--upward {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.session-category__menu-item {
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--text);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-category__menu-item:hover:not(:disabled),
+.session-category__menu-item:focus-visible {
+  outline: none;
+  background: var(--panel-raised);
+}
+
+.session-category__menu-item:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent-foreground);
+}
+
+.session-category__menu-item:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.session-category__menu-item--danger:not(:disabled) {
+  color: var(--danger);
+}
+
+.session-category__sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-category__more {
+  align-self: flex-start;
+  min-height: 28px;
+  margin-left: 22px;
+  padding: 0 8px;
+  color: var(--muted-strong);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.session-category__more:hover {
+  color: var(--text);
+  background: var(--panel-raised);
+}
+
+.session-category__empty {
+  margin: 0;
+  padding: 7px 12px 7px 30px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Where a new category will appear, and taking nothing from the header. */
+.session-categories__new {
+  display: flex;
+  align-self: flex-start;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  color: var(--muted-strong);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.session-categories__new:hover {
+  color: var(--text);
+  background: var(--panel-raised);
+}
+
+/* In a category, rows from different computers sit together, so each says
+   whose it is, in that computer's colour. */
+.session-item__computer {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--muted-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-item__computer::before {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--computer-accent);
+  content: '';
+}
+
+/* Touch screens get 40px targets throughout. */
+@media (hover: none), (pointer: coarse) {
+  .session-category__toggle,
+  .session-category__more,
+  .session-categories__new,
+  .session-category__menu-item {
+    min-height: 40px;
+  }
+
+  .session-category__menu-button {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* The dialog that moves the open session: every category, then none. */
+.category-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.category-choice {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.category-choice:hover {
+  background: var(--panel-raised);
+}
+
+.category-choice:focus-visible {
+  outline: 2px solid var(--accent-foreground);
+  outline-offset: 1px;
+}
+
+.category-choice[aria-current='true'] {
+  border-color: var(--accent-border-strong);
+  background: var(--accent-tint);
+}
+
+.category-choice__name {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-choice--none .category-choice__name {
+  color: var(--muted-strong);
+}
+
+.category-choice--new {
+  width: 100%;
+  border-style: dashed;
+  color: var(--muted-strong);
+}
+
 .drag-handle {
   display: grid;
   flex: 0 0 auto;

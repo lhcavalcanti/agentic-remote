@@ -1,4 +1,6 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useDndContext, useDroppable } from '@dnd-kit/core'
 import {
   SortableContext,
   useSortable,
@@ -7,6 +9,8 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import {
   ChevronDown,
+  ChevronRight,
+  Ellipsis,
   Eye,
   EyeOff,
   GripVertical,
@@ -14,6 +18,7 @@ import {
   Mail,
   MailOpen,
   Monitor,
+  LayersPlus,
   Plus,
   RefreshCw,
   Search,
@@ -37,7 +42,11 @@ import {
   taskSnapshot,
 } from './session-presentation'
 import type { SessionPresentation, SessionSort } from './session-presentation'
-import type { SessionFilter, SessionNavigationView } from './session-navigation-view'
+import type {
+  SessionCategorySection,
+  SessionFilter,
+  SessionNavigationView,
+} from './session-navigation-view'
 import { SessionOriginBadge } from './SessionOriginBadge'
 import { SessionOriginRunLink } from './SessionOriginRunLink'
 import { sessionOriginDescription } from './session-origin'
@@ -163,6 +172,7 @@ function SortableSessionItem({
   markingUnreadSessions,
   onToggleSessionUnread,
   recoverableClose,
+  showComputer = false,
 }: SessionActions & {
   session: ManagedSession
   selected: boolean
@@ -173,6 +183,8 @@ function SortableSessionItem({
   sorting: boolean
   /** The owning computer keeps a closed session to reopen. */
   recoverableClose: boolean
+  /** Names its computer, as a category's rows come from several. */
+  showComputer?: boolean
 }) {
   const {
     attributes,
@@ -282,6 +294,7 @@ function SortableSessionItem({
               {session.title}
             </strong>
             <small className="session-item__where">
+              {showComputer ? <span className="session-item__computer">{computerName}</span> : null}
               <span className="session-item__cwd">{shortPath(session.cwd)}</span>
               <time
                 className="session-item__time"
@@ -379,6 +392,7 @@ function SortableComputerGroup({
   pendingCreations = [],
   total,
   hidden,
+  categorized = 0,
   filtering,
   reorderDisabled,
   sorting,
@@ -392,6 +406,8 @@ function SortableComputerGroup({
   total: number
   /** Sessions left out of the list because they are hidden. */
   hidden: number
+  /** Its open sessions in categories, listed there or hidden. */
+  categorized?: number
   filtering: boolean
   reorderDisabled: boolean
   sorting: boolean
@@ -488,13 +504,311 @@ function SortableComputerGroup({
             <p className="computer-session-group__empty">
               {filtering
                 ? 'No matching sessions'
-                : hidden > 0
-                  ? `${hidden} hidden session${hidden === 1 ? '' : 's'}`
-                  : 'No open sessions'}
+                : categorized > 0
+                  ? `${categorized}${hidden > 0 ? '' : ` session${categorized === 1 ? '' : 's'}`} in ${
+                    categorized === 1 ? 'a category' : 'categories'}${hidden > 0 ? `, ${hidden} hidden` : ''}`
+                  : hidden > 0
+                    ? `${hidden} hidden session${hidden === 1 ? '' : 's'}`
+                    : 'No open sessions'}
             </p>
           ) : null}
         </div>
       </SortableContext>
+    </section>
+  )
+}
+
+export interface SessionCategoryActions {
+  /** Collapses or expands a category for every browser on the hub. */
+  onToggleCategory: (categoryId: string, collapsed: boolean) => void
+  onMarkCategoryRead: (categoryId: string) => void
+  onRenameCategory: (categoryId: string) => void
+  /** Moves a category one place up (-1) or down (1). */
+  onMoveCategory: (categoryId: string, direction: -1 | 1) => void
+  onDeleteCategory: (categoryId: string) => void
+  onNewCategory: () => void
+}
+
+interface CategoryMenuItem {
+  label: string
+  onSelect: () => void
+  disabled?: boolean
+  danger?: boolean
+}
+
+/**
+ * A category's own actions. The menu takes the focus when it opens, the arrow
+ * keys, Home and End move it between the actions, and Escape or choosing one
+ * gives it back to the button; Tab or a press elsewhere just closes it.
+ */
+function CategoryMenu({ name, items }: { name: string; items: CategoryMenuItem[] }) {
+  const [open, setOpen] = useState(false)
+  // Opens upward when the list has no room for it below the button.
+  const [upward, setUpward] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuId = useId()
+  const label = `Category actions for ${name}`
+  const enabled = () => [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])]
+    .filter((item) => !item.disabled)
+
+  useEffect(() => {
+    if (!open) return
+    enabled()[0]?.focus()
+    function dismissOutside(event: PointerEvent | FocusEvent) {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false)
+    }
+    document.addEventListener('pointerdown', dismissOutside)
+    document.addEventListener('focusin', dismissOutside)
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside)
+      document.removeEventListener('focusin', dismissOutside)
+    }
+  }, [open])
+
+  function moveFocus(event: ReactKeyboardEvent) {
+    const items = enabled()
+    const current = items.indexOf(document.activeElement as HTMLButtonElement)
+    const next = event.key === 'ArrowDown' ? (current + 1) % items.length
+      : event.key === 'ArrowUp' ? (current - 1 + items.length) % items.length
+        : event.key === 'Home' ? 0
+          : event.key === 'End' ? items.length - 1
+            : undefined
+    if (next === undefined) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopPropagation()
+        setOpen(false)
+        triggerRef.current?.focus()
+      } else if (event.key === 'Tab') {
+        setOpen(false)
+      }
+      return
+    }
+    event.preventDefault()
+    items[next]?.focus()
+  }
+
+  return (
+    <div className="session-category__menu" ref={rootRef}>
+      <button
+        aria-controls={open ? menuId : undefined}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={label}
+        className="session-category__menu-button"
+        onClick={() => {
+          const button = triggerRef.current?.getBoundingClientRect()
+          const list = triggerRef.current?.closest('.session-list__scroll')?.getBoundingClientRect()
+          setUpward(Boolean(button && list && list.bottom - button.bottom < 220 && button.top - list.top > list.bottom - button.bottom))
+          setOpen(!open)
+        }}
+        ref={triggerRef}
+        title={label}
+        type="button"
+      >
+        <Ellipsis aria-hidden="true" size={15} />
+      </button>
+      {open ? (
+        <div
+          aria-label={label}
+          className={`session-category__menu-panel${upward ? ' session-category__menu-panel--upward' : ''}`}
+          id={menuId}
+          onKeyDown={moveFocus}
+          ref={menuRef}
+          role="menu"
+        >
+          {items.map((item) => (
+            <button
+              className={`session-category__menu-item${item.danger ? ' session-category__menu-item--danger' : ''}`}
+              disabled={item.disabled}
+              key={item.label}
+              onClick={() => {
+                setOpen(false)
+                // Back on the button before the action runs, so a dialog it
+                // opens returns the focus there when it closes.
+                triggerRef.current?.focus()
+                item.onSelect()
+              }}
+              role="menuitem"
+              tabIndex={-1}
+              type="button"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`
+}
+
+/** What a category's header says to a screen reader; the visible counts are hidden from it. */
+function categoryHeaderLabel(section: SessionCategorySection, filtering: boolean): string {
+  const parts = [section.category.name]
+  if (filtering) {
+    parts.push(`${section.sessions.length} of ${plural(section.total, 'session')}`)
+  } else if (section.collapsed) {
+    if (section.attention > 0) parts.push(`${section.attention} need${section.attention === 1 ? 's' : ''} you`)
+    if (section.unread > 0) parts.push(`${section.unread} unread`)
+    if (section.working) parts.push('working')
+    parts.push(plural(section.total, 'session'))
+  } else {
+    parts.push(plural(section.total, 'session'))
+  }
+  return parts.join(', ')
+}
+
+function SessionCategorySectionView({
+  section,
+  position,
+  count,
+  computers,
+  backgroundTasks,
+  selectedKey,
+  filtering,
+  reorderDisabled,
+  sorting,
+  categoryActions,
+  ...actions
+}: SessionActions & {
+  section: SessionCategorySection
+  position: number
+  count: number
+  computers: ReadonlyMap<string, ComputerSummary>
+  backgroundTasks: Record<string, BackgroundTaskSnapshot>
+  selectedKey?: string
+  filtering: boolean
+  reorderDisabled: boolean
+  sorting: boolean
+  categoryActions: SessionCategoryActions
+}) {
+  const { category } = section
+  const listId = useId()
+  // A session dropped anywhere on the category, header included, goes into it.
+  const { setNodeRef } = useDroppable({ id: `category:${category.id}` })
+  const { active, over } = useDndContext()
+  const rowIds = section.sessions.map((session) => `session:${sessionKey(session)}`)
+  const dropping = Boolean(active && String(active.id).startsWith('session:') && over &&
+    (over.id === `category:${category.id}` || rowIds.includes(String(over.id))))
+  return (
+    <section
+      aria-label={`Category ${category.name}`}
+      className={`session-category${section.collapsed ? ' session-category--collapsed' : ''}${
+        dropping ? ' session-category--drop-target' : ''}`}
+      ref={setNodeRef}
+    >
+      <header className="session-category__header">
+        <button
+          aria-controls={listId}
+          aria-expanded={!section.collapsed}
+          aria-label={categoryHeaderLabel(section, filtering)}
+          className="session-category__toggle"
+          disabled={filtering}
+          onClick={() => categoryActions.onToggleCategory(category.id, !section.collapsed)}
+          title={filtering ? 'Clear the search and filters to close it' : undefined}
+          type="button"
+        >
+          <ChevronRight aria-hidden="true" className="session-category__chevron" size={14} />
+          <strong className="session-category__name">{category.name}</strong>
+          <span aria-hidden="true" className="session-category__summary">
+            {filtering ? (
+              <small>{`${section.sessions.length}/${section.total}`}</small>
+            ) : section.collapsed ? (
+              <>
+                {section.attention > 0 ? (
+                  <span className="session-category__signal session-category__signal--attention">
+                    <span className="session-category__glyph">◆</span>
+                    {section.attention}
+                  </span>
+                ) : null}
+                {section.unread > 0 ? (
+                  <span className="session-category__signal session-category__signal--unread">
+                    <span className="session-category__glyph">●</span>
+                    {section.unread}
+                  </span>
+                ) : null}
+                {section.working ? <span className="session-category__ring" /> : null}
+              </>
+            ) : (
+              <small>{section.total}</small>
+            )}
+          </span>
+        </button>
+        <CategoryMenu
+          items={[
+            {
+              label: 'Mark all as read',
+              disabled: section.unread === 0,
+              onSelect: () => categoryActions.onMarkCategoryRead(category.id),
+            },
+            { label: 'Rename…', onSelect: () => categoryActions.onRenameCategory(category.id) },
+            {
+              label: 'Move up',
+              // Filtering lists only some categories, so places among them mean nothing.
+              disabled: reorderDisabled || position === 0,
+              onSelect: () => categoryActions.onMoveCategory(category.id, -1),
+            },
+            {
+              label: 'Move down',
+              disabled: reorderDisabled || position === count - 1,
+              onSelect: () => categoryActions.onMoveCategory(category.id, 1),
+            },
+            {
+              label: 'Delete category…',
+              danger: true,
+              onSelect: () => categoryActions.onDeleteCategory(category.id),
+            },
+          ]}
+          name={category.name}
+        />
+      </header>
+      <div className="session-category__sessions" id={listId}>
+        <SortableContext items={rowIds} strategy={verticalListSortingStrategy}>
+          {section.sessions.map((session) => {
+            const computer = computers.get(session.computerId)
+            return (
+              <SortableSessionItem
+                {...actions}
+                backgroundTasks={taskSnapshot(backgroundTasks, session)}
+                computerName={computer?.name ?? session.computerName}
+                key={sessionKey(session)}
+                online={computer?.online ?? false}
+                recoverableClose={Boolean(computer?.providers?.some(
+                  (provider) => provider.supportsRecoverableClose === true,
+                ))}
+                reorderDisabled={reorderDisabled}
+                selected={sessionKey(session) === selectedKey}
+                session={session}
+                showComputer={computers.size > 1}
+                sorting={sorting}
+              />
+            )
+          })}
+        </SortableContext>
+        {section.collapsed && section.more > 0 ? (
+          <button
+            aria-label={`Show ${plural(section.more, 'more session')} in ${category.name}`}
+            className="session-category__more"
+            onClick={() => categoryActions.onToggleCategory(category.id, false)}
+            type="button"
+          >
+            {section.more} more
+          </button>
+        ) : null}
+        {!section.collapsed && section.sessions.length === 0 ? (
+          <p className="session-category__empty">
+            {sorting
+              ? "Use Move to category in a session's actions"
+              : "Drag sessions here, or use Move to category in a session's actions"}
+          </p>
+        ) : null}
+      </div>
     </section>
   )
 }
@@ -524,9 +838,12 @@ export function SessionNavigation({
   signInExpired,
   recentlyClosedCount,
   onOpenRecentlyClosed,
+  categoryActions,
   ...actions
 }: SessionActions & {
   view: SessionNavigationView
+  /** Absent on a hub that keeps no categories. */
+  categoryActions?: SessionCategoryActions
   backgroundTasks: Record<string, BackgroundTaskSnapshot>
   selectedKey?: string
   loading: boolean
@@ -560,6 +877,7 @@ export function SessionNavigation({
   const scrollRef = useRef<HTMLDivElement>(null)
   const restoredScrollRef = useRef(false)
   const { groups, counts, shown, filtering, reorderDisabled } = view
+  const computers = new Map(groups.map(({ computer }) => [computer.id, computer]))
   const filters: { id: SessionFilter; label: string; count: number }[] = [
     { id: 'all', label: 'All', count: counts.all },
     { id: 'attention', label: 'Needs you', count: counts.attention },
@@ -780,6 +1098,38 @@ export function SessionNavigation({
           pendingCreations.length === 0 ? (
           <p className="sidebar-message">No sessions here.</p>
         ) : null}
+        {categoryActions && !loading ? (
+          <div className="session-categories">
+            {view.categories.map((section, position) => (
+              <SessionCategorySectionView
+                {...actions}
+                backgroundTasks={backgroundTasks}
+                categoryActions={categoryActions}
+                computers={computers}
+                count={view.categories.length}
+                filtering={filtering}
+                key={section.category.id}
+                position={position}
+                reorderDisabled={reorderDisabled}
+                section={section}
+                selectedKey={selectedKey}
+                sorting={sort !== 'custom'}
+              />
+            ))}
+            {/* Where a new category appears, and taking no room in the header,
+                which stays one row on a phone. */}
+            {!filtering ? (
+              <button
+                className="session-categories__new"
+                onClick={categoryActions.onNewCategory}
+                type="button"
+              >
+                <LayersPlus aria-hidden="true" size={14} />
+                New category
+              </button>
+            ) : null}
+          </div>
+        ) : null}
         <SortableContext
           items={groups.map(({ computer }) => `computer:${computer.id}`)}
           strategy={verticalListSortingStrategy}
@@ -801,6 +1151,7 @@ export function SessionNavigation({
                 sessions={group.sessions}
                 total={group.total}
                 hidden={group.hidden}
+                categorized={group.categorized}
               />
             ))}
           </div>

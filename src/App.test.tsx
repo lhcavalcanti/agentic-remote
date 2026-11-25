@@ -35,6 +35,10 @@ import { scheduleProposalSchema } from '../shared/schedule-proposals'
 import { scheduleSchema } from '../shared/schedules'
 import { SubmissionError } from '../shared/submission-error'
 import {
+  applySessionCategoryChange,
+  type SessionCategoriesSnapshot,
+} from '../shared/session-categories'
+import {
   applySettingsChanges,
   applySettingsImport,
   validateSettingsChanges,
@@ -84,6 +88,8 @@ import {
   saveSessionUnread,
   saveSessionOrderLane,
   bootstrapSessionOrder,
+  fetchSessionCategories,
+  saveSessionCategoryChange,
   fetchSettingsProfile,
   saveSettingsChanges,
   importSettingsProfile,
@@ -164,6 +170,9 @@ function submitComposerMessage(enqueue = false) {
   const steer = screen.queryByRole('menuitem', { name: /Steer —/ })
   if (!enqueue && steer) fireEvent.click(steer)
 }
+
+/** The hub's session categories, committed with the real rules: a stale revision is refused. */
+let hubCategories: SessionCategoriesSnapshot = { revision: 0, categories: [] }
 
 /** The hub-owned custom session order the api mocks read and commit against. */
 let hubSessionOrder: {
@@ -277,6 +286,8 @@ vi.mock('./api', async (importOriginal) => ({
   saveSessionUnread: vi.fn(),
   saveSessionOrderLane: vi.fn(),
   bootstrapSessionOrder: vi.fn(),
+  fetchSessionCategories: vi.fn(),
+  saveSessionCategoryChange: vi.fn(),
   fetchSettingsProfile: vi.fn(),
   saveSettingsChanges: vi.fn(),
   importSettingsProfile: vi.fn(),
@@ -2223,6 +2234,16 @@ describe('App', () => {
       bootstrapped: false,
       order: {},
     }
+    hubCategories = { revision: 0, categories: [] }
+    vi.mocked(fetchSessionCategories).mockReset().mockImplementation(async () => structuredClone(hubCategories))
+    vi.mocked(saveSessionCategoryChange).mockReset().mockImplementation(async (revision, change) => {
+      if (revision !== hubCategories.revision) {
+        throw new SubmissionError('Categories changed on another device; reload the session list and try again', 409)
+      }
+      const categories = applySessionCategoryChange(hubCategories.categories, change)
+      if (categories !== hubCategories.categories) hubCategories = { revision: revision + 1, categories }
+      return structuredClone(hubCategories)
+    })
     hubSettings = { revision: 0, values: {}, keyRevisions: {} }
     vi.mocked(fetchSettingsProfile).mockImplementation(async () => hubSettingsSnapshot())
     vi.mocked(saveSettingsChanges).mockImplementation(async (changes, deviceId) => {
@@ -6910,6 +6931,27 @@ describe('App', () => {
       expect(screen.queryByLabelText('Loading conversation')).not.toBeInTheDocument()
       // Opening it reads it as before, which is what marks it read.
       expect(getSession).toHaveBeenLastCalledWith('computer-1', 'session-2')
+    })
+
+    it('reads ahead in the order the sidebar shows, categories first, skipping what a closed one keeps out of sight', async () => {
+      const fourth: ManagedSession = { ...secondSession, id: 'session-4', title: 'Fourth chat' }
+      hubCategories = {
+        revision: 1,
+        categories: [
+          { id: 'lab', name: 'Lab', collapsed: false, sessions: [`computer-1:${third.id}`] },
+          { id: 'quiet', name: 'Quiet', collapsed: true, sessions: [`computer-1:${fourth.id}`] },
+        ],
+      }
+      const { ahead, openSocket } = await renderWithReads([session, secondSession, third, fourth])
+      openSocket()
+      await waitFor(() => expect(ahead()).toHaveLength(1))
+      expect(ahead()[0].sessionId).toBe('session-3')
+      await act(async () => ahead()[0].resolve(windowOf(third)))
+      await waitFor(() => expect(ahead()).toHaveLength(2))
+      expect(ahead()[1].sessionId).toBe('session-2')
+      await act(async () => ahead()[1].resolve(windowOf(secondSession)))
+      await pause()
+      expect(ahead().map((read) => read.sessionId)).toEqual(['session-3', 'session-2'])
     })
 
     it('opens an empty session read ahead at once, without waiting on its own read', async () => {
@@ -23204,6 +23246,265 @@ describe('App', () => {
         .toHaveAttribute('aria-pressed', 'true')
       expect(await screen.findByRole('button', { name: /^Other work, unread,/ })).toBeVisible()
       expect(saveSessionUnread).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('session categories', () => {
+    const key = (item: ManagedSession) => `${item.computerId}:${item.id}`
+    const other = { ...session, id: 'other-work', title: 'Other work', messages: [] }
+    const third = { ...session, id: 'third-work', title: 'Third work', messages: [] }
+    const fourth = { ...session, id: 'fourth-work', title: 'Fourth work', messages: [] }
+    const category = (id: string, name: string, members: ManagedSession[], collapsed = false) =>
+      ({ id, name, collapsed, sessions: members.map(key) })
+    const emit = (event: unknown) => act(() => {
+      MockWebSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify(event) } as MessageEvent)
+    })
+    const listed = (items: ManagedSession[], unread: ManagedSession[] = []) => {
+      vi.mocked(listSessions).mockResolvedValue(items)
+      vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+        items.find((candidate) => candidate.id === id) ?? items[0],
+      )
+      hubSessionOrder = {
+        revision: 3,
+        bootstrapped: true,
+        unread: unread.map(key),
+        order: { [computer.id]: items.map(key) },
+      }
+      window.history.replaceState({}, '', `/?computer=${computer.id}&session=${session.id}`)
+    }
+    const region = (name: string) => screen.getByRole('region', { name })
+    const openList = () => {
+      const toggle = screen.queryByRole('button', { name: 'Open sessions' })
+      if (toggle?.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle ?? document.body)
+    }
+
+    it('moves the open session into a category from its actions, and back out', async () => {
+      listed([session, other])
+      hubCategories = { revision: 2, categories: [category('lab', 'Homelab', [])] }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(await findSessionAction('Move to category…'))
+      let dialog = screen.getByRole('dialog', { name: 'Move to category' })
+      expect(within(dialog).getByRole('button', { name: 'No category' })).toHaveAttribute('aria-current', 'true')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Homelab' }))
+      expect(screen.queryByRole('dialog', { name: 'Move to category' })).toBeNull()
+
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenCalledWith(2, { type: 'move', sessions: [key(session)], categoryId: 'lab' }))
+      openList()
+      expect(within(region('Category Homelab')).getByRole('button', { name: /^Project chat,/ })).toBeVisible()
+      expect(within(region(computer.name)).queryByRole('button', { name: /^Project chat,/ })).toBeNull()
+
+      fireEvent.click(await findSessionAction('Move to category…'))
+      dialog = screen.getByRole('dialog', { name: 'Move to category' })
+      expect(within(dialog).getByRole('button', { name: 'Homelab' })).toHaveAttribute('aria-current', 'true')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'No category' }))
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenLastCalledWith(3, { type: 'move', sessions: [key(session)], categoryId: null }))
+      expect(within(region(computer.name)).getByRole('button', { name: /^Project chat,/ })).toBeVisible()
+    })
+
+    it('creates a category and moves the open session into it in one step', async () => {
+      listed([session, other])
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(await findSessionAction('Move to category…'))
+      const dialog = screen.getByRole('dialog', { name: 'Move to category' })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'New category…' }))
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Category name' }), { target: { value: 'Homelab' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Create and move' }))
+
+      await waitFor(() => expect(saveSessionCategoryChange).toHaveBeenCalledWith(0, {
+        type: 'create', id: expect.any(String), name: 'Homelab', sessions: [key(session)],
+      }))
+      expect(saveSessionCategoryChange).toHaveBeenCalledTimes(1)
+      openList()
+      expect(within(region('Category Homelab')).getByRole('button', { name: /^Project chat,/ })).toBeVisible()
+    })
+
+    it('creates, renames, moves and deletes categories from the list, and the sessions stay', async () => {
+      listed([session, other])
+      hubCategories = {
+        revision: 1,
+        categories: [category('lab', 'Homelab', [other]), category('plans', 'Plans', [])],
+      }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      fireEvent.click(await screen.findByRole('button', { name: 'New category' }))
+      let dialog = screen.getByRole('dialog', { name: 'New category' })
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Category name' }), { target: { value: 'Plans' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Create category' }))
+      // A name already taken is refused in place, before anything is sent.
+      expect(within(dialog).getByText('A category named Plans already exists')).toBeVisible()
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Category name' }), { target: { value: 'Ideas' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Create category' }))
+      expect(screen.queryByRole('dialog', { name: 'New category' })).toBeNull()
+      expect(region('Category Ideas')).toBeVisible()
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenCalledWith(1, { type: 'create', id: expect.any(String), name: 'Ideas' }))
+
+      const menu = (name: string) => {
+        fireEvent.click(within(region(`Category ${name}`)).getByRole('button', { name: `Category actions for ${name}` }))
+        return screen.getByRole('menu', { name: `Category actions for ${name}` })
+      }
+      fireEvent.click(within(menu('Homelab')).getByRole('menuitem', { name: 'Rename…' }))
+      dialog = screen.getByRole('dialog', { name: 'Rename category' })
+      const field = within(dialog).getByRole('textbox', { name: 'Category name' })
+      expect(field).toHaveValue('Homelab')
+      fireEvent.change(field, { target: { value: 'Home lab' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Rename category' }))
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenCalledWith(2, { type: 'update', categoryId: 'lab', name: 'Home lab' }))
+
+      fireEvent.click(within(menu('Home lab')).getByRole('menuitem', { name: 'Move down' }))
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenCalledWith(3, { type: 'update', categoryId: 'lab', index: 1 }))
+      expect(screen.getAllByRole('region', { name: /^Category / }).map((element) => element.getAttribute('aria-label')))
+        .toEqual(['Category Plans', 'Category Home lab', 'Category Ideas'])
+
+      fireEvent.click(within(menu('Home lab')).getByRole('menuitem', { name: 'Delete category…' }))
+      dialog = screen.getByRole('dialog', { name: 'Delete category' })
+      expect(dialog).toHaveTextContent('Delete Home lab? Its 1 session stays, under its computer.')
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Delete category' }))
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenCalledWith(4, { type: 'delete', categoryId: 'lab' }))
+      expect(screen.queryByRole('region', { name: 'Category Home lab' })).toBeNull()
+      expect(within(region(computer.name)).getByRole('button', { name: /^Other work,/ })).toBeVisible()
+    })
+
+    it('shares a category\'s collapse through the hub, and follows changes from other devices', async () => {
+      listed([session, other, third], [third])
+      hubCategories = { revision: 5, categories: [category('lab', 'Homelab', [other, third])] }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      const header = await screen.findByRole('button', { name: 'Homelab, 2 sessions' })
+      fireEvent.click(header)
+      expect(screen.getByRole('button', { name: 'Homelab, 1 unread, 2 sessions' }))
+        .toHaveAttribute('aria-expanded', 'false')
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenCalledWith(5, { type: 'update', categoryId: 'lab', collapsed: true }))
+      // The unread one stays in sight; the other is behind "1 more".
+      const lab = region('Category Homelab')
+      expect(within(lab).getByRole('button', { name: /^Third work, unread,/ })).toBeVisible()
+      expect(within(lab).queryByRole('button', { name: /^Other work,/ })).toBeNull()
+      expect(within(lab).getByRole('button', { name: 'Show 1 more session in Homelab' })).toBeVisible()
+
+      emit({
+        type: 'session.categories.updated',
+        categories: { revision: 7, categories: [category('lab', 'Shared lab', [other, third])] },
+      })
+      expect(screen.getByRole('button', { name: 'Shared lab, 2 sessions' })).toHaveAttribute('aria-expanded', 'true')
+      emit({
+        type: 'session.categories.updated',
+        categories: { revision: 6, categories: [] },
+      })
+      expect(region('Category Shared lab')).toBeVisible()
+    })
+
+    it('puts back the committed categories and says why when the hub refuses a change', async () => {
+      listed([session, other])
+      hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other])] }
+      vi.mocked(saveSessionCategoryChange).mockRejectedValueOnce(new Error('Hub unavailable'))
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      fireEvent.click(await screen.findByRole('button', { name: 'Homelab, 1 session' }))
+
+      expect(await within(screen.getByRole('main'))
+        .findByText('Could not close Homelab: Hub unavailable')).toBeVisible()
+      openList()
+      expect(screen.getByRole('button', { name: 'Homelab, 1 session' })).toHaveAttribute('aria-expanded', 'true')
+    })
+
+    it('drags sessions onto a closed category, into one at a place, and back to their computer', async () => {
+      listed([session, other, third, fourth])
+      hubCategories = {
+        revision: 1,
+        categories: [category('lab', 'Homelab', [], true), category('plans', 'Plans', [other, third])],
+      }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      await screen.findByRole('region', { name: 'Category Plans' })
+      finishReorder('session-navigation', `session:${key(fourth)}`, 'category:lab')
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenLastCalledWith(1, { type: 'move', sessions: [key(fourth)], categoryId: 'lab' }))
+      finishReorder('session-navigation', `session:${key(other)}`, `session:${key(third)}`)
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenLastCalledWith(2, { type: 'move', sessions: [key(other)], categoryId: 'plans', index: 1 }))
+      finishReorder('session-navigation', `session:${key(session)}`, `session:${key(third)}`)
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenLastCalledWith(3, { type: 'move', sessions: [key(session)], categoryId: 'plans', index: 0 }))
+      finishReorder('session-navigation', `session:${key(third)}`, `computer:${computer.id}`)
+      await waitFor(() => expect(saveSessionCategoryChange)
+        .toHaveBeenLastCalledWith(4, { type: 'move', sessions: [key(third)], categoryId: null }))
+      expect(hubCategories.categories.map((entry) => [entry.id, entry.sessions])).toEqual([
+        ['lab', [key(fourth)]], ['plans', [key(session), key(other)]],
+      ])
+      expect(within(region(computer.name)).getByRole('button', { name: /^Third work,/ })).toBeVisible()
+    })
+
+    it('says each category change the hub commits, again when it repeats', async () => {
+      listed([session, other])
+      hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other])] }
+      const announced = () => document.querySelector('.session-category-announcement')
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      fireEvent.click(await screen.findByRole('button', { name: 'Homelab, 1 session' }))
+      await waitFor(() => expect(announced()).toHaveTextContent('Closed Homelab'))
+      fireEvent.click(screen.getByRole('button', { name: 'Homelab, 1 session' }))
+      await waitFor(() => expect(announced()).toHaveTextContent('Opened Homelab'))
+      fireEvent.click(screen.getByRole('button', { name: 'Homelab, 1 session' }))
+      // The same words are cleared first, so a screen reader says them again.
+      await waitFor(() => expect(announced()).toHaveTextContent(''))
+      await waitFor(() => expect(announced()).toHaveTextContent('Closed Homelab'))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Category actions for Homelab' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Rename…' }))
+      const dialog = screen.getByRole('dialog', { name: 'Rename category' })
+      fireEvent.change(within(dialog).getByRole('textbox', { name: 'Category name' }), { target: { value: 'Home lab' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Rename category' }))
+      await waitFor(() => expect(announced()).toHaveTextContent('Renamed Homelab to Home lab'))
+    })
+
+    it('counts a category\'s closed sessions among those that stay when it is deleted', async () => {
+      listed([session, other])
+      hubCategories = {
+        revision: 1,
+        categories: [category('lab', 'Homelab', [{ ...other, id: 'closed-work' }])],
+      }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      fireEvent.click(await screen.findByRole('button', { name: 'Category actions for Homelab' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Delete category…' }))
+      expect(screen.getByRole('dialog', { name: 'Delete category' }))
+        .toHaveTextContent('Delete Homelab? Its 1 session stays, under its computer.')
+    })
+
+    it('marks every unread session in a category read from its menu', async () => {
+      listed([session, other, third], [other, third])
+      hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other, third])] }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      fireEvent.click(await screen.findByRole('button', { name: 'Category actions for Homelab' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Mark all as read' }))
+      await waitFor(() => expect(saveSessionUnread).toHaveBeenCalledWith(computer.id, other.id, false))
+      expect(saveSessionUnread).toHaveBeenCalledWith(computer.id, third.id, false)
+      expect(saveSessionUnread).toHaveBeenCalledTimes(2)
     })
   })
 

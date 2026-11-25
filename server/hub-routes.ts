@@ -16,6 +16,7 @@ import type {
   WorkspaceListing,
 } from '../shared/contracts.js'
 import type { ManagerEvent } from '../shared/manager.js'
+import type { SessionCategoriesSnapshot } from '../shared/session-categories.js'
 import type { SettingsProfileSnapshot } from '../shared/settings-profile.js'
 import {
   joinKnowledgeRelativePath,
@@ -29,6 +30,8 @@ import { noteRefusalReason } from './refusal-metrics.js'
 import { registerSessionKnowledgeRoutes } from './session-knowledge-routes.js'
 import type { SessionKnowledgeStore } from './session-knowledge-store.js'
 import type { SessionOrderStore } from './session-order-store.js'
+import type { SessionCategoryStore } from './session-category-store.js'
+import { registerSessionCategoryRoutes } from './session-category-routes.js'
 import { SessionUnreadTracker } from './session-unread-tracker.js'
 import { registerSettingsProfileRoutes } from './settings-profile-routes.js'
 import type { SettingsProfileStore } from './settings-profile-store.js'
@@ -423,6 +426,7 @@ export async function registerHubRoutes(
   scheduleNotifications?: ScheduleNotificationService,
   isScheduledSession?: (session: ManagedSession) => boolean,
   provenance?: Pick<ManagerStore, 'sessionProvenance'> & Partial<Pick<ManagerStore, 'recordUserSession' | 'recordSessionReplacement'>>,
+  sessionCategories?: SessionCategoryStore,
 ): Promise<void> {
   const projection = sessionProvenanceProjection(provenance, scheduler)
   app.addHook('preSerialization', async (_request, _reply, payload) => projection.reply(payload))
@@ -476,6 +480,7 @@ export async function registerHubRoutes(
   // skipped, which is what a client's own response already told it.
   let publishOrder: (snapshot: SessionOrderSnapshot) => void = () => {}
   let publishSettings: (settings: SettingsProfileSnapshot) => void = () => {}
+  let publishCategories: (snapshot: SessionCategoriesSnapshot) => void = () => {}
   const requireSessionOrder = (): SessionOrderStore => {
     if (!sessionOrder) {
       throw Object.assign(new Error('Session order is not available'), {
@@ -883,6 +888,19 @@ export async function registerHubRoutes(
 
   registerSettingsProfileRoutes(app, settingsProfile, (settings) => publishSettings(settings))
 
+  // Only a session the custom order lists may be placed in a category, as
+  // only such a session may be hidden or marked unread.
+  const categoryLifecycle = registerSessionCategoryRoutes(app, {
+    store: sessionCategories,
+    listed: (key) => {
+      const separator = key.indexOf(':')
+      return Boolean(sessionOrder) &&
+        sessionOrder!.indexOf(key.slice(0, separator), key.slice(separator + 1)) >= 0
+    },
+    publish: (snapshot) => publishCategories(snapshot),
+    log: (error, message) => app.log.error({ err: error }, message),
+  })
+
   app.post<{ Params: { computerId: string } }>(
     '/api/computers/:computerId/sessions',
     async (request, reply) => {
@@ -1020,6 +1038,13 @@ export async function registerHubRoutes(
               )
             : undefined,
           `${completed}, but its position in the custom order could not be saved. Drag it back into place.`,
+        ),
+        // The same lineage keeps it in its category, in its place there.
+        carryMetadata(
+          () => categoryLifecycle && session.id !== sessionId
+            ? categoryLifecycle.replace(computerId, sessionId, session.id)
+            : undefined,
+          `${completed}, but its category could not be kept. Use Move to category to put it back.`,
         ),
       ])
       assertCurrent()
@@ -1401,7 +1426,7 @@ export async function registerHubRoutes(
     const previous = [broadcasts.get(key)?.promise, computerId ? broadcasts.get(computerKey)?.promise : undefined]
     if (event.type === 'computer.removed') {
       previous.push(...[...broadcasts.values()].filter((entry) => entry.computerId === computerId).map((entry) => entry.promise))
-    } else if (event.type === 'session.order.updated') {
+    } else if (event.type === 'session.order.updated' || event.type === 'session.categories.updated') {
       previous.push(...[...broadcasts.values()].filter((entry) => entry.computerId !== undefined).map((entry) => entry.promise))
     }
     // Preserve each session's metadata/transcript order and computer retirement
@@ -1433,6 +1458,8 @@ export async function registerHubRoutes(
   publishOrder = (snapshot) =>
     broadcast({ type: 'session.order.updated', order: snapshot })
   publishSettings = (settings) => broadcast({ type: 'settings.updated', settings })
+  publishCategories = (snapshot) =>
+    broadcast({ type: 'session.categories.updated', categories: snapshot })
   /**
    * Keeps the saved order in step with session identity, which is the part a
    * browser cannot be trusted to do: a client that is closed, filtered, or
@@ -1507,6 +1534,8 @@ export async function registerHubRoutes(
     }
   }
   manager.on('event', trackOrder)
+  const trackCategories = (event: HubEvent) => categoryLifecycle?.observe(event)
+  manager.on('event', trackCategories)
   let closed = false
   let seeding: Promise<unknown> = Promise.resolve()
   if (sessionOrder) {
@@ -1537,6 +1566,9 @@ export async function registerHubRoutes(
               session.replacedSessionIds,
             ),
           )
+          if (session.isOpen !== false && !session.closedAt) {
+            await categoryLifecycle?.listed(session.computerId, session.id, session.replacedSessionIds)
+          }
         }
       })
       .catch((error: unknown) => {
@@ -1552,9 +1584,11 @@ export async function registerHubRoutes(
     scheduler?.off('proposal', broadcast)
     scheduleNotifications?.off('event', broadcast)
     manager.off('event', trackOrder)
+    manager.off('event', trackCategories)
     // Drain in-flight order work so a closing app leaves no write behind it.
     await seeding
     await orderWork
+    await categoryLifecycle?.drain()
     await Promise.all([...broadcasts.values()].map((entry) => entry.promise))
   })
 }

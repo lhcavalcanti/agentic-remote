@@ -3,6 +3,7 @@ import type {
   ComputerSummary,
   ManagedSession,
 } from '../shared/contracts'
+import type { SessionCategory } from '../shared/session-categories'
 import {
   matchesSessionSearch,
   sessionKey,
@@ -12,13 +13,49 @@ import {
 
 export type SessionFilter = 'all' | 'attention' | 'working' | 'unread'
 
+/** How many sessions a collapsed category keeps in sight beside the open one. */
+export const COLLAPSED_CATEGORY_ROWS = 3
+
+export interface SessionCategorySection {
+  category: Pick<SessionCategory, 'id' | 'name' | 'collapsed'>
+  /** Whether it shows collapsed: never while the list is filtered. */
+  collapsed: boolean
+  /**
+   * The rows it shows: every listed session expanded, or the matches while
+   * filtering; collapsed, those that need you or are unread and the open one.
+   */
+  sessions: ManagedSession[]
+  /** Its sessions the list includes, whether or not they are shown. */
+  total: number
+  attention: number
+  unread: number
+  working: boolean
+  /** Collapsed, how many of its sessions are not shown. */
+  more: number
+}
+
+export interface CategorizedSessions {
+  /** In display order, each with its sessions in the order the list shows them. */
+  categories: readonly {
+    category: Pick<SessionCategory, 'id' | 'name' | 'collapsed' | 'sessions'>
+    sessions: readonly ManagedSession[]
+  }[]
+  /** The open session, which a collapsed category keeps in sight. */
+  selectedKey?: string
+}
+
 export interface SessionNavigationView {
+  /** Above the computers, in their order. */
+  categories: SessionCategorySection[]
   groups: {
     computer: ComputerSummary
+    /** The sessions in no category. */
     sessions: ManagedSession[]
     total: number
     /** Sessions left out of the list because they are hidden. */
     hidden: number
+    /** Its open sessions in categories, listed there or hidden. */
+    categorized: number
   }[]
   counts: Record<SessionFilter, number> & { hidden: number }
   visible: ManagedSession[]
@@ -36,6 +73,7 @@ export interface HiddenSessions {
 
 const noHiddenSessions: HiddenSessions = { keys: new Set(), shown: false }
 const noUnreadSessions: ReadonlySet<string> = new Set()
+const noCategories: CategorizedSessions = { categories: [] }
 
 export function sessionNavigationView(
   computers: readonly ComputerSummary[],
@@ -46,51 +84,93 @@ export function sessionNavigationView(
   hiddenSessions: HiddenSessions = noHiddenSessions,
   /** `computerId:sessionId` of the sessions not read since their last turn ended. */
   unreadSessions: ReadonlySet<string> = noUnreadSessions,
+  /** Categories with their sessions; a session in one is listed there instead of under its computer. */
+  categorized: CategorizedSessions = noCategories,
 ): SessionNavigationView {
+  const filtering = query.trim().length > 0 || filter !== 'all'
   const counts = { all: 0, attention: 0, working: 0, unread: 0, hidden: 0 }
+  const online = new Map(computers.map((computer) => [computer.id, computer]))
+  const classify = (session: ManagedSession, computer: ComputerSummary) => ({
+    session,
+    hidden: hiddenSessions.keys.has(sessionKey(session)),
+    unread: unreadSessions.has(sessionKey(session)),
+    state: sessionPresentation(session, taskSnapshot(backgroundTasks, session), computer.online),
+  })
+  // Hiding is curation rather than a filter: a hidden session leaves the
+  // list, and its counts, unless shown -- or while it needs you, so a
+  // question or permission is never out of sight.
+  const listed = (entry: ReturnType<typeof classify>) =>
+    !entry.hidden || hiddenSessions.shown || entry.state.needsAttention
+  const matches = ({ session, state, unread }: ReturnType<typeof classify>, computer: ComputerSummary) =>
+    matchesSessionSearch(session, query, computer.name) &&
+      (filter === 'all' ||
+        (filter === 'attention' && state.needsAttention) ||
+        (filter === 'working' && state.working) ||
+        (filter === 'unread' && unread))
+  const inCategory = new Set<string>()
+  const categories = categorized.categories.flatMap(({ category, sessions }) => {
+    const states = sessions.flatMap((session) => {
+      const computer = online.get(session.computerId)
+      if (!computer || session.isOpen === false || inCategory.has(sessionKey(session))) return []
+      inCategory.add(sessionKey(session))
+      return [{ ...classify(session, computer), computer }]
+    })
+    const included = states.filter(listed)
+    const section = {
+      category: { id: category.id, name: category.name, collapsed: category.collapsed },
+      total: included.length,
+      attention: included.filter(({ state }) => state.needsAttention).length,
+      unread: included.filter((entry) => entry.unread).length,
+      working: included.some(({ state }) => state.working),
+    }
+    if (filtering) {
+      const shown = included.filter((entry) => matches(entry, entry.computer)).map(({ session }) => session)
+      return shown.length ? [{ ...section, collapsed: false, sessions: shown, more: 0 }] : []
+    }
+    if (!category.collapsed) {
+      return [{ ...section, collapsed: false, sessions: included.map(({ session }) => session), more: 0 }]
+    }
+    // Needs you before unread, then the open session, each in the list's order.
+    const kept = new Set([
+      ...included.filter(({ state }) => state.needsAttention),
+      ...included.filter((entry) => entry.unread && !entry.state.needsAttention),
+    ].slice(0, COLLAPSED_CATEGORY_ROWS).map(({ session }) => sessionKey(session)))
+    if (categorized.selectedKey && included.some(({ session }) => sessionKey(session) === categorized.selectedKey)) {
+      kept.add(categorized.selectedKey)
+    }
+    const shown = included.filter(({ session }) => kept.has(sessionKey(session))).map(({ session }) => session)
+    return [{ ...section, collapsed: true, sessions: shown, more: included.length - shown.length }]
+  })
   const groups = computers.map((computer) => {
     const open = (sessionsByComputer.get(computer.id) || []).filter((session) => session.isOpen !== false)
-    const states = open.map((session) => ({
-      session,
-      hidden: hiddenSessions.keys.has(sessionKey(session)),
-      unread: unreadSessions.has(sessionKey(session)),
-      state: sessionPresentation(
-        session,
-        taskSnapshot(backgroundTasks, session),
-        computer.online,
-      ),
-    }))
-    // Hiding is curation rather than a filter: a hidden session leaves the
-    // list, and its counts, unless shown -- or while it needs you, so a
-    // question or permission is never out of sight.
-    const classified = states.filter((entry) =>
-      !entry.hidden || hiddenSessions.shown || entry.state.needsAttention)
+    const states = open.map((session) => classify(session, computer))
+    const classified = states.filter(listed)
     counts.hidden += states.filter((entry) => entry.hidden).length
     counts.all += classified.length
     counts.attention += classified.filter(({ state }) => state.needsAttention).length
     counts.working += classified.filter(({ state }) => state.working).length
     counts.unread += classified.filter((entry) => entry.unread).length
+    const own = (entry: ReturnType<typeof classify>) => !inCategory.has(sessionKey(entry.session))
     return {
       computer,
-      total: classified.length,
-      hidden: states.length - classified.length,
-      sessions: classified.filter(({ session, state, unread }) =>
-        matchesSessionSearch(session, query, computer.name) &&
-          (filter === 'all' ||
-            (filter === 'attention' && state.needsAttention) ||
-            (filter === 'working' && state.working) ||
-            (filter === 'unread' && unread)),
-      ).map(({ session }) => session),
+      total: classified.filter(own).length,
+      hidden: states.filter(own).length - classified.filter(own).length,
+      categorized: states.length - states.filter(own).length,
+      sessions: classified.filter((entry) => own(entry) && matches(entry, computer)).map(({ session }) => session),
     }
   })
-  const visible = groups.flatMap((group) => group.sessions)
+  const visible = [
+    ...categories.flatMap((section) => section.sessions),
+    ...groups.flatMap((group) => group.sessions),
+  ]
   return {
+    categories,
     groups,
     counts,
     visible,
     shown: visible.length,
-    filtering: query.trim().length > 0 || filter !== 'all',
-    reorderDisabled: query.trim().length > 0 || filter !== 'all',
+    filtering,
+    reorderDisabled: filtering,
   }
 }
 

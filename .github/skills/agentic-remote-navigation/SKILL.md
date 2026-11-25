@@ -100,6 +100,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Claude Agent lifecycle | `server/claude-agent-service.ts` |
 | Provider aggregation | `server/provider-session-service.ts` |
 | Session persistence | `server/session-store.ts` |
+| Shared Sessions list state: custom order, hidden, unread; categories in their own file | `server/session-order-store.ts`; `shared/session-categories.ts`, `server/session-category-store.ts`, `server/session-category-routes.ts`, `src/use-session-categories.ts`, `src/session-navigation-view.ts` |
 | Recoverable close, Recently closed, 14-day expiry | `shared/closed-sessions.ts`, `server/closed-session-sweeper.ts`, `src/RecentlyClosed.tsx` |
 | Side questions (`/ask`) | `src/SideQuestions.tsx`, `server/side-question.ts`, `AgentService.askSession` |
 | Oracle (session manager agent; "manager" internally) | `src/ManagerAssistant.tsx` (panel, bubble, mode switch, resizer, queue editing), `src/voice-recorder.ts` (dictation), `src/OracleSettings.tsx` (model and folder-status parts placed in App settings groups), `src/use-oracle-settings.ts` (`useOracleSettings`); `server/manager-agent.ts` (runtime, queue, recovery, settings, session folders), `manager-tools.ts`, `manager-context.ts` (system prompt, including model routing: a named model stays on Copilot, otherwise `create_session` reads App settings → Models from the hub's settings profile), `manager-journal.ts`, `manager-store.ts`; `docs/design/session-manager.md` |

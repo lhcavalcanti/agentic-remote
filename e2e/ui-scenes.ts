@@ -57,6 +57,7 @@ export const uiSceneNames = [
   'background-tasks-sheet-light',
   'background-tasks-expanded',
   'session-list',
+  'session-categories',
   'session-actions',
   'app-settings',
   'preview-features',
@@ -322,6 +323,28 @@ export function createUIScenes(
       }
       const recentlyClosed = name.startsWith('recently-closed')
       if (recentlyClosed) state.closedSessions.push(...recentlyClosedFixture())
+      if (name === 'session-categories') {
+        // A closed category summing up two that need you, one unread, and one
+        // working, then an open one: both kinds of header, above the computers.
+        const key = (computerId: string, id: string) => `${computerId}:${id}`
+        state.sessionOrder.unread = [key('fixture-studio', 'fixture-draft-summary')]
+        state.sessionCategories = {
+          revision: 2,
+          categories: [
+            {
+              id: 'reviews', name: 'Reviews', collapsed: true,
+              sessions: [
+                key('fixture-studio', 'fixture-review-recovery'), key('fixture-build', 'fixture-check-links'),
+                key('fixture-studio', 'fixture-draft-summary'), key('fixture-build', 'fixture-approve-check'),
+              ],
+            },
+            {
+              id: 'plans', name: 'Plans', collapsed: false,
+              sessions: [key('fixture-studio', SELECTED_SESSION_ID)],
+            },
+          ],
+        }
+      }
       const busyQueue = name === 'composer-busy-queue' || name === 'composer-busy-queue-light'
       if (busyQueue) {
         const session = state.sessions.find((entry) => entry.id === SELECTED_SESSION_ID)!
@@ -452,7 +475,7 @@ export function createUIScenes(
           await more.click()
           await expect(more).toHaveAttribute('aria-expanded', 'true')
         }
-      } else if (name === 'session-list' || name === 'desktop-rail') {
+      } else if (name === 'session-list' || name === 'desktop-rail' || name === 'session-categories') {
         await openSessions(page)
       } else if (name === 'session-actions') {
         await page.getByRole('button', { name: 'Session actions', exact: true }).click()

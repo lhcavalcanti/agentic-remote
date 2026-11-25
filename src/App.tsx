@@ -101,16 +101,14 @@ import type {
   TouchEvent as ReactTouchEvent,
 } from 'react'
 import {
-  closestCenter,
   DndContext,
   KeyboardSensor,
   PointerSensor,
-  pointerWithin,
   TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import type { Collision, CollisionDetection, DragEndEvent } from '@dnd-kit/core'
+import type { DragEndEvent } from '@dnd-kit/core'
 import {
   arrayMove,
   sortableKeyboardCoordinates,
@@ -191,6 +189,7 @@ import {
   MoveToCategoryDialog,
 } from './SessionCategoryDialogs'
 import { useSessionCategories } from './use-session-categories'
+import { sessionListCollisions } from './session-list-collisions'
 import {
   applySessionCategoryChange,
   newSessionCategoryId,
@@ -6696,35 +6695,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
-  // Rows trade places by the nearest centre, as they always have. A session
-  // the pointer carries onto a category goes there instead: onto the session
-  // under the pointer, the nearest one below its header, or the header itself.
-  // A computer only ever trades places with computers.
-  const sessionListCollisions = useCallback<CollisionDetection>((args) => {
-    const computerDrag = String(args.active.id).startsWith('computer:')
-    const droppableContainers = computerDrag
-      ? args.droppableContainers.filter((container) => String(container.id).startsWith('computer:'))
-      : args.droppableContainers
-    const scoped = { ...args, droppableContainers }
-    if (computerDrag) return closestCenter(scoped)
-    const under = pointerWithin(scoped)
-    const category = under.find((collision) => String(collision.id).startsWith('category:'))
-    if (!category) return closestCenter(scoped)
-    const row = under.find((collision) => String(collision.id).startsWith('session:'))
-    if (row) return [row, category]
-    const section = args.droppableRects.get(category.id)
-    const members = droppableContainers.filter((container) => {
-      const rect = args.droppableRects.get(container.id)
-      return String(container.id).startsWith('session:') && rect && section &&
-        rect.top >= section.top && rect.bottom <= section.bottom
-    })
-    const firstRow = Math.min(...members.map((member) => args.droppableRects.get(member.id)!.top))
-    if (!args.pointerCoordinates || members.length === 0 || args.pointerCoordinates.y < firstRow) {
-      return [category]
-    }
-    const nearest: Collision[] = closestCenter({ ...args, droppableContainers: members }).slice(0, 1)
-    return [...nearest, category]
-  }, [])
   const dialogCategory = categoryDialog && 'categoryId' in categoryDialog
     ? sessionCategories.categories.find((category) => category.id === categoryDialog.categoryId)
     : undefined

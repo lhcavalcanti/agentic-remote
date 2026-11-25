@@ -163,7 +163,9 @@ export function registerSessionCategoryRoutes(
     observe(event) {
       if (store.unavailableReason()) return
       if (event.type === 'session.upserted') {
-        const { computerId, id, replacedSessionIds } = event.session
+        const { computerId, id, replacedSessionIds, isOpen, closedAt } = event.session
+        // A closed or archived record arriving is not a reopen.
+        if (isOpen === false || closedAt) return
         quietly((categories) => categories.sessionListed(computerId, id, replacedSessionIds))
       } else if (event.type === 'session.removed') {
         const { computerId, sessionId, replacedBy, closed } = event

@@ -209,6 +209,23 @@ describe('hub session category routes', () => {
     await app.close()
   })
 
+  it('takes only an open session\'s arrival as Reopen', async () => {
+    const owned = await stores({ hub: ['hub:a'] })
+    await owned.categories.change(0, { type: 'create', id: 'lab', name: 'Lab', sessions: ['hub:a'] })
+    const { app, manager } = await hub(owned)
+
+    manager.emit('event', { type: 'session.removed', computerId: 'hub', sessionId: 'a', closed: true })
+    await until(() => owned.categories.snapshot().revision === 2)
+    // Still closed: a closed or archived record arriving is not a reopen.
+    manager.emit('event', { type: 'session.upserted', session: { id: 'a', computerId: 'hub', isOpen: false, closedAt: '2026-11-25T00:00:00Z' } })
+    manager.emit('event', { type: 'session.upserted', session: { id: 'a', computerId: 'hub', isOpen: false, archivedAt: '2026-11-25T00:00:00Z' } })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(owned.categories.snapshot().revision).toBe(2)
+    manager.emit('event', { type: 'session.upserted', session: { id: 'a', computerId: 'hub' } })
+    await until(() => owned.categories.snapshot().revision === 3)
+    await app.close()
+  })
+
   it('seeds sessions the hub already lists by lineage, without placing any it finds', async () => {
     const owned = await stores({ hub: ['hub:old'] })
     await owned.categories.change(0, { type: 'create', id: 'lab', name: 'Lab', sessions: ['hub:old'] })

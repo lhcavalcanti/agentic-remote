@@ -1566,7 +1566,9 @@ export async function registerHubRoutes(
               session.replacedSessionIds,
             ),
           )
-          await categoryLifecycle?.listed(session.computerId, session.id, session.replacedSessionIds)
+          if (session.isOpen !== false && !session.closedAt) {
+            await categoryLifecycle?.listed(session.computerId, session.id, session.replacedSessionIds)
+          }
         }
       })
       .catch((error: unknown) => {

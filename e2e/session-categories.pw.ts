@@ -174,6 +174,26 @@ for (const device of devices) {
         }
         await screenshot(page, `${device.name}-collapsed`)
 
+        // Its own menu takes the focus, and Escape gives it back.
+        const actions = reviews.getByRole('button', { name: 'Category actions for Reviews' })
+        await actions.click()
+        const menu = page.getByRole('menu', { name: 'Category actions for Reviews' })
+        await expect(menu.getByRole('menuitem', { name: 'Mark all as read' })).toBeFocused()
+        await expect(menu.getByRole('menuitem', { name: 'Move up' })).toBeDisabled()
+        await page.keyboard.press('ArrowDown')
+        await expect(menu.getByRole('menuitem', { name: 'Rename…' })).toBeFocused()
+        if (device.name === 'phone') {
+          for (const item of await menu.getByRole('menuitem').all()) {
+            expect((await bounds(item)).height).toBeGreaterThanOrEqual(device.target)
+          }
+        }
+        await screenshot(page, `${device.name}-menu`)
+        await page.keyboard.press('Escape')
+        await expect(menu).toHaveCount(0)
+        await expect(actions).toBeFocused()
+        // The phone's drawer stays open: Escape was the menu's.
+        await expect(list).toBeVisible()
+
         const plans = list.getByRole('region', { name: 'Category Plans' })
         await drag(page, plans.locator('.session-item').filter({ hasText: 'Plan the knowledge workspace' }), header)
         await expect(reviews).toHaveClass(/session-category--drop-target/)

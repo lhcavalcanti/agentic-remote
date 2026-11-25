@@ -55,6 +55,13 @@ export class SessionCategoryRefusal extends Error {
   }
 }
 
+/** A fresh category id; works on a plain-HTTP LAN address too, where `randomUUID` is unavailable. */
+export function newSessionCategoryId(): string {
+  const bytes = new Uint8Array(16)
+  globalThis.crypto.getRandomValues(bytes)
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
 export function isSessionCategoryKey(key: string): boolean {
   const separator = key.indexOf(':')
   return separator > 0 && separator < key.length - 1 && key.length <= SESSION_KEY_MAX_LENGTH

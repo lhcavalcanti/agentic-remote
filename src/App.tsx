@@ -105,11 +105,12 @@ import {
   DndContext,
   KeyboardSensor,
   PointerSensor,
+  pointerWithin,
   TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import type { DragEndEvent } from '@dnd-kit/core'
+import type { Collision, CollisionDetection, DragEndEvent } from '@dnd-kit/core'
 import {
   arrayMove,
   sortableKeyboardCoordinates,
@@ -131,6 +132,7 @@ import {
   FolderOpen,
   FileText,
   History,
+  Layers,
   LoaderCircle,
   Maximize2,
   Menu,
@@ -181,7 +183,21 @@ import {
 import {
   SessionNavigation,
   type PendingSessionCreation,
+  type SessionCategoryActions,
 } from './SessionNavigation'
+import {
+  CategoryNameDialog,
+  DeleteCategoryDialog,
+  MoveToCategoryDialog,
+} from './SessionCategoryDialogs'
+import { useSessionCategories } from './use-session-categories'
+import {
+  applySessionCategoryChange,
+  newSessionCategoryId,
+  sessionCategoryName,
+  sessionCategoryOf,
+  type SessionCategoryChange,
+} from '../shared/session-categories'
 import {
   reorderSessionLaneWithHiddenFollowers,
   sessionNavigationView,
@@ -4522,6 +4538,28 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     },
     [],
   )
+  // Categories are hub-owned as well, in a revisioned snapshot of their own.
+  const sessionCategories = useSessionCategories({
+    onError: (message) => {
+      // The report is in the conversation, which a phone's drawer covers.
+      setSidebarOpen(false)
+      setError(message)
+    },
+  })
+  // Both are stable; the refs let the event socket's effect reach them.
+  const syncSessionCategoriesRef = useRef(sessionCategories.sync)
+  const applySessionCategoriesRef = useRef(sessionCategories.apply)
+  useEffect(() => {
+    syncSessionCategoriesRef.current = sessionCategories.sync
+    applySessionCategoriesRef.current = sessionCategories.apply
+  }, [sessionCategories.apply, sessionCategories.sync])
+  const [categoryDialog, setCategoryDialog] = useState<
+    | { kind: 'create' }
+    | { kind: 'rename' | 'delete'; categoryId: string }
+    | { kind: 'move'; session: ManagedSession }
+  >()
+  // Said to a screen reader once the hub has committed a move or a reorder.
+  const [categoryAnnouncement, setCategoryAnnouncement] = useState('')
   const sessionSort: SessionSort = profile.sessionSort ?? 'custom'
   const [sessionQuery, setSessionQuery] = useState(initialSessionNavigation.current.query)
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>(
@@ -5009,6 +5047,20 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     return keys
   }, [unreadSaves, unreadSessionKeys])
   const markingUnreadKeys = useMemo(() => new Set(unreadSaves.keys()), [unreadSaves])
+  // Each category's sessions in the order the list shows them: its own order
+  // under Custom order, and the chosen sort otherwise, as under a computer.
+  const categorizedSessions = useMemo(() => {
+    const byKey = new Map(sessions.map((session) => [sessionKey(session), session]))
+    return sessionCategories.categories.map((category) => ({
+      category,
+      sessions: orderSessionLane(
+        category.sessions.flatMap((key) => byKey.get(key) ?? []),
+        category.sessions,
+        sessionSort,
+        backgroundTaskSnapshots,
+      ),
+    }))
+  }, [backgroundTaskSnapshots, sessionCategories.categories, sessionSort, sessions])
   const navigationView = useMemo(
     () => sessionNavigationView(
       orderedComputers,
@@ -5018,6 +5070,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       sessionFilter,
       { keys: listedHiddenKeys, shown: showHiddenSessions },
       listedUnreadKeys,
+      { categories: categorizedSessions, selectedKey },
     ),
     [
       orderedComputers,
@@ -5028,6 +5081,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       listedHiddenKeys,
       showHiddenSessions,
       listedUnreadKeys,
+      categorizedSessions,
+      selectedKey,
     ],
   )
   // A pending row stands where its session will appear, so finishing the
@@ -6641,6 +6696,41 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
+  // Rows trade places by the nearest centre, as they always have. A session
+  // the pointer carries onto a category goes there instead: onto the session
+  // under the pointer, the nearest one below its header, or the header itself.
+  // A computer only ever trades places with computers.
+  const sessionListCollisions = useCallback<CollisionDetection>((args) => {
+    const computerDrag = String(args.active.id).startsWith('computer:')
+    const droppableContainers = computerDrag
+      ? args.droppableContainers.filter((container) => String(container.id).startsWith('computer:'))
+      : args.droppableContainers
+    const scoped = { ...args, droppableContainers }
+    if (computerDrag) return closestCenter(scoped)
+    const under = pointerWithin(scoped)
+    const category = under.find((collision) => String(collision.id).startsWith('category:'))
+    if (!category) return closestCenter(scoped)
+    const row = under.find((collision) => String(collision.id).startsWith('session:'))
+    if (row) return [row, category]
+    const section = args.droppableRects.get(category.id)
+    const members = droppableContainers.filter((container) => {
+      const rect = args.droppableRects.get(container.id)
+      return String(container.id).startsWith('session:') && rect && section &&
+        rect.top >= section.top && rect.bottom <= section.bottom
+    })
+    const firstRow = Math.min(...members.map((member) => args.droppableRects.get(member.id)!.top))
+    if (!args.pointerCoordinates || members.length === 0 || args.pointerCoordinates.y < firstRow) {
+      return [category]
+    }
+    const nearest: Collision[] = closestCenter({ ...args, droppableContainers: members }).slice(0, 1)
+    return [...nearest, category]
+  }, [])
+  const dialogCategory = categoryDialog && 'categoryId' in categoryDialog
+    ? sessionCategories.categories.find((category) => category.id === categoryDialog.categoryId)
+    : undefined
+  // A category deleted on another device takes its open dialog with it.
+  const categoryDialogOpen = categoryDialog?.kind === 'create' || categoryDialog?.kind === 'move' ||
+    Boolean(dialogCategory)
 
   useEffect(() => {
     if (computers.length === 0) {
@@ -6697,6 +6787,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   useEffect(() => {
     void syncSessionOrder()
   }, [syncSessionOrder])
+
+  useEffect(() => {
+    void syncSessionCategoriesRef.current()
+  }, [])
 
   // Reading the session on screen. Opening it, coming back to the app with it
   // open, or its turn ending while you watch each leave an intent to read it;
@@ -7700,6 +7794,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         // Order events are not replayed, so a reorder committed while this
         // socket was down would otherwise stay invisible until the next one.
         void syncSessionOrderRef.current()
+        // Nor are category events.
+        void syncSessionCategoriesRef.current()
         // Settings events are not replayed either.
         void settingsClient.sync()
         setScheduleProposalEpoch((current) => current + 1)
@@ -7727,6 +7823,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           // Preference state, not session lifecycle: it must not advance the
           // transcript sequence the snapshot reconciliation depends on.
           applySessionOrderSnapshot(event.order)
+        } else if (event.type === 'session.categories.updated') {
+          // Preference state as well, which moves no transcript sequence.
+          applySessionCategoriesRef.current(event.categories)
         } else if (event.type === 'settings.updated') {
           settingsClient.receive(event.settings)
         } else if (event.type === 'session.upserted') {
@@ -9585,6 +9684,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       [retentionOpen, () => setRetentionOpen(false)],
       [backgroundTasksOpen, () => setBackgroundTasksOpen(false)],
       [renameOpen, () => setRenameOpen(false)],
+      [categoryDialogOpen, () => setCategoryDialog(undefined)],
       [cwdOpen, () => setCwdOpen(false)],
       [workspaceOpen, () => setWorkspaceOpen(false)],
     ]
@@ -13035,7 +13135,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       saveSetting('computerOrder', arrayMove(computerOrder, from, to))
       return
     }
-    if (!activeId.startsWith('session:') || !overId.startsWith('session:')) {
+    if (!activeId.startsWith('session:')) {
       return
     }
     if (sessionSort !== 'custom') {
@@ -13047,15 +13147,20 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return
     }
     const activeKey = activeId.slice('session:'.length)
-    const overKey = overId.slice('session:'.length)
     const activeSession = sessions.find(
       (session) => sessionKey(session) === activeKey,
     )
+    if (!activeSession || dropSessionInCategory(event, activeSession)) {
+      return
+    }
+    if (!overId.startsWith('session:')) {
+      return
+    }
+    const overKey = overId.slice('session:'.length)
     const overSession = sessions.find(
       (session) => sessionKey(session) === overKey,
     )
     if (
-      !activeSession ||
       !overSession ||
       activeSession.computerId !== overSession.computerId
     ) {
@@ -13105,6 +13210,146 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       }
     })()
   }
+
+  /** Shows a category change at once and sends it; `done` is announced once the hub commits it. */
+  function changeCategories(change: SessionCategoryChange, failure: string, done?: string) {
+    void sessionCategories.change(change, failure).then((committed) => {
+      if (committed && done) setCategoryAnnouncement(done)
+    })
+  }
+
+  /** Why the categories as shown cannot take a change, if they cannot. */
+  function categoryRefusal(change: SessionCategoryChange): string | undefined {
+    try {
+      applySessionCategoryChange(sessionCategories.categories, change)
+      return undefined
+    } catch (caught) {
+      return caught instanceof Error ? caught.message : String(caught)
+    }
+  }
+
+  /** Makes a category, moving `members` into it; answers why it cannot be made, if it cannot. */
+  function createSessionCategory(name: string, members: string[] = []): string | undefined {
+    const change: SessionCategoryChange = {
+      type: 'create',
+      id: newSessionCategoryId(),
+      name,
+      ...(members.length > 0 ? { sessions: members } : {}),
+    }
+    const refused = categoryRefusal(change)
+    if (refused) return refused
+    const named = sessionCategoryName(name)
+    setCategoryDialog(undefined)
+    changeCategories(change, `Could not create ${named}`, members.length > 0
+      ? `Created ${named} and moved the session into it`
+      : `Created ${named}`)
+    return undefined
+  }
+
+  function renameSessionCategory(categoryId: string, name: string): string | undefined {
+    const change: SessionCategoryChange = { type: 'update', categoryId, name }
+    const refused = categoryRefusal(change)
+    if (refused) return refused
+    const before = sessionCategories.categories.find((category) => category.id === categoryId)?.name
+    setCategoryDialog(undefined)
+    changeCategories(change, `Could not rename ${before ?? 'the category'}`)
+    return undefined
+  }
+
+  function moveSessionToCategory(session: ManagedSession, categoryId: string | null) {
+    setCategoryDialog(undefined)
+    const key = sessionKey(session)
+    const from = sessionCategoryOf(sessionCategories.categories, key)
+    if ((from?.id ?? null) === categoryId) return
+    const target = sessionCategories.categories.find((category) => category.id === categoryId)
+    if (categoryId !== null && !target) return
+    changeCategories(
+      { type: 'move', sessions: [key], categoryId },
+      target ? `Could not move ${session.title} to ${target.name}` : `Could not take ${session.title} out of ${from?.name}`,
+      target ? `Moved ${session.title} to ${target.name}` : `Moved ${session.title} out of ${from?.name}`,
+    )
+  }
+
+  /**
+   * A dragged session dropped on a category, on one of a category's sessions,
+   * or, from a category, back under its own computer, where it takes the place
+   * it kept there. Answers whether the drop was about categories at all: an
+   * ordinary reorder under a computer is not.
+   */
+  function dropSessionInCategory(event: DragEndEvent, dragged: ManagedSession): boolean {
+    const overId = String(event.over?.id ?? '')
+    const draggedKey = sessionKey(dragged)
+    const categories = sessionCategories.categories
+    const from = sessionCategoryOf(categories, draggedKey)
+    const overKey = overId.startsWith('session:') ? overId.slice('session:'.length) : undefined
+    const target = overId.startsWith('category:')
+      ? categories.find((category) => `category:${category.id}` === overId)
+      : overKey ? sessionCategoryOf(categories, overKey) : undefined
+    if (target) {
+      const rest = target.sessions.filter((key) => key !== draggedKey)
+      const at = overKey ? rest.indexOf(overKey) : -1
+      // Dropped on its own category's header: it is already there.
+      if (from?.id === target.id && at < 0) return true
+      let index: number | undefined
+      if (at >= 0 && from?.id === target.id) {
+        // As a reorder under a computer: it takes the place it was dropped on.
+        index = target.sessions.indexOf(draggedKey) < target.sessions.indexOf(overKey!) ? at + 1 : at
+      } else if (at >= 0) {
+        // From elsewhere: before or after the session, by the half it was dropped on.
+        const dropped = event.active.rect.current.translated
+        const over = event.over?.rect
+        index = dropped && over && dropped.top + dropped.height / 2 > over.top + over.height / 2 ? at + 1 : at
+      }
+      changeCategories(
+        { type: 'move', sessions: [draggedKey], categoryId: target.id, ...(index === undefined ? {} : { index }) },
+        `Could not move ${dragged.title} to ${target.name}`,
+        from?.id === target.id ? `Moved ${dragged.title} within ${target.name}` : `Moved ${dragged.title} to ${target.name}`,
+      )
+      return true
+    }
+    if (!from) return false
+    const overComputer = overId.startsWith('computer:')
+      ? overId.slice('computer:'.length)
+      : sessions.find((session) => sessionKey(session) === overKey)?.computerId
+    if (overComputer === dragged.computerId) {
+      changeCategories(
+        { type: 'move', sessions: [draggedKey], categoryId: null },
+        `Could not take ${dragged.title} out of ${from.name}`,
+        `Moved ${dragged.title} out of ${from.name}`,
+      )
+    }
+    return true
+  }
+
+  const categoryActions: SessionCategoryActions | undefined = sessionCategories.available ? {
+    onToggleCategory: (categoryId, collapsed) => {
+      const category = sessionCategories.categories.find((entry) => entry.id === categoryId)
+      if (!category) return
+      changeCategories(
+        { type: 'update', categoryId, collapsed },
+        `Could not ${collapsed ? 'close' : 'open'} ${category.name}`,
+      )
+    },
+    onMarkCategoryRead: (categoryId) => {
+      const members = categorizedSessions.find((entry) => entry.category.id === categoryId)?.sessions ?? []
+      for (const session of members) {
+        if (listedUnreadKeys.has(sessionKey(session))) changeSessionUnread(session, false, true)
+      }
+    },
+    onRenameCategory: (categoryId) => setCategoryDialog({ kind: 'rename', categoryId }),
+    onMoveCategory: (categoryId, direction) => {
+      const index = sessionCategories.categories.findIndex((entry) => entry.id === categoryId)
+      const category = sessionCategories.categories[index]
+      if (!category) return
+      changeCategories(
+        { type: 'update', categoryId, index: index + direction },
+        `Could not move ${category.name}`,
+        `Moved ${category.name} ${direction < 0 ? 'up' : 'down'}`,
+      )
+    },
+    onDeleteCategory: (categoryId) => setCategoryDialog({ kind: 'delete', categoryId }),
+    onNewCategory: () => setCategoryDialog({ kind: 'create' }),
+  } : undefined
 
   function changeSessionSort(sort: SessionSort) {
     saveSetting('sessionSort', sort)
@@ -13441,7 +13686,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
 
         <div className="sidebar__body">
             <DndContext
-              collisionDetection={closestCenter}
+              collisionDetection={sessionListCollisions}
               onDragCancel={() => {
                 sortableDragActiveRef.current = false
               }}
@@ -13496,8 +13741,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 onToggleSessionUnread={toggleSessionUnread}
                 recentlyClosedCount={recentlyClosed.sessions?.length}
                 onOpenRecentlyClosed={openRecentlyClosed}
+                categoryActions={categoryActions}
               />
             </DndContext>
+            <p aria-live="polite" className="visually-hidden" role="status">{categoryAnnouncement}</p>
         </div>
         {knowledgeMode !== 'hidden' ? (
           <div className="sidebar-knowledge">
@@ -13915,6 +14162,17 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 <Pencil size={17} />
                 <span>Rename session</span>
               </button>
+              {/* The hub keeps categories, so this works while the computer is offline too. */}
+              {sessionCategories.available ? (
+                <button
+                  className="session-action"
+                  onClick={() => setCategoryDialog({ kind: 'move', session: selected })}
+                  type="button"
+                >
+                  <Layers aria-hidden="true" size={17} />
+                  <span>Move to category…</span>
+                </button>
+              ) : null}
               <button
                 aria-label={
                   selectedNotificationsMuted
@@ -14646,6 +14904,48 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             </button>
           </div>
         </DialogFrame>
+      ) : null}
+
+      {categoryDialog?.kind === 'create' ? (
+        <CategoryNameDialog
+          mode="create"
+          onClose={() => setCategoryDialog(undefined)}
+          onSubmit={(name) => createSessionCategory(name)}
+        />
+      ) : null}
+      {categoryDialog?.kind === 'rename' && dialogCategory ? (
+        <CategoryNameDialog
+          initialName={dialogCategory.name}
+          mode="rename"
+          onClose={() => setCategoryDialog(undefined)}
+          onSubmit={(name) => renameSessionCategory(dialogCategory.id, name)}
+        />
+      ) : null}
+      {categoryDialog?.kind === 'delete' && dialogCategory ? (
+        <DeleteCategoryDialog
+          name={dialogCategory.name}
+          onClose={() => setCategoryDialog(undefined)}
+          onDelete={() => {
+            setCategoryDialog(undefined)
+            changeCategories(
+              { type: 'delete', categoryId: dialogCategory.id },
+              `Could not delete ${dialogCategory.name}`,
+              `Deleted ${dialogCategory.name}; its sessions are under their computers`,
+            )
+          }}
+          sessions={categorizedSessions.find((entry) => entry.category.id === dialogCategory.id)
+            ?.sessions.filter((session) => session.isOpen !== false).length ?? 0}
+        />
+      ) : null}
+      {categoryDialog?.kind === 'move' ? (
+        <MoveToCategoryDialog
+          categories={sessionCategories.categories}
+          current={sessionCategoryOf(sessionCategories.categories, sessionKey(categoryDialog.session))?.id ?? null}
+          onClose={() => setCategoryDialog(undefined)}
+          onCreate={(name) => createSessionCategory(name, [sessionKey(categoryDialog.session)])}
+          onMove={(categoryId) => moveSessionToCategory(categoryDialog.session, categoryId)}
+          sessionTitle={categoryDialog.session.title}
+        />
       ) : null}
 
       {closeRequestSession ? (

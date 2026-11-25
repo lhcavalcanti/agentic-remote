@@ -18,8 +18,8 @@ import {
   Mail,
   MailOpen,
   Monitor,
+  LayersPlus,
   Plus,
-  FolderPlus,
   RefreshCw,
   Search,
   X,
@@ -171,6 +171,7 @@ function SortableSessionItem({
   markingUnreadSessions,
   onToggleSessionUnread,
   recoverableClose,
+  showComputer = false,
 }: SessionActions & {
   session: ManagedSession
   selected: boolean
@@ -181,6 +182,8 @@ function SortableSessionItem({
   sorting: boolean
   /** The owning computer keeps a closed session to reopen. */
   recoverableClose: boolean
+  /** Names its computer, as a category's rows come from several. */
+  showComputer?: boolean
 }) {
   const {
     attributes,
@@ -284,6 +287,7 @@ function SortableSessionItem({
               {session.title}
             </strong>
             <small className="session-item__where">
+              {showComputer ? <span className="session-item__computer">{computerName}</span> : null}
               <span className="session-item__cwd">{shortPath(session.cwd)}</span>
               <time
                 className="session-item__time"
@@ -762,6 +766,7 @@ function SessionCategorySectionView({
                 reorderDisabled={reorderDisabled}
                 selected={sessionKey(session) === selectedKey}
                 session={session}
+                showComputer={computers.size > 1}
                 sorting={sorting}
               />
             )
@@ -1100,7 +1105,7 @@ export function SessionNavigation({
                 onClick={categoryActions.onNewCategory}
                 type="button"
               >
-                <FolderPlus aria-hidden="true" size={14} />
+                <LayersPlus aria-hidden="true" size={14} />
                 New category
               </button>
             ) : null}

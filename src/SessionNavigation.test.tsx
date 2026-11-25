@@ -908,6 +908,9 @@ describe('session categories in the list', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(within(homelab).getByRole('button', { name: /^Build docs,/ })).toBeVisible()
     expect(within(homelab).getByRole('button', { name: /^Choose a direction,/ })).toBeVisible()
+    // Rows from several computers sit together there, so each names its own.
+    expect(within(homelab).getByText('Build node', { selector: '.session-item__computer' })).toBeVisible()
+    expect(within(homelab).getByText('Studio', { selector: '.session-item__computer' })).toBeVisible()
     // Each session is listed once: under its category rather than its computer.
     const studio = screen.getByRole('region', { name: 'Studio' })
     expect(within(studio).queryByRole('button', { name: /^Choose a direction,/ })).toBeNull()

@@ -182,6 +182,7 @@ import {
   SessionNavigation,
   type PendingSessionCreation,
 } from './SessionNavigation'
+import { useSessionListSensors } from './session-list-sensors'
 import {
   reorderSessionLaneWithHiddenFollowers,
   sessionNavigationView,
@@ -6641,6 +6642,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
+  const sessionListSensors = useSessionListSensors()
 
   useEffect(() => {
     if (computers.length === 0) {
@@ -13452,7 +13454,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               onDragStart={() => {
                 sortableDragActiveRef.current = true
               }}
-              sensors={sensors}
+              sensors={sessionListSensors}
             >
               <SessionNavigation
                 onOpenScheduleRun={(target) => {

@@ -85,7 +85,7 @@ export function nativeShell(): boolean {
   return bridge() !== undefined
 }
 
-/** Shell version, which is independent of the hub's `__APP_VERSION__`. */
+/** Shell version, which is independent of the hub's app version. */
 export function shellVersion(): string | undefined {
   const value = bridge()?.version
   return typeof value === 'string' && value.trim() ? value.trim() : undefined

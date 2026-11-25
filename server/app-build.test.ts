@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { brotliDecompressSync, gunzipSync } from 'node:zlib'
 import type { FastifyInstance } from 'fastify'
-import { build } from 'vite'
+import { build, type Rolldown } from 'vite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseAppVersion } from '../shared/app-version.js'
 import { ORACLE_VOICE_SAMPLE_RATE } from '../shared/oracle-voice.js'
@@ -26,13 +26,12 @@ afterEach(async () => {
 })
 
 describe('production app build identity', () => {
-  it('embeds one identity in the client, metadata and worker, and changes it on rebuild', async () => {
+  it('records one identity in the page, metadata and worker, and changes it on rebuild', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'app-build-'))
     directories.push(directory)
     await writeFile(path.join(directory, 'index.html'),
-      '<html><script type="module" src="/entry.js"></script></html>')
-    await writeFile(path.join(directory, 'entry.js'),
-      'globalThis.app = { version: __APP_VERSION__, buildId: __APP_BUILD_ID__ }')
+      '<html><head><title>Fixture</title></head><script type="module" src="/entry.js"></script></html>')
+    await writeFile(path.join(directory, 'entry.js'), 'globalThis.app = document.title')
 
     const compile = async () => {
       await build({
@@ -49,13 +48,14 @@ describe('production app build identity', () => {
       const identity = parseAppVersion(metadata)
       expect(Object.keys(metadata).sort()).toEqual(['buildId', 'version'])
       expect(identity.buildId).toMatch(/^[0-9a-f-]{36}$/)
+      const page = await readFile(path.join(output, 'index.html'), 'utf8')
+      expect(page).toContain(`<meta name="agentic-remote-version" content="${identity.version}">`)
+      expect(page).toContain(`<meta name="agentic-remote-build" content="${identity.buildId}">`)
       const scripts = (await readdir(path.join(output, 'assets')))
         .filter((name) => name.endsWith('.js'))
       expect(scripts).toHaveLength(1)
       const client = await readFile(path.join(output, 'assets', scripts[0]), 'utf8')
-      expect(client).toContain(JSON.stringify(identity.buildId))
-      expect(client).toContain(JSON.stringify(identity.version))
-      expect(client).not.toContain('__APP_BUILD_ID__')
+      expect(client).not.toContain(identity.buildId)
       const worker = await readFile(path.join(output, 'sw.js'), 'utf8')
       expect(worker).toBe(
         `self.AGENTIC_REMOTE_BUILD_ID = ${JSON.stringify(identity.buildId)};\n${
@@ -84,6 +84,46 @@ describe('production app build identity', () => {
     expect(second.version).toBe(first.version)
     expect(second.buildId).not.toBe(first.buildId)
   }, 20_000)
+
+  it('names every app file the same on a rebuild of unchanged code', async () => {
+    const compile = async () => {
+      const directory = await mkdtemp(path.join(tmpdir(), 'app-rebuild-'))
+      directories.push(directory)
+      // Nothing is written: the precompression step finds this empty directory.
+      const outDir = path.join(directory, 'dist')
+      await mkdir(outDir)
+      const result = await build({
+        configFile: fileURLToPath(new URL('../vite.config.ts', import.meta.url)),
+        configLoader: 'runner',
+        root: fileURLToPath(new URL('..', import.meta.url)),
+        cacheDir: path.join(directory, 'cache'),
+        logLevel: 'silent',
+        build: { outDir, write: false },
+      }) as Rolldown.RolldownOutput
+      return new Map(result.output.map((file) => [
+        file.fileName,
+        file.type === 'chunk' ? file.code : Buffer.from(file.source).toString('latin1'),
+      ]))
+    }
+    const identity = (files: Map<string, string>) =>
+      parseAppVersion(JSON.parse(files.get('build-info.json') ?? 'null'))
+
+    const first = await compile()
+    const second = await compile()
+    const [before, after] = [identity(first), identity(second)]
+    expect(after.buildId).not.toBe(before.buildId)
+    const perBuild = ['build-info.json', 'index.html', 'sw.js']
+    const shared = (files: Map<string, string>) =>
+      [...files.keys()].filter((name) => !perBuild.includes(name)).sort()
+    expect(shared(second)).toEqual(shared(first))
+    expect(shared(first).filter((name) => name.startsWith('assets/')).length).toBeGreaterThan(50)
+    for (const name of perBuild) {
+      expect(second.get(name)).toBe(first.get(name)?.replaceAll(before.buildId!, after.buildId!))
+    }
+    for (const name of shared(first)) {
+      expect(first.get(name), name).not.toContain(before.buildId)
+    }
+  }, 120_000)
 })
 
 describe('Oracle voice app construction', () => {

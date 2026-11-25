@@ -1231,8 +1231,8 @@
     "server/session-admissions.ts": "0ac22f65f3354bac38062156f3ca77b568d3f7a7c9c469e843049e84c9de2a3e",
     "server/session-category-routes.test.ts": "88e4e1a6c436f0c50797b592a5d2e036a00fbcd4bcef4cc73ad5ba5a91e4879e",
     "server/session-category-routes.ts": "737cabef2ba6f7b3fe604aa3abb01d3cc2f0310dd7960ac5719a814c2f5967fb",
-    "server/session-category-store.test.ts": "238aa6c60b4ee686b663c1f088cf1502433b58b950c7ac72f105f617d2bb39f6",
-    "server/session-category-store.ts": "a3b04e020f1d122a12f4cee41e757e0b71b796d633c89f209a69da51d1588b16",
+    "server/session-category-store.test.ts": "fa35819fe2345f67f4fc2d17bfdb548edb8743337eaeb9810ed246528d220c9a",
+    "server/session-category-store.ts": "56c2c803533823022d24f18e82f9e612d88a8a0e4f77c09deea66d4295f0fba5",
     "server/session-clear-transcript.test.ts": "bb73bb871f2d405beaf3273397bc26e826c688773bb2b5e22fe4968c9390ecc1",
     "server/session-directory.test.ts": "2aaf8033014c572bf4d1e55d0e530db80066311faf50047f9471d4b369a257df",
     "server/session-directory.ts": "0fbc02dbe1e2810dc218f9296dcd03f2d9577fac78080a4fc1a4b1bd4dbdfdce",
@@ -1917,13 +1917,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "433c09f9c021f87f424ec8d5d75fcd79c84deb605208858fba94bbc23d0c8687",
+    "GRAPH_REPORT.md": "3126dfe3d50e5c2b225b7bc2a05b7131baba601c46d65c44c06b744e69f14302",
     "communities.json": "6217b2c4832061ffe201ff20145208ff50de625cbca2ad4e488cb6a8ec3c9385",
-    "graph.html": "4d79f86b1b93fcb54cebdb44b428920c5f7ac5739b338aa687758af245fcc2fa",
-    "graph.json": "28856b23a292b190f1f558c8e135660f71401dbc19ccac9306f773e51f9703e5"
+    "graph.html": "8256d5f75aa1fa90012ac1c364bd940189d71539286abb1c0d4a754a3aa70ccf",
+    "graph.json": "ff09a75acd90a2e9a7acb6d918afa79993ab9853015b3f9e3098738f2bd65851"
   },
   "schema_version": 1,
-  "source_commit": "dd5fd5a07d4a36612aebf5a16d4668de8c8082d9",
-  "source_fingerprint": "ed005aac14066b3dcaa50f3b1b18ea8da5a43b9dce62d12f539aa2eca8d18305",
+  "source_commit": "ea63c807ea44eac0c4815062847a9303c34e62c4",
+  "source_fingerprint": "45782595a874fe0a959b9ca0bf5723b019737cac2820940faee89a25126a2a43",
   "working_tree_changes": []
 }

@@ -4865,7 +4865,12 @@ button {
 }
 
 /* Waiting for its session, in the order it will be sent; there is nothing
-   to reorder by, so no handle. */
+   to reorder by, so no handle. The tray grows by the line a refusal adds,
+   and its list scrolls as the queue's does. */
+.queued-prompts.held-messages {
+  max-height: none;
+}
+
 .held-messages__list {
   margin: 0;
   padding: 0;

@@ -118,7 +118,7 @@ export function SessionStart({
           </p>
           <small className="session-start__note">
             {held
-              ? 'What you send now goes to it, in order, once it is ready.'
+              ? 'Messages you send now wait below and go to it in order once it is ready.'
               : 'Write your first message below. It sends once the session is ready.'}
           </small>
         </>

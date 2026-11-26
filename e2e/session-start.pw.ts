@@ -92,5 +92,68 @@ for (const device of devices) {
         fixture.assertHealthy()
       }
     })
+
+    test('keeps what was written for a session that could not start, and starts it again as asked', async ({ page }, testInfo) => {
+      const state = createWorkspaceFixtureState()
+      const fixture = await setupWorkspaceFixture(page, {
+        baseUrl: testInfo.project.use.baseURL!,
+        knowledgeMode: 'hidden',
+        state,
+      })
+      try {
+        await page.goto(fixture.url)
+        const message = page.getByRole('textbox', { name: 'Message', exact: true })
+        await expect(message).toBeVisible()
+        let refuse!: () => void
+        const refused = new Promise<void>((resolve) => {
+          refuse = resolve
+        })
+        let attempts = 0
+        await page.route((url) => /^\/api\/computers\/[^/]+\/sessions$/.test(url.pathname), async (route) => {
+          if (route.request().method() === 'POST' && ++attempts === 1) {
+            await refused
+            await route.fulfill({
+              status: 409,
+              contentType: 'application/json',
+              body: JSON.stringify({ error: 'Studio could not start Copilot in that folder.' }),
+            })
+            return
+          }
+          await route.fallback()
+        })
+        const main = page.getByRole('main')
+        await main.getByRole('button', { name: 'New session', exact: true }).click()
+        const create = page.getByRole('dialog', { name: 'Choose a folder' })
+          .getByRole('button', { name: 'Create session' })
+        await expect(create).toBeEnabled()
+        await create.click()
+        await expect(main.getByRole('status', { name: 'Starting session' })).toBeVisible()
+        await message.fill('Compare the two handbook drafts')
+        await main.getByRole('button', { name: 'Send message' }).click()
+        await message.fill('Keep the shorter one')
+
+        refuse()
+
+        const failure = main.getByRole('alert')
+        await expect(failure).toContainText('Couldn’t start the session')
+        await expect(failure).toContainText('Studio could not start Copilot in that folder.')
+        const held = main.getByRole('region', { name: 'Held messages' })
+        await expect(held.getByRole('listitem')).toHaveText(['Compare the two handbook drafts'])
+        await expect(message).toHaveValue('Keep the shorter one')
+        await expect(page.locator('.session-item--creation-failed')).toHaveCount(1)
+        await screenshot(page, `${device.name}-failed`)
+
+        await main.getByRole('button', { name: 'Try again' }).click()
+
+        await expect.poll(() => state.sessions.find(({ id }) => id === 'fixture-started-1')?.messages
+          .filter(({ role }) => role === 'user').map(({ content }) => content))
+          .toEqual(['Compare the two handbook drafts'])
+        await expect(held).toHaveCount(0)
+        await expect(message).toHaveValue('Keep the shorter one')
+        expect(attempts).toBe(2)
+      } finally {
+        fixture.assertHealthy()
+      }
+    })
   })
 }

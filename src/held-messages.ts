@@ -31,7 +31,8 @@ export type HeldDeliveryOutcome =
 const emptyQueue: HeldQueue = { messages: [], delivered: 0 }
 
 function withQueue(queues: HeldQueues, key: string, queue: HeldQueue): HeldQueues {
-  if (!queue.messages.length && queue.returnBefore === undefined && !queue.failure) {
+  // With nothing left, a message being edited goes back last, which is its place.
+  if (!queue.messages.length && !queue.failure) {
     if (!(key in queues)) return queues
     const { [key]: _gone, ...rest } = queues
     return rest

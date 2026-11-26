@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   activatePwaUpdate,
   activePushSubscription,
@@ -9,10 +9,48 @@ import {
   enablePushNotifications,
   PWA_UPDATE_EVENT,
   registerPwa,
+  runningAppVersion,
 } from './pwa'
 import { HubSignInExpiredError, hubSignInExpired, setHubSignInExpired } from './hub-sign-in'
 
+// The release that served this page, as its index.html records it.
+const running = { version: '3.1.4', buildId: 'running-build' }
+
+function servePage(identity: { version?: string, buildId?: string }) {
+  for (const [name, content] of [
+    ['agentic-remote-version', identity.version],
+    ['agentic-remote-build', identity.buildId],
+  ]) {
+    document.head.querySelector(`meta[name="${name}"]`)?.remove()
+    if (content !== undefined) {
+      document.head.append(Object.assign(document.createElement('meta'), { name, content }))
+    }
+  }
+}
+
+describe('running app version', () => {
+  it('reads the build from the page that loaded the bundle', () => {
+    servePage(running)
+    expect(runningAppVersion()).toEqual(running)
+    servePage({ version: '3.1.5', buildId: 'next-build' })
+    expect(runningAppVersion()).toEqual({ version: '3.1.5', buildId: 'next-build' })
+  })
+
+  it.each([
+    {},
+    { version: running.version },
+    { buildId: running.buildId },
+    { version: ' ', buildId: running.buildId },
+    { version: running.version, buildId: '../private/path' },
+  ])('reports no identity for a page that does not record a valid one: %j', (identity) => {
+    servePage(identity)
+    expect(runningAppVersion()).toBeUndefined()
+  })
+})
+
 describe('PWA updates', () => {
+  beforeEach(() => servePage(running))
+
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
@@ -59,7 +97,7 @@ describe('PWA updates', () => {
       register: vi.fn().mockResolvedValue(registration),
     })
     vi.stubGlobal('fetch', vi.fn(async () =>
-      Response.json({ version: __APP_VERSION__, buildId: 'new-bundle' }),
+      Response.json({ version: running.version, buildId: 'new-bundle' }),
     ))
     const reload = vi.fn()
 
@@ -71,7 +109,7 @@ describe('PWA updates', () => {
 
   it('reloads a bundle-only update when no worker is waiting', async () => {
     const { registration } = mockUpdateCheck({
-      version: __APP_VERSION__, buildId: 'new-bundle',
+      version: running.version, buildId: 'new-bundle',
     })
     const reload = vi.fn()
 
@@ -97,13 +135,13 @@ describe('PWA updates', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        Response.json({ version: __APP_VERSION__ }),
+        Response.json({ version: running.version }),
       ),
     )
 
     await expect(checkForPwaUpdate()).resolves.toEqual({
       registration,
-      version: __APP_VERSION__,
+      version: running.version,
     })
     expect(registration.update).toHaveBeenCalledOnce()
   })
@@ -163,13 +201,13 @@ describe('PWA updates', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        Response.json({ version: __APP_VERSION__, buildId: 'new-bundle' }),
+        Response.json({ version: running.version, buildId: 'new-bundle' }),
       ),
     )
 
     await expect(checkForPwaUpdate()).resolves.toMatchObject({
       registration,
-      version: __APP_VERSION__,
+      version: running.version,
       buildId: 'new-bundle',
     })
     expect(register).toHaveBeenCalledWith('/sw.js?v=new-bundle', {
@@ -180,47 +218,68 @@ describe('PWA updates', () => {
 
   it('does not offer an update for the currently running build', async () => {
     const { registration, serviceWorker, fetch } = mockUpdateCheck({
-      version: __APP_VERSION__,
-      buildId: __APP_BUILD_ID__,
+      version: running.version,
+      buildId: running.buildId,
     })
 
     await expect(checkForPwaUpdate()).resolves.toBeUndefined()
     expect(fetch).toHaveBeenCalledWith('/api/version', expect.objectContaining({ cache: 'no-store' }))
     expect(serviceWorker.register).toHaveBeenCalledWith(
-      `/sw.js?v=${__APP_BUILD_ID__}`,
+      `/sw.js?v=${running.buildId}`,
       { scope: '/', updateViaCache: 'none' },
     )
     expect(registration.update).toHaveBeenCalledOnce()
   })
 
+  it('compares the deployed build with the one the page records', async () => {
+    const { fetch } = mockUpdateCheck({ version: running.version, buildId: 'build-b' })
+
+    servePage({ version: running.version, buildId: 'build-a' })
+    await expect(checkForPwaUpdate()).resolves.toMatchObject({ buildId: 'build-b' })
+    // The same bundle, reloaded from build B's index.html, is current.
+    servePage({ version: running.version, buildId: 'build-b' })
+    await expect(checkForPwaUpdate()).resolves.toBeUndefined()
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses to judge updates from a page that does not record its build', async () => {
+    const { serviceWorker } = mockUpdateCheck({ version: running.version, buildId: running.buildId })
+    serviceWorker.getRegistration.mockResolvedValue(undefined)
+    servePage({})
+
+    await expect(checkForPwaUpdate()).rejects.toThrow('does not record its build')
+    await expect(registerPwa()).rejects.toThrow('does not record its build')
+    expect(serviceWorker.register).not.toHaveBeenCalled()
+  })
+
   it('keeps version-only legacy hubs compatible', async () => {
-    const { serviceWorker } = mockUpdateCheck({ version: __APP_VERSION__ })
+    const { serviceWorker } = mockUpdateCheck({ version: running.version })
 
     await expect(checkForPwaUpdate()).resolves.toBeUndefined()
     expect(serviceWorker.register).toHaveBeenCalledWith(
-      `/sw.js?v=${__APP_VERSION__}`,
+      `/sw.js?v=${running.version}`,
       { scope: '/', updateViaCache: 'none' },
     )
   })
 
   it('does not report a changed build as current when no worker is registered yet', async () => {
     const { registration, serviceWorker } = mockUpdateCheck({
-      version: __APP_VERSION__,
+      version: running.version,
       buildId: 'new-bundle',
     })
     serviceWorker.getRegistration.mockResolvedValue(undefined)
 
     await expect(checkForPwaUpdate()).resolves.toEqual({
       registration,
-      version: __APP_VERSION__,
+      version: running.version,
       buildId: 'new-bundle',
     })
   })
 
   it('retargets a persistent registration after a same-version rollback', async () => {
     const { registration, serviceWorker } = mockUpdateCheck({
-      version: __APP_VERSION__,
-      buildId: __APP_BUILD_ID__,
+      version: running.version,
+      buildId: running.buildId,
     })
     const staleRegistration = {
       waiting: { scriptURL: 'https://example.test/sw.js?v=rolled-back-build' },
@@ -230,7 +289,7 @@ describe('PWA updates', () => {
 
     await expect(checkForPwaUpdate()).resolves.toBeUndefined()
     expect(serviceWorker.register).toHaveBeenCalledWith(
-      `/sw.js?v=${__APP_BUILD_ID__}`,
+      `/sw.js?v=${running.buildId}`,
       { scope: '/', updateViaCache: 'none' },
     )
     expect(staleRegistration.update).not.toHaveBeenCalled()
@@ -239,7 +298,7 @@ describe('PWA updates', () => {
 
   it('rechecks the deployment before activating a prompt left over from a rollback', async () => {
     const { serviceWorker } = mockUpdateCheck({
-      version: __APP_VERSION__, buildId: __APP_BUILD_ID__,
+      version: running.version, buildId: running.buildId,
     })
     const postMessage = vi.fn(() => queueMicrotask(() =>
       serviceWorker.dispatchEvent(new Event('controllerchange')),
@@ -253,7 +312,7 @@ describe('PWA updates', () => {
     await activatePwaUpdate(reload)
 
     expect(serviceWorker.register).toHaveBeenCalledWith(
-      `/sw.js?v=${__APP_BUILD_ID__}`, { scope: '/', updateViaCache: 'none' },
+      `/sw.js?v=${running.buildId}`, { scope: '/', updateViaCache: 'none' },
     )
     expect(postMessage).not.toHaveBeenCalled()
     expect(reload).toHaveBeenCalledOnce()
@@ -261,7 +320,7 @@ describe('PWA updates', () => {
 
   it('leaves the current app in place when the activation recheck fails', async () => {
     const { fetch, serviceWorker } = mockUpdateCheck({
-      version: __APP_VERSION__, buildId: 'new-bundle',
+      version: running.version, buildId: 'new-bundle',
     })
     fetch.mockResolvedValue(new Response('Unavailable', { status: 503 }))
     const reload = vi.fn()
@@ -275,11 +334,11 @@ describe('PWA updates', () => {
     [],
     {},
     { version: '' },
-    { version: __APP_VERSION__, buildId: '' },
-    { version: __APP_VERSION__, buildId: null },
-    { version: __APP_VERSION__, buildId: 123 },
-    { version: __APP_VERSION__, buildId: '../private/path' },
-    { version: __APP_VERSION__, buildId: 'x'.repeat(129) },
+    { version: running.version, buildId: '' },
+    { version: running.version, buildId: null },
+    { version: running.version, buildId: 123 },
+    { version: running.version, buildId: '../private/path' },
+    { version: running.version, buildId: 'x'.repeat(129) },
   ])('rejects invalid version metadata instead of reporting up to date: %j', async (payload) => {
     const { serviceWorker } = mockUpdateCheck(payload)
 
@@ -303,7 +362,7 @@ describe('PWA updates', () => {
 
   it('surfaces HTTP and worker registration failures', async () => {
     const { fetch, serviceWorker } = mockUpdateCheck({
-      version: __APP_VERSION__,
+      version: running.version,
       buildId: 'new-bundle',
     })
     fetch.mockResolvedValueOnce(new Response('Unavailable', { status: 503 }))
@@ -312,11 +371,11 @@ describe('PWA updates', () => {
     await expect(checkForPwaUpdate()).rejects.toThrow('Worker unavailable')
   })
 
-  it('registers a first-time worker with the embedded build identity', async () => {
+  it('registers a first-time worker with the build identity of the page', async () => {
     vi.useFakeTimers()
     const { serviceWorker } = mockUpdateCheck({
-      version: __APP_VERSION__,
-      buildId: __APP_BUILD_ID__,
+      version: running.version,
+      buildId: running.buildId,
     })
     serviceWorker.getRegistration.mockResolvedValueOnce(undefined)
     vi.spyOn(document, 'addEventListener').mockImplementation(() => undefined)
@@ -326,7 +385,7 @@ describe('PWA updates', () => {
 
     expect(serviceWorker.register).toHaveBeenNthCalledWith(
       1,
-      `/sw.js?v=${__APP_BUILD_ID__}`,
+      `/sw.js?v=${running.buildId}`,
       { scope: '/', updateViaCache: 'none' },
     )
   })
@@ -334,7 +393,7 @@ describe('PWA updates', () => {
   it('announces successive same-version builds on startup and foreground return', async () => {
     vi.useFakeTimers()
     const { registration, serviceWorker, fetch } = mockUpdateCheck({
-      version: __APP_VERSION__,
+      version: running.version,
       buildId: 'bundle-b',
     })
     let foreground: (() => void) | undefined
@@ -352,7 +411,7 @@ describe('PWA updates', () => {
     await registerPwa()
     await vi.advanceTimersByTimeAsync(751)
     expect(updateEvents()).toHaveLength(1)
-    // Do not overwrite an existing worker with this old page's embedded ID.
+    // Do not overwrite an existing worker with this old page's build ID.
     expect(serviceWorker.register).toHaveBeenNthCalledWith(
       1, '/sw.js?v=bundle-b', { scope: '/', updateViaCache: 'none' },
     )
@@ -364,7 +423,7 @@ describe('PWA updates', () => {
     expect(updateEvents()).toHaveLength(1)
 
     fetch.mockImplementation(async () => Response.json({
-      version: __APP_VERSION__,
+      version: running.version,
       buildId: 'bundle-c',
     }))
     foreground?.()

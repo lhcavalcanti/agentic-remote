@@ -553,9 +553,16 @@ low.
 
 Every production Vite build generates an opaque `buildId` once, independently
 of the package version, Git checkout, and release directory name. The same ID
-is embedded in the browser bundle and `sw.js`, and recorded with the package
-version in `dist/build-info.json`. Rebuilding an unchanged commit deliberately
-creates a new identity; copying or restarting that build does not.
+is written into `index.html` (`<meta name="agentic-remote-build">`, beside
+`agentic-remote-version`) and embedded in `sw.js`, and recorded with the
+package version in `dist/build-info.json`. Rebuilding an unchanged commit
+deliberately creates a new identity; copying or restarting that build does not.
+
+Neither value is compiled into a script or stylesheet: the page reads both
+from its `index.html`, which is never cached without revalidation. A rebuild of
+unchanged code therefore keeps every content-hashed `assets/` name, and a
+returning client takes those files from its caches instead of downloading them
+again; only `index.html`, `build-info.json`, and `sw.js` change.
 
 Publication copies the complete `dist` directory, including this metadata and
 the precompressed `.br`/`.gz` files, without regenerating the ID. Rollback
@@ -571,8 +578,9 @@ build metadata prevents static-serving startup: rebuild older standalone
 development/test hubs do not require a production build; the latter retain
 the version-only API response.
 
-The client compares build IDs when available, falling back to package versions
-for older hubs. Registration URLs and shell caches use the build ID. The ID is
+The client compares its page's build ID with the deployed one when available,
+falling back to package versions for older hubs. Registration URLs and shell
+caches use the build ID. The ID is
 also embedded in the worker so an older, persistent registration URL cannot
 choose the cache namespace of newly fetched worker code. Cache reads stay
 within that worker's namespace, and online navigation does not replace the

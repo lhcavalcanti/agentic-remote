@@ -523,7 +523,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   Attaching files and recording MUST wait for the session and say why; its
   model and mode are the ones it is created with. Commands the app answers
   about the open session (`/clear`, `/restart`, `/statusline`, `/cwd`, `/ask`,
-  `/oracle`, and the resource views) MUST be refused rather than held.
+  `/oracle`, and the resource views), under any of their names, MUST be
+  refused rather than held.
 - Success MUST replace the row with the created session in that place, move the
   draft to it, and hand the held messages to it one at a time, in order, through
   the composer's own send, whether or not it is still open: the first as it was
@@ -535,7 +536,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   delivery is uncertain says so.
 - Failure MUST keep the row, marked as not started, and show the error in the
   starting view with **Try again**, which sends the same request again, and
-  **Discard**, which drops the session with its draft and held messages.
+  **Discard**, which drops the session with its draft and held messages. Every
+  attempt for one start MUST carry the same launch identity where the computer
+  keeps them, so an attempt whose answer was lost yields the session it made
+  rather than a second one.
   Nothing held is ever sent for a session that did not start. A failure while
   the reader is elsewhere or in the New session sheet MUST also be reported
   there. Several sessions MAY start at once, each with its own view, draft, and

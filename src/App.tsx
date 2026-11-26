@@ -592,6 +592,13 @@ function isPendingSessionKey(key: string | undefined): boolean {
   return Boolean(key?.startsWith(pendingSessionPrefix) && !key.includes(':'))
 }
 
+/** Random rather than counted, as a computer never accepts one launch identity twice; works over plain HTTP too. */
+function newLaunchId(): string {
+  const bytes = new Uint8Array(16)
+  globalThis.crypto.getRandomValues(bytes)
+  return `session-start-${[...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+}
+
 /** A held message on its way to the session it was written for. */
 type HeldSubmission = { session: ManagedSession; message: HeldMessage }
 
@@ -4697,7 +4704,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // What each session being started sends, and sends again on Try again.
   const sessionStartRequests = useRef(new Map<string, {
     computerId: string
-    request: () => Promise<ManagedSession>
+    request: (launchId: string | undefined) => Promise<ManagedSession>
+    /** Every attempt's, so one whose answer was lost is found again rather than made twice. */
+    launchId?: string
     /** What follows once it exists, such as putting it in a category. */
     started?: (session: ManagedSession) => void
     /** What was open before it, for Discard to go back to. */
@@ -10907,20 +10916,23 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
    */
   function startSessionCreation(
     creation: Omit<PendingSessionCreation, 'id' | 'before' | 'failure'>,
-    request: () => Promise<ManagedSession>,
+    request: (launchId: string | undefined) => Promise<ManagedSession>,
     started?: (session: ManagedSession) => void,
   ) {
     const id = `${pendingSessionPrefix}${pendingSessionPage}-${++pendingSessionCreationIdRef.current}`
+    const computer = computersRef.current.find((entry) => entry.id === creation.computerId)
+    // Only a computer that keeps launch identities is sent one; any other refuses it.
+    const launchId = computerProviders(computer).find((entry) => entry.id === creation.provider)
+      ?.supportsLaunchIdentity === true ? newLaunchId() : undefined
     sessionStartRequests.current.set(id, {
       computerId: creation.computerId,
       request,
+      launchId,
       started,
       previousKey: selectedKeyStateRef.current,
       inFlight: false,
     })
-    const computerName = computersRef.current.find(
-      (computer) => computer.id === creation.computerId,
-    )?.name ?? creation.computerId
+    const computerName = computer?.name ?? creation.computerId
     setPendingSessionCreations((current) => [
       ...current,
       { ...creation, id, computerName, startedAt: Date.now() },
@@ -10952,7 +10964,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     let session: ManagedSession
     try {
       await turn
-      session = await entry.request()
+      session = await entry.request(entry.launchId)
     } catch (caught) {
       entry.inFlight = false
       finish()
@@ -11077,18 +11089,24 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   function heldMessageRefusal(content: string, starting: boolean): string | undefined {
     const trimmed = content.trim()
     if (!trimmed.startsWith('/')) return undefined
-    const name = trimmed.slice(1).split(/\s+/, 1)[0].toLowerCase()
+    const typed = trimmed.slice(1).split(/\s+/, 1)[0].toLowerCase()
+    if (!typed) return undefined
+    // Known by its name, shortcut or alias, as the send itself knows it.
+    const name = webCommands.find((candidate) =>
+      candidate.name.toLowerCase() === typed ||
+      slashShortcut(candidate.name) === typed ||
+      candidate.aliases?.some((alias) => alias.toLowerCase() === typed))?.name ?? typed
     const local = Boolean(
       sessionResourceCommand(content) ||
       sideQuestionCommand(content) ||
       oracleCommand(content),
     ) ||
       ['statusline', 'clear', 'restart'].includes(name) ||
-      (name === 'cwd' && !trimmed.slice(name.length + 1).trim())
+      (name === 'cwd' && !trimmed.slice(typed.length + 1).trim())
     if (!local) return undefined
     return starting
-      ? `Wait for the session to start before using /${name}.`
-      : `Wait for the held messages to be sent before using /${name}.`
+      ? `Wait for the session to start before using /${typed}.`
+      : `Wait for the held messages to be sent before using /${typed}.`
   }
 
   /** Holds what the composer has for a session that cannot take it yet. */
@@ -13733,7 +13751,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         executionMode: terminalBacked ? 'tmux' : 'sdk',
         provider,
       },
-      async () => {
+      async (launchId) => {
         // As in New session, a configured model is checked against the ones
         // the provider offers on that computer.
         const models = runtime.model.trim()
@@ -13745,6 +13763,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           terminalBacked,
           allowAllPermissions: true,
           ...newSessionRuntimeInput(runtime, models),
+          ...(launchId ? { launchId } : {}),
         })
       },
       (session) => changeCategories(
@@ -15066,7 +15085,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               resumeHeldDelivery(current, followReplacementsRef.current(selectedKey)))}
             selectedRetained={selectedRetained}
             selectedQueueHeadIsSteering={selectedQueueHeadIsSteering}
-            selectedQueueAvailable={selectedQueueAvailable}
+            // A message for a session that is starting can be queued behind the turn it starts.
+            selectedQueueAvailable={selected ? selectedQueueAvailable : true}
             foregroundTurnActive={selectedForegroundTurnActive}
             selectedComputerOnline={selectedComputerOnline}
             supportsQueuedPromptDispatch={selectedProviderCapability?.supportsQueuedPromptDispatch === true}

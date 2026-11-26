@@ -196,7 +196,7 @@ export function ComposerActions({
           disabled={!composer.trim() || sending || transcribing || uploadingFile ||
             Boolean(queueActionId) || Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
           onClick={() => onSubmitMessage(true)}
-          title={`Queue for later delivery${shortcut('Ctrl/⌘+Enter')}`}
+          title={`${startingSession ? 'Queue once the session has started' : 'Queue for later delivery'}${shortcut('Ctrl/⌘+Enter')}`}
           type="button"
         >
           <ListPlus size={17} />

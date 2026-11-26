@@ -63,10 +63,10 @@ export function NewSessionDialog({
   defaultBackend: NewSessionBackendSetting
   creationError?: string
   onClose: () => void
-  /** Starts it: the app opens it at once and sends `request` for it. */
+  /** Starts it: the app opens it at once and sends `request` for it, under one launch identity if it has one. */
   onCreating: (
     creation: Omit<PendingSessionCreation, 'id' | 'before' | 'failure'>,
-    request: () => Promise<ManagedSession>,
+    request: (launchId: string | undefined) => Promise<ManagedSession>,
   ) => void
   /** A previous session opened again. */
   onCreated: (session: ManagedSession) => void
@@ -310,7 +310,7 @@ export function NewSessionDialog({
         // The app sends it, and sends it again as it was on Try again.
         onCreating(
           { computerId, cwd, executionMode: createInTmux ? 'tmux' : 'sdk', provider },
-          () => createSession(computerId, input),
+          (launchId) => createSession(computerId, launchId ? { ...input, launchId } : input),
         )
       } else {
         const previous = history.find(

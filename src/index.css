@@ -3303,14 +3303,6 @@ button {
   margin-top: 22px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  /* Still and plainly visible; the heading and the time say it is going on. */
-  .session-start__dots i {
-    animation: none;
-    opacity: 0.8;
-  }
-}
-
 .primary-button,
 .secondary-button {
   display: inline-flex;
@@ -9477,6 +9469,12 @@ button {
 
   .manager-conversation-status__activity {
     animation: none !important;
+  }
+
+  /* Still and plainly visible; the heading and the time say it is going on. */
+  .session-start__dots i {
+    animation: none;
+    opacity: 0.8;
   }
 }
 

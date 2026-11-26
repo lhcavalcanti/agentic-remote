@@ -41,7 +41,6 @@ import {
 import type {
   DefaultRuntimeSettings,
   DefaultSessionFolders,
-  SessionCreationHandle,
 } from './types'
 
 export function NewSessionDialog({
@@ -54,7 +53,6 @@ export function NewSessionDialog({
   creationError,
   onClose,
   onCreating,
-  onCreationFailed,
   onCreated,
 }: {
   open: boolean
@@ -65,17 +63,13 @@ export function NewSessionDialog({
   defaultBackend: NewSessionBackendSetting
   creationError?: string
   onClose: () => void
+  /** Starts it: the app opens it at once and sends `request` for it. */
   onCreating: (
-    creation: Omit<PendingSessionCreation, 'id'>,
-  ) => SessionCreationHandle
-  onCreationFailed: (
-    creation: SessionCreationHandle,
-    message: string,
+    creation: Omit<PendingSessionCreation, 'id' | 'before' | 'failure'>,
+    request: () => Promise<ManagedSession>,
   ) => void
-  onCreated: (
-    session: ManagedSession,
-    creation?: SessionCreationHandle,
-  ) => void
+  /** A previous session opened again. */
+  onCreated: (session: ManagedSession) => void
 }) {
   const [computerId, setComputerId] = useState('')
   const [provider, setProvider] = useState<AgentProvider>(DEFAULT_SESSION_PROVIDER)
@@ -290,7 +284,6 @@ export function NewSessionDialog({
     const submittedGeneration = dialogGeneration.current
     setSubmitting(true)
     setError(undefined)
-    let pendingCreation: SessionCreationHandle | undefined
     try {
       if (
         !available.some((computer) => computer.id === computerId) ||
@@ -307,27 +300,18 @@ export function NewSessionDialog({
           ).find((entry) => entry.id === provider)?.terminalBacked === true
             ? terminalBacked
             : false
-        pendingCreation = onCreating({
-          computerId,
+        const input = {
           cwd,
-          executionMode: createInTmux ? 'tmux' : 'sdk',
           provider,
-        })
-        setSubmitting(false)
-        await pendingCreation.turn
-        onCreated(
-          await createSession(computerId, {
-            cwd,
-            provider,
-            terminalBacked: createInTmux,
-            allowAllPermissions,
-            ...newSessionRuntimeInput(defaultRuntimes[provider], providerRuntimeModels),
-          }),
-          pendingCreation,
-        )
-        if (dialogGeneration.current === submittedGeneration) {
-          setCwd('')
+          terminalBacked: createInTmux,
+          allowAllPermissions,
+          ...newSessionRuntimeInput(defaultRuntimes[provider], providerRuntimeModels),
         }
+        // The app sends it, and sends it again as it was on Try again.
+        onCreating(
+          { computerId, cwd, executionMode: createInTmux ? 'tmux' : 'sdk', provider },
+          () => createSession(computerId, input),
+        )
       } else {
         const previous = history.find(
           (session) =>
@@ -346,11 +330,8 @@ export function NewSessionDialog({
         }
       }
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught)
-      if (pendingCreation) {
-        onCreationFailed(pendingCreation, message)
-      } else if (dialogGeneration.current === submittedGeneration) {
-        setError(message)
+      if (dialogGeneration.current === submittedGeneration) {
+        setError(caught instanceof Error ? caught.message : String(caught))
       }
     } finally {
       if (dialogGeneration.current === submittedGeneration) {

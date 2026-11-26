@@ -2364,8 +2364,25 @@ button {
   cursor: wait;
 }
 
+/* The row opens the session it stands for, starting or not. */
+.session-item--creating > .session-item__open {
+  grid-column: 1 / -1;
+}
+
 .session-item--creating .session-item__text {
   grid-column: 1 / -1;
+}
+
+/* Open, it has the bars every open row has; one that could not start says so
+   on its leading edge as well as in words. */
+.session-item--creating.session-item--active {
+  border-left-color: var(--session-edge);
+}
+
+.session-item--creation-failed,
+.session-item--creation-failed:hover {
+  border-left-color: var(--danger);
+  cursor: default;
 }
 
 .session-creation-dots {
@@ -2415,36 +2432,42 @@ button {
 
 .computer-session-group--tone-0,
 .session-item--tone-0,
+.session-start--tone-0,
 .recently-closed-card--tone-0 {
   --computer-accent: #6ea8fe;
 }
 
 .computer-session-group--tone-1,
 .session-item--tone-1,
+.session-start--tone-1,
 .recently-closed-card--tone-1 {
   --computer-accent: #9b8afb;
 }
 
 .computer-session-group--tone-2,
 .session-item--tone-2,
+.session-start--tone-2,
 .recently-closed-card--tone-2 {
   --computer-accent: #e7a45f;
 }
 
 .computer-session-group--tone-3,
 .session-item--tone-3,
+.session-start--tone-3,
 .recently-closed-card--tone-3 {
   --computer-accent: #55bfa7;
 }
 
 .computer-session-group--tone-4,
 .session-item--tone-4,
+.session-start--tone-4,
 .recently-closed-card--tone-4 {
   --computer-accent: #db7fa8;
 }
 
 .computer-session-group--tone-5,
 .session-item--tone-5,
+.session-start--tone-5,
 .recently-closed-card--tone-5 {
   --computer-accent: #c9b85f;
 }
@@ -3146,6 +3169,146 @@ button {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.6;
+}
+
+/* A session being started fills the conversation the way the empty one it
+   becomes does, so its arrival changes the words, not the layout. Its dots
+   are the ones on its row, larger, in the colour of the computer it is on. */
+.session-start {
+  --computer-accent: #788075;
+  display: flex;
+  max-width: 480px;
+  min-height: 100%;
+  margin: auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.session-start__state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.session-start__dots {
+  display: inline-flex;
+  height: 48px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.session-start__dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--computer-accent);
+  animation: session-start-flow 1.2s ease-in-out infinite;
+}
+
+.session-start__dots i:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.session-start__dots i:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes session-start-flow {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-5px);
+  }
+}
+
+.session-start h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(22px, 4vw, 30px);
+  font-weight: 590;
+  letter-spacing: -0.035em;
+}
+
+.session-start__state p {
+  max-width: 420px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.session-start strong {
+  color: var(--text);
+  font-weight: 620;
+}
+
+.session-start code {
+  color: var(--muted-strong);
+  overflow-wrap: anywhere;
+}
+
+.session-start__elapsed {
+  margin: 14px 0 0;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.session-start__note {
+  max-width: 36ch;
+  margin-top: 22px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.session-start__mark {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 18px;
+  place-items: center;
+  color: var(--danger);
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.session-start__state .session-start__error {
+  margin-top: 14px;
+  padding: 8px 12px;
+  color: var(--error-banner-text, #ffd5cd);
+  border: 1px solid rgba(239, 129, 111, 0.35);
+  border-radius: 10px;
+  background: rgba(239, 129, 111, 0.08);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.session-start__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still and plainly visible; the heading and the time say it is going on. */
+  .session-start__dots i {
+    animation: none;
+    opacity: 0.8;
+  }
 }
 
 .primary-button,
@@ -4701,6 +4864,42 @@ button {
   border-bottom: 0;
 }
 
+/* Waiting for its session, in the order it will be sent; there is nothing
+   to reorder by, so no handle. */
+.held-messages__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queued-prompt--held {
+  grid-template-columns: minmax(0, 1fr) 30px 30px;
+  padding-left: 10px;
+}
+
+/* Being handed over: it stays in sight until the session has it. */
+.queued-prompt--sending .queued-prompt__text {
+  color: var(--muted);
+}
+
+.held-messages__failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  color: var(--error-banner-text, #ffd5cd);
+  border-bottom: 1px solid var(--border);
+  background: rgba(239, 129, 111, 0.08);
+  font-size: 11.5px;
+}
+
+.held-messages__failure span {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .queued-prompt__text {
   display: -webkit-box;
   overflow: hidden;
@@ -5194,6 +5393,13 @@ button {
 .conversation-header__cwd:focus-visible {
   color: var(--text);
   text-decoration: underline;
+}
+
+/* A session still starting has no folder to browse yet. */
+.conversation-header__cwd--pending,
+.conversation-header__cwd--pending:hover {
+  cursor: default;
+  text-decoration: none;
 }
 
 /* The heading and the running count stay put; only the tasks move. The whole
@@ -9052,6 +9258,10 @@ button {
     padding-block: 0;
   }
 
+  .queued-prompt--held {
+    grid-template-columns: minmax(0, 1fr) 40px 40px;
+  }
+
   .queued-prompt .icon-button {
     width: 40px;
     height: 40px;
@@ -9168,7 +9378,8 @@ button {
   }
 
   .empty-state,
-  .empty-chat {
+  .empty-chat,
+  .session-start {
     justify-content: flex-start;
     padding-top: 18vh;
   }

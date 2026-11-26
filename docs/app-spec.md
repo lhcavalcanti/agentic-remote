@@ -192,9 +192,10 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   New session sheet would start there by default (§3.2): Copilot, in tmux
   unless App settings chooses the SDK, every permission allowed, and App
   settings' model, effort, context size, and mode. It MUST say under its name
-  where the session will start, go through the same pending row and selection
-  as a session the sheet starts, and put the session in the category once it
-  exists. It MUST be disabled, saying why, while the category lists no session,
+  where the session will start, open it at once through the same starting view,
+  pending row, and selection as a session the sheet starts, and put the session
+  in the category once it exists, including after Try again. It MUST be
+  disabled, saying why, while the category lists no session,
   or while that computer is offline or lacks Copilot. A hub MUST list a
   session it creates in its custom order before answering, trying a seat it
   could not save once more, so the session can go into a category at once; a
@@ -503,17 +504,46 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   computer and MUST NOT store or expose provider credentials or implement a
   Claude subscription login flow.
 - Submitting a valid new session MUST close the creation sheet immediately and
-  show a noninteractive pending row in the owning computer group until creation
-  finishes. The row MUST stand where the created session will appear in the
-  current sort and be scrolled into view; in Custom order that is the end of
-  its computer's lane. Creations on one computer MUST be sent in submission
-  order, each after the previous one settles, so each finishes where its row
-  stood. The row MUST identify the provider, execution mode, folder, and
-  creation state without relying on motion alone. Success MUST replace it with
-  the created session in that place; failure MUST remove it and surface the
-  error in the active sheet, drawer, or conversation. An older creation
-  response MUST NOT close or reset a newer sheet, re-enable its submission, or
-  steal selection from newer navigation or creation intent.
+  open the session at once as the main view, before it exists, with a starting
+  screen that names its provider, execution mode, computer, folder, and the
+  time elapsed, announced politely; on a phone the drawer closes. A pending row
+  in the owning computer group MUST stand where the created session will appear
+  in the current sort and be scrolled into view; in Custom order that is the
+  end of its computer's lane. The row MUST identify the provider, execution
+  mode, folder, and creation state without relying on motion alone, show as
+  selected while its view is open, and open that view. Creations on one
+  computer MUST be sent in submission order, each after the previous one
+  settles, so each finishes where its row stood. A starting session MUST NOT be
+  written to the address, which keeps naming what was open before it until the
+  created session replaces the view and is pushed.
+- While it starts, its composer MUST be focused and usable and keep a draft of
+  its own. Send and Queue MUST hold what they submit as visible items ("Will
+  send when the session starts") that can be edited, which takes one back into
+  the composer and returns it to its place when it is held again, or removed.
+  Attaching files and recording MUST wait for the session and say why; its
+  model and mode are the ones it is created with. Commands the app answers
+  about the open session (`/clear`, `/restart`, `/statusline`, `/cwd`, `/ask`,
+  `/oracle`, and the resource views) MUST be refused rather than held.
+- Success MUST replace the row with the created session in that place, move the
+  draft to it, and hand the held messages to it one at a time, in order, through
+  the composer's own send, whether or not it is still open: the first as it was
+  sent, later ones queued behind the turn it starts. Until each is handed over,
+  messages sent there are held behind them. The created session MUST take the
+  place of its starting view only while that view is open; a reader who has
+  gone elsewhere stays there. A held message the session refuses MUST stay
+  first in line, with those behind it, saying why, until Try again; one whose
+  delivery is uncertain says so.
+- Failure MUST keep the row, marked as not started, and show the error in the
+  starting view with **Try again**, which sends the same request again, and
+  **Discard**, which drops the session with its draft and held messages.
+  Nothing held is ever sent for a session that did not start. A failure while
+  the reader is elsewhere or in the New session sheet MUST also be reported
+  there. Several sessions MAY start at once, each with its own view, draft, and
+  held messages. A reload loses a session still starting, with its draft and
+  held messages, which only the page keeps; a message being handed over at
+  that moment comes back to its session's composer as unconfirmed. An older
+  creation response MUST NOT close or reset a newer sheet or re-enable its
+  submission.
 
 ### 3.3 Rename, restart, recover, clear, and delete
 

@@ -61,6 +61,8 @@ export type PendingSessionCreation = Pick<
   id: string
   /** The shown session the created one will precede; absent when it lands last. */
   before?: string
+  /** Why it could not start. It stays listed until it is tried again or discarded. */
+  failure?: string
 }
 
 const sessionListScrollStorageKey = 'agentic-remote:session-list-scroll-v1'
@@ -68,6 +70,8 @@ const sessionListScrollStorageKey = 'agentic-remote:session-list-scroll-v1'
 type SessionActions = {
   onOpenScheduleRun?: (target: ScheduleLink) => void
   onSelectSession: (session: ManagedSession) => void
+  /** Opens a session that is still being started, by its pending id. */
+  onSelectPendingCreation?: (id: string) => void
   onOpenSessionTasks: (session: ManagedSession) => void
   onCloseSession: (session: ManagedSession) => void
   /** `computerId:sessionId` of the sessions whose close is in flight. */
@@ -105,12 +109,17 @@ function PendingSessionItem({
   creation,
   computerName,
   position,
+  selected,
+  onSelect,
 }: {
   creation: PendingSessionCreation
   computerName: string
   position: number
+  selected: boolean
+  onSelect?: (id: string) => void
 }) {
-  const description = `Creating ${providerName(creation.provider)} session on ${computerName} in ${creation.cwd}`
+  const what = `${providerName(creation.provider)} session on ${computerName} in ${creation.cwd}`
+  const description = creation.failure ? `Could not create ${what}` : `Creating ${what}`
   const rowRef = useRef<HTMLDivElement>(null)
   // Its place can be below the visible part of a long list, and a new sort or
   // another session arriving can move it there.
@@ -121,34 +130,52 @@ function PendingSessionItem({
     <div
       ref={rowRef}
       aria-label={description}
-      className={`session-item session-item--creating session-item--tone-${computerTone(
+      className={`session-item session-item--creating${
+        creation.failure ? ' session-item--creation-failed' : ''
+      }${selected ? ' session-item--active' : ''} session-item--tone-${computerTone(
         creation.computerId,
       )}`}
       role="status"
-      title={description}
+      title={creation.failure ? `${description}: ${creation.failure}` : description}
     >
-      <span className="session-item__text">
-        <span className="session-item__badges">
-          <em className="provider-badge">
-            {creation.provider === 'claude' ? 'Claude' : 'Copilot'}
-          </em>
-          <em className="provider-badge session-mode-badge">
-            {executionModeName(creation.executionMode)}
-          </em>
-          <span className="session-state session-state--running">
-            <span aria-hidden="true" className="session-creation-dots">
-              <i className="session-creation-dot" />
-              <i className="session-creation-dot" />
-              <i className="session-creation-dot" />
-            </span>
-            Creating
+      {/* It opens as the main view, where it can be written to while it starts. */}
+      <button
+        aria-current={selected ? 'page' : undefined}
+        aria-label={description}
+        className="session-item__open"
+        onClick={() => onSelect?.(creation.id)}
+        type="button"
+      >
+        <span className="session-item__text">
+          <span className="session-item__badges">
+            <em className="provider-badge">
+              {creation.provider === 'claude' ? 'Claude' : 'Copilot'}
+            </em>
+            <em className="provider-badge session-mode-badge">
+              {executionModeName(creation.executionMode)}
+            </em>
+            {creation.failure ? (
+              <span className="session-state session-state--error">
+                <span aria-hidden="true" className="status-dot status-dot--error" />
+                Failed
+              </span>
+            ) : (
+              <span className="session-state session-state--running">
+                <span aria-hidden="true" className="session-creation-dots">
+                  <i className="session-creation-dot" />
+                  <i className="session-creation-dot" />
+                  <i className="session-creation-dot" />
+                </span>
+                Creating
+              </span>
+            )}
           </span>
+          <strong>{creation.failure ? 'Couldn’t start' : 'Creating session'}</strong>
+          <small className="session-item__where">
+            <span className="session-item__cwd">{shortPath(creation.cwd)}</span>
+          </small>
         </span>
-        <strong>Creating session</strong>
-        <small className="session-item__where">
-          <span className="session-item__cwd">{shortPath(creation.cwd)}</span>
-        </small>
-      </span>
+      </button>
     </div>
   )
 }
@@ -480,7 +507,9 @@ function SortableComputerGroup({
                 computerName={computer.name}
                 creation={row.creation}
                 key={row.creation.id}
+                onSelect={actions.onSelectPendingCreation}
                 position={position}
+                selected={row.creation.id === selectedKey}
               />
             ) : (
               <SortableSessionItem

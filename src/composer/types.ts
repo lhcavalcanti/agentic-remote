@@ -10,6 +10,7 @@ import type {
 } from 'react'
 import type { DndContext, DragEndEvent } from '@dnd-kit/core'
 import type { AgentProviderCapability, ManagedSession, QueuedPrompt, SlashCommand } from '../../shared/contracts'
+import type { HeldQueue } from '../held-messages'
 import type { SessionResourceTab } from '../session-resource-commands'
 
 export type ComposerAttachment = {
@@ -100,4 +101,14 @@ export type ComposerProps = {
   /** Reads the page of messages before the ones the session holds. */
   onLoadEarlierMessages?: () => void
   loadingEarlierMessages?: boolean
+  /**
+   * The session is still being started: what is sent is held for it, and
+   * what needs the session itself, such as attaching a file, waits.
+   */
+  startingSession?: boolean
+  /** Messages held until the session can take them, and what can be done with them. */
+  heldQueue?: HeldQueue
+  onEditHeldMessage?: (id: string) => void
+  onRemoveHeldMessage?: (id: string) => void
+  onRetryHeldMessages?: () => void
 }

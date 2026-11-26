@@ -11,6 +11,7 @@ import { OracleModelSettings, OracleSettingsStatus } from '../OracleSettings'
 import { PreviewFeaturesSettings } from '../PreviewFeaturesSettings'
 import { SchedulerPermissionSettings } from './SchedulerPermissionSettings'
 import { openShellSettings, shellSettingsAvailable } from '../shell'
+import { runningAppVersion } from '../pwa'
 import { DefaultRuntimeControls, DefaultSessionFolderControl, SettingScope, ShortcutEditor } from './controls'
 import { accentThemes, appearanceOptions, notificationScopeOptions } from './options'
 import { StatuslineControls, statuslineOptions } from './StatuslineControls'
@@ -588,7 +589,7 @@ export const navigableSettingsSections: readonly SettingsSection[] = [
           <section className="app-settings-section">
             <h4>App updates</h4>
             <p className="dialog-message">
-              Version {__APP_VERSION__}. Updates are checked automatically when the
+              Version {runningAppVersion()?.version ?? 'unknown'}. Updates are checked automatically when the
               app opens and returns to the foreground.
             </p>
             {updateRegistration ? (

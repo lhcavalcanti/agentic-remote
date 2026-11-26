@@ -1519,7 +1519,7 @@
     "src/html-preview.ts": "81ec3b5dd35c9398adcdab616da39b07af78278f85bbe7489c0ccd5e4d213c64",
     "src/hub-reachability.ts": "39d2789075d58fd20585eeb706bdeabefba6f507c2d28764ebeb4f5b7e99e3cd",
     "src/hub-sign-in.ts": "bb68abb53da257f7c544d3824934d97768e110009412ea3d1a91d9202580d976",
-    "src/index.css": "bac6d4f27e67e626fcb99591abee2639a52e7ae56862decb2b0a377ed13f98a3",
+    "src/index.css": "6b3e0b73cbabc3d8fe3afa39103dee3ae5a306bbf2f25b4822ec5b57c5992713",
     "src/knowledge-position.ts": "9e20ab8625c0c8b480509cfb40315edcd6833ae9c75f799e49da4f8639b22bf9",
     "src/knowledge-restore.test.ts": "7cda20b7eb1aee62312f77c4f422e3fc118ca10d7d62eeef47da9f44bdaa7506",
     "src/knowledge-restore.ts": "8bfef84aea981ff661bf03d86bb237a069f4a1bcfe7062b35a230906abcc7d31",
@@ -1937,13 +1937,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "48807c0f1065f32ea8a85b97395251574f7419ce8eef81447d6b64f83d74fcc2",
+    "GRAPH_REPORT.md": "52dd997194aae44499139c76fc7f23ec4c4ac91421caff2707a5a76049efc5db",
     "communities.json": "3cc1badf3d68c1b7f62771af16e33e35ba8536f4bc81bf005bd9c34ae107ed25",
-    "graph.html": "0c699f6b4c7689d0613b2fc54263d7c3a10804345bcd04e912c47f485b86806e",
-    "graph.json": "0551e56e63bbd2108b72277aa90c094015b6ad7cf8250358e429f6d3bcde3a47"
+    "graph.html": "129cf9ec7a365aed821d468b8b53af4f6f378e9edd64659da2008ea75a7e8d0e",
+    "graph.json": "b8d916662abca8ec00bca2a9a539bee6f0b3a31fadb541c7cc1fa1e0d54b5ec3"
   },
   "schema_version": 1,
-  "source_commit": "1f02ebfed0660648e9d554091641c9a30ff7c150",
-  "source_fingerprint": "18c969f5fd9a5d8a7fcc6c6d60a156ce276593472468a6695ada5a224cf648f6",
+  "source_commit": "f5307d4345493401f14bf57e4ea8724b83bfd7cb",
+  "source_fingerprint": "b927546c835f23cf5e9c94183ec82c4daf59a68249c8563e391e8f3d1900bdfd",
   "working_tree_changes": []
 }

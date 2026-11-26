@@ -13939,7 +13939,9 @@ describe('App', () => {
 
       send('First message')
       write('Second message')
-      fireEvent.keyDown(message(), { key: 'Enter', ctrlKey: true })
+      const queue = screen.getByRole('button', { name: 'Queue message' })
+      expect(queue).toHaveAttribute('title', 'Queue once the session has started (Ctrl/⌘+Enter)')
+      fireEvent.click(queue)
 
       expect(screen.getByRole('region', { name: 'Held messages' }))
         .toHaveTextContent('Will send when the session starts')
@@ -14079,6 +14081,8 @@ describe('App', () => {
 
       await waitFor(() => expect(createSession).toHaveBeenCalledTimes(2))
       expect(vi.mocked(createSession).mock.calls[1]).toEqual(vi.mocked(createSession).mock.calls[0])
+      // A computer that does not say it keeps launch identities would refuse one.
+      expect(vi.mocked(createSession).mock.calls[0][1]).not.toHaveProperty('launchId')
       expect(within(main).getByRole('status', { name: 'Starting session' })).toBeInTheDocument()
       expect(within(main).queryByRole('alert')).toBeNull()
       expect(sendMessage).not.toHaveBeenCalled()
@@ -14092,6 +14096,54 @@ describe('App', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: /^Fresh session,/ }))
         .toHaveAttribute('aria-current', 'page'))
       expect(message()).toHaveValue('Draft through it')
+    })
+
+    it('starts under one launch identity, so Try again after a lost answer finds the session it made', async () => {
+      vi.mocked(listComputers).mockResolvedValue([{
+        ...computer,
+        providers: computer.providers?.map((provider) => ({ ...provider, supportsLaunchIdentity: true })),
+      }])
+      const first = slowCreation()
+      const second = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      send('Held through it')
+
+      await first.fail('Failed to fetch')
+      fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Try again' }))
+
+      await waitFor(() => expect(createSession).toHaveBeenCalledTimes(2))
+      const [[, firstInput], [, retryInput]] = vi.mocked(createSession).mock.calls
+      expect(firstInput.launchId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+      expect(retryInput).toEqual(firstInput)
+
+      await second.finish(started())
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+
+      // Another start is another launch.
+      slowCreation()
+      await startSession()
+      await waitFor(() => expect(createSession).toHaveBeenCalledTimes(3))
+      expect(vi.mocked(createSession).mock.calls[2][1].launchId).toMatch(/^[A-Za-z0-9]/)
+      expect(vi.mocked(createSession).mock.calls[2][1].launchId).not.toBe(firstInput.launchId)
+    })
+
+    it('refuses a command the app answers, under any of its names, rather than holding it', async () => {
+      slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+
+      for (const command of ['/footer', '/clear']) {
+        send(command)
+        expect(within(screen.getByRole('main')).getByRole('alert'))
+          .toHaveTextContent(`Wait for the session to start before using ${command}.`)
+        expect(message()).toHaveValue(command)
+      }
+      expect(screen.queryByRole('region', { name: 'Held messages' })).toBeNull()
     })
 
     it('discards a session that could not start, with everything written for it', async () => {

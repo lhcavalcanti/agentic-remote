@@ -9,6 +9,7 @@ import type {
   ComputerSummary,
   ManagedSession,
 } from '../shared/contracts'
+import type { CollapsedCategoryShows } from '../shared/session-categories'
 import { SessionNavigation, type PendingSessionCreation } from './SessionNavigation'
 import { useSessionListSensors } from './session-list-sensors'
 import type { SessionSort } from './session-presentation'
@@ -107,8 +108,10 @@ function NavigationHarness({
   onOpenRecentlyClosed,
   onRefresh,
   categories,
+  collapsedShows,
 }: {
   categories?: CategorizedSessions['categories']
+  collapsedShows?: CollapsedCategoryShows
   sessions?: Map<string, ManagedSession[]>
   sort?: SessionSort
   computerList?: ComputerSummary[]
@@ -170,7 +173,7 @@ function NavigationHarness({
           filter,
           { keys: hidden, shown: showHidden },
           unread,
-          categories ? { categories, selectedKey: 'studio:review' } : undefined,
+          categories ? { categories, selectedKey: 'studio:review', collapsedShows } : undefined,
         )}
         categoryActions={categories ? categoryActions : undefined}
         query={query}
@@ -1052,6 +1055,37 @@ describe('session categories in the list', () => {
     expect(homelab.querySelector('.session-category__ring')).not.toBeNull()
 
     fireEvent.click(within(homelab).getByRole('button', { name: 'Show 2 more sessions in Homelab' }))
+    expect(categoryActions.onToggleCategory).toHaveBeenCalledWith('lab', false)
+  })
+
+  it('keeps nothing below a closed category showing counts only, and marks it when the open session is inside', () => {
+    const quiet = { ...worker, id: 'quiet', title: 'Quiet work' }
+    const busy = { ...worker, id: 'busy', title: 'Busy work', status: 'running' as const }
+    const away = { category: { id: 'away', name: 'Away', collapsed: true, sessions: ['worker:quiet'] }, sessions: [quiet] }
+    render(<NavigationHarness
+      categories={[lab([session, question, busy, worker], true), away]}
+      collapsedShows="none"
+      initialUnread={['worker:build']}
+      sessions={new Map([['studio', [session, question]], ['worker', [quiet, busy, worker]], ['travel', []]])}
+    />)
+
+    const homelab = sectionNamed('Homelab')
+    const toggle = within(homelab).getByRole('button', {
+      name: 'Homelab, 1 needs you, 1 unread, working, 4 sessions, open session inside',
+    })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(homelab).toHaveClass('session-category--holds-selected')
+    // Nothing below the header, the open session included; the header counts them all.
+    expect(homelab.querySelectorAll('.session-item, .session-category__more')).toHaveLength(0)
+    expect(within(toggle).getByText('4')).toBeVisible()
+    expect(homelab.querySelector('.session-category__signal--attention')).toHaveTextContent('1')
+    expect(homelab.querySelector('.session-category__signal--unread')).toHaveTextContent('1')
+    expect(homelab.querySelector('.session-category__ring')).not.toBeNull()
+
+    const quietToggle = within(sectionNamed('Away')).getByRole('button', { name: 'Away, 1 session' })
+    expect(sectionNamed('Away')).not.toHaveClass('session-category--holds-selected')
+    expect(within(quietToggle).getByText('1')).toBeVisible()
+    fireEvent.click(toggle)
     expect(categoryActions.onToggleCategory).toHaveBeenCalledWith('lab', false)
   })
 

@@ -22,6 +22,22 @@ export interface SessionCategory {
 }
 
 /**
+ * What a collapsed category keeps in sight below its header: up to three of
+ * its sessions that need you or are unread, needs you first, and the open
+ * session; only those that need you, and the open session; or nothing, its
+ * header's counts alone.
+ */
+export const COLLAPSED_CATEGORY_SHOWS = ['attention-unread', 'attention', 'none'] as const
+
+export type CollapsedCategoryShows = typeof COLLAPSED_CATEGORY_SHOWS[number]
+
+export const DEFAULT_COLLAPSED_CATEGORY_SHOWS: CollapsedCategoryShows = 'attention-unread'
+
+export function isCollapsedCategoryShows(value: unknown): value is CollapsedCategoryShows {
+  return (COLLAPSED_CATEGORY_SHOWS as readonly unknown[]).includes(value)
+}
+
+/**
  * Every category on the hub, in display order. `revision` is the hub's
  * authority: a browser applies a snapshot only when it is at least as new as
  * the one it holds, and a write names the revision it was made against.
@@ -29,6 +45,11 @@ export interface SessionCategory {
 export interface SessionCategoriesSnapshot {
   revision: number
   categories: SessionCategory[]
+  /**
+   * What a collapsed category keeps in sight, once someone has chosen; until
+   * then, and from a hub that predates the choice, the default.
+   */
+  collapsedShows?: CollapsedCategoryShows
 }
 
 export type SessionCategoryChange =

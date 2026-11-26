@@ -1,5 +1,6 @@
 import type { ComputerSummary } from '../../shared/contracts'
 import type { NotificationScope } from '../../shared/notifications'
+import type { CollapsedCategoryShows } from '../../shared/session-categories'
 import type { AppearanceSetting, NewSessionBackendSetting, OracleResponseStyle } from '../../shared/settings-profile'
 import type { ShortcutBinding, ShortcutDefinition, ShortcutId } from '../app-shortcuts'
 import type { SettingsProfileState } from '../settings-profile'
@@ -56,6 +57,11 @@ export type AppSettingsDialogProps = {
   onSchedulerAllowAllForOracleChange?: (allowed: boolean) => void
   statusline: StatuslineSettings
   onStatuslineChange: (settings: StatuslineSettings) => void
+  /** What a collapsed category keeps in sight, kept on the hub with its categories. */
+  collapsedCategoryShows: CollapsedCategoryShows
+  /** Why the hub cannot keep that choice now, if it cannot. */
+  collapsedCategoryShowsUnavailable?: string
+  onCollapsedCategoryShowsChange: (value: CollapsedCategoryShows) => void
   shortcuts: ShortcutDefinition[]
   shortcutOverrides: Partial<Record<ShortcutId, ShortcutBinding>>
   onShortcutsChange: (

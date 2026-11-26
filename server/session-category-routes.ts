@@ -3,6 +3,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import type { HubEvent } from '../shared/contracts.js'
 import {
+  COLLAPSED_CATEGORY_SHOWS,
   SESSION_CATEGORY_NAME_MAX_LENGTH,
   type SessionCategoriesSnapshot,
   type SessionCategoryChange,
@@ -36,6 +37,11 @@ const updateSchema = z.object({
 )
 
 const deleteSchema = z.object({ revision: z.coerce.number().int().min(0) })
+
+const settingsSchema = z.object({
+  revision,
+  collapsedShows: z.enum(COLLAPSED_CATEGORY_SHOWS),
+}).strict()
 
 const moveSchema = z.object({
   revision,
@@ -142,6 +148,12 @@ export function registerSessionCategoryRoutes(
   })
 
   app.get('/api/session-categories', async () => ({ sessionCategories: requireStore().snapshot() }))
+
+  // What a collapsed category keeps in sight, for every browser.
+  app.patch('/api/session-categories', async (request) => {
+    const input = parse(settingsSchema, request.body)
+    return { sessionCategories: await requireStore().setCollapsedShows(input.revision, input.collapsedShows) }
+  })
 
   app.post('/api/session-categories', async (request) => {
     const input = parse(createSchema, request.body)

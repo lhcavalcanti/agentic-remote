@@ -1,6 +1,10 @@
 import { defaultHubFeatureFlags, type HubFeatureFlags } from '../shared/feature-flags'
 import type { HubHealth } from '../shared/hub-health'
-import type { SessionCategoriesSnapshot, SessionCategoryChange } from '../shared/session-categories'
+import type {
+  CollapsedCategoryShows,
+  SessionCategoriesSnapshot,
+  SessionCategoryChange,
+} from '../shared/session-categories'
 import { skillSettingsSchema, type SkillSettingsSnapshot, type SkillToggle } from '../shared/skill-settings'
 
 export async function listComputerSkills(computerId: string, signal?: AbortSignal): Promise<SkillSettingsSnapshot> {
@@ -520,6 +524,18 @@ export async function saveSessionCategoryChange(
         sessions: sessionRefs(change.sessions),
       })
   }
+}
+
+/** Chooses what a collapsed category keeps in sight, for every browser, against the revision this one holds. */
+export async function saveCollapsedCategoryShows(
+  revision: number,
+  collapsedShows: CollapsedCategoryShows,
+): Promise<SessionCategoriesSnapshot> {
+  const response = await request<{ sessionCategories: SessionCategoriesSnapshot }>('/api/session-categories', {
+    method: 'PATCH',
+    body: JSON.stringify({ revision, collapsedShows }),
+  })
+  return response.sessionCategories
 }
 
 /** Asks the hub something cheap only to learn whether the gateway still lets requests through. */

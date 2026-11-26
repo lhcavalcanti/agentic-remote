@@ -90,6 +90,7 @@ import {
   bootstrapSessionOrder,
   fetchSessionCategories,
   saveSessionCategoryChange,
+  saveCollapsedCategoryShows,
   fetchSettingsProfile,
   saveSettingsChanges,
   importSettingsProfile,
@@ -288,6 +289,7 @@ vi.mock('./api', async (importOriginal) => ({
   bootstrapSessionOrder: vi.fn(),
   fetchSessionCategories: vi.fn(),
   saveSessionCategoryChange: vi.fn(),
+  saveCollapsedCategoryShows: vi.fn(),
   fetchSettingsProfile: vi.fn(),
   saveSettingsChanges: vi.fn(),
   importSettingsProfile: vi.fn(),
@@ -2241,7 +2243,16 @@ describe('App', () => {
         throw new SubmissionError('Categories changed on another device; reload the session list and try again', 409)
       }
       const categories = applySessionCategoryChange(hubCategories.categories, change)
-      if (categories !== hubCategories.categories) hubCategories = { revision: revision + 1, categories }
+      if (categories !== hubCategories.categories) hubCategories = { ...hubCategories, revision: revision + 1, categories }
+      return structuredClone(hubCategories)
+    })
+    vi.mocked(saveCollapsedCategoryShows).mockReset().mockImplementation(async (revision, collapsedShows) => {
+      if (revision !== hubCategories.revision) {
+        throw new SubmissionError('Categories changed on another device; reload the session list and try again', 409)
+      }
+      if (collapsedShows !== hubCategories.collapsedShows) {
+        hubCategories = { ...hubCategories, revision: revision + 1, collapsedShows }
+      }
       return structuredClone(hubCategories)
     })
     hubSettings = { revision: 0, values: {}, keyRevisions: {} }
@@ -23405,6 +23416,61 @@ describe('App', () => {
         categories: { revision: 6, categories: [] },
       })
       expect(region('Category Shared lab')).toBeVisible()
+    })
+
+    it('keeps in a closed category what the hub\'s choice says, chosen here or in another browser', async () => {
+      listed([session, other, third, fourth], [third])
+      hubCategories = { revision: 2, categories: [category('lab', 'Homelab', [session, other, third, fourth], true)] }
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      openList()
+      const lab = region('Category Homelab')
+      // By default the unread one and the open session stay in sight.
+      expect(within(lab).getByRole('button', { name: /^Third work, unread,/ })).toBeVisible()
+      expect(within(lab).getByRole('button', { name: /^Project chat,/ })).toBeVisible()
+      expect(within(lab).getByRole('button', { name: 'Show 2 more sessions in Homelab' })).toBeVisible()
+
+      // Another browser chooses counts only.
+      hubCategories = { ...hubCategories, revision: 3, collapsedShows: 'none' }
+      emit({ type: 'session.categories.updated', categories: hubCategories })
+      expect(within(lab).getByRole('button', { name: 'Homelab, 1 unread, 4 sessions, open session inside' }))
+        .toHaveAttribute('aria-expanded', 'false')
+      expect(within(lab).queryAllByRole('button', { name: /^(Project chat|Other work|Third work|Fourth work),/ }))
+        .toHaveLength(0)
+      expect(within(lab).queryByRole('button', { name: /more session/ })).toBeNull()
+
+      // App settings shows that choice, and a new one reaches the hub against its revision.
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = screen.getByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Interface/ }))
+      const choices = within(dialog).getByRole('group', { name: 'Collapsed categories show' })
+      expect(within(choices).getByRole('radio', { name: 'Counts only' })).toBeChecked()
+      fireEvent.click(within(choices).getByRole('radio', { name: 'Only sessions that need you' }))
+      expect(within(choices).getByRole('radio', { name: 'Only sessions that need you' })).toBeChecked()
+      await waitFor(() => expect(saveCollapsedCategoryShows).toHaveBeenCalledWith(3, 'attention'))
+      expect(hubCategories).toMatchObject({ revision: 4, collapsedShows: 'attention' })
+      // Unread ones collapse too; the open session stays.
+      expect(within(lab).getByRole('button', { name: /^Project chat,/ })).toBeInTheDocument()
+      expect(within(lab).queryByRole('button', { name: /^Third work,/ })).toBeNull()
+      expect(within(lab).getByRole('button', { name: 'Show 3 more sessions in Homelab', hidden: true })).toBeInTheDocument()
+    })
+
+    it('shows what closed categories keep disabled, saying why, on a hub that keeps no categories', async () => {
+      listed([session, other])
+      vi.mocked(fetchSessionCategories).mockRejectedValue(
+        new SubmissionError('Session categories were saved by a newer release; categories are unavailable until it is running again', 503))
+
+      render(<App />)
+      await screen.findByLabelText('Message')
+      fireEvent.click(screen.getByRole('button', { name: 'App settings' }))
+      const dialog = screen.getByRole('dialog', { name: 'App settings' })
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Interface/ }))
+      const choices = within(dialog).getByRole('group', { name: 'Collapsed categories show' })
+      await waitFor(() => expect(choices).toHaveAccessibleDescription(
+        'Session categories were saved by a newer release; categories are unavailable until it is running again'))
+      expect(choices).toBeDisabled()
+      expect(within(choices).getByRole('radio', { name: 'Sessions that need you or are unread' })).toBeChecked()
     })
 
     it('puts back the committed categories and says why when the hub refuses a change', async () => {

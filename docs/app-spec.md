@@ -153,11 +153,18 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   (`aria-expanded`); whether it is closed is hub state. Open, the header MUST
   show only the category's total. Closed, it MUST show how many of its sessions
   need you (◆, in the attention colour) and how many are unread (●, in the
-  accent), and a ring while any of them is working, and MUST keep in sight up
-  to three of its sessions that need you or are unread (needs you first), the
-  open session, and then "N more", which opens it. The header's accessible
-  name MUST carry those counts in words. Hidden sessions follow the hidden
-  rules inside categories too.
+  accent), and a ring while any of them is working. Below the header it MUST
+  keep in sight what App settings' **Collapsed categories show** (§9.2)
+  chooses, the same in every browser on the hub: **Sessions that need you or
+  are unread**, the default, keeps up to three of them (needs you first) and
+  the open session; **Only sessions that need you** keeps up to three of those
+  and the open session; either then offers "N more", which opens it. **Counts
+  only** keeps nothing below the header, not even the open session, and the
+  header shows its total instead of "N more"; while the open session is in it,
+  the header MUST be marked as the open row is and its accessible name MUST
+  end "open session inside". The header's accessible name MUST carry those
+  counts in words. Hidden sessions follow the hidden rules inside categories
+  too.
 - Search and the Needs you, Working, and Unread filters MUST show matches
   inside their categories, opened, and leave out categories without any; the
   headers cannot be closed, and nothing can be reordered, until they are
@@ -207,6 +214,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   again, and report the failure. Every change the hub commits, whether a
   browser's, Oracle's (§3.7), or its own lifecycle bookkeeping, MUST reach
   every browser as `session.categories.updated` and survive a hub restart.
+  The choice of what a closed category keeps in sight is part of the same
+  snapshot and is changed by the same rules; while the hub keeps no
+  categories, App settings MUST show it disabled with the reason.
 - Clear and Recover MUST keep a session's category and its place there; the
   replacement takes its predecessor's place. Close MUST remember the category
   and Reopen restore it, until the closed session can no longer be reopened.
@@ -215,7 +225,9 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
 - Categories MUST be kept in their own hub file, `session-categories.json`,
   never in the session order file: a release that predates categories ignores
   the file, so rolling back leaves them alone and rolling forward restores them.
-  Fields the release does not know MUST be written back unchanged; a file it
+  Fields the release does not know MUST be written back unchanged, as MUST a
+  choice of what a closed category keeps in sight that it does not know, which
+  it shows as the default until one is made; a file it
   cannot read, or one from a newer release, MUST leave categories unavailable
   without changing the file or stopping the hub. A browser on a hub without
   categories MUST list every session under its computer and say so if a change
@@ -2392,7 +2404,8 @@ clear replacement IDs without losing, duplicating, or reordering content.
     notifies you.
   - **Notifications**: this device's notification permission and subscription.
   - **Scheduler**: Oracle's scheduling permission defaults, only while the Scheduler view preview is effective.
-  - **Interface**: Appearance, Status line, Keyboard shortcuts, Preview features.
+  - **Interface**: Appearance, Status line, Collapsed categories show (kept
+    with the hub's categories), Keyboard shortcuts, Preview features.
   - **Skills**: per-computer skill discovery and explicitly confirmed enable/disable changes.
   - **App**: Display name, Settings sync, Health, Hub connection (native app only), App updates.
 - Each section whose scope is not obvious MUST say whether it is **Synced** or
@@ -2696,6 +2709,8 @@ Every material release SHOULD preserve:
 - Synced settings matching across devices on the same hub, with no theme flash
 - Session categories matching across browsers on the same hub, through Clear,
   Recover, Close and Reopen, with `session-order.json` untouched
+- What collapsed categories show matching across browsers, with Counts only
+  marking the closed category that holds the open session
 - A session started from a category's menu, beside its latest session, landing
   in that category; and Oracle organizing sessions into categories on request,
   seen by every browser, without touching a session

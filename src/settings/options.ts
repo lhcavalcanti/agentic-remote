@@ -1,4 +1,5 @@
 import type { NotificationScope } from '../../shared/notifications'
+import type { CollapsedCategoryShows } from '../../shared/session-categories'
 import type { AppearanceSetting } from '../../shared/settings-profile'
 
 export const accentThemes = [
@@ -32,4 +33,22 @@ export const appearanceOptions: Array<{ id: AppearanceSetting; name: string }> =
   { id: 'system', name: 'System' },
   { id: 'graphite', name: 'Graphite' },
   { id: 'light', name: 'Light' },
+]
+
+export const collapsedCategoryOptions: Array<{ id: CollapsedCategoryShows; name: string; description: string }> = [
+  {
+    id: 'attention-unread',
+    name: 'Sessions that need you or are unread',
+    description: 'Up to three, those that need you first, and the open session.',
+  },
+  {
+    id: 'attention',
+    name: 'Only sessions that need you',
+    description: 'Up to three, and the open session. Unread ones collapse with the rest.',
+  },
+  {
+    id: 'none',
+    name: 'Counts only',
+    description: 'Nothing below the header, not even the open session. The header is marked while it is inside.',
+  },
 ]

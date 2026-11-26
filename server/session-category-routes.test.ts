@@ -150,9 +150,11 @@ describe('hub session category routes', () => {
 
   it('answers 503 without categories, or while their file cannot be used', async () => {
     const owned = await stores()
+    const choose = { method: 'PATCH', url: '/api/session-categories', headers: host, payload: { revision: 0, collapsedShows: 'none' } } as const
     const without = await hub({ sessionOrder: owned.sessionOrder })
     expect((await without.app.inject({ method: 'GET', url: '/api/session-categories', headers: host })).statusCode)
       .toBe(503)
+    expect((await without.app.inject(choose)).statusCode).toBe(503)
     await without.app.close()
 
     await writeFile(path.join(owned.directory, 'session-categories.json'), JSON.stringify({ version: 2 }))
@@ -162,6 +164,35 @@ describe('hub session category routes', () => {
     const response = await app.inject({ method: 'GET', url: '/api/session-categories', headers: host })
     expect(response.statusCode).toBe(503)
     expect(JSON.stringify(response.json())).toMatch(/newer release/)
+    const chosen = await app.inject(choose)
+    expect(chosen.statusCode).toBe(503)
+    expect(JSON.stringify(chosen.json())).toMatch(/newer release/)
+    await app.close()
+  })
+
+  it('chooses what a collapsed category keeps in sight against the revision, refusing a stale or unknown choice', async () => {
+    const owned = await stores({ hub: ['hub:a'] })
+    await owned.categories.change(0, { type: 'create', id: 'lab', name: 'Lab', sessions: ['hub:a'] })
+    const { app } = await hub(owned)
+    const choose = (payload: object) => app.inject({ method: 'PATCH', url: '/api/session-categories', headers: host, payload })
+    const lab = { id: 'lab', name: 'Lab', collapsed: false, sessions: ['hub:a'] }
+
+    const chosen = await choose({ revision: 1, collapsedShows: 'none' })
+    expect(chosen.statusCode).toBe(200)
+    expect(chosen.json()).toEqual({ sessionCategories: { revision: 2, categories: [lab], collapsedShows: 'none' } })
+    expect((await app.inject({ method: 'GET', url: '/api/session-categories', headers: host })).json())
+      .toEqual(chosen.json())
+
+    expect((await choose({ revision: 1, collapsedShows: 'attention' })).statusCode).toBe(409)
+    for (const malformed of [
+      { revision: 2, collapsedShows: 'everything' },
+      { revision: 2 },
+      { collapsedShows: 'attention' },
+      { revision: 2, collapsedShows: 'attention', categories: [] },
+    ]) {
+      expect((await choose(malformed)).statusCode).toBe(400)
+    }
+    expect(owned.categories.snapshot()).toEqual({ revision: 2, categories: [lab], collapsedShows: 'none' })
     await app.close()
   })
 
@@ -402,6 +433,31 @@ describe('session.categories.updated', () => {
         type: 'session.categories.updated',
         categories: { revision: 2, categories: [{ id: 'lab', name: 'Lab', collapsed: false, sessions: [] }] },
       })
+    } finally {
+      first.terminate()
+      second.terminate()
+      await app.close()
+    }
+  })
+
+  it('brings every connected browser to the same choice of what a collapsed category keeps in sight', async () => {
+    const { app } = await startHub()
+    const first = await app.injectWS('/api/events', { headers: trusted })
+    const second = await app.injectWS('/api/events', { headers: trusted })
+    try {
+      const firstEvents = inbox(first)
+      const secondEvents = inbox(second)
+      const chosen = await app.inject({
+        method: 'PATCH', url: '/api/session-categories', headers: trusted,
+        payload: { revision: 0, collapsedShows: 'attention' },
+      })
+      expect(chosen.statusCode).toBe(200)
+      await until(() => firstEvents.length === 1 && secondEvents.length === 1)
+      expect(firstEvents).toEqual([{
+        type: 'session.categories.updated',
+        categories: { revision: 1, categories: [], collapsedShows: 'attention' },
+      }])
+      expect(secondEvents).toEqual(firstEvents)
     } finally {
       first.terminate()
       second.terminate()

@@ -30,6 +30,7 @@ import type { KnowledgePosition } from '../src/knowledge-position'
 import {
   SessionCategoryRefusal,
   applySessionCategoryChange,
+  type CollapsedCategoryShows,
   type SessionCategoriesSnapshot,
   type SessionCategoryChange,
 } from '../shared/session-categories'
@@ -1506,15 +1507,17 @@ export async function setupWorkspaceFixture(
     }
     // As the hub does: a change made against another revision is refused, and
     // a committed one is told to every page sharing this state.
+    const staleCategories = async (revision: number) => {
+      if (revision === state.sessionCategories.revision) return false
+      await respond({ error: 'Categories changed on another device; reload the session list and try again' }, 409)
+      return true
+    }
     const commitCategories = async (revision: number, change: SessionCategoryChange) => {
-      if (revision !== state.sessionCategories.revision) {
-        await respond({ error: 'Categories changed on another device; reload the session list and try again' }, 409)
-        return
-      }
+      if (await staleCategories(revision)) return
       try {
         const categories = applySessionCategoryChange(state.sessionCategories.categories, change)
         if (categories !== state.sessionCategories.categories) {
-          state.sessionCategories = { revision: revision + 1, categories }
+          state.sessionCategories = { ...state.sessionCategories, revision: revision + 1, categories }
           emit({ type: 'session.categories.updated', categories: state.sessionCategories })
         }
         await respond({ sessionCategories: state.sessionCategories })
@@ -1525,6 +1528,16 @@ export async function setupWorkspaceFixture(
     }
     const refs = (sessions: { computerId: string; sessionId: string }[] = []) =>
       sessions.map(({ computerId, sessionId }) => `${computerId}:${sessionId}`)
+    if (method === 'PATCH' && path === '/api/session-categories') {
+      const { revision, collapsedShows } = request.postDataJSON() as { revision: number; collapsedShows: CollapsedCategoryShows }
+      if (await staleCategories(revision)) return
+      if (collapsedShows !== state.sessionCategories.collapsedShows) {
+        state.sessionCategories = { ...state.sessionCategories, revision: revision + 1, collapsedShows }
+        emit({ type: 'session.categories.updated', categories: state.sessionCategories })
+      }
+      await respond({ sessionCategories: state.sessionCategories })
+      return
+    }
     if (method === 'POST' && path === '/api/session-categories') {
       const input = request.postDataJSON() as {
         revision: number; id: string; name: string; sessions?: { computerId: string; sessionId: string }[]

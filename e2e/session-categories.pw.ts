@@ -322,6 +322,77 @@ for (const device of devices) {
       }
     })
 
+    test('shows a closed category as counts only once App settings says so, marked while the open session is in it', async ({ page, browser }, testInfo) => {
+      const state = categorizedState()
+      const [reviews, plans] = state.sessionCategories.categories
+      // The open session is in Reviews, which is closed.
+      state.sessionCategories = {
+        revision: 3,
+        categories: [{ ...reviews, sessions: [...reviews.sessions, studio(SELECTED_SESSION_ID)] }, { ...plans, sessions: [] }],
+      }
+      const baseUrl = testInfo.project.use.baseURL!
+      const fixture = await open(page, baseUrl, state)
+      const other = await secondPage(browser, device, baseUrl, state)
+      try {
+        let list = await sessionList(page)
+        const otherList = await sessionList(other.page)
+        await expect.poll(() => state.eventSockets.size).toBe(2)
+        // By default the open session stays in sight in it.
+        await expect(list.getByRole('region', { name: 'Category Reviews' })
+          .getByRole('button', { name: /^Plan the knowledge workspace,/ })).toBeVisible()
+
+        await page.getByRole('button', { name: 'App settings', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: 'App settings', exact: true })
+        await dialog.getByRole('button', { name: /^Interface/ }).click()
+        const choices = dialog.getByRole('group', { name: 'Collapsed categories show' })
+        await expect(choices.getByRole('radio', { name: 'Sessions that need you or are unread' })).toBeChecked()
+        await choices.getByRole('radio', { name: 'Counts only' }).check()
+        await expect.poll(() => state.sessionCategories.collapsedShows).toBe('none')
+        await choices.scrollIntoViewIfNeeded()
+        await screenshot(page, `${device.name}-collapsed-setting`)
+        await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+
+        // Here and on the other page alike: the header alone, counting everything in it.
+        list = await sessionList(page)
+        const name = 'Reviews, 2 need you, 1 unread, working, 5 sessions, open session inside'
+        for (const shown of [list, otherList]) {
+          const category = shown.getByRole('region', { name: 'Category Reviews' })
+          const header = category.getByRole('button', { name, exact: true })
+          await expect(header).toHaveAttribute('aria-expanded', 'false')
+          await expect(category).toHaveClass(/session-category--holds-selected/)
+          await expect(category.locator('.session-item, .session-category__more')).toHaveCount(0)
+          await expect(header.locator('.session-category__signal--attention')).toHaveText('◆2')
+          await expect(header.locator('.session-category__signal--unread')).toHaveText('●1')
+          await expect(header.locator('.session-category__ring')).toBeVisible()
+          await expect(header.locator('.session-category__summary small')).toHaveText('5')
+          expect((await bounds(category)).height)
+            .toBeLessThanOrEqual((await bounds(category.locator('.session-category__header'))).height + 1)
+          expect((await bounds(header)).height).toBeGreaterThanOrEqual(device.target)
+        }
+        // Marked as the open row is: tinted, with a bar at each side.
+        const marker = await list.locator('.session-category--holds-selected > .session-category__header').evaluate((element) => {
+          const style = getComputedStyle(element)
+          return { background: style.backgroundColor, bars: style.boxShadow }
+        })
+        expect(marker.background).not.toBe('rgba(0, 0, 0, 0)')
+        expect(marker.bars).toMatch(/inset.*inset/)
+        expect(await list.locator('.session-list__scroll').evaluate(
+          (element) => element.scrollWidth - element.clientWidth,
+        )).toBeLessThanOrEqual(0)
+        await screenshot(page, `${device.name}-counts-only`)
+
+        // A search still opens it to its matches.
+        await list.getByRole('searchbox', { name: 'Search sessions' }).fill('handbook')
+        const searched = list.getByRole('region', { name: 'Category Reviews' })
+        await expect(searched.getByRole('button', { name: 'Reviews, 1 of 5 sessions' })).toHaveAttribute('aria-expanded', 'true')
+        await expect(searched.getByRole('button', { name: /^Check handbook links,/ })).toBeVisible()
+      } finally {
+        fixture.assertHealthy()
+        other.fixture.assertHealthy()
+        await other.context.close()
+      }
+    })
+
     test('keeps two pages on the same categories', async ({ page, browser }, testInfo) => {
       const state = categorizedState()
       const baseUrl = testInfo.project.use.baseURL!

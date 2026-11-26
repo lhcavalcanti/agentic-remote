@@ -3,7 +3,11 @@ import type {
   ComputerSummary,
   ManagedSession,
 } from '../shared/contracts'
-import type { SessionCategory } from '../shared/session-categories'
+import {
+  DEFAULT_COLLAPSED_CATEGORY_SHOWS,
+  type CollapsedCategoryShows,
+  type SessionCategory,
+} from '../shared/session-categories'
 import { DEFAULT_SESSION_PROVIDER } from '../shared/settings-profile'
 import { computerProviders } from './session-setup/runtime-presentation'
 import {
@@ -25,7 +29,8 @@ export interface SessionCategorySection {
   collapsed: boolean
   /**
    * The rows it shows: every listed session expanded, or the matches while
-   * filtering; collapsed, those that need you or are unread and the open one.
+   * filtering; collapsed, what the hub's choice of what it keeps in sight lets
+   * through.
    */
   sessions: ManagedSession[]
   /** Its sessions the list includes, whether or not they are shown. */
@@ -35,6 +40,10 @@ export interface SessionCategorySection {
   working: boolean
   /** Collapsed, how many of its sessions are not shown. */
   more: number
+  /** Collapsed to its header's counts, with nothing below it. */
+  countsOnly: boolean
+  /** Whether the open session is in it but out of sight, as it is when collapsed to its counts. */
+  hidesSelected: boolean
   /**
    * The most recently active of its sessions the list includes, whether or
    * not it is shown: a new session in the category starts beside it.
@@ -73,8 +82,10 @@ export interface CategorizedSessions {
     category: Pick<SessionCategory, 'id' | 'name' | 'collapsed' | 'sessions'>
     sessions: readonly ManagedSession[]
   }[]
-  /** The open session, which a collapsed category keeps in sight. */
+  /** The open session, which a collapsed category keeps in sight unless it shows counts only. */
   selectedKey?: string
+  /** What a collapsed category keeps in sight; the default when unset. */
+  collapsedShows?: CollapsedCategoryShows
 }
 
 export interface SessionNavigationView {
@@ -107,6 +118,7 @@ export interface HiddenSessions {
 const noHiddenSessions: HiddenSessions = { keys: new Set(), shown: false }
 const noUnreadSessions: ReadonlySet<string> = new Set()
 const noCategories: CategorizedSessions = { categories: [] }
+const expanded = { collapsed: false, more: 0, countsOnly: false, hidesSelected: false } as const
 
 export function sessionNavigationView(
   computers: readonly ComputerSummary[],
@@ -141,6 +153,7 @@ export function sessionNavigationView(
         (filter === 'working' && state.working) ||
         (filter === 'unread' && unread))
   const inCategory = new Set<string>()
+  const shows = categorized.collapsedShows ?? DEFAULT_COLLAPSED_CATEGORY_SHOWS
   const categories = categorized.categories.flatMap(({ category, sessions }) => {
     const states = sessions.flatMap((session) => {
       const computer = online.get(session.computerId)
@@ -159,21 +172,26 @@ export function sessionNavigationView(
     }
     if (filtering) {
       const shown = included.filter((entry) => matches(entry, entry.computer)).map(({ session }) => session)
-      return shown.length ? [{ ...section, collapsed: false, sessions: shown, more: 0 }] : []
+      return shown.length ? [{ ...section, ...expanded, sessions: shown }] : []
     }
-    if (!category.collapsed) {
-      return [{ ...section, collapsed: false, sessions: included.map(({ session }) => session), more: 0 }]
-    }
-    // Needs you before unread, then the open session, each in the list's order.
-    const kept = new Set([
+    if (!category.collapsed) return [{ ...section, ...expanded, sessions: included.map(({ session }) => session) }]
+    // Needs you before unread, then the open session, each in the list's order;
+    // counts only keeps none of them.
+    const kept = new Set(shows === 'none' ? [] : [
       ...included.filter(({ state }) => state.needsAttention),
-      ...included.filter((entry) => entry.unread && !entry.state.needsAttention),
+      ...shows === 'attention' ? [] : included.filter((entry) => entry.unread && !entry.state.needsAttention),
     ].slice(0, COLLAPSED_CATEGORY_ROWS).map(({ session }) => sessionKey(session)))
-    if (categorized.selectedKey && included.some(({ session }) => sessionKey(session) === categorized.selectedKey)) {
-      kept.add(categorized.selectedKey)
-    }
+    const holdsSelected = included.some(({ session }) => sessionKey(session) === categorized.selectedKey)
+    if (holdsSelected && shows !== 'none') kept.add(categorized.selectedKey!)
     const shown = included.filter(({ session }) => kept.has(sessionKey(session))).map(({ session }) => session)
-    return [{ ...section, collapsed: true, sessions: shown, more: included.length - shown.length }]
+    return [{
+      ...section,
+      collapsed: true,
+      sessions: shown,
+      more: included.length - shown.length,
+      countsOnly: shows === 'none',
+      hidesSelected: holdsSelected && shows === 'none',
+    }]
   })
   const groups = computers.map((computer) => {
     const open = (sessionsByComputer.get(computer.id) || []).filter((session) => session.isOpen !== false)

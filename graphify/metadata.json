@@ -686,9 +686,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 279,
+  "communities": 291,
   "community_algorithm": "louvain-seed-42",
-  "edges": 27628,
+  "edges": 27632,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -728,7 +728,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "6d28b3d496288fb278a6cf8274bc2d5eeff7d01777b43f8950f42a6f3a5da13f",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "e787feedfa54ff4785b354361c1f724d84b6d75ad375b3f2f8d3e2e279d6bfff",
+    "docs/app-spec.md": "ef876b3c6063f1ffb4eb23d2c79da3c495a1b255b3ad7d46da4b83f0b0121979",
     "docs/architecture.md": "9f213fbd42ca3cecbf06d1bd5bb68bf95492fd5bf4a54bd620d0f3af660bc934",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -1403,8 +1403,8 @@
     "src/ActivityDetails.tsx": "6d871849962d193ca6894814111c8d0b911c5c1a39a550d8b71447a1a66debf4",
     "src/ActivityRow.test.tsx": "e08ee4c7462b8ff914b4a58afc827a7e7df738b1af2977f91d76cf7359cd8765",
     "src/ActivityRow.tsx": "b46ef2fab57d4351b2017e9c5c1d2a85c5bacbd857e78fbcdd3279410d2cee3e",
-    "src/App.test.tsx": "baece5906dfebcce115d32782183c8920863f8b57c7e84871404691259fb8829",
-    "src/App.tsx": "3a1cf7d173935d19a1dcc98ba2772e58b462d2f0daf838b1e383c2340d3124a6",
+    "src/App.test.tsx": "a0bb200cc8dda3607752d079470dbfe22e82064c8717d7527f2a26a34df765bc",
+    "src/App.tsx": "ac523d78406deb3fb8c358a038c0d1c8ef09ee79c2ec860853666d15e220a371",
     "src/DocumentViewControls.test.tsx": "d5c15658d4dd44927ebaec31fa282027d8c5de1d91567fd13feeab9f9b2bdbbc",
     "src/DocumentViewControls.tsx": "254630c460593357c976058c7a2dbef8722af6e49f9980dcffd18746a7063dcf",
     "src/HtmlPreview.test.tsx": "05125e6ff6ee539f4ac2df066fdfc9878fa492484f9e87404b89834ccb6c5ed4",
@@ -1476,7 +1476,7 @@
     "src/composer/Composer.test.tsx": "23c3cb0efcbfa8d09bb84858157e2cfe71d5821aa0bf108b1e44f244e1824045",
     "src/composer/Composer.tsx": "e8202101ccd70e913a1e883cac32c7d4ea49cd685decf57e204aa0f4ce3c7982",
     "src/composer/ComposerActions.test.tsx": "3d5054a6af3dec3e81ddc56d4f4ed200a71a8520d0f59f8657c025633e858b6d",
-    "src/composer/ComposerActions.tsx": "39b3d4918487e9115c5a74e3fd64fce7aabb6b9c614b5199a6613b3b339dce44",
+    "src/composer/ComposerActions.tsx": "8709be719409f38e23941318fb98c0dada37d0bf43431447fd118afcd424d23c",
     "src/composer/ContextRing.tsx": "c732bba8225410dd60b6eb61a60b539ccbe130e539682c218e6f114b8ccc53b4",
     "src/composer/HeldMessageList.tsx": "8fd2d1eb1b2dde75e79ef443b4f9dd77fb6cf3aa8e9d0b05ff6a2aa7a3be70dc",
     "src/composer/QueuedPromptList.tsx": "730a0d18cb8158e56009cf5f0339cab7234bdd286df54543028fe8e9c9bacd15",
@@ -1605,7 +1605,7 @@
     "src/session-resource-commands.ts": "d78077a8ff92795de261d41fff61dcc8227a50a511905280716bfae658655849",
     "src/session-response-order.test.ts": "c7142b82fa253d8e1f54c9dbc87c2d4b48546df4f9becaabf327eec9f6fbc826",
     "src/session-response-order.ts": "88fefaa9745fb2a0dda485a07185f5bfb1cd5a978e44dc0f1c7f31231d02739c",
-    "src/session-setup/NewSessionDialog.tsx": "e745be7ade96e8dc0e853e657724bb813c5374e2966cfc7277d4defaf44952a7",
+    "src/session-setup/NewSessionDialog.tsx": "bc7583dbb85171fbd9bb53fdccfcac4122c4658bb83f8a7e1f5c245962e148ec",
     "src/session-setup/RuntimeDialog.tsx": "f8c3d2bfcf5ff8a6f876bf554b2537fb100e6815d6cd9bf100d3ee6a9d2e9cc4",
     "src/session-setup/runtime-presentation.ts": "563a6837cb687d0b247a1bb18e15e8afabc1880036dd216ef3b22989bf89c7a1",
     "src/session-setup/types.ts": "9907803d7cd5cda69a527c47eadf83bec4e7aadd8487e8d3790dba50e919771d",
@@ -1656,7 +1656,7 @@
     "vite.config.ts": "d7c5b3d7f134cc12eb085703c541bf6b82aa349c25130212cc3eefdcf7c89ccd"
   },
   "mode": "local-ast-only",
-  "nodes": 9555,
+  "nodes": 9556,
   "not_semantically_extracted": [
     ".github/CODEOWNERS",
     ".github/copilot-instructions.md",
@@ -1937,13 +1937,13 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "52dd997194aae44499139c76fc7f23ec4c4ac91421caff2707a5a76049efc5db",
-    "communities.json": "3cc1badf3d68c1b7f62771af16e33e35ba8536f4bc81bf005bd9c34ae107ed25",
-    "graph.html": "129cf9ec7a365aed821d468b8b53af4f6f378e9edd64659da2008ea75a7e8d0e",
-    "graph.json": "b8d916662abca8ec00bca2a9a539bee6f0b3a31fadb541c7cc1fa1e0d54b5ec3"
+    "GRAPH_REPORT.md": "55401b864b4db0f5518b9054099096904829b7b971b5f9fe1a2fa1bac34329ed",
+    "communities.json": "f02d75c59c960acec9d36597537f61bbb34a55e3388fead7f641d845869ad2c4",
+    "graph.html": "1569c83a6b50ef0af97a3035728460070bdbcb7d2a689da189dea50b8b64a402",
+    "graph.json": "4b69eb39b05544973aa8a0be3a95498b12317d713b838ef171c2899b151b3e1e"
   },
   "schema_version": 1,
-  "source_commit": "f5307d4345493401f14bf57e4ea8724b83bfd7cb",
-  "source_fingerprint": "b927546c835f23cf5e9c94183ec82c4daf59a68249c8563e391e8f3d1900bdfd",
+  "source_commit": "d49f14ad53973a8c00c160d190ae0c129018f865",
+  "source_fingerprint": "b902c03a5e6f9768ba62dafc2b3831561f4f7d987b55400fbe385165903dffb7",
   "working_tree_changes": []
 }

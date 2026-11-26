@@ -13700,6 +13700,15 @@ describe('App', () => {
     )
     expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
+
+    // Back on the session that failed, it is said once, there.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Choose a folder' })).toBeNull(),
+    )
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(within(screen.getByRole('main')).getByRole('alert'))
+      .toHaveTextContent('Session creation failed')
   })
 
   it('closes the 390px sessions drawer to show the session it starts, failure included', async () => {

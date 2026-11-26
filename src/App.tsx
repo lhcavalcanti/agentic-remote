@@ -14832,6 +14832,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         {sessionCreationError &&
         !signInExpired &&
         !newSessionOpen &&
+        // A starting view that failed says why itself, with what to do next.
+        !selectedStart?.failure &&
         (!sidebarOpen || sidebarView !== 'sessions') ? (
           <div className="error-banner" role="alert">
             <span>{sessionCreationError}</span>

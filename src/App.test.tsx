@@ -14000,6 +14000,56 @@ describe('App', () => {
       expect(sentContents()).toEqual(['Alpha, edited', 'Charlie'])
     })
 
+    it('keeps the place of a held message being edited, so none after it goes first', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      for (const text of ['Alpha', 'Bravo', 'Charlie']) send(text)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit held message 1' }))
+      expect(message()).toHaveValue('Alpha')
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Held messages' }))
+        .toHaveTextContent('Waiting for the message you are editing'))
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(heldTexts()).toEqual(['Bravo', 'Charlie'])
+
+      send('Alpha, edited')
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(3))
+      expect(sentContents()).toEqual(['Alpha, edited', 'Bravo', 'Charlie'])
+    })
+
+    it('lets the messages after an edited one go once its text is cleared', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      for (const text of ['Alpha', 'Bravo', 'Charlie']) send(text)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit held message 1' }))
+      // Its place moves to whatever follows it when that is removed.
+      fireEvent.click(screen.getByRole('button', { name: 'Remove held message 1' }))
+      expect(heldTexts()).toEqual(['Charlie'])
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Held messages' }))
+        .toHaveTextContent('Waiting for the message you are editing'))
+      expect(sendMessage).not.toHaveBeenCalled()
+
+      write('')
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+      expect(sentContents()).toEqual(['Charlie'])
+    })
+
     it('sends what it holds to the session it started after you move on, leaving you there', async () => {
       const creation = slowCreation()
       answerAs(started())

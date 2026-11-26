@@ -161,8 +161,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   and the open session; either then offers "N more", which opens it. **Counts
   only** keeps nothing below the header, not even the open session, and the
   header shows its total instead of "N more"; while the open session is in it,
-  the header MUST be marked as the open row is and its accessible name MUST
-  end "open session inside". The header's accessible name MUST carry those
+  hidden or not, the header MUST be marked as the open row is and its
+  accessible name MUST end "open session inside". The header's accessible name MUST carry those
   counts in words. Hidden sessions follow the hidden rules inside categories
   too.
 - Search and the Needs you, Working, and Unread filters MUST show matches

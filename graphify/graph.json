@@ -1,5 +1,5 @@
 {
-  "built_at_commit": "bbfe70bd6c5494186a6ec2ec7a73d0407b75b535",
+  "built_at_commit": "4bd8f6372e0940f28d06c1d36120156276e25bd3",
   "directed": true,
   "graph": {},
   "hyperedges": [],
@@ -304312,7 +304312,7 @@
       "relation": "contains",
       "source": "src_session_navigation_view",
       "source_file": "src/session-navigation-view.ts",
-      "source_location": "L229",
+      "source_location": "L231",
       "target": "src_session_navigation_view_reordersessionlanewithhiddenfollowers",
       "weight": 1.0
     },
@@ -304356,7 +304356,7 @@
       "relation": "contains",
       "source": "src_session_navigation_view",
       "source_file": "src/session-navigation-view.ts",
-      "source_location": "L255",
+      "source_location": "L257",
       "target": "src_session_navigation_view_stepvisiblesession",
       "weight": 1.0
     },
@@ -304620,7 +304620,7 @@
       "relation": "calls",
       "source": "src_session_navigation_view_stepvisiblesession",
       "source_file": "src/session-navigation-view.ts",
-      "source_location": "L261",
+      "source_location": "L263",
       "target": "src_session_presentation_sessionkey",
       "weight": 1.0
     },
@@ -429431,7 +429431,7 @@
       "label": "reorderSessionLaneWithHiddenFollowers()",
       "norm_label": "reordersessionlanewithhiddenfollowers()",
       "source_file": "src/session-navigation-view.ts",
-      "source_location": "L229"
+      "source_location": "L231"
     },
     {
       "_callable": true,
@@ -429482,7 +429482,7 @@
       "label": "stepVisibleSession()",
       "norm_label": "stepvisiblesession()",
       "source_file": "src/session-navigation-view.ts",
-      "source_location": "L255"
+      "source_location": "L257"
     },
     {
       "_origin": "ast",

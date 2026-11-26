@@ -42,7 +42,7 @@ export interface SessionCategorySection {
   more: number
   /** Collapsed to its header's counts, with nothing below it. */
   countsOnly: boolean
-  /** Whether the open session is in it but out of sight, as it is when collapsed to its counts. */
+  /** Collapsed to its counts, whether the open session is in it, hidden or not. */
   hidesSelected: boolean
   /**
    * The most recently active of its sessions the list includes, whether or
@@ -181,8 +181,9 @@ export function sessionNavigationView(
       ...included.filter(({ state }) => state.needsAttention),
       ...shows === 'attention' ? [] : included.filter((entry) => entry.unread && !entry.state.needsAttention),
     ].slice(0, COLLAPSED_CATEGORY_ROWS).map(({ session }) => sessionKey(session)))
-    const holdsSelected = included.some(({ session }) => sessionKey(session) === categorized.selectedKey)
-    if (holdsSelected && shows !== 'none') kept.add(categorized.selectedKey!)
+    if (shows !== 'none' && included.some(({ session }) => sessionKey(session) === categorized.selectedKey)) {
+      kept.add(categorized.selectedKey!)
+    }
     const shown = included.filter(({ session }) => kept.has(sessionKey(session))).map(({ session }) => session)
     return [{
       ...section,
@@ -190,7 +191,8 @@ export function sessionNavigationView(
       sessions: shown,
       more: included.length - shown.length,
       countsOnly: shows === 'none',
-      hidesSelected: holdsSelected && shows === 'none',
+      // Hidden or not: the header is all that says where the open session is.
+      hidesSelected: shows === 'none' && states.some(({ session }) => sessionKey(session) === categorized.selectedKey),
     }]
   })
   const groups = computers.map((computer) => {

@@ -315,6 +315,14 @@ describe('categories in the session navigation view', () => {
       expect(open.sessions).toEqual(members)
     })
 
+    it('still says the open session is in it when that session is hidden, though its counts leave it out', () => {
+      const view = sessionNavigationView(computers, new Map([['one', [...members, first]]]), {}, '', 'all',
+        { keys: new Set(['one:open']), shown: false }, unread, {
+          categories: [lab(members, true)], selectedKey: 'one:open', collapsedShows: 'none',
+        })
+      expect(view.categories[0]).toMatchObject({ sessions: [], total: 7, more: 7, hidesSelected: true })
+    })
+
     it('still opens to show its matches while the list is filtered, whatever it keeps in sight closed', () => {
       for (const shows of ['attention-unread', 'attention', 'none'] as const) {
         const searched = collapsed(shows, { query: 'quiet-2' }).categories[0]

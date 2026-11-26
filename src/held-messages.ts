@@ -17,7 +17,7 @@ export type HeldQueue = {
   failure?: { message: string; uncertain: boolean }
   /**
    * Where a message taken back to be edited returns when it is held again:
-   * before this message, or last when null.
+   * before this message, which waits for it with those after it, or last when null.
    */
   returnBefore?: string | null
 }
@@ -78,19 +78,36 @@ export function takeHeldMessage(
 
 export function removeHeldMessage(queues: HeldQueues, key: string, id: string): HeldQueues {
   const queue = queues[key]
-  if (!queue || queue.sending === id || !queue.messages.some((entry) => entry.id === id)) return queues
-  const messages = queue.messages.filter((entry) => entry.id !== id)
+  const index = queue?.messages.findIndex((entry) => entry.id === id) ?? -1
+  if (!queue || index < 0 || queue.sending === id) return queues
   return withQueue(queues, key, {
     ...queue,
-    messages,
+    messages: queue.messages.filter((entry) => entry.id !== id),
     // Only a refused message holds the others back.
-    ...(queue.failure && queue.messages[0]?.id === id ? { failure: undefined } : {}),
+    ...(queue.failure && index === 0 ? { failure: undefined } : {}),
+    // One being edited goes back before whatever follows it now.
+    ...(queue.returnBefore === id ? { returnBefore: queue.messages[index + 1]?.id ?? null } : {}),
   })
 }
 
-/** The message to hand over next, unless one is already going or a refusal holds them. */
+/** The message taken back to be edited was cleared, so those after it no longer wait for it. */
+export function forgetHeldPlace(queues: HeldQueues, key: string): HeldQueues {
+  const queue = queues[key]
+  return queue?.returnBefore === undefined
+    ? queues
+    : withQueue(queues, key, { ...queue, returnBefore: undefined })
+}
+
+/** Whether the next message waits for one taken back to be edited, which goes before it. */
+export function waitsForEditedMessage(queue: HeldQueue | undefined): boolean {
+  return Boolean(queue?.returnBefore && queue.messages[0]?.id === queue.returnBefore)
+}
+
+/** The message to hand over next, unless one is already going, a refusal holds them, or one being edited goes first. */
 export function nextHeldMessage(queue: HeldQueue | undefined): HeldMessage | undefined {
-  return queue && !queue.sending && !queue.failure ? queue.messages[0] : undefined
+  return queue && !queue.sending && !queue.failure && !waitsForEditedMessage(queue)
+    ? queue.messages[0]
+    : undefined
 }
 
 export function beginHeldDelivery(queues: HeldQueues, key: string, id: string): HeldQueues {

@@ -1,5 +1,5 @@
 import { Pencil, X } from 'lucide-react'
-import type { HeldQueue } from '../held-messages'
+import { waitsForEditedMessage, type HeldQueue } from '../held-messages'
 
 /**
  * Messages sent before their session could take them. They go to it in this
@@ -27,7 +27,10 @@ export function HeldMessageList({
         <strong>
           {starting
             ? 'Will send when the session starts'
-            : failure ? 'Not sent yet' : 'Sending to the session'}
+            : failure ? 'Not sent yet'
+              : !queue.sending && waitsForEditedMessage(queue)
+                ? 'Waiting for the message you are editing'
+                : 'Sending to the session'}
         </strong>
         <span>{queue.messages.length}</span>
       </header>

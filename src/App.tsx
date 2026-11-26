@@ -454,6 +454,7 @@ import { SessionStart, type StartingSession } from './SessionStart'
 import {
   beginHeldDelivery,
   dropHeldQueue,
+  forgetHeldPlace,
   holdMessage,
   holdsMessages,
   moveHeldQueue,
@@ -11172,9 +11173,19 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   useEffect(() => {
     submitMessageRef.current = submitMessage
   })
+  // A message taken back to be edited keeps its place, and those after it
+  // wait, until it is held again or its text is cleared from the message bar.
+  useEffect(() => {
+    for (const [key, queue] of Object.entries(heldQueues)) {
+      if (queue.returnBefore && !composerDrafts[key]?.text.trim()) {
+        updateHeldQueues((current) => forgetHeldPlace(current, key))
+      }
+    }
+  }, [composerDrafts, heldQueues])
   useEffect(() => {
     if (heldDeliveryRef.current || loading) return
-    for (const [key, queue] of Object.entries(heldQueues)) {
+    // What is held now, not as of the last render: one may have just been taken back.
+    for (const [key, queue] of Object.entries(heldQueuesRef.current)) {
       if (isPendingSessionKey(key)) continue
       if (removedSessions.current.has(key)) {
         updateHeldQueues((current) => dropHeldQueue(current, key))

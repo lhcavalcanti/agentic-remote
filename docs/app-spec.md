@@ -520,6 +520,8 @@ MUST NOT appear in source control, browser responses, logs, or documentation.
   its own. Send and Queue MUST hold what they submit as visible items ("Will
   send when the session starts") that can be edited, which takes one back into
   the composer and returns it to its place when it is held again, or removed.
+  Until an edited one is held again or its text is cleared, those after it
+  MUST wait for it, even once the session exists.
   Attaching files and recording MUST wait for the session and say why; its
   model and mode are the ones it is created with. Commands the app answers
   about the open session (`/clear`, `/restart`, `/statusline`, `/cwd`, `/ask`,

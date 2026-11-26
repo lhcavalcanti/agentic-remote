@@ -588,7 +588,7 @@ const pendingSessionPrefix = 'pending-session-'
 const pendingSessionPage = Date.now().toString(36)
 
 /** A session still being started: it can be open, but it is no session yet. */
-function isPendingSessionKey(key: string | undefined): key is string {
+function isPendingSessionKey(key: string | undefined): boolean {
   return Boolean(key?.startsWith(pendingSessionPrefix) && !key.includes(':'))
 }
 
@@ -11044,7 +11044,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     )
       ? previous
       : fallbackSessionKey(sessionsRef.current, closingSessionsRef.current)
-    if (isPendingSessionKey(back)) {
+    if (back && isPendingSessionKey(back)) {
       openPendingSession(back)
       return
     }

@@ -224,6 +224,75 @@ describe('SessionCategoryStore', () => {
     })
   })
 
+  it('keeps what a collapsed category shows, as a revisioned choice that survives a restart', async () => {
+    const { store: categories, directory, file } = await store()
+    const told: unknown[] = []
+    categories.on('changed', (snapshot) => told.push(snapshot))
+    // Nothing chosen yet: the default, which the snapshot leaves unsaid.
+    expect(categories.snapshot()).toEqual({ revision: 0, categories: [] })
+
+    const chosen = await categories.setCollapsedShows(0, 'none')
+    expect(chosen).toEqual({ revision: 1, categories: [], collapsedShows: 'none' })
+    expect(told).toEqual([chosen])
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      version: 1, revision: 1, categories: [], closed: {}, collapsedShows: 'none',
+    })
+    // Refused against a revision the hub has moved past, and the same choice again changes nothing.
+    await expect(categories.setCollapsedShows(0, 'attention')).rejects.toMatchObject({ statusCode: 409 })
+    expect(await categories.setCollapsedShows(1, 'none')).toEqual(chosen)
+    expect(told).toHaveLength(1)
+    // Category changes keep it.
+    await categories.change(1, { type: 'create', id: 'lab', name: 'Homelab' })
+
+    const { store: restarted } = await store(directory)
+    expect(restarted.snapshot()).toEqual({
+      revision: 2,
+      categories: [{ id: 'lab', name: 'Homelab', collapsed: false, sessions: [] }],
+      collapsedShows: 'none',
+    })
+    expect(await restarted.setCollapsedShows(2, 'attention-unread')).toMatchObject({
+      revision: 3, collapsedShows: 'attention-unread',
+    })
+  })
+
+  it('reads and writes back a file with the choice in it without losing anything', async () => {
+    const directory = await folder()
+    const file = path.join(directory, 'session-categories.json')
+    const written = {
+      version: 1,
+      revision: 7,
+      futureSetting: { kept: true },
+      categories: [{ id: 'lab', name: 'Homelab', collapsed: true, sessions: ['hub:a'], color: 'teal' }],
+      closed: {},
+      collapsedShows: 'attention',
+    }
+    await writeFile(file, JSON.stringify(written))
+    const { store: categories } = await store(directory)
+    expect(categories.snapshot()).toMatchObject({ revision: 7, collapsedShows: 'attention' })
+
+    await categories.change(7, { type: 'update', categoryId: 'lab', name: 'Lab' })
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      ...written, revision: 8, categories: [{ ...written.categories[0], name: 'Lab' }],
+    })
+  })
+
+  it('shows the default for a choice it does not know, and writes that choice back until one is made', async () => {
+    const directory = await folder()
+    const file = path.join(directory, 'session-categories.json')
+    // As a newer release could leave it, rolled back from.
+    await writeFile(file, JSON.stringify({ version: 1, revision: 2, categories: [], closed: {}, collapsedShows: 'working' }))
+    const { store: categories } = await store(directory)
+    expect(categories.unavailableReason()).toBeUndefined()
+    expect(categories.snapshot()).toEqual({ revision: 2, categories: [] })
+
+    await categories.change(2, { type: 'create', id: 'lab', name: 'Homelab' })
+    expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ revision: 3, collapsedShows: 'working' })
+    expect(await categories.setCollapsedShows(3, 'attention-unread')).toMatchObject({
+      revision: 4, collapsedShows: 'attention-unread',
+    })
+    expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ revision: 4, collapsedShows: 'attention-unread' })
+  })
+
   it('leaves a newer or unreadable file alone and reports categories unavailable', async () => {
     for (const contents of [
       JSON.stringify({ version: 2, revision: 9, categories: [] }),
@@ -237,6 +306,7 @@ describe('SessionCategoryStore', () => {
       expect(categories.unavailableReason()).toMatch(/categories/i)
       await expect(categories.change(0, { type: 'create', id: 'lab', name: 'Homelab' }))
         .rejects.toMatchObject({ statusCode: 503 })
+      await expect(categories.setCollapsedShows(0, 'none')).rejects.toMatchObject({ statusCode: 503 })
       await categories.sessionClosed('hub', 'a')
       await categories.removeComputer('hub')
       expect(await readFile(file, 'utf8')).toBe(contents)
@@ -375,6 +445,16 @@ describe('SessionCategoryStore', () => {
     expect(categories.snapshot()).toMatchObject({ revision: 1, categories: [{ collapsed: false }] })
     expect(await categories.change(1, { type: 'update', categoryId: 'lab', collapsed: true }))
       .toMatchObject({ revision: 2 })
+
+    await rm(directory, { recursive: true, force: true })
+    await writeFile(directory, 'blocked')
+    await expect(categories.setCollapsedShows(2, 'none')).rejects.toThrow()
+    await rm(directory, { force: true })
+    await mkdir(directory)
+    expect(categories.snapshot()).toEqual({
+      revision: 2, categories: [{ id: 'lab', name: 'Homelab', collapsed: true, sessions: [] }],
+    })
+    expect(await categories.setCollapsedShows(2, 'none')).toMatchObject({ revision: 3, collapsedShows: 'none' })
   })
 
   it('tells its listeners each commit once it is saved, whoever made it, and nothing else', async () => {

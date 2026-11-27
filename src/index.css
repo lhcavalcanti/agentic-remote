@@ -1874,6 +1874,14 @@ button {
   border-radius: var(--radius-small);
 }
 
+/* Closed to its counts with the open session in it: its header takes the
+   open row's tint and bars, since that row is out of sight. */
+.session-category--holds-selected > .session-category__header {
+  border-radius: var(--radius-small);
+  background: color-mix(in srgb, var(--accent) 9%, var(--navigation));
+  box-shadow: inset 3px 0 0 var(--text), inset -3px 0 0 var(--text);
+}
+
 /* Where a dragged session would land. */
 .session-category--drop-target {
   background: var(--accent-tint);

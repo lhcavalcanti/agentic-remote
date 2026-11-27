@@ -13,8 +13,9 @@ import { SchedulerPermissionSettings } from './SchedulerPermissionSettings'
 import { openShellSettings, shellSettingsAvailable } from '../shell'
 import { runningAppVersion } from '../pwa'
 import { DefaultRuntimeControls, DefaultSessionFolderControl, SettingScope, ShortcutEditor } from './controls'
-import { accentThemes, appearanceOptions, notificationScopeOptions } from './options'
+import { accentThemes, appearanceOptions, collapsedCategoryOptions, notificationScopeOptions } from './options'
 import { StatuslineControls, statuslineOptions } from './StatuslineControls'
+import { CollapsedCategoriesSetting } from './CollapsedCategoriesSetting'
 import type { AppSettingsDialogProps } from './types'
 import { DisplayNameSetting } from '../rail/DisplayNameSetting'
 import { ComputersBody } from '../computers/ComputersDialog'
@@ -415,7 +416,8 @@ export const navigableSettingsSections: readonly SettingsSection[] = [
     scope: 'hub',
     searchLabels: ({ shortcuts }) => [
       'Appearance', 'Reading surfaces', 'Accent color', 'Status line', 'Show status line', 'Keyboard shortcuts',
-      'Recall previous message', 'Preview features',
+      'Recall previous message', 'Preview features', 'Collapsed categories show',
+      ...collapsedCategoryOptions.map((option) => option.name),
       ...appearanceOptions.flatMap((option) => [option.name, `${option.name} appearance`]),
       ...accentThemes.flatMap((theme) => [theme.name, `${theme.name} accent`]),
       ...statuslineOptions.map((option) => option.label),
@@ -429,6 +431,9 @@ export const navigableSettingsSections: readonly SettingsSection[] = [
       onAccentThemeChange,
       statusline,
       onStatuslineChange,
+      collapsedCategoryShows,
+      collapsedCategoryShowsUnavailable,
+      onCollapsedCategoryShowsChange,
       onShortcutsChange,
       shortcutOverrides,
       shortcuts,
@@ -504,6 +509,11 @@ export const navigableSettingsSections: readonly SettingsSection[] = [
               settings={statusline}
             />
           </section>
+          <CollapsedCategoriesSetting
+            onChange={onCollapsedCategoryShowsChange}
+            unavailable={collapsedCategoryShowsUnavailable}
+            value={collapsedCategoryShows}
+          />
           <section className="app-settings-section app-settings-section--wide">
             <div className="app-settings-section__title">
               <h4>Keyboard shortcuts</h4>

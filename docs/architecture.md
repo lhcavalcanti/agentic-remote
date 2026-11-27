@@ -47,7 +47,9 @@ with session events, never with discovery: a replacement takes its predecessor's
 category and place (from the removal's `replacedBy`, the Clear or Recover
 response of an older node, or `replacedSessionIds` lineage), a close is
 remembered for Reopen until the closed session expires or no category holds it,
-and a delete or an unpairing removes it. Writes under `/api/session-categories`,
+and a delete or an unpairing removes it. The same file and revision keep what a
+collapsed category shows (`collapsedShows`), which an older release writes back
+as one more field it does not know. Writes under `/api/session-categories`,
 and Oracle's category tools, name the revision they were made against, and the
 store tells the hub routes every change it commits, from either or from the
 hub's own bookkeeping, which they broadcast as `session.categories.updated`.

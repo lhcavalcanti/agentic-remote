@@ -701,6 +701,7 @@ function categoryHeaderLabel(section: SessionCategorySection, filtering: boolean
     if (section.unread > 0) parts.push(`${section.unread} unread`)
     if (section.working) parts.push('working')
     parts.push(plural(section.total, 'session'))
+    if (section.hidesSelected) parts.push('open session inside')
   } else {
     parts.push(plural(section.total, 'session'))
   }
@@ -744,6 +745,7 @@ function SessionCategorySectionView({
     <section
       aria-label={`Category ${category.name}`}
       className={`session-category${section.collapsed ? ' session-category--collapsed' : ''}${
+        section.hidesSelected ? ' session-category--holds-selected' : ''}${
         dropping ? ' session-category--drop-target' : ''}`}
       ref={setNodeRef}
     >
@@ -778,6 +780,8 @@ function SessionCategorySectionView({
                   </span>
                 ) : null}
                 {section.working ? <span className="session-category__ring" /> : null}
+                {/* Nothing below to count what is left out, so the header counts it all. */}
+                {section.countsOnly ? <small>{section.total}</small> : null}
               </>
             ) : (
               <small>{section.total}</small>
@@ -841,7 +845,7 @@ function SessionCategorySectionView({
             )
           })}
         </SortableContext>
-        {section.collapsed && section.more > 0 ? (
+        {section.collapsed && section.more > 0 && !section.countsOnly ? (
           <button
             aria-label={`Show ${plural(section.more, 'more session')} in ${category.name}`}
             className="session-category__more"

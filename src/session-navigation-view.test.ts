@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { ComputerSummary, ManagedSession } from '../shared/contracts'
+import type { CollapsedCategoryShows } from '../shared/session-categories'
 import {
   categoryNewSession,
   reorderSessionLaneWithHiddenFollowers,
   sessionNavigationView,
   stepVisibleSession,
+  type SessionFilter,
 } from './session-navigation-view'
 
 const computers: ComputerSummary[] = [
@@ -246,6 +248,90 @@ describe('categories in the session navigation view', () => {
       categories: [lab([first], true)],
     })
     expect(quiet.categories[0]).toMatchObject({ sessions: [], total: 1, attention: 0, unread: 0, working: false, more: 1 })
+  })
+
+  describe('what a collapsed category keeps in sight', () => {
+    const members = [
+      session('quiet-1'),
+      session('unread-1'),
+      session('asking-1', asking),
+      session('working', { status: 'running' }),
+      session('unread-2'),
+      session('asking-2', { status: 'error' }),
+      session('open'),
+      session('quiet-2'),
+    ]
+    const unread = new Set(['one:unread-1', 'one:unread-2'])
+    const collapsed = (
+      collapsedShows?: CollapsedCategoryShows,
+      { selectedKey = 'one:open', query = '', filter = 'all', sessions = members, closed = true }: {
+        selectedKey?: string | null
+        query?: string
+        filter?: SessionFilter
+        sessions?: ManagedSession[]
+        closed?: boolean
+      } = {},
+    ) => sessionNavigationView(computers, new Map([['one', [...sessions, first]]]), {}, query, filter, undefined, unread, {
+      categories: [lab(sessions, closed)], selectedKey: selectedKey ?? undefined, collapsedShows,
+    })
+
+    it.each([
+      // The default: up to three that need you or are unread, needs you first, and the open session.
+      ['attention-unread', ['unread-1', 'asking-1', 'asking-2', 'open']],
+      // Unread sessions collapse too.
+      ['attention', ['asking-1', 'asking-2', 'open']],
+      // Nothing, the open session included.
+      ['none', []],
+    ] as const)('closed and showing %s, keeps %j in sight and counts all eight alike', (collapsedShows, kept) => {
+      const view = collapsed(collapsedShows)
+      const [section] = view.categories
+      expect(section).toMatchObject({
+        collapsed: true, total: 8, attention: 2, unread: 2, working: true, more: 8 - kept.length,
+      })
+      expect(section.sessions.map((entry) => entry.id)).toEqual(kept)
+      expect(view.visible.map((entry) => entry.id)).toEqual([...kept, 'first'])
+    })
+
+    it('keeps up to three that need you when only those show, and the open session though it is only unread', () => {
+      const many = [...members, session('asking-3', asking), session('asking-4', asking)]
+      const [section] = collapsed('attention', { selectedKey: 'one:unread-2', sessions: many }).categories
+      expect(section.sessions.map((entry) => entry.id)).toEqual(['asking-1', 'unread-2', 'asking-2', 'asking-3'])
+      expect(section).toMatchObject({ total: 10, attention: 4, unread: 2, more: 6, hidesSelected: false })
+    })
+
+    it('keeps even the open session out of sight when it shows counts only, and says it is in there', () => {
+      const view = collapsed('none')
+      expect(view.categories[0]).toMatchObject({ sessions: [], more: 8, countsOnly: true, hidesSelected: true })
+      // Next and previous pass it by, as they do a session a filter leaves out.
+      expect(stepVisibleSession(view.visible, 'one:open', 1)?.id).toBe('first')
+      expect(collapsed('none', { selectedKey: 'one:first' }).categories[0].hidesSelected).toBe(false)
+      expect(collapsed('none', { selectedKey: null }).categories[0].hidesSelected).toBe(false)
+      for (const shows of [undefined, 'attention-unread', 'attention'] as const) {
+        expect(collapsed(shows).categories[0].hidesSelected).toBe(false)
+      }
+      // Open, it shows every session whatever it keeps when closed.
+      const open = collapsed('none', { closed: false }).categories[0]
+      expect(open).toMatchObject({ collapsed: false, more: 0, countsOnly: false, hidesSelected: false })
+      expect(open.sessions).toEqual(members)
+    })
+
+    it('still says the open session is in it when that session is hidden, though its counts leave it out', () => {
+      const view = sessionNavigationView(computers, new Map([['one', [...members, first]]]), {}, '', 'all',
+        { keys: new Set(['one:open']), shown: false }, unread, {
+          categories: [lab(members, true)], selectedKey: 'one:open', collapsedShows: 'none',
+        })
+      expect(view.categories[0]).toMatchObject({ sessions: [], total: 7, more: 7, hidesSelected: true })
+    })
+
+    it('still opens to show its matches while the list is filtered, whatever it keeps in sight closed', () => {
+      for (const shows of ['attention-unread', 'attention', 'none'] as const) {
+        const searched = collapsed(shows, { query: 'quiet-2' }).categories[0]
+        expect(searched).toMatchObject({ collapsed: false, total: 8, more: 0, countsOnly: false, hidesSelected: false })
+        expect(searched.sessions.map((entry) => entry.id)).toEqual(['quiet-2'])
+        expect(collapsed(shows, { filter: 'unread' }).categories[0].sessions.map((entry) => entry.id))
+          .toEqual(['unread-1', 'unread-2'])
+      }
+    })
   })
 
   it('shows matches inside their categories, expanded, and leaves out categories without any', () => {

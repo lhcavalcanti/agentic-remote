@@ -196,6 +196,7 @@ const slowTests = [
   'src/scheduler/ScheduleForm.test.tsx',
   'src/scheduler/SchedulerView.test.tsx',
   'src/settings/AppUpdatesSettings.test.tsx',
+  'src/settings/CollapsedCategoriesSetting.test.tsx',
   'src/settings/HealthCard.test.tsx',
   'src/settings/SettingsNavigation.test.tsx',
   'src/settings/SkillsSettings.test.tsx',

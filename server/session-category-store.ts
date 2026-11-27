@@ -5,10 +5,12 @@ import { CLOSED_SESSION_RETENTION_MS } from '../shared/closed-sessions.js'
 import {
   SessionCategoryRefusal,
   applySessionCategoryChange,
+  isCollapsedCategoryShows,
   isSessionCategoryId,
   isSessionCategoryKey,
   sessionCategoryName,
   sessionCategoryNameKey,
+  type CollapsedCategoryShows,
   type SessionCategoriesSnapshot,
   type SessionCategory,
   type SessionCategoryChange,
@@ -22,6 +24,7 @@ const CLOSED_MEMBER_GRACE_MS = 24 * 60 * 60 * 1000
 const DEPARTED_LIMIT = 256
 /** Places plain removals took, for a legacy clear's successor; see `retired`. */
 const RETIRED_LIMIT = 64
+const STALE_REVISION = 'Categories changed on another device; reload the session list and try again'
 
 type Fields = Record<string, unknown>
 
@@ -30,6 +33,8 @@ interface CategoryState {
   categories: SessionCategory[]
   /** Members whose session is closed, by when it closed. Reopening gives them back their place. */
   closed: Record<string, string>
+  /** What a collapsed category keeps in sight, once chosen. */
+  collapsedShows?: CollapsedCategoryShows
 }
 
 function key(computerId: string, sessionId: string): string {
@@ -67,7 +72,7 @@ function validName(name: unknown): name is string {
  * would quietly drop whatever did not fit.
  */
 function parseState(parsed: Fields): { state: CategoryState; extra: Fields; categoryExtra: Map<string, Fields> } | undefined {
-  const { version: _version, revision = 0, categories, closed = {}, ...extra } = parsed
+  const { version: _version, revision = 0, categories, closed = {}, collapsedShows, ...extra } = parsed
   // One that could not be written past is no more usable than a negative one.
   if (typeof revision !== 'number' || !Number.isSafeInteger(revision + 1) || revision < 0) return undefined
   if (!Array.isArray(categories) || !isRecord(closed)) return undefined
@@ -94,14 +99,19 @@ function parseState(parsed: Fields): { state: CategoryState; extra: Fields; cate
       return undefined
     }
   }
-  return { state: { revision, categories: loaded, closed: { ...closed } as Record<string, string> }, extra, categoryExtra }
+  const state: CategoryState = { revision, categories: loaded, closed: { ...closed } as Record<string, string> }
+  // A choice a newer release offers shows as the default here, and is
+  // written back as it was read until one is made here.
+  if (isCollapsedCategoryShows(collapsedShows)) state.collapsedShows = collapsedShows
+  else if (collapsedShows !== undefined) extra.collapsedShows = collapsedShows
+  return { state, extra, categoryExtra }
 }
 
 /**
- * The hub's session categories, kept in `session-categories.json` beside, and
- * never inside, `session-order.json`: a release that predates categories
- * ignores this file, so rolling back leaves it alone and rolling forward
- * finds it again.
+ * The hub's session categories, and what a collapsed one keeps in sight, kept
+ * in `session-categories.json` beside, and never inside, `session-order.json`:
+ * a release that predates categories ignores this file, so rolling back
+ * leaves it alone and rolling forward finds it again.
  *
  * Fields this release does not know are written back as they were read, so
  * a newer release's additions survive a rollback. A file from a newer
@@ -203,7 +213,8 @@ export class SessionCategoryStore extends EventEmitter<{ changed: [snapshot: Ses
   }
 
   snapshot(): SessionCategoriesSnapshot {
-    return { revision: this.state.revision, categories: structuredClone(this.state.categories) }
+    const { revision, categories, collapsedShows } = this.state
+    return { revision, categories: structuredClone(categories), ...collapsedShows ? { collapsedShows } : {} }
   }
 
   /**
@@ -220,7 +231,7 @@ export class SessionCategoryStore extends EventEmitter<{ changed: [snapshot: Ses
       // Checked inside the commit: a lifecycle change queued ahead of this one
       // has already moved the revision on.
       if (revision !== state.revision) {
-        throw refused('Categories changed on another device; reload the session list and try again', 409)
+        throw refused(STALE_REVISION, 409)
       }
       const placed = change.type === 'create' ? change.sessions ?? []
         : change.type === 'move' && change.categoryId !== null ? change.sessions : []
@@ -238,6 +249,19 @@ export class SessionCategoryStore extends EventEmitter<{ changed: [snapshot: Ses
       if (next === state.categories) return false
       state.categories = next
       for (const member of placed) delete state.closed[member]
+      return true
+    })
+  }
+
+  /** What a collapsed category keeps in sight, for every browser, chosen against `revision`. */
+  async setCollapsedShows(revision: number, collapsedShows: CollapsedCategoryShows): Promise<SessionCategoriesSnapshot> {
+    if (this.unavailable) throw refused(this.unavailable, 503)
+    return this.commit((state) => {
+      if (revision !== state.revision) {
+        throw refused(STALE_REVISION, 409)
+      }
+      if (state.collapsedShows === collapsedShows) return false
+      state.collapsedShows = collapsedShows
       return true
     })
   }
@@ -391,11 +415,7 @@ export class SessionCategoryStore extends EventEmitter<{ changed: [snapshot: Ses
     const run = this.commits.then(async () => {
       const previous = this.state
       const retired = new Map(this.retired)
-      const staged: CategoryState = {
-        revision: previous.revision,
-        categories: previous.categories,
-        closed: { ...previous.closed },
-      }
+      const staged: CategoryState = { ...previous, closed: { ...previous.closed } }
       // Expired first, so nothing can reclaim a place that has already lapsed.
       const expired = this.expire(staged)
       const changed = mutate(staged)
@@ -434,6 +454,7 @@ export class SessionCategoryStore extends EventEmitter<{ changed: [snapshot: Ses
         ...category,
       })),
       closed: this.state.closed,
+      ...this.state.collapsedShows ? { collapsedShows: this.state.collapsedShows } : {},
     }, null, 2)
     const temporary = `${this.statePath}.tmp`
     await writeFile(temporary, snapshot, { mode: 0o600 })

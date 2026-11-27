@@ -25,6 +25,6 @@ Each `SettingsSection` declares `id`, `title`, `icon`, `scope`, and `render(prop
 - Models, Folders, Remote machines, Oracle, Interface, Skills, and Scheduler: `hub`.
 - Notifications (permission and push subscription) and App (connection and updates): `device`.
 
-Interface retains device-local keyboard shortcuts, and App still shows the hub's sync status. Oracle's own model and folders remain in its existing hub-owned manager settings, not the settings profile. Existing per-control scope labels remain unchanged; registry icons and scope metadata appear in category navigation.
+Interface retains device-local keyboard shortcuts, and App still shows the hub's sync status. Oracle's own model and folders remain in its existing hub-owned manager settings, not the settings profile. Interface's Collapsed categories show is kept in the hub's revisioned session categories (`useSessionCategories`), not the settings profile, and shows disabled with the hub's reason while it keeps no categories. Existing per-control scope labels remain unchanged; registry icons and scope metadata appear in category navigation.
 
 `App` still owns the settings-profile client and passes its current values, state, and callbacks to the dialog. Profile revisions, persistence, offline handling, and conflict resolution are unchanged. The shared status-line controls and runtime defaults are also used by the existing session UI. Runtime presentation helpers and default-runtime types have a single owner in `src/session-setup/`; settings imports those canonical exports.

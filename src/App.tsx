@@ -5141,7 +5141,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       sessionFilter,
       { keys: listedHiddenKeys, shown: showHiddenSessions },
       listedUnreadKeys,
-      { categories: categorizedSessions, selectedKey },
+      { categories: categorizedSessions, selectedKey, collapsedShows: sessionCategories.collapsedShows },
     ),
     [
       orderedComputers,
@@ -5154,6 +5154,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       listedUnreadKeys,
       categorizedSessions,
       selectedKey,
+      sessionCategories.collapsedShows,
     ],
   )
   // A pending row stands where its session will appear, so finishing the
@@ -15626,6 +15627,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         onNewSessionBackendChange={setNewSessionBackend}
         onShortcutsChange={setShortcutOverrides}
         onStatuslineChange={setStatusline}
+        collapsedCategoryShows={sessionCategories.collapsedShows}
+        collapsedCategoryShowsUnavailable={sessionCategories.available
+          ? undefined
+          : sessionCategories.unavailable ?? 'Waiting for the hub’s categories…'}
+        onCollapsedCategoryShowsChange={(next) => void sessionCategories.changeCollapsedShows(
+          next, 'Could not change what collapsed categories show')}
         shortcutOverrides={shortcutOverrides}
         shortcuts={shortcuts}
         onUpdateReady={setUpdateRegistration}

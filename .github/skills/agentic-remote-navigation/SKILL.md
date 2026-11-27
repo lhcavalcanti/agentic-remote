@@ -272,6 +272,12 @@ Do not weaken these without an explicit product decision.
   serves the one a request accepts. Hashed `/assets/*` is `immutable` for a
   year and everything else `no-cache`, so only hashed output may land in
   `assets/` (`vite.config.ts` refuses a `public/assets`).
+- The page reads its version and build ID from `index.html`'s
+  `agentic-remote-version` and `agentic-remote-build` metas
+  (`runningAppVersion` in `src/pwa.ts`). Never compile a per-build or
+  per-release value into the bundle: the chunk holding it, and every chunk
+  importing that one, would be renamed and downloaded again on each release.
+  `server/app-build.test.ts` rebuilds the app to check that every name survives.
 - A tmux session's `/commands` comes from its folder's catalog, read through
   one single-flight temporary SDK session per folder. It is fresh for 60 s,
   when a known tmux session skips process discovery, and is served for up to

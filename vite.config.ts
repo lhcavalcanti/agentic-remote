@@ -195,6 +195,7 @@ const slowTests = [
   'src/rail/ShellNavigation.test.tsx',
   'src/scheduler/ScheduleForm.test.tsx',
   'src/scheduler/SchedulerView.test.tsx',
+  'src/settings/AppUpdatesSettings.test.tsx',
   'src/settings/CollapsedCategoriesSetting.test.tsx',
   'src/settings/HealthCard.test.tsx',
   'src/settings/SettingsNavigation.test.tsx',
@@ -264,10 +265,6 @@ export default defineConfig(({ command, mode }) => {
   const buildId = command === 'build' ? randomUUID() : packageVersion.version
   const oracleVoiceE2eBuild = process.env.AGENTIC_REMOTE_E2E_BUILD === '1'
   return {
-    define: {
-      __APP_VERSION__: JSON.stringify(packageVersion.version),
-      __APP_BUILD_ID__: JSON.stringify(buildId),
-    },
     // Module workers (the Markdown document renderer) are built as modules.
     // micromark's entity decoder resolves to a `browser` build that decodes
     // through the DOM, which a worker does not have; take its plain build.
@@ -287,7 +284,12 @@ export default defineConfig(({ command, mode }) => {
       react(),
       {
         name: 'app-build-identity',
-        apply: 'build',
+        // The page reads its release from these (src/pwa.ts). A value
+        // compiled into the bundle would rename every chunk on each build.
+        transformIndexHtml: () => [
+          { tag: 'meta', attrs: { name: 'agentic-remote-version', content: packageVersion.version }, injectTo: 'head' },
+          { tag: 'meta', attrs: { name: 'agentic-remote-build', content: buildId }, injectTo: 'head' },
+        ],
         generateBundle() {
           this.emitFile({
             type: 'asset',

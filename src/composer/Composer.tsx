@@ -2,6 +2,7 @@ import { Pencil, X } from 'lucide-react'
 import { SIDE_QUESTION_MAX_LENGTH } from '../../shared/side-question'
 import { AttachmentStrip } from './AttachmentStrip'
 import { ComposerActions } from './ComposerActions'
+import { HeldMessageList } from './HeldMessageList'
 import { QueuedPromptList } from './QueuedPromptList'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import type { ComposerProps } from './types'
@@ -45,6 +46,11 @@ export function Composer(props: ComposerProps) {
     onKeyDown,
     onPaste,
     onFileChange,
+    startingSession,
+    heldQueue,
+    onEditHeldMessage,
+    onRemoveHeldMessage,
+    onRetryHeldMessages,
   } = props
   // The line below the composer only explains a live state or mode; an idle
   // composer keeps no line. Send and Queue name their shortcuts in tooltips.
@@ -115,6 +121,15 @@ export function Composer(props: ComposerProps) {
           </div>
         ) : null}
         {selected.queuedPrompts?.length ? <QueuedPromptList {...props} /> : null}
+        {heldQueue && (heldQueue.messages.length > 0 || heldQueue.failure) ? (
+          <HeldMessageList
+            onEdit={(id) => onEditHeldMessage?.(id)}
+            onRemove={(id) => onRemoveHeldMessage?.(id)}
+            onRetry={() => onRetryHeldMessages?.()}
+            queue={heldQueue}
+            starting={Boolean(startingSession)}
+          />
+        ) : null}
         {editingQueuedPromptId ? (
           <div className="queued-edit-banner">
             <Pencil size={13} />

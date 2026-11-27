@@ -9,6 +9,33 @@ import { hubFetch } from './hub-sign-in'
 export const PWA_UPDATE_EVENT = 'agentic-remote:update-ready'
 let announcedUpdateIdentity: string | undefined
 
+/**
+ * The release this page was loaded from, which vite.config.ts writes into
+ * index.html rather than the bundle, so unchanged chunks keep their names.
+ */
+export function runningAppVersion(): AppVersion | undefined {
+  const content = (name: string) =>
+    document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content
+  const version = content('agentic-remote-version')
+  const buildId = content('agentic-remote-build')
+  if (version === undefined || buildId === undefined) {
+    return undefined
+  }
+  try {
+    return parseAppVersion({ version, buildId })
+  } catch {
+    return undefined
+  }
+}
+
+function pageVersion(): AppVersion {
+  const running = runningAppVersion()
+  if (!running) {
+    throw new Error('This page does not record its build; reload Agentic Remote')
+  }
+  return running
+}
+
 function workerUrl(version: AppVersion): string {
   return `/sw.js?v=${encodeURIComponent(version.buildId ?? version.version)}`
 }
@@ -162,10 +189,11 @@ export async function registerPwa(): Promise<void> {
   if (!('serviceWorker' in navigator)) {
     return
   }
+  const running = pageVersion()
   const registration =
     (await navigator.serviceWorker.getRegistration()) ??
     (await navigator.serviceWorker.register(
-      workerUrl({ version: __APP_VERSION__, buildId: __APP_BUILD_ID__ }),
+      workerUrl(running),
       workerOptions,
     ))
   const announceUpdate = () => {
@@ -220,14 +248,15 @@ export async function checkForPwaUpdate(): Promise<
   if (!('serviceWorker' in navigator)) {
     return undefined
   }
+  const running = pageVersion()
   const versionResponse = await hubFetch('/api/version', { cache: 'no-store' })
   if (!versionResponse.ok) {
     throw new Error(`Unable to check app version (${versionResponse.status})`)
   }
   const deployed = parseAppVersion(await versionResponse.json())
   const bundleUpdate =
-    deployed.version !== __APP_VERSION__ ||
-    (deployed.buildId !== undefined && deployed.buildId !== __APP_BUILD_ID__)
+    deployed.version !== running.version ||
+    (deployed.buildId !== undefined && deployed.buildId !== running.buildId)
   // Retarget even when this page is current: a waiting worker can belong to a
   // release that has since been rolled back.
   const registration = await navigator.serviceWorker.register(

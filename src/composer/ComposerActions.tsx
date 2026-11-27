@@ -10,6 +10,10 @@ import { SendControl } from './SendControl'
 import { composerSteeringUnavailableReason } from './composer-state'
 import type { ComposerProps } from './types'
 
+/** Why files cannot be attached to a session that is still starting. */
+export const startingAttachmentReason = 'Attach files once the session has started'
+const recordWaitReason = 'Record once the session has started'
+
 export function ComposerActions({
   selected,
   selectedComputerOnline,
@@ -48,6 +52,7 @@ export function ComposerActions({
   phoneEnterCreatesNewline,
   loadingEarlierMessages,
   onLoadEarlierMessages,
+  startingSession,
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'foregroundTurnActive' | 'supportsQueuedPromptDispatch' |
   'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
@@ -56,7 +61,7 @@ export function ComposerActions({
   'recordingDuration' | 'compactTokens' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
   'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage' | 'phoneEnterCreatesNewline' |
-  'loadingEarlierMessages' | 'onLoadEarlierMessages'
+  'loadingEarlierMessages' | 'onLoadEarlierMessages' | 'startingSession'
 >) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyChosen, setHistoryChosen] = useState(false)
@@ -130,48 +135,59 @@ export function ComposerActions({
     <>
     <div className="composer-actions composer-actions--refresh">
       <button
+        aria-description={startingSession ? startingAttachmentReason : undefined}
         aria-label={transcribing
           ? 'Transcribing audio'
           : uploadingFile ? 'Uploading file' : 'Attach file or audio recording'}
         className="send-button composer-attachment-button"
-        disabled={transcribing || uploadingFile}
+        disabled={startingSession || transcribing || uploadingFile}
         onClick={onOpenAttachmentInput}
+        title={startingSession ? startingAttachmentReason : undefined}
         type="button"
       >
         {transcribing || uploadingFile ? (
           <LoaderCircle className="activity-message__spinner" size={17} />
         ) : <Plus size={19} />}
       </button>
-      <div className="composer-secondary-tools">
-        {setupButton}
-        {historyButton}
-        <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
-      </div>
-      <button
-        aria-label="Start microphone recording"
-        className="send-button composer-record-button"
-        disabled={transcribing || uploadingFile}
-        onClick={onStartRecording}
-        title="Record and transcribe"
-        type="button"
-      >
-        <Mic size={17} />
-      </button>
-      <SessionActions className="composer-session-panel" label="Session panel" description="This session">
-        <div className="composer-secondary-overflow">
+      {/* The session's own setup, history and actions wait for it to exist;
+          its model and mode are the ones it is being started with. */}
+      {startingSession ? null : (
+        <div className="composer-secondary-tools">
           {setupButton}
           {historyButton}
           <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
         </div>
-        {sessionActions?.map((action) => (
-          <button
-            className="session-action" disabled={action.disabled}
-            key={action.label} onClick={action.onClick} type="button"
-          >{action.label}</button>
-        ))}
-      </SessionActions>
-      {/* The runtime summary takes the spacer's room rather than a line of its own. */}
-      <RuntimeStatus session={selected} compactTokens={compactTokens} onOpen={onOpenRuntime} />
+      )}
+      <button
+        aria-description={startingSession ? recordWaitReason : undefined}
+        aria-label="Start microphone recording"
+        className="send-button composer-record-button"
+        disabled={startingSession || transcribing || uploadingFile}
+        onClick={onStartRecording}
+        title={startingSession ? recordWaitReason : 'Record and transcribe'}
+        type="button"
+      >
+        <Mic size={17} />
+      </button>
+      {startingSession ? <span className="composer-actions__spacer" /> : (
+        <>
+          <SessionActions className="composer-session-panel" label="Session panel" description="This session">
+            <div className="composer-secondary-overflow">
+              {setupButton}
+              {historyButton}
+              <ContextRing runtime={selected.runtime} onOpen={onOpenRuntime} />
+            </div>
+            {sessionActions?.map((action) => (
+              <button
+                className="session-action" disabled={action.disabled}
+                key={action.label} onClick={action.onClick} type="button"
+              >{action.label}</button>
+            ))}
+          </SessionActions>
+          {/* The runtime summary takes the spacer's room rather than a line of its own. */}
+          <RuntimeStatus session={selected} compactTokens={compactTokens} onOpen={onOpenRuntime} />
+        </>
+      )}
       {selectedQueueAvailable ? (
         <button
           aria-description="Queues this message for later delivery"
@@ -180,7 +196,7 @@ export function ComposerActions({
           disabled={!composer.trim() || sending || transcribing || uploadingFile ||
             Boolean(queueActionId) || Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
           onClick={() => onSubmitMessage(true)}
-          title={`Queue for later delivery${shortcut('Ctrl/⌘+Enter')}`}
+          title={`${startingSession ? 'Queue once the session has started' : 'Queue for later delivery'}${shortcut('Ctrl/⌘+Enter')}`}
           type="button"
         >
           <ListPlus size={17} />
@@ -207,8 +223,9 @@ export function ComposerActions({
             ? 'Open the read-only resource view without sending a prompt'
             : editingQueuedPromptId
               ? supportsQueuedPromptDispatch ? 'Send this queued message now' : 'Put this back in the queue'
-              : busyChoices ? 'Choose Steer or Queue'
-                : `${foregroundTurnActive ? 'Send into the current response' : 'Send immediately'}${shortcut('Enter')}`
+              : startingSession ? `Send once the session has started${shortcut('Enter')}`
+                : busyChoices ? 'Choose Steer or Queue'
+                  : `${foregroundTurnActive ? 'Send into the current response' : 'Send immediately'}${shortcut('Enter')}`
         }
         type="button"
       >

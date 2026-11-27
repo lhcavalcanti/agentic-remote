@@ -12,6 +12,7 @@ import {
 } from 'react'
 import ReaderWorkspace, { READER_WIDTH_MIN } from './ReaderWorkspace'
 import { Composer } from './composer/Composer'
+import { startingAttachmentReason } from './composer/ComposerActions'
 import { useForegroundHandoff } from './composer/use-foreground-handoff'
 import type { ComposerAttachment } from './composer/types'
 import {
@@ -448,8 +449,24 @@ import {
 import type {
   DefaultRuntimeSettings,
   DefaultSessionFolders,
-  SessionCreationHandle,
 } from './session-setup/types'
+import { SessionStart, type StartingSession } from './SessionStart'
+import {
+  beginHeldDelivery,
+  dropHeldQueue,
+  forgetHeldPlace,
+  holdMessage,
+  holdsMessages,
+  moveHeldQueue,
+  nextHeldMessage,
+  removeHeldMessage,
+  resumeHeldDelivery,
+  settleHeldDelivery,
+  takeHeldMessage,
+  type HeldDeliveryOutcome,
+  type HeldMessage,
+  type HeldQueues,
+} from './held-messages'
 
 function scopedKnowledgeRoot(
   root: KnowledgeRoot,
@@ -565,6 +582,26 @@ function recordingDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`
 }
+
+const pendingSessionPrefix = 'pending-session-'
+// Unique to this page, so nothing a previous page kept under a starting
+// session's key is ever taken for one started here.
+const pendingSessionPage = Date.now().toString(36)
+
+/** A session still being started: it can be open, but it is no session yet. */
+function isPendingSessionKey(key: string | undefined): boolean {
+  return Boolean(key?.startsWith(pendingSessionPrefix) && !key.includes(':'))
+}
+
+/** Random rather than counted, as a computer never accepts one launch identity twice; works over plain HTTP too. */
+function newLaunchId(): string {
+  const bytes = new Uint8Array(16)
+  globalThis.crypto.getRandomValues(bytes)
+  return `session-start-${[...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+}
+
+/** A held message on its way to the session it was written for. */
+type HeldSubmission = { session: ManagedSession; message: HeldMessage }
 
 function slashShortcut(value: string): string {
   const parts = value.split(/[-_]/)
@@ -4264,8 +4301,16 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const [resizingSidebar, setResizingSidebar] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [pendingSessionCreations, setPendingSessionCreations] = useState<
-    PendingSessionCreation[]
+    StartingSession[]
   >([])
+  const pendingSessionCreationsRef = useRef(pendingSessionCreations)
+  useLayoutEffect(() => {
+    pendingSessionCreationsRef.current = pendingSessionCreations
+  }, [pendingSessionCreations])
+  // Messages sent to a session before it could take them: under its pending
+  // id while it starts, then under its own key until each has been handed over.
+  const [heldQueues, setHeldQueues] = useState<HeldQueues>({})
+  const heldQueuesRef = useRef(heldQueues)
   const [sessionCreationError, setSessionCreationError] = useState<string>()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const navigationWidth = sidebarWidth + (desktopRail && desktopLayout ? 64 : 0)
@@ -4657,8 +4702,18 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   // ahead early would let a later creation take an earlier row's place, and a
   // creation that never answers is already showing as stuck on that computer.
   const sessionCreationQueues = useRef(new Map<string, Promise<void>>())
-  const sessionCreationIntentRef = useRef(0)
-  const sessionSelectionIntentRef = useRef(0)
+  // What each session being started sends, and sends again on Try again.
+  const sessionStartRequests = useRef(new Map<string, {
+    computerId: string
+    request: (launchId: string | undefined) => Promise<ManagedSession>
+    /** Every attempt's, so one whose answer was lost is found again rather than made twice. */
+    launchId?: string
+    /** What follows once it exists, such as putting it in a category. */
+    started?: (session: ManagedSession) => void
+    /** What was open before it, for Discard to go back to. */
+    previousKey?: string
+    inFlight: boolean
+  }>())
   const newSessionOpenRef = useRef(false)
   const backgroundTaskRequestsRef = useRef(new Map<string, Promise<void>>())
   // Set from the page returning until the hub answers; see the hub event effect.
@@ -5140,6 +5195,27 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const selected = useMemo(
     () => sessions.find((session) => sessionKey(session) === selectedKey),
     [selectedKey, sessions],
+  )
+  // A session still being started, open in its place until it exists.
+  const selectedStart = isPendingSessionKey(selectedKey)
+    ? pendingSessionCreations.find((pending) => pending.id === selectedKey)
+    : undefined
+  // What its composer is drawn for. Nothing is ever sent to it: what is sent
+  // there is held until the session exists.
+  const startingComposerSession = useMemo(
+    (): ManagedSession | undefined => selectedStart && {
+      id: selectedStart.id,
+      computerId: selectedStart.computerId,
+      computerName: selectedStart.computerName,
+      cwd: selectedStart.cwd,
+      provider: selectedStart.provider,
+      executionMode: selectedStart.executionMode,
+      title: 'New session',
+      status: 'idle',
+      updatedAt: new Date(selectedStart.startedAt).toISOString(),
+      messages: [],
+    },
+    [selectedStart],
   )
   const hasSelectedSession = Boolean(selected)
   // Drops a pending message once its session's transcript has it, or once the
@@ -5747,7 +5823,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       (computer) => computer.id === selectedComputerId && computer.online,
     )
       ? selectedComputerId
-      : computers.find((computer) => computer.isLocal)?.id) ||
+      : selectedStart &&
+          computers.some((computer) => computer.id === selectedStart.computerId && computer.online)
+        ? selectedStart.computerId
+        : computers.find((computer) => computer.isLocal)?.id) ||
     computers.find((computer) => computer.online)?.id
 
   const applyBackgroundTaskSnapshot = useCallback(
@@ -5981,6 +6060,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       // Rewriting while sessions are still loading would drop the deep link
       // the loader is about to read.
       if (loading) {
+        return
+      }
+      // A session still starting has no address yet. The one shown stays,
+      // so Back and a reload go where they went before it opened.
+      if (isPendingSessionKey(selectedKey)) {
         return
       }
       const selectedSession = sessions.find(
@@ -6887,10 +6971,17 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       : draft
   }
 
-  function persistComposerDrafts(drafts: ComposerDrafts): ComposerPersistenceResult {
+  function persistComposerDrafts(allDrafts: ComposerDrafts): ComposerPersistenceResult {
     if (composerInitialReadFailure.current) {
       return { ok: false, error: composerInitialReadFailure.current }
     }
+    // A session still starting is lost with the page, so nothing of it is
+    // saved for a page that could never show it again.
+    const drafts = Object.keys(allDrafts).some(isPendingSessionKey)
+      ? Object.fromEntries(
+          Object.entries(allDrafts).filter(([key]) => !isPendingSessionKey(key)),
+        )
+      : allDrafts
     try {
       // Admission and receipts must fail visibly, unlike best-effort settings.
       const snapshot = readComposerStorageSnapshot()
@@ -7189,7 +7280,12 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     // An upsert can settle the pending ref before this render's fallback runs.
     // Its session membership must come from the same latest snapshot.
     setSelectedKey((current) =>
-      current &&
+      // A session still starting is open until it exists or is discarded.
+      isPendingSessionKey(current)
+        ? pendingSessionCreationsRef.current.some((pending) => pending.id === current)
+          ? current
+          : fallbackSessionKey(sessionsRef.current, closingSessionsRef.current)
+        : current &&
       (sessionsRef.current.some((session) => sessionKey(session) === current) ||
         pendingReplacements.current.has(current) ||
         clearingSessions.current.has(current) ||
@@ -9377,6 +9473,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return
     }
     moveComposerDraft(fromKey, toKey)
+    // What is waiting to be sent goes on waiting, for the session it became.
+    updateHeldQueues((current) => moveHeldQueue(current, fromKey, toKey))
     moveAttachments(fromKey, toKey)
     // The draft moves, so what it is answering has to move with it. Left
     // behind, an edited recovery arrived under the replacement with no
@@ -9421,10 +9519,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
 
   function focusComposer(targetKey: string | undefined, cursor?: number): boolean {
     const current = selectedRef.current
+    // A session still starting has a composer too, under its pending id.
+    const showing = (key: string) => current
+      ? sessionKey(current) === key
+      : isPendingSessionKey(key) && selectedKeyStateRef.current === key
     if (
       !targetKey ||
-      !current ||
-      sessionKey(current) !== targetKey ||
+      !showing(targetKey) ||
       document.querySelector('.dialog[aria-modal="true"]')
     ) {
       return false
@@ -9442,10 +9543,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     window.requestAnimationFrame(() => {
       const latest = selectedRef.current
       if (
-        !latest ||
-        sessionKey(latest) !== targetKey ||
-        latest.pendingPermission ||
-        latest.pendingUserInput ||
+        (latest ? sessionKey(latest) !== targetKey : selectedKeyStateRef.current !== targetKey) ||
+        latest?.pendingPermission ||
+        latest?.pendingUserInput ||
         composerRef.current !== textarea ||
         !textarea.isConnected ||
         textarea.disabled ||
@@ -10531,7 +10631,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   }
 
   function selectSession(session: ManagedSession) {
-    sessionSelectionIntentRef.current += 1
     historyIntentRef.current = 'push'
     setLocationKnowledgeTarget(undefined)
     if (sessionKey(session) === selectedKey) {
@@ -10780,7 +10879,6 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   }
 
   function openNewSession() {
-    sessionCreationIntentRef.current += 1
     newSessionOpenRef.current = true
     setNewSessionOpen(true)
   }
@@ -10790,75 +10888,186 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setNewSessionOpen(false)
   }
 
-  function sessionCreationStarted(
-    creation: Omit<PendingSessionCreation, 'id'>,
-  ): SessionCreationHandle {
-    const id = `pending-session-${++pendingSessionCreationIdRef.current}`
+  /** Opens a session that is still starting as the main view. */
+  function openPendingSession(id: string) {
+    // Never written to the address: until it exists there is nothing to link
+    // to, and the address goes on naming what Back returns to.
+    setLocationKnowledgeTarget(undefined)
+    selectedKeyStateRef.current = id
+    setSelectedKey(id)
+    setSidebarView('sessions')
+    setSidebarOpen(false)
+    setError(undefined)
+    // Drawn by the next frame, ready to be written to.
+    window.requestAnimationFrame(() => focusComposer(id))
+  }
+
+  function selectPendingCreation(id: string) {
+    const start = pendingSessionCreationsRef.current.find((entry) => entry.id === id)
+    if (!start) return
+    // Its own view says why it did not start.
+    if (start.failure) setSessionCreationError(undefined)
+    openPendingSession(id)
+  }
+
+  /**
+   * Starts a session and opens it at once, before it exists. What is written
+   * there is its draft and what is sent is held for it; both are the
+   * session's once it exists, wherever the reader has gone by then.
+   */
+  function startSessionCreation(
+    creation: Omit<PendingSessionCreation, 'id' | 'before' | 'failure'>,
+    request: (launchId: string | undefined) => Promise<ManagedSession>,
+    started?: (session: ManagedSession) => void,
+  ) {
+    const id = `${pendingSessionPrefix}${pendingSessionPage}-${++pendingSessionCreationIdRef.current}`
+    const computer = computersRef.current.find((entry) => entry.id === creation.computerId)
+    // Only a computer that keeps launch identities is sent one; any other refuses it.
+    const launchId = computerProviders(computer).find((entry) => entry.id === creation.provider)
+      ?.supportsLaunchIdentity === true ? newLaunchId() : undefined
+    sessionStartRequests.current.set(id, {
+      computerId: creation.computerId,
+      request,
+      launchId,
+      started,
+      previousKey: selectedKeyStateRef.current,
+      inFlight: false,
+    })
+    const computerName = computer?.name ?? creation.computerId
+    setPendingSessionCreations((current) => [
+      ...current,
+      { ...creation, id, computerName, startedAt: Date.now() },
+    ])
+    setSessionCreationError(undefined)
+    closeNewSession()
+    openPendingSession(id)
+    void sendSessionCreation(id)
+  }
+
+  async function sendSessionCreation(id: string) {
+    const entry = sessionStartRequests.current.get(id)
+    if (!entry || entry.inFlight) return
+    entry.inFlight = true
+    const { computerId } = entry
     const turn =
-      sessionCreationQueues.current.get(creation.computerId) ?? Promise.resolve()
+      sessionCreationQueues.current.get(computerId) ?? Promise.resolve()
     let finish = () => {}
     const finished = new Promise<void>((resolve) => {
       finish = resolve
     })
     const queued = turn.then(() => finished)
-    sessionCreationQueues.current.set(creation.computerId, queued)
+    sessionCreationQueues.current.set(computerId, queued)
     void queued.then(() => {
-      if (sessionCreationQueues.current.get(creation.computerId) === queued) {
-        sessionCreationQueues.current.delete(creation.computerId)
+      if (sessionCreationQueues.current.get(computerId) === queued) {
+        sessionCreationQueues.current.delete(computerId)
       }
     })
-    const handle = {
-      id,
-      intent: sessionCreationIntentRef.current,
-      selectionIntent: sessionSelectionIntentRef.current,
-      selectedKey: selectedKeyStateRef.current,
-      turn,
-      finish,
-    }
-    setPendingSessionCreations((current) => [...current, { ...creation, id }])
-    setSessionCreationError(undefined)
-    closeNewSession()
-    setSidebarView('sessions')
-    setSidebarOpen(true)
-    return handle
-  }
-
-  function sessionCreationFailed(
-    creation: SessionCreationHandle,
-    message: string,
-  ) {
-    creation.finish()
-    setPendingSessionCreations((current) =>
-      current.filter((pending) => pending.id !== creation.id),
-    )
-    setSessionCreationError(message)
-    if (!newSessionOpenRef.current) {
-      setSidebarView('sessions')
-    }
-  }
-
-  function created(
-    session: ManagedSession,
-    creation?: SessionCreationHandle,
-  ) {
-    if (creation) {
-      setPendingSessionCreations((current) =>
-        current.filter((pending) => pending.id !== creation.id),
-      )
-    }
-    setSessions((current) => upsertSession(current, session))
-    creation?.finish()
-    const shouldSelect =
-      !creation ||
-      (
-        creation.intent === sessionCreationIntentRef.current &&
-        creation.selectionIntent === sessionSelectionIntentRef.current &&
-        creation.selectedKey === selectedKeyStateRef.current &&
-        !newSessionOpenRef.current
-      )
-    if (!shouldSelect) {
+    let session: ManagedSession
+    try {
+      await turn
+      session = await entry.request(entry.launchId)
+    } catch (caught) {
+      entry.inFlight = false
+      finish()
+      sessionCreationFailed(id, caught instanceof Error ? caught.message : String(caught))
       return
     }
+    entry.inFlight = false
+    try {
+      sessionCreated(id, session)
+    } finally {
+      finish()
+    }
+    entry.started?.(session)
+  }
+
+  function sessionCreated(id: string, session: ManagedSession) {
+    const key = sessionKey(session)
+    sessionStartRequests.current.delete(id)
+    setPendingSessionCreations((current) =>
+      current.filter((pending) => pending.id !== id),
+    )
+    sessionsRef.current = upsertSession(sessionsRef.current, session)
+    setSessions((current) => upsertSession(current, session))
+    // Anything still addressed to it, such as a keystroke handled before the
+    // next render, reaches the session it became.
+    replacedInto.current.set(id, key)
+    // Its draft and held messages go with it, and the held ones then go out.
+    migrateSessionState(id, key)
+    // It becomes the view it had. Opened elsewhere meanwhile, the reader stays.
+    if (selectedKeyStateRef.current === id) {
+      historyIntentRef.current = 'push'
+      selectedKeyStateRef.current = key
+      setSelectedKey(key)
+    }
+  }
+
+  function sessionCreationFailed(id: string, message: string) {
+    setPendingSessionCreations((current) =>
+      current.map((pending) =>
+        pending.id === id ? { ...pending, failure: message } : pending,
+      ),
+    )
+    // Its own view says why; anywhere else it is said where the reader is.
+    if (selectedKeyStateRef.current !== id || newSessionOpenRef.current) {
+      setSessionCreationError(message)
+      if (!newSessionOpenRef.current) {
+        setSidebarView('sessions')
+      }
+    }
+  }
+
+  /** Sends the same request again, with what is written and held for it kept. */
+  function retrySessionCreation(id: string) {
+    const entry = sessionStartRequests.current.get(id)
+    if (!entry || entry.inFlight) return
+    setPendingSessionCreations((current) =>
+      current.map((pending) =>
+        pending.id === id
+          ? { ...pending, failure: undefined, startedAt: Date.now() }
+          : pending,
+      ),
+    )
+    setSessionCreationError(undefined)
+    void sendSessionCreation(id)
+  }
+
+  /** Gives up on a session that did not start, with everything written for it. */
+  function discardSessionCreation(id: string) {
+    const entry = sessionStartRequests.current.get(id)
+    if (!entry || entry.inFlight) return
+    sessionStartRequests.current.delete(id)
+    setPendingSessionCreations((current) =>
+      current.filter((pending) => pending.id !== id),
+    )
+    updateHeldQueues((current) => dropHeldQueue(current, id))
+    updateComposerDrafts([id], (current) => {
+      if (!(id in current)) return current
+      const { [id]: _discarded, ...remaining } = current
+      return remaining
+    })
+    forgetKnowledgeSession(id)
+    setSessionCreationError(undefined)
+    if (selectedKeyStateRef.current !== id) return
+    // What was open before it, or what that has become since.
+    const previous = entry.previousKey && followReplacementsRef.current(entry.previousKey)
+    const back = previous && previous !== id && (
+      sessionsRef.current.some((session) => sessionKey(session) === previous) ||
+      pendingSessionCreationsRef.current.some((pending) => pending.id === previous)
+    )
+      ? previous
+      : fallbackSessionKey(sessionsRef.current, closingSessionsRef.current)
+    if (back && isPendingSessionKey(back)) {
+      openPendingSession(back)
+      return
+    }
+    selectedKeyStateRef.current = back
+    setSelectedKey(back)
+  }
+
+  /** A session opened again, from Open previous or Recently closed, and shown. */
+  function sessionReopened(session: ManagedSession) {
+    setSessions((current) => upsertSession(current, session))
     historyIntentRef.current = 'push'
     setLocationKnowledgeTarget(undefined)
     setSelectedKey(sessionKey(session))
@@ -10866,28 +11075,195 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setSidebarOpen(false)
   }
 
-  async function submitMessage(enqueue = false) {
-    const displayContent = composer
-    const trimmedDisplay = displayContent.trim()
-    if (
-      !selected ||
-      !trimmedDisplay ||
-      sending ||
-      transcribing ||
-      uploadingFile
-    ) {
+  function updateHeldQueues(update: (current: HeldQueues) => HeldQueues) {
+    const next = update(heldQueuesRef.current)
+    if (next === heldQueuesRef.current) return
+    heldQueuesRef.current = next
+    setHeldQueues(next)
+  }
+
+  /**
+   * Why a message cannot wait for its session, if it cannot: the app answers
+   * these itself, about the session on screen, so later they would act on
+   * whatever is open then.
+   */
+  function heldMessageRefusal(content: string, starting: boolean): string | undefined {
+    const trimmed = content.trim()
+    if (!trimmed.startsWith('/')) return undefined
+    const typed = trimmed.slice(1).split(/\s+/, 1)[0].toLowerCase()
+    if (!typed) return undefined
+    // Known by its name, shortcut or alias, as the send itself knows it.
+    const name = webCommands.find((candidate) =>
+      candidate.name.toLowerCase() === typed ||
+      slashShortcut(candidate.name) === typed ||
+      candidate.aliases?.some((alias) => alias.toLowerCase() === typed))?.name ?? typed
+    const local = Boolean(
+      sessionResourceCommand(content) ||
+      sideQuestionCommand(content) ||
+      oracleCommand(content),
+    ) ||
+      ['statusline', 'clear', 'restart'].includes(name) ||
+      (name === 'cwd' && !trimmed.slice(typed.length + 1).trim())
+    if (!local) return undefined
+    return starting
+      ? `Wait for the session to start before using /${typed}.`
+      : `Wait for the held messages to be sent before using /${typed}.`
+  }
+
+  /** Holds what the composer has for a session that cannot take it yet. */
+  function holdComposerMessage(key: string, enqueue: boolean) {
+    const draft = composerDraftsRef.current[key]
+    const history = composerHistoryRef.current[key]
+    const preview = history && history.index < history.messages.length
+      ? history
+      : undefined
+    const text = draft?.text ?? ''
+    if (!text.trim()) return
+    const pastes = activeComposerPastes(text, draft?.pastes || [])
+    const refusal = heldMessageRefusal(
+      expandComposerPastes(text, pastes),
+      isPendingSessionKey(key),
+    )
+    if (refusal) {
+      setError(refusal)
       return
     }
+    retireAttachments(attachmentsInContent(key, text))
+    const message: HeldMessage = { id: newCollapsedPasteKey(), text, pastes, enqueue }
+    updateHeldQueues((current) => holdMessage(current, key, message))
+    updateComposerDrafts([key], (current) =>
+      writeComposerContent(
+        current,
+        key,
+        preview
+          ? { text: preview.draft, pastes: preview.draftPastes }
+          : { text: '', pastes: [] },
+      ),
+    )
+    setError(undefined)
+    focusComposer(key)
+  }
+
+  /** Takes a held message back into the composer; holding it again returns it to its place. */
+  function editHeldMessage(key: string, id: string) {
+    const history = composerHistoryRef.current[key]
+    const unsent = history ? history.draft : composerDraftsRef.current[key]?.text ?? ''
+    if (unsent.trim()) {
+      setError(
+        'There is already something written here. Send it or clear it before editing a held message.',
+      )
+      return
+    }
+    const { queues, message } = takeHeldMessage(heldQueuesRef.current, key, id)
+    if (!message) return
+    updateHeldQueues(() => queues)
+    updateComposerDrafts([key], (current) =>
+      writeComposerContent(current, key, { text: message.text, pastes: message.pastes }),
+    )
+    setError(undefined)
+    focusComposer(key)
+  }
+
+  // Held messages go to their session one at a time, in order, through the
+  // same send as the composer's: one at the head that the session refuses
+  // stays there, with those behind it, until it is tried again.
+  const heldDeliveryRef = useRef<string | undefined>(undefined)
+  const [heldDeliveryTurn, setHeldDeliveryTurn] = useState(0)
+  const submitMessageRef = useRef(submitMessage)
+  useEffect(() => {
+    submitMessageRef.current = submitMessage
+  })
+  // A message taken back to be edited keeps its place, and those after it
+  // wait, until it is held again or its text is cleared from the message bar.
+  useEffect(() => {
+    for (const [key, queue] of Object.entries(heldQueues)) {
+      if (queue.returnBefore && !composerDrafts[key]?.text.trim()) {
+        updateHeldQueues((current) => forgetHeldPlace(current, key))
+      }
+    }
+  }, [composerDrafts, heldQueues])
+  useEffect(() => {
+    if (heldDeliveryRef.current || loading) return
+    // What is held now, not as of the last render: one may have just been taken back.
+    for (const [key, queue] of Object.entries(heldQueuesRef.current)) {
+      if (isPendingSessionKey(key)) continue
+      if (removedSessions.current.has(key)) {
+        updateHeldQueues((current) => dropHeldQueue(current, key))
+        return
+      }
+      const message = nextHeldMessage(queue)
+      const session = message
+        ? sessions.find((entry) => sessionKey(entry) === key)
+        : undefined
+      // Never beside another send to the same session; it goes once that settles.
+      if (!message || !session || submissionInFlight(key)) continue
+      heldDeliveryRef.current = key
+      updateHeldQueues((current) => beginHeldDelivery(current, key, message.id))
+      // Only the first goes as it was sent. Later ones, and any to a session
+      // already busy, wait behind the turn it started rather than steering it.
+      const busy = session.status === 'running' || session.status === 'waiting'
+      void submitMessageRef.current(message.enqueue || queue.delivered > 0 || busy, { session, message })
+        .then(
+          (outcome): HeldDeliveryOutcome =>
+            outcome ?? { accepted: false, message: 'This message was not sent.', uncertain: false },
+          (caught: unknown): HeldDeliveryOutcome => ({
+            accepted: false,
+            message: caught instanceof Error ? caught.message : String(caught),
+            uncertain: true,
+          }),
+        )
+        .then((outcome) => {
+          const liveKey = followReplacementsRef.current(key)
+          updateHeldQueues((current) => settleHeldDelivery(current, liveKey, message.id, outcome))
+        })
+        .finally(() => {
+          heldDeliveryRef.current = undefined
+          setHeldDeliveryTurn((turn) => turn + 1)
+        })
+      return
+    }
+  }, [heldQueues, heldDeliveryTurn, loading, sending, sessions])
+
+  async function submitMessage(
+    enqueue = false,
+    // A held message, sent to its session wherever the reader is by then.
+    held?: HeldSubmission,
+  ): Promise<HeldDeliveryOutcome | undefined> {
+    const composeKey = selectedKey && followReplacementsRef.current(selectedKey)
+    if (
+      !held &&
+      composeKey &&
+      !editingQueuedPromptId &&
+      (isPendingSessionKey(composeKey) || holdsMessages(heldQueuesRef.current, composeKey))
+    ) {
+      // It cannot take it yet, or has to take what was held for it first.
+      holdComposerMessage(composeKey, enqueue)
+      return undefined
+    }
+    const target = held?.session ?? selected
+    const displayContent = held ? held.message.text : composer
+    const trimmedDisplay = displayContent.trim()
+    if (
+      !target ||
+      !trimmedDisplay ||
+      (!held && (sending || transcribing || uploadingFile))
+    ) {
+      return undefined
+    }
+    const targetKey = sessionKey(target)
+    const viewing = Boolean(
+      selectedRef.current && sessionKey(selectedRef.current) === targetKey,
+    )
     // Sending is asking to see what happens next. A reader who had scrolled
     // back to read something older stayed there, so the message they just sent
     // and the status that follows it -- queued, sent to the terminal, the
     // reply arriving -- all happened somewhere off screen.
-    followLatest()
-    const targetKey = sessionKey(selected)
-    const submittedRecoveryToken =
-      restoredFailures.current.get(targetKey) ??
-      restoredDraftStamps.current[targetKey]
-    const history = composerHistoryRef.current[targetKey]
+    if (!held || viewing) followLatest()
+    const submittedRecoveryToken = held
+      ? undefined
+      : restoredFailures.current.get(targetKey) ??
+        restoredDraftStamps.current[targetKey]
+    const history = held ? undefined : composerHistoryRef.current[targetKey]
     const preview = history && history.index < history.messages.length
       ? history
       : undefined
@@ -10907,20 +11283,24 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     const submittedPastes = activeComposerPastes(
       displayContent,
-      composerDrafts[targetKey]?.pastes || [],
+      held ? held.message.pastes : composerDrafts[targetKey]?.pastes || [],
     )
     const content = expandComposerPastes(displayContent, submittedPastes)
-    const submittedAttachments = attachmentsInContent(
-      targetKey,
-      displayContent,
-    )
-    if (editingQueuedPromptId) {
+    const submittedAttachments = held
+      ? []
+      : attachmentsInContent(targetKey, displayContent)
+    if (!held && editingQueuedPromptId) {
       if (enqueue || selectedProviderCapability?.supportsQueuedPromptDispatch !== true) {
         await saveQueuedPromptEdit()
       } else {
         await sendQueuedPromptEdit()
       }
-      return
+      return undefined
+    }
+    if (held) {
+      // Refused when it was held; a session must never be the one to answer it.
+      const refusal = heldMessageRefusal(content, false)
+      if (refusal) return { accepted: false, message: refusal, uncertain: false }
     }
     // Sending clears the composer before the request is answered, so a failure
     // that arrives during it must not be put back on top of what was just
@@ -10982,7 +11362,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       await control.ask(oraclePrompt.prompt, { answerOnly: true })
       return
     }
-    const command = isCommand
+    const command = isCommand && !held
       ? sessionCommands.find(
           (candidate) =>
             candidate.name.toLowerCase() === commandName ||
@@ -11046,10 +11426,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     }
     const shouldEnqueue =
       enqueue ||
-      (selected.status === 'running' &&
+      (target.status === 'running' &&
         isCommand &&
         !command?.allowDuringAgentExecution)
-    setError(undefined)
+    if (!held) setError(undefined)
     const submission: ComposerSubmission = {
       id: newCollapsedPasteKey(),
       originKey: targetKey,
@@ -11062,46 +11442,57 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     let acknowledgedStamp: string | undefined
     const acknowledgedFailure = submission.acknowledgesFailure
     let admitted = false
+    // What became of a held message, for its queue.
+    let outcome: HeldDeliveryOutcome | undefined
     try {
-      admitted = updateComposerDrafts([targetKey], (current) => ({
+      admitted = updateComposerDrafts(held ? [] : [targetKey], (current) => ({
         ...current,
-        [targetKey]: {
-          // Sending a history preview does not submit the draft behind it.
-          text: preview?.draft || '',
-          pastes: preview?.draftPastes || [],
-          ...(preview && current[targetKey]?.deliveryUncertain
-            ? { deliveryUncertain: true }
-            : {}),
-          ...(preview && current[targetKey]?.unresolvedPastes
-            ? { unresolvedPastes: current[targetKey].unresolvedPastes }
-            : {}),
-          pendingSubmission: submission,
-        },
+        [targetKey]: held
+          // Whatever is being written there meanwhile stays; only this goes.
+          ? { ...(current[targetKey] ?? { text: '', pastes: [] }), pendingSubmission: submission }
+          : {
+              // Sending a history preview does not submit the draft behind it.
+              text: preview?.draft || '',
+              pastes: preview?.draftPastes || [],
+              ...(preview && current[targetKey]?.deliveryUncertain
+                ? { deliveryUncertain: true }
+                : {}),
+              ...(preview && current[targetKey]?.unresolvedPastes
+                ? { unresolvedPastes: current[targetKey].unresolvedPastes }
+                : {}),
+              pendingSubmission: submission,
+            },
       }), true)
       if (!admitted) {
-        return
+        return held
+          ? {
+              accepted: false,
+              message: 'This browser could not save the message before sending it. Try again once it can store data.',
+              uncertain: false,
+            }
+          : undefined
       }
       submissionsInFlight.current.add(targetKey)
       submissionAnchors.current.add(targetKey)
-      setSending(true)
+      if (!held) setSending(true)
       // The send goes out alone; reading ahead picks up again once it is answered.
       interruptPrefetch()
       const sendOptions = terminalSendOptions({
-        status: selected.status,
-        provider: selected.provider,
-        executionMode: selected.executionMode,
+        status: target.status,
+        provider: target.provider,
+        executionMode: target.executionMode,
         enqueue: shouldEnqueue,
         appLocalCommand,
       })
       const response = await (isCommand
-        ? executeCommand(selected.computerId, selected.id, {
+        ? executeCommand(target.computerId, target.id, {
             // A restored prompt can be a slash command, and it answers the
             // failure just as a message does.
             acknowledgesFailure: acknowledgedFailure,
             command: content,
             ...sendOptions,
           })
-        : sendMessage(selected.computerId, selected.id, {
+        : sendMessage(target.computerId, target.id, {
             // Whatever they were handed back is answered by this, whether
             // they sent it as it was, edited it, or replaced it outright.
             acknowledgesFailure: acknowledgedFailure,
@@ -11116,18 +11507,18 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       // The terminal took it, but Copilot may hold it as pending and log it
       // only later. A send the app queued instead is already shown in the
       // queue, as a prompt that was not there before this send.
-      const queuedBefore = new Set((selected.queuedPrompts || []).map((prompt) => prompt.id))
+      const queuedBefore = new Set((target.queuedPrompts || []).map((prompt) => prompt.id))
       const queuedInstead = Boolean(updated.queuedPrompts?.some((prompt) =>
         !queuedBefore.has(prompt.id) && prompt.content.trim() === content.trim()))
       if (
         !isCommand &&
         !shouldEnqueue &&
         !appLocalCommand &&
-        selected.executionMode === 'tmux' &&
+        target.executionMode === 'tmux' &&
         !queuedInstead
       ) {
         const echo = createPendingEcho(
-          submission.id, content, selected.messages, Date.now(), selected.messagesStart,
+          submission.id, content, target.messages, Date.now(), target.messagesStart,
         )
         setPendingEchoes((current) => ({
           ...current,
@@ -11180,11 +11571,13 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       if (!isCommand && !shouldEnqueue && !queuedInstead) {
         foregroundHandoff.accepted(updated, sessionEventSequenceRef.current.get(liveKey) || 0)
       }
+      outcome = { accepted: true }
     } catch (caught) {
       if (!composerMounted.current) {
         return
       }
-      foregroundHandoff.clear()
+      // The open session's hand-off, which a held message to another is not.
+      if (!held || viewing) foregroundHandoff.clear()
       const liveKey = followReplacementsRef.current(targetKey)
       if (
         liveKey === targetKey &&
@@ -11194,16 +11587,21 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         // A refresh can omit the session while the request is in flight. Put
         // its last known row back before releasing the anchor so the restored
         // draft and error remain reachable after a rejection.
-        sessionsRef.current = upsertSession(sessionsRef.current, selected)
+        sessionsRef.current = upsertSession(sessionsRef.current, target)
         setSessions((current) =>
           current.some((entry) => sessionKey(entry) === targetKey)
             ? current
-            : upsertSession(current, selected),
+            : upsertSession(current, target),
         )
       }
       const receipt = submissionReceiptFromError(caught)
-      const awaitingReplacement = receipt && receipt.sessionId !== selected.id && liveKey === targetKey &&
-        !removedSessions.current.has(`${selected.computerId}:${receipt.sessionId}`)
+      const awaitingReplacement = receipt && receipt.sessionId !== target.id && liveKey === targetKey &&
+        !removedSessions.current.has(`${target.computerId}:${receipt.sessionId}`)
+      const refusal: HeldDeliveryOutcome = {
+        accepted: false,
+        message: caught instanceof Error ? caught.message : String(caught),
+        uncertain: deliveryUncertaintyFromError(caught) ?? true,
+      }
       if (!removedSessions.current.has(liveKey) || clearingSessions.current.has(liveKey) || awaitingReplacement) {
         if (receipt?.accepted) {
           acknowledgedStamp = submission.acknowledgesFailure
@@ -11225,14 +11623,27 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           if (submittedRecoveryToken) tokens.add(submittedRecoveryToken)
           if (receipt.failedAt) tokens.add(receipt.failedAt)
           acceptedSubmissionTokens.current.set(liveKey, tokens)
-          const held = restoredDraftStamps.current[liveKey]
-          if (held && tokens.has(held)) {
+          const handed = restoredDraftStamps.current[liveKey]
+          if (handed && tokens.has(handed)) {
             forgetRestoredDraft(liveKey)
             restoredFailures.current.delete(liveKey)
           }
           const deferred = unshownFailures.current.get(liveKey)
           if (deferred && tokens.has(deferred.stamp)) unshownFailures.current.delete(liveKey)
           if (receipt.failedAt) warnedUncertain.current.set(liveKey, receipt.failedAt)
+          outcome = { accepted: true }
+        } else if (held) {
+          // A held message stays first in its queue rather than coming back
+          // into a composer that may hold something else by now.
+          updateComposerDrafts([], (current) => {
+            const draft = current[liveKey]
+            if (draft?.pendingSubmission?.id !== submission.id) {
+              return current
+            }
+            const { pendingSubmission: _refused, ...remaining } = draft
+            return writeComposerContent({ ...current, [liveKey]: remaining }, liveKey, remaining)
+          })
+          outcome = refusal
         } else {
           const token =
             receipt?.failedAt ??
@@ -11251,17 +11662,22 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           )
         }
         if (
-          (selectedRef.current && sessionKey(selectedRef.current) === liveKey) ||
-          (!selectedRef.current && selectedKey === liveKey)
+          !held && (
+            (selectedRef.current && sessionKey(selectedRef.current) === liveKey) ||
+            (!selectedRef.current && selectedKey === liveKey)
+          )
         ) {
           setError(caught instanceof Error ? caught.message : String(caught))
         }
+      } else if (held) {
+        // Its session is gone, and its queue with it.
+        outcome = refusal
       }
     } finally {
       if (composerMounted.current) {
         const liveKey = followReplacementsRef.current(targetKey)
         settleSubmission()
-        setSending(false)
+        if (!held) setSending(false)
         // The composer is free again, so anything held back while it was busy
         // is offered now. Waiting for the next draft change left a failure
         // holding the queue with nothing on screen to answer it.
@@ -11281,9 +11697,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         )) {
           reofferFailedPrompt(liveKey)
         }
-        focusComposer(liveKey)
+        // A held message goes out beside whatever is being written; the caret stays put.
+        if (!held) focusComposer(liveKey)
       }
     }
+    return outcome
   }
 
   /** Unpairing discards a computer's drafts, even if it is paired again before queued work runs. */
@@ -12730,6 +13148,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const files = pastedFiles(event.clipboardData)
     if (files.length > 0) {
       event.preventDefault()
+      if (!selected) {
+        // An upload goes to a session's own storage, so it waits for one.
+        setError(`${startingAttachmentReason}.`)
+        return
+      }
       void attachedFiles(files, selected, true)
       return
     }
@@ -13112,7 +13535,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     removedSessions.current.delete(key)
     recentlyClosed.forget(key)
     setRecentlyClosedOpen(false)
-    created(opened)
+    sessionReopened(opened)
   }
 
   async function deleteClosedSession(session: ManagedSession) {
@@ -13321,7 +13744,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
    * session's computer and in its folder, as New session would with its
    * defaults, and puts it in the category once it exists.
    */
-  async function startSessionInCategory(categoryId: string) {
+  function startSessionInCategory(categoryId: string) {
     const category = sessionCategories.categories.find((entry) => entry.id === categoryId)
     const section = navigationView.categories.find((entry) => entry.category.id === categoryId)
     if (!category || !section) return
@@ -13331,37 +13754,35 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     const provider = DEFAULT_SESSION_PROVIDER
     const terminalBacked = newSessionBackend !== 'sdk' &&
       computerProviders(computer).find((entry) => entry.id === provider)?.terminalBacked === true
-    sessionCreationIntentRef.current += 1
-    const creation = sessionCreationStarted({
-      computerId: computer.id,
-      cwd,
-      executionMode: terminalBacked ? 'tmux' : 'sdk',
-      provider,
-    })
-    try {
-      const runtime = defaultRuntimes[provider]
-      // As in New session, a configured model is checked against the ones
-      // the provider offers on that computer.
-      const models = runtime.model.trim()
-        ? (await getProviderRuntimeOptions(computer.id, provider)).models
-        : undefined
-      await creation.turn
-      const session = await createSession(computer.id, {
+    const runtime = defaultRuntimes[provider]
+    startSessionCreation(
+      {
+        computerId: computer.id,
         cwd,
+        executionMode: terminalBacked ? 'tmux' : 'sdk',
         provider,
-        terminalBacked,
-        allowAllPermissions: true,
-        ...newSessionRuntimeInput(runtime, models),
-      })
-      created(session, creation)
-      changeCategories(
+      },
+      async (launchId) => {
+        // As in New session, a configured model is checked against the ones
+        // the provider offers on that computer.
+        const models = runtime.model.trim()
+          ? (await getProviderRuntimeOptions(computer.id, provider)).models
+          : undefined
+        return createSession(computer.id, {
+          cwd,
+          provider,
+          terminalBacked,
+          allowAllPermissions: true,
+          ...newSessionRuntimeInput(runtime, models),
+          ...(launchId ? { launchId } : {}),
+        })
+      },
+      (session) => changeCategories(
         { type: 'move', sessions: [sessionKey(session)], categoryId },
         `Could not put ${session.title} in ${category.name}`,
         `Started ${session.title} in ${category.name}`,
-      )
-    } catch (caught) {
-      sessionCreationFailed(creation, caught instanceof Error ? caught.message : String(caught))
-    }
+      ),
+    )
   }
 
   /**
@@ -13829,6 +14250,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 onNewSession={openNewSession}
                 loading={loading}
                 pendingCreations={placedSessionCreations}
+                onSelectPendingCreation={selectPendingCreation}
                 onOpenSessionTasks={openTasksForSession}
                 onCloseSession={requestSessionClose}
                 onSelectSession={selectSession}
@@ -14150,7 +14572,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                   }} />
                 </span>
               ) : null}
-              {selected?.title || 'Agentic Remote'}
+              {selected?.title || (selectedStart ? 'New session' : 'Agentic Remote')}
             </strong>
             {selected ? (
               <span className="conversation-header__meta">
@@ -14180,6 +14602,20 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 >
                   {shortPath(selected.cwd)}
                 </button>
+              </span>
+            ) : selectedStart ? (
+              <span className="conversation-header__meta">
+                <span className="conversation-header__describes">
+                  {`${providerName(selectedStart.provider)}${
+                    executionModeName(selectedStart.executionMode)
+                      ? ` · ${executionModeName(selectedStart.executionMode)}`
+                      : ''
+                  } · ${selectedStart.computerName} · `}
+                </span>
+                {/* Its folder opens once it is a session. */}
+                <span className="conversation-header__cwd conversation-header__cwd--pending">
+                  {shortPath(selectedStart.cwd)}
+                </span>
               </span>
             ) : (
               <span>Ready when you are</span>
@@ -14426,6 +14862,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         {sessionCreationError &&
         !signInExpired &&
         !newSessionOpen &&
+        // A starting view that failed says why itself, with what to do next.
+        !selectedStart?.failure &&
         (!sidebarOpen || sidebarView !== 'sessions') ? (
           <div className="error-banner" role="alert">
             <span>{sessionCreationError}</span>
@@ -14439,7 +14877,16 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         ) : null}
 
         <div className="timeline" onScroll={timelineScrolled} ref={timelineRef}>
-          {!selected ? (
+          {!selected && selectedStart ? (
+            <SessionStart
+              announceFailure={!newSessionOpen}
+              drafted={Boolean(composerDrafts[selectedStart.id]?.text.trim())}
+              held={heldQueues[selectedStart.id]?.messages.length ?? 0}
+              onDiscard={() => discardSessionCreation(selectedStart.id)}
+              onRetry={() => retrySessionCreation(selectedStart.id)}
+              start={selectedStart}
+            />
+          ) : !selected ? (
             <EmptyConversation
               onCreate={openNewSession}
               onKnowledge={() => setKnowledgeMode('docked')}
@@ -14636,18 +15083,28 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
           </div>
         ) : null}
 
-        {selected ? (
+        {selected || startingComposerSession ? (
           <Composer
-            selected={selected}
+            selected={selected ?? startingComposerSession!}
+            startingSession={!selected}
+            heldQueue={selectedKey ? heldQueues[selectedKey] : undefined}
+            onEditHeldMessage={(id) =>
+              selectedKey && editHeldMessage(followReplacementsRef.current(selectedKey), id)}
+            onRemoveHeldMessage={(id) => selectedKey && updateHeldQueues((current) =>
+              removeHeldMessage(current, followReplacementsRef.current(selectedKey), id))}
+            onRetryHeldMessages={() => selectedKey && updateHeldQueues((current) =>
+              resumeHeldDelivery(current, followReplacementsRef.current(selectedKey)))}
             selectedRetained={selectedRetained}
             selectedQueueHeadIsSteering={selectedQueueHeadIsSteering}
-            selectedQueueAvailable={selectedQueueAvailable}
+            // A message for a session that is starting can be queued behind the turn it starts.
+            selectedQueueAvailable={selected ? selectedQueueAvailable : true}
             foregroundTurnActive={selectedForegroundTurnActive}
             selectedComputerOnline={selectedComputerOnline}
             supportsQueuedPromptDispatch={selectedProviderCapability?.supportsQueuedPromptDispatch === true}
             providerCapability={selectedProviderCapability}
             queueActionId={queueActionId}
-            sending={sending}
+            // Holding a message for a session that is starting waits for nothing.
+            sending={selected ? sending : false}
             editingQueuedPromptId={editingQueuedPromptId}
             queuedEditUnconfirmed={queuedEditUnconfirmed}
             composer={composer}
@@ -14662,7 +15119,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             sideQuestionDraft={sideQuestionDraft}
             sideQuestionPending={sideQuestionPending}
             sideQuestionHasEntries={Boolean(selectedSideThread?.entries.length)}
-            sideQuestionPanel={askingAside && selectedSideThread ? (
+            sideQuestionPanel={askingAside && selectedSideThread && selected ? (
               <SideQuestionPanel
                 entries={selectedSideThread.entries}
                 markdownComponents={mermaidComponents}
@@ -14690,7 +15147,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             recording={recording}
             recordingSeconds={recordingSeconds}
             cancelling={cancelling}
-            readonlyResourceCommand={readonlyResourceCommand}
+            readonlyResourceCommand={selected ? readonlyResourceCommand : undefined}
             composerDraftRecovered={composerDraftRecovered}
             phoneEnterCreatesNewline={phoneEnterCreatesNewline()}
             composerRef={composerRef}
@@ -14702,7 +15159,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             onQueueDragEnd={(event) => void queueDragEnded(event)}
             onEditQueuedPrompt={editQueuedPrompt}
             onRemoveQueuedPrompt={(promptId) => void manageQueuedPrompt(promptId, false)}
-            onDiscardUnconfirmed={() => void manageQueuedPrompt(selected.queuedDispatch!.promptId, false)}
+            onDiscardUnconfirmed={() => {
+              if (selected?.queuedDispatch) void manageQueuedPrompt(selected.queuedDispatch.promptId, false)
+            }}
             onSaveQueuedPromptEdit={() => void saveQueuedPromptEdit()}
             onCancelQueuedPromptEdit={cancelQueuedPromptEdit}
             // A file is for the session; while the bar asks aside it would
@@ -14711,17 +15170,23 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             onDragOver={(event) => {
               if (event.dataTransfer.types.includes('Files')) {
                 event.preventDefault()
-                if (askingAside) event.dataTransfer.dropEffect = 'none'
+                if (askingAside || !selected) event.dataTransfer.dropEffect = 'none'
               }
             }}
-            onDrop={askingAside ? (event) => event.preventDefault() : audioDropped}
+            onDrop={askingAside
+              ? (event) => event.preventDefault()
+              : selected ? audioDropped : (event) => {
+                if (event.dataTransfer.files.length === 0) return
+                event.preventDefault()
+                setError(`${startingAttachmentReason}.`)
+              }}
             onSelectCommand={selectCommand}
             onRetryAttachment={(attachment) => void retryAttachment(attachment)}
             onRemoveAttachment={removeAttachment}
             onBeforeInput={composerBeforeInput}
             onCut={composerCut}
             onChange={(event) => {
-              if (askingAside) {
+              if (askingAside && selected) {
                 const draft = event.target.value
                 updateSideThread(sessionKey(selected), (thread) => ({ ...thread, draft }))
                 return
@@ -14738,7 +15203,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             onStartRecording={() => void startRecording()}
             onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
             onOpenRuntime={() => setRuntimeOpen(true)}
-            loadingEarlierMessages={earlierLoads[sessionKey(selected)] === 'loading'}
+            loadingEarlierMessages={selected ? earlierLoads[sessionKey(selected)] === 'loading' : false}
             onLoadEarlierMessages={loadEarlierMessages}
             onRecallSentMessage={(id) => { navigateMessageHistory(-1, true, id) }}
             onUseSentMessage={() => {
@@ -14757,7 +15222,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               setComposerForKey(selectedKey, history.draft, false, history.draftPastes)
               focusComposer(selectedKey)
             }}
-            sessionActions={[
+            sessionActions={selected ? [
               { label: 'Background tasks', onClick: openBackgroundTasks, disabled: !selectedSupportsBackgroundTasks },
               { label: 'Skills', onClick: () => openSessionResources('skills') },
               { label: 'MCP servers', onClick: () => openSessionResources('mcp') },
@@ -14772,7 +15237,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 ? [{ label: 'Recover conversation', onClick: () => void recoverSelectedConversation(), disabled: !selectedCanRecover || recovering }] : []),
               { label: 'Clear conversation', onClick: () => void clearSelectedConversation(), disabled: clearing || selectedLifecycleBlocked },
               { label: 'Close session', onClick: () => requestSessionClose(), disabled: selectedClosing || !selectedComputerOnline },
-            ]}
+            ] : undefined}
           />
         ) : null}
       </main>
@@ -15092,9 +15557,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         defaultSessionFolders={defaultSessionFolders}
         defaultBackend={newSessionBackend}
         onClose={closeNewSession}
-        onCreating={sessionCreationStarted}
-        onCreationFailed={sessionCreationFailed}
-        onCreated={created}
+        onCreating={startSessionCreation}
+        onCreated={sessionReopened}
         open={newSessionOpen}
       />
       <StatuslineDialog

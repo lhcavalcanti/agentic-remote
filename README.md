@@ -220,7 +220,8 @@ matrix.
 ## Use
 
 - **New session**: choose computer, provider, folder, and the configured provider
-  default model and agent mode.
+  default model and agent mode. It opens at once: write and send while it
+  starts, and what you send goes to it in order once it exists.
 - **Open previous**: resume provider history known to Agentic Remote under the
   same session ID, including saved runtime settings and queued work.
 - **Queue**: add, edit, or remove prompts while an agent runs.

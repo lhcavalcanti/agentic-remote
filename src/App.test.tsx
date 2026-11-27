@@ -13441,8 +13441,12 @@ describe('App', () => {
     ).toBeInTheDocument()
     expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
     expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /^Project chat,/ }))
+    // The sheet was opened over the starting session, which becomes the
+    // created one in place; the one open before it stays where it was.
+    expect(screen.getByRole('button', { name: /^Fresh session,/ }))
       .toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: /^Project chat,/ }))
+      .not.toHaveAttribute('aria-current')
     fireEvent.keyDown(document, { key: 'Escape' })
 
     await waitFor(() =>
@@ -13696,9 +13700,18 @@ describe('App', () => {
     )
     expect(screen.getByLabelText('Agent provider')).toHaveValue('claude')
     expect(screen.getAllByRole('alert')).toHaveLength(1)
+
+    // Back on the session that failed, it is said once, there.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Choose a folder' })).toBeNull(),
+    )
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(within(screen.getByRole('main')).getByRole('alert'))
+      .toHaveTextContent('Session creation failed')
   })
 
-  it('shows a failed creation inside the active 390px sessions drawer', async () => {
+  it('closes the 390px sessions drawer to show the session it starts, failure included', async () => {
     const originalWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
@@ -13713,24 +13726,25 @@ describe('App', () => {
     try {
       render(<App />)
       await screen.findAllByText('Project chat')
+      fireEvent.click(screen.getByRole('button', { name: 'Open sessions' }))
+      expect(document.querySelector('.sidebar--open')).not.toBeNull()
 
       fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
       fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
-      await screen.findByRole('status', {
-        name: 'Creating GitHub Copilot session on development in ~',
-      })
+      const main = screen.getByRole('main')
+      await within(main).findByRole('status', { name: 'Starting session' })
+      expect(document.querySelector('.sidebar--open')).toBeNull()
 
       await act(async () => {
         failCreation?.(new Error('Session creation failed'))
         await Promise.resolve()
       })
 
-      const sidebar = document.querySelector('.sidebar--open')
-      expect(sidebar).not.toBeNull()
-      expect(within(sidebar as HTMLElement).getByRole('alert')).toHaveTextContent(
+      expect(within(main).getByRole('alert')).toHaveTextContent(
         'Session creation failed',
       )
       expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(document.querySelector('.sidebar--open')).toBeNull()
     } finally {
       Object.defineProperty(window, 'innerWidth', {
         configurable: true,
@@ -13739,7 +13753,7 @@ describe('App', () => {
     }
   })
 
-  it('removes a failed pending session before showing its error', async () => {
+  it('keeps a session that cannot start in its place, saying why where it is open', async () => {
     let failCreation: ((error: Error) => void) | undefined
     vi.mocked(createSession).mockReturnValueOnce(
       new Promise((_resolve, reject) => {
@@ -13760,14 +13774,575 @@ describe('App', () => {
       await Promise.resolve()
     })
 
-    await waitFor(() =>
-      expect(
-        screen.queryByRole('status', {
-          name: 'Creating GitHub Copilot session on development in ~',
+    expect(within(screen.getByRole('main')).getByRole('alert'))
+      .toHaveTextContent('Session creation failed')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.queryByRole('status', {
+      name: 'Creating GitHub Copilot session on development in ~',
+    })).toBeNull()
+    const row = screen.getByRole('status', {
+      name: 'Could not create GitHub Copilot session on development in ~',
+    })
+    expect(row).toHaveTextContent('Failed')
+    expect(within(row).getByRole('button')).toHaveAttribute('aria-current', 'page')
+  })
+
+  describe('a session that is starting', () => {
+    const creatingLabel = 'Creating GitHub Copilot session on development in ~'
+
+    function started(overrides: Partial<ManagedSession> = {}): ManagedSession {
+      return {
+        ...session,
+        id: 'created-session',
+        title: 'Fresh session',
+        provider: 'copilot',
+        executionMode: 'tmux',
+        cwd: '~',
+        status: 'idle',
+        messages: [],
+        updatedAt: '2026-07-23T00:00:00.000Z',
+        ...overrides,
+      }
+    }
+
+    /** A creation that answers only when the test says so. */
+    function slowCreation() {
+      let finish!: (created: ManagedSession) => void
+      let fail!: (error: Error) => void
+      vi.mocked(createSession).mockReturnValueOnce(new Promise((resolve, reject) => {
+        finish = resolve
+        fail = reject
+      }))
+      return {
+        finish: (created: ManagedSession) => act(async () => {
+          finish(created)
+          await Promise.resolve()
         }),
-      ).not.toBeInTheDocument(),
-    )
-    expect(screen.getByRole('alert')).toHaveTextContent('Session creation failed')
+        fail: (message: string) => act(async () => {
+          fail(new Error(message))
+          await Promise.resolve()
+        }),
+      }
+    }
+
+    /** The started sessions are read as themselves and take what is sent to them. */
+    function answerAs(...created: ManagedSession[]) {
+      const known = [session, ...created]
+      const find = (computerId: string, id: string) =>
+        known.find((entry) => entry.computerId === computerId && entry.id === id) ?? session
+      vi.mocked(getSession).mockImplementation(async (computerId, id) => find(computerId, id))
+      vi.mocked(sendMessage).mockImplementation(async (computerId, id, input) => {
+        const target = find(computerId, id)
+        return input.enqueue
+          ? {
+              ...target,
+              status: 'running',
+              queuedPrompts: [{
+                id: `queued-${input.content}`,
+                content: input.content,
+                createdAt: '2026-07-23T00:00:01.000Z',
+              }],
+            }
+          : { ...target, status: 'running' }
+      })
+    }
+
+    async function startSession() {
+      fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+      fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+      return within(screen.getByRole('main')).findByRole('status', { name: 'Starting session' })
+    }
+
+    const message = () => screen.getByLabelText('Message') as HTMLTextAreaElement
+    const write = (text: string) => fireEvent.change(message(), { target: { value: text } })
+    const send = (text: string) => {
+      write(text)
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+    }
+    const heldTexts = () => within(screen.getByRole('region', { name: 'Held messages' }))
+      .getAllByRole('listitem')
+      .map((item) => item.textContent)
+    const sentContents = () => vi.mocked(sendMessage).mock.calls.map(([, , input]) => input.content)
+
+    it('opens in the main view at once, saying what is starting and for how long', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+
+      const starting = await startSession()
+
+      expect(starting).toHaveTextContent('GitHub Copilot')
+      expect(starting).toHaveTextContent('tmux')
+      expect(starting).toHaveTextContent('development')
+      expect(starting).toHaveTextContent('~')
+      const elapsed = within(screen.getByRole('main')).getByText('0:00')
+      expect(elapsed).toHaveAttribute('datetime', 'PT0S')
+      const row = screen.getByRole('status', { name: creatingLabel })
+      expect(within(row).getByRole('button', { name: creatingLabel }))
+        .toHaveAttribute('aria-current', 'page')
+      expect(screen.getByRole('button', { name: /^Project chat,/ }))
+        .not.toHaveAttribute('aria-current')
+      await waitFor(() => expect(message()).toHaveFocus())
+      expect(createSession).toHaveBeenCalledOnce()
+
+      const now = Date.now()
+      vi.spyOn(Date, 'now').mockImplementation(() => now + 65_000)
+      await waitFor(() => expect(elapsed).toHaveTextContent('1:05'), { timeout: 2_500 })
+      vi.mocked(Date.now).mockRestore()
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Fresh session,/ }))
+        .toHaveAttribute('aria-current', 'page'))
+      expect(within(screen.getByRole('main')).queryByRole('status', { name: 'Starting session' }))
+        .toBeNull()
+      expect(screen.queryByRole('status', { name: creatingLabel })).toBeNull()
+    })
+
+    it('keeps what is written while it starts as its draft, carried to the session', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      write('Draft while it starts')
+      const saved = () => JSON.parse(
+        localStorage.getItem('agentic-remote:composer-drafts-v2') || '{}',
+      ) as Record<string, { text: string }>
+
+      // Another session has a draft of its own, and coming back finds this one.
+      fireEvent.click(screen.getByRole('button', { name: /^Project chat,/ }))
+      await waitFor(() => expect(message()).toHaveValue(''))
+      fireEvent.click(screen.getByRole('button', { name: creatingLabel }))
+      await waitFor(() => expect(message()).toHaveValue('Draft while it starts'))
+      // A reload loses a session that has not started, so nothing of it is saved.
+      expect(saved()).toEqual({})
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Fresh session,/ }))
+        .toHaveAttribute('aria-current', 'page'))
+      expect(message()).toHaveValue('Draft while it starts')
+      expect(saved()).toEqual({
+        'computer-1:created-session': expect.objectContaining({ text: 'Draft while it starts' }),
+      })
+      expect(sendMessage).not.toHaveBeenCalled()
+    })
+
+    it('holds what is sent while it starts, then sends each once, in order, to that session', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+
+      send('First message')
+      write('Second message')
+      const queue = screen.getByRole('button', { name: 'Queue message' })
+      expect(queue).toHaveAttribute('title', 'Queue once the session has started (Ctrl/⌘+Enter)')
+      fireEvent.click(queue)
+
+      expect(screen.getByRole('region', { name: 'Held messages' }))
+        .toHaveTextContent('Will send when the session starts')
+      expect(heldTexts()).toEqual(['First message', 'Second message'])
+      expect(message()).toHaveValue('')
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(executeCommand).not.toHaveBeenCalled()
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
+      expect(vi.mocked(sendMessage).mock.calls).toEqual([
+        ['computer-1', 'created-session', expect.objectContaining({
+          content: 'First message', enqueue: false,
+        })],
+        ['computer-1', 'created-session', expect.objectContaining({
+          content: 'Second message', enqueue: true,
+        })],
+      ])
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Held messages' })).toBeNull())
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+      expect(sendMessage).toHaveBeenCalledTimes(2)
+    })
+
+    it('lets a held message be edited or removed until it sends', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      for (const text of ['Alpha', 'Bravo', 'Charlie']) send(text)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Remove held message 2' }))
+      expect(heldTexts()).toEqual(['Alpha', 'Charlie'])
+
+      // Editing will not write over something else being written.
+      write('Something else')
+      fireEvent.click(screen.getByRole('button', { name: 'Edit held message 1' }))
+      expect(within(screen.getByRole('main')).getByRole('alert'))
+        .toHaveTextContent('There is already something written here')
+      expect(heldTexts()).toEqual(['Alpha', 'Charlie'])
+      write('')
+
+      // It comes back to the composer, and sending it again returns it to its place.
+      fireEvent.click(screen.getByRole('button', { name: 'Edit held message 1' }))
+      expect(message()).toHaveValue('Alpha')
+      expect(heldTexts()).toEqual(['Charlie'])
+      send('Alpha, edited')
+      expect(heldTexts()).toEqual(['Alpha, edited', 'Charlie'])
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2))
+      expect(sentContents()).toEqual(['Alpha, edited', 'Charlie'])
+    })
+
+    it('keeps the place of a held message being edited, so none after it goes first', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      for (const text of ['Alpha', 'Bravo', 'Charlie']) send(text)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit held message 1' }))
+      expect(message()).toHaveValue('Alpha')
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Held messages' }))
+        .toHaveTextContent('Waiting for the message you are editing'))
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(heldTexts()).toEqual(['Bravo', 'Charlie'])
+
+      send('Alpha, edited')
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(3))
+      expect(sentContents()).toEqual(['Alpha, edited', 'Bravo', 'Charlie'])
+    })
+
+    it('lets the messages after an edited one go once its text is cleared', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      for (const text of ['Alpha', 'Bravo', 'Charlie']) send(text)
+      fireEvent.click(screen.getByRole('button', { name: 'Edit held message 1' }))
+      // Its place moves to whatever follows it when that is removed.
+      fireEvent.click(screen.getByRole('button', { name: 'Remove held message 1' }))
+      expect(heldTexts()).toEqual(['Charlie'])
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Held messages' }))
+        .toHaveTextContent('Waiting for the message you are editing'))
+      expect(sendMessage).not.toHaveBeenCalled()
+
+      write('')
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+      expect(sentContents()).toEqual(['Charlie'])
+    })
+
+    it('sends what it holds to the session it started after you move on, leaving you there', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      send('Hold this')
+      write('Unsent words')
+
+      fireEvent.click(screen.getByRole('button', { name: /^Project chat,/ }))
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Project chat,/ }))
+        .toHaveAttribute('aria-current', 'page'))
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1', 'created-session', expect.objectContaining({ content: 'Hold this', enqueue: false }),
+      ))
+      expect(sendMessage).toHaveBeenCalledOnce()
+      expect(screen.getByRole('button', { name: /^Project chat,/ }))
+        .toHaveAttribute('aria-current', 'page')
+      expect(screen.getByRole('button', { name: /^Fresh session,/ }))
+        .not.toHaveAttribute('aria-current')
+      expect(message()).toHaveValue('')
+
+      fireEvent.click(screen.getByRole('button', { name: /^Fresh session,/ }))
+      await waitFor(() => expect(message()).toHaveValue('Unsent words'))
+      expect(sendMessage).toHaveBeenCalledOnce()
+    })
+
+    it('keeps a held message the session refuses, first in line, until asked to try again', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      vi.mocked(sendMessage).mockRejectedValueOnce(
+        new SubmissionError('The terminal is not ready yet', 409, undefined, { uncertainDelivery: false }),
+      )
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      send('First message')
+      send('Second message')
+
+      await creation.finish(started())
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+      const held = await screen.findByRole('region', { name: 'Held messages' })
+      await waitFor(() => expect(held).toHaveTextContent('The terminal is not ready yet'))
+      expect(heldTexts()).toEqual(['First message', 'Second message'])
+      expect(message()).toHaveValue('')
+      expect(sendMessage).toHaveBeenCalledOnce()
+
+      fireEvent.click(within(held).getByRole('button', { name: 'Try again' }))
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(3))
+      expect(sentContents()).toEqual(['First message', 'First message', 'Second message'])
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Held messages' })).toBeNull())
+    })
+
+    it('keeps the draft and held messages when it cannot start, and Try again starts it the same way', async () => {
+      const first = slowCreation()
+      const second = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      send('Held through it')
+      write('Draft through it')
+
+      await first.fail('Folder is not available')
+
+      const main = screen.getByRole('main')
+      expect(within(main).getByRole('alert')).toHaveTextContent('Folder is not available')
+      expect(heldTexts()).toEqual(['Held through it'])
+      expect(message()).toHaveValue('Draft through it')
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(createSession).toHaveBeenCalledOnce()
+
+      fireEvent.click(within(main).getByRole('button', { name: 'Try again' }))
+
+      await waitFor(() => expect(createSession).toHaveBeenCalledTimes(2))
+      expect(vi.mocked(createSession).mock.calls[1]).toEqual(vi.mocked(createSession).mock.calls[0])
+      // A computer that does not say it keeps launch identities would refuse one.
+      expect(vi.mocked(createSession).mock.calls[0][1]).not.toHaveProperty('launchId')
+      expect(within(main).getByRole('status', { name: 'Starting session' })).toBeInTheDocument()
+      expect(within(main).queryByRole('alert')).toBeNull()
+      expect(sendMessage).not.toHaveBeenCalled()
+
+      await second.finish(started())
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1', 'created-session', expect.objectContaining({ content: 'Held through it' }),
+      ))
+      expect(sendMessage).toHaveBeenCalledOnce()
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Fresh session,/ }))
+        .toHaveAttribute('aria-current', 'page'))
+      expect(message()).toHaveValue('Draft through it')
+    })
+
+    it('starts under one launch identity, so Try again after a lost answer finds the session it made', async () => {
+      vi.mocked(listComputers).mockResolvedValue([{
+        ...computer,
+        providers: computer.providers?.map((provider) => ({ ...provider, supportsLaunchIdentity: true })),
+      }])
+      const first = slowCreation()
+      const second = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      send('Held through it')
+
+      await first.fail('Failed to fetch')
+      fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Try again' }))
+
+      await waitFor(() => expect(createSession).toHaveBeenCalledTimes(2))
+      const [[, firstInput], [, retryInput]] = vi.mocked(createSession).mock.calls
+      expect(firstInput.launchId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+      expect(retryInput).toEqual(firstInput)
+
+      await second.finish(started())
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+
+      // Another start is another launch.
+      slowCreation()
+      await startSession()
+      await waitFor(() => expect(createSession).toHaveBeenCalledTimes(3))
+      expect(vi.mocked(createSession).mock.calls[2][1].launchId).toMatch(/^[A-Za-z0-9]/)
+      expect(vi.mocked(createSession).mock.calls[2][1].launchId).not.toBe(firstInput.launchId)
+    })
+
+    it('refuses a command the app answers, under any of its names, rather than holding it', async () => {
+      slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+
+      for (const command of ['/footer', '/clear']) {
+        send(command)
+        expect(within(screen.getByRole('main')).getByRole('alert'))
+          .toHaveTextContent(`Wait for the session to start before using ${command}.`)
+        expect(message()).toHaveValue(command)
+      }
+      expect(screen.queryByRole('region', { name: 'Held messages' })).toBeNull()
+    })
+
+    it('discards a session that could not start, with everything written for it', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      send('Held for nothing')
+      write('Draft for nothing')
+      await creation.fail('Folder is not available')
+
+      fireEvent.click(within(screen.getByRole('main')).getByRole('button', { name: 'Discard' }))
+
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Project chat,/ }))
+        .toHaveAttribute('aria-current', 'page'))
+      expect(screen.queryByRole('status', { name: /session on development in ~$/ })).toBeNull()
+      expect(screen.queryByRole('region', { name: 'Held messages' })).toBeNull()
+      expect(message()).toHaveValue('')
+      expect(sendMessage).not.toHaveBeenCalled()
+
+      slowCreation()
+      await startSession()
+      expect(message()).toHaveValue('')
+      expect(screen.queryByRole('region', { name: 'Held messages' })).toBeNull()
+    })
+
+    it('keeps each of several sessions starting at once to its own view, draft and messages', async () => {
+      const worker = { ...computer, id: 'computer-2', name: 'worker-node', isLocal: false }
+      vi.mocked(listComputers).mockResolvedValue([computer, worker])
+      const onDevelopment = slowCreation()
+      const onWorker = slowCreation()
+      const workerSession = started({
+        id: 'worker-created',
+        computerId: worker.id,
+        computerName: worker.name,
+        provider: 'claude',
+        executionMode: 'sdk',
+        title: 'Worker session',
+      })
+      answerAs(started(), workerSession)
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+      send('For development')
+      write('Draft for development')
+
+      fireEvent.click(screen.getAllByRole('button', { name: 'New session' })[0])
+      fireEvent.change(screen.getAllByLabelText('Computer')[0], {
+        target: { value: worker.id },
+      })
+      fireEvent.change(screen.getByLabelText('Agent provider'), {
+        target: { value: 'claude' },
+      })
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Create session' })).toBeEnabled(),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Create session' }))
+      const workerLabel = 'Creating Claude Agent session on worker-node in ~'
+      await waitFor(() => expect(screen.getByRole('button', { name: workerLabel }))
+        .toHaveAttribute('aria-current', 'page'))
+      expect(message()).toHaveValue('')
+      expect(screen.queryByRole('region', { name: 'Held messages' })).toBeNull()
+      send('For worker')
+
+      fireEvent.click(screen.getByRole('button', { name: creatingLabel }))
+      await waitFor(() => expect(message()).toHaveValue('Draft for development'))
+      expect(heldTexts()).toEqual(['For development'])
+
+      await onWorker.finish(workerSession)
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+        worker.id, 'worker-created', expect.objectContaining({ content: 'For worker' }),
+      ))
+      expect(screen.getByRole('button', { name: creatingLabel }))
+        .toHaveAttribute('aria-current', 'page')
+      expect(heldTexts()).toEqual(['For development'])
+
+      await onDevelopment.finish(started())
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledWith(
+        'computer-1', 'created-session', expect.objectContaining({ content: 'For development' }),
+      ))
+      expect(sendMessage).toHaveBeenCalledTimes(2)
+      await waitFor(() => expect(screen.getByRole('button', { name: /^Fresh session,/ }))
+        .toHaveAttribute('aria-current', 'page'))
+      expect(message()).toHaveValue('Draft for development')
+    })
+
+    it('never puts a session that is still starting in the address', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await waitFor(() =>
+        expect(window.location.search).toBe('?computer=computer-1&session=session-1'),
+      )
+      const pushState = vi.spyOn(window.history, 'pushState')
+      const replaceState = vi.spyOn(window.history, 'replaceState')
+      const addresses = () => [...pushState.mock.calls, ...replaceState.mock.calls]
+        .map(([, , url]) => String(url))
+
+      await startSession()
+      // Opening Knowledge asks for the address to be written again.
+      fireEvent.click(screen.getByRole('button', { name: 'Session knowledge' }))
+      expect(window.location.search).toBe('?computer=computer-1&session=session-1')
+      expect(addresses()).toEqual([])
+
+      await creation.finish(started())
+
+      await waitFor(() =>
+        expect(window.location.search).toBe('?computer=computer-1&session=created-session'),
+      )
+      act(() => {
+        window.history.back()
+      })
+      await waitFor(() =>
+        expect(window.location.search).toBe('?computer=computer-1&session=session-1'),
+      )
+      expect(addresses().filter((address) => /pending/.test(address))).toEqual([])
+    })
+
+    it('waits for the session to exist before taking files, saying why', async () => {
+      const creation = slowCreation()
+      answerAs(started())
+      render(<App />)
+      await screen.findAllByText('Project chat')
+      await startSession()
+
+      const attach = screen.getByRole('button', { name: 'Attach file or audio recording' })
+      expect(attach).toBeDisabled()
+      expect(attach).toHaveAttribute('title', 'Attach files once the session has started')
+      expect(attach).toHaveAccessibleDescription('Attach files once the session has started')
+      expect(screen.getByRole('button', { name: 'Start microphone recording' })).toBeDisabled()
+      const file = new File(['note'], 'note.pdf', { type: 'application/pdf', lastModified: 7 })
+      fireEvent.paste(message(), {
+        clipboardData: { files: [file], items: [], getData: () => '' },
+      })
+      expect(within(screen.getByRole('main')).getByRole('alert'))
+        .toHaveTextContent('Attach files once the session has started')
+      expect(uploadSessionFile).not.toHaveBeenCalled()
+
+      await creation.finish(started())
+
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Attach file or audio recording' })).toBeEnabled(),
+      )
+      expect(uploadSessionFile).not.toHaveBeenCalled()
+    })
   })
 
   it('allows SDK-backed session creation by disabling tmux', async () => {
@@ -23543,6 +24118,38 @@ describe('App', () => {
         const row = within(region('Category Homelab')).getByRole('button', { name: /^lab,/ })
         expect(row).toHaveAttribute('aria-current', 'page')
         expect(within(region(computer.name)).queryByRole('button', { name: /^lab,/ })).toBeNull()
+      })
+
+      it('opens the session it starts in the main view at once, and keeps it open in the category', async () => {
+        listed([session, other])
+        hubCategories = { revision: 1, categories: [category('lab', 'Homelab', [other])] }
+        const started = { ...other, id: 'started', title: 'Started', messages: [] }
+        let finish!: (created: ManagedSession) => void
+        vi.mocked(createSession).mockReturnValueOnce(new Promise((resolve) => {
+          finish = resolve
+        }))
+        vi.mocked(getSession).mockImplementation(async (_computerId, id) =>
+          [session, other, started].find((candidate) => candidate.id === id) ?? session)
+
+        render(<App />)
+        await screen.findByLabelText('Message')
+        fireEvent.click(await startIn('Homelab'))
+
+        const starting = await within(screen.getByRole('main'))
+          .findByRole('status', { name: 'Starting session' })
+        expect(starting).toHaveTextContent('~/src/project')
+        expect(starting).toHaveTextContent('development')
+        await waitFor(() => expect(createSession).toHaveBeenCalledOnce())
+
+        await act(async () => {
+          finish(started)
+          await Promise.resolve()
+        })
+
+        await waitFor(() => expect(hubCategories.categories[0].sessions).toEqual([key(other), key(started)]))
+        openList()
+        expect(within(region('Category Homelab')).getByRole('button', { name: /^Started,/ }))
+          .toHaveAttribute('aria-current', 'page')
       })
 
       it('starts it with the model, mode, and backend New session uses', async () => {

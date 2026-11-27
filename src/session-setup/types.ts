@@ -15,14 +15,3 @@ export type DefaultRuntimeSelection = {
 export type DefaultRuntimeSettings = Record<AgentProvider, DefaultRuntimeSelection>
 
 export type DefaultSessionFolders = Record<string, string>
-
-export type SessionCreationHandle = {
-  id: string
-  intent: number
-  selectionIntent: number
-  selectedKey?: string
-  /** Settles once earlier creations on the same computer have finished. */
-  turn: Promise<void>
-  /** Lets the next creation on the same computer go ahead. */
-  finish: () => void
-}

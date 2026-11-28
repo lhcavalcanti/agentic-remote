@@ -12,7 +12,7 @@ const phone = { name: 'phone', viewport: { width: 390, height: 844 }, hasTouch: 
  * server, whose fake engine hears a scripted sentence through the real
  * routes, host and word agreement. The microphone is a generated tone.
  */
-async function open(page: Page, baseUrl: string, engine: 'ready' | 'stopped' = 'ready') {
+async function open(page: Page, baseUrl: string, engine: 'ready' | 'failed' = 'ready') {
   await installFakeDictationCapture(page)
   const fixture = await setupWorkspaceFixture(page, { baseUrl, knowledgeMode: 'hidden' })
   const context = page.context()
@@ -76,7 +76,7 @@ test.describe('live dictation', () => {
   })
 
   test('records and uploads when the transcription computer cannot dictate live', async ({ page }, testInfo) => {
-    const { fixture, composer } = await open(page, testInfo.project.use.baseURL!, 'stopped')
+    const { fixture, composer } = await open(page, testInfo.project.use.baseURL!, 'failed')
     await page.getByRole('button', { name: 'Start microphone recording' }).click()
     await expect(page.locator('.recording-panel')).toContainText('Recording 0:0')
     await page.getByRole('button', { name: /Stop & transcribe/ }).click()

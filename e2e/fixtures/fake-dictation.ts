@@ -30,10 +30,11 @@ export interface FakeDictationState {
  * every 0.6 s from half a second in, at the positions the fake microphone's
  * signal gives each window, so the real live session's word agreement
  * confirms words as it would for speech. Passes hear the words in lower case;
- * the final decode returns them punctuated.
+ * the final decode returns them punctuated. It stays failed, so microphones
+ * record and upload, until a test makes it ready.
  */
 export class FakeDictationEngine implements LiveDictationEngine {
-  state: LiveDictationEngineState = 'ready'
+  state: LiveDictationEngineState = 'failed'
   passes = 0
   finals = 0
   private readonly words = ['Draft', 'the', 'release', 'notes', 'for', 'Friday.']
@@ -48,7 +49,7 @@ export class FakeDictationEngine implements LiveDictationEngine {
     return this.hear(samples, true)
   }
 
-  reset(state: LiveDictationEngineState = 'ready'): void {
+  reset(state: LiveDictationEngineState = 'failed'): void {
     this.state = state
     this.passes = 0
     this.finals = 0
@@ -74,7 +75,7 @@ export class FakeDictationEngine implements LiveDictationEngine {
   }
 }
 
-/** E2E controls: reset the sentence, or make the engine unavailable. */
+/** E2E controls: make the engine ready with the sentence from its start, or unavailable. */
 export function registerFakeDictationControls(app: FastifyInstance, engine: FakeDictationEngine): void {
   app.post<{ Body: { state?: LiveDictationEngineState } }>('/__e2e/dictation/reset', async (request) => {
     engine.reset(request.body?.state ?? 'ready')

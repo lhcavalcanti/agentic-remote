@@ -31,6 +31,7 @@ export function Composer(props: ComposerProps) {
     showCommandMenu,
     selectedAttachments,
     recording,
+    dictation,
     composerDraftRecovered,
     phoneEnterCreatesNewline,
     composerRef,
@@ -56,7 +57,8 @@ export function Composer(props: ComposerProps) {
   // composer keeps no line. Send and Queue name their shortcuts in tooltips.
   // Recording has none either, whatever else applies: its panel is the status
   // and shows the timer, and it hides the buttons the other lines name.
-  const stateLine = recording
+  // Dictation shows its status beside its own controls.
+  const stateLine = recording || dictation
     ? null
     : askingAside
       ? (
@@ -192,7 +194,7 @@ export function Composer(props: ComposerProps) {
       <div
         className={`composer ${
           selectedQueueAvailable && !askingAside ? 'composer--running' : ''
-        } ${askingAside ? 'composer--aside' : ''} composer--refresh`}
+        } ${askingAside ? 'composer--aside' : ''}${dictation ? ' composer--dictating' : ''} composer--refresh`}
         onDragOver={onDragOver}
         onDrop={onDrop}
       >

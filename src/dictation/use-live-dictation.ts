@@ -32,6 +32,8 @@ export interface UseLiveDictationOptions {
   startFallback: () => void
   /** The composer's polite live region. */
   announce: (message: string) => void
+  /** Dictation ended, however it ended; called after any `setDraft`. */
+  onEnd?: () => void
   dependencies?: Partial<LiveDictationDependencies>
 }
 
@@ -98,6 +100,7 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
     setStatus('idle')
     setSeconds(0)
     if (draft !== undefined) optionsRef.current.setDraft(draft, selection)
+    optionsRef.current.onEnd?.()
   }, [stopTimer])
 
   const ensureSpan = (stream: Stream): void => {

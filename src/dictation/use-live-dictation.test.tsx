@@ -39,6 +39,7 @@ function setup(options: {
   const stored: Array<{ draft: string; selection?: [number, number] }> = []
   const announcements: string[] = []
   const startFallback = vi.fn()
+  const onEnd = vi.fn()
   const fetchCapabilities = vi.fn(async () => {
     const capabilities = options.capabilities ?? { live: true, computerName: 'Studio' }
     if (capabilities instanceof Error) throw capabilities
@@ -61,6 +62,7 @@ function setup(options: {
       },
       startFallback,
       announce: (message) => announcements.push(message),
+      onEnd,
       dependencies: {
         fetchCapabilities,
         audioWorkletSupported: () => options.audioWorklet ?? true,
@@ -94,7 +96,7 @@ function setup(options: {
     textarea.setSelectionRange(caret, caret)
     act(() => hook.current.onUserEdit(previous, next))
   }
-  return { hook, textarea, clients, client, stored, announcements, startFallback, begin, text, edit }
+  return { hook, textarea, clients, client, stored, announcements, startFallback, onEnd, begin, text, edit }
 }
 
 beforeEach(() => {
@@ -128,6 +130,7 @@ describe('live dictation in a composer', () => {
     expect(harness.textarea.value).toBe('Please fix that login the bug')
     expect(harness.hook.current.status).toBe('idle')
     expect(harness.hook.current.draft).toBeUndefined()
+    expect(harness.onEnd).toHaveBeenCalledOnce()
   })
 
   it('counts the seconds while listening', async () => {
@@ -222,6 +225,7 @@ describe('falling back to recording', () => {
     const harness = setup(options)
     await harness.begin()
     expect(harness.startFallback).toHaveBeenCalledTimes(1)
+    expect(harness.onEnd).toHaveBeenCalledOnce()
     expect(harness.announcements).toEqual([announcement])
     expect(harness.hook.current.status).toBe('idle')
     expect(harness.hook.current.draft).toBeUndefined()

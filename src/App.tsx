@@ -4701,6 +4701,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     },
     startFallback: () => void startRecording(),
     announce: (message) => announceCategory(message),
+    onError: (message) => setError(message),
     onEnd: () => {
       dictationTargetRef.current = undefined
       setDictationTarget(undefined)
@@ -11800,6 +11801,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
         liveDictation.status !== 'idle') {
       return
     }
+    setError(undefined)
     dictationTargetRef.current = followReplacementsRef.current(selectedKey)
     setDictationTarget(selectedKey)
     void liveDictation.start()
@@ -12349,6 +12351,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     // row in its baseline, so canceling would discard it.
     if (recording) {
       setError('Stop recording before editing a queued message.')
+      return
+    }
+    // The draft it would replace is still taking dictated words.
+    if (dictationHere) {
+      setError('Finish dictation before editing a queued message.')
       return
     }
     if (pendingAttachmentIntakeRef.current > 0) {
@@ -14727,7 +14734,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               className={`icon-button side-question-toggle ${
                 askingAside ? 'icon-button--active' : ''
               }`}
-              disabled={!askingAside && (Boolean(editingQueuedPromptId) || recording)}
+              disabled={!askingAside && (Boolean(editingQueuedPromptId) || recording || dictationHere)}
               onClick={() => askingAside ? closeSideQuestion() : openSideQuestion()}
               title={askingAside
                 ? 'Back to your message (Esc)'

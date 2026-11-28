@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { beginSpan, cancelSpan, rebaseSpan, renderSpan, type DictationSpan } from './draft-span'
+import { beginSpan, cancelSpan, rebaseSpan, renderSpan, settleSpan, type DictationSpan } from './draft-span'
 
 describe('draft span rendering', () => {
   it('starts at the caret and spaces dictated text from the words around it', () => {
@@ -71,5 +71,43 @@ describe('rebasing a span on edits made while dictating', () => {
     const shown = renderSpan(replacing, 'new')
     const edited = rebaseSpan(replacing, shown, shown.draft, 'Please Send the new now', 7) as DictationSpan
     expect(cancelSpan(edited)).toEqual({ draft: 'Please Send the old words now', selectionStart: 16, selectionEnd: 25 })
+  })
+})
+
+describe('settling a span into a stored draft that changed while dictating', () => {
+  it('stores what the user saw when the stored draft did not change', () => {
+    const span = beginSpan('Fix the bug', 8, 8)
+    expect(settleSpan(span, 'Fix the bug', 'Fix the login bug', [13, 13]))
+      .toEqual({ draft: 'Fix the login bug', selection: [13, 13] })
+  })
+
+  it('puts the dictated words after text restored into an empty draft', () => {
+    // A send that failed while dictating gave its words back to the draft.
+    const span = beginSpan('', 0, 0)
+    expect(settleSpan(span, 'Sent first', 'spoken words', [12, 12]))
+      .toEqual({ draft: 'Sent first\n\nspoken words', selection: [24, 24] })
+    // As a transcript is added: one blank line apart.
+    expect(settleSpan(span, 'Sent first\n', 'spoken words', [12, 12]))
+      .toEqual({ draft: 'Sent first\n\nspoken words', selection: [24, 24] })
+  })
+
+  it('keeps text added before or after the draft dictation started from', () => {
+    const span = beginSpan('Draft', 5, 5)
+    expect(settleSpan(span, 'Sent first\n\nDraft', 'Draft spoken', [12, 12]))
+      .toEqual({ draft: 'Sent first\n\nDraft spoken', selection: [24, 24] })
+    expect(settleSpan(span, 'Draft\n\n/uploads/a.png', 'Draft spoken', [12, 12]))
+      .toEqual({ draft: 'Draft spoken\n\n/uploads/a.png', selection: [12, 12] })
+  })
+
+  it('adds only what was dictated and typed to a draft replaced while dictating', () => {
+    const span = beginSpan('Old words here', 9, 9)
+    expect(settleSpan(span, 'Rewritten', 'Old words spoken here', [16, 16]))
+      .toEqual({ draft: 'Rewritten\n\nspoken', selection: [17, 17] })
+  })
+
+  it('leaves a changed draft alone when nothing was added', () => {
+    const span = beginSpan('Old words', 9, 9)
+    expect(settleSpan(span, 'Rewritten', 'Old words', [9, 9])).toEqual({ draft: 'Rewritten' })
+    expect(settleSpan(beginSpan('', 0, 0), 'Sent first', '', [0, 0])).toEqual({ draft: 'Sent first' })
   })
 })

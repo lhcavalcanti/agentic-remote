@@ -910,6 +910,7 @@ export function ManagerAssistant({
     },
     startFallback: () => void voice.start(),
     announce: (message) => announce(message),
+    onError: (message) => setSendError(message),
   })
   const dictating = dictation.status !== 'idle'
   // The microphone control becomes Stop while dictating, so focus stays on it.

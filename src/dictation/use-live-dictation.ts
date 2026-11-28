@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { DictationCapabilities } from '../../shared/dictation'
-import { beginSpan, cancelSpan, rebaseSpan, renderSpan, type DictationSpan, type RenderedSpan } from './draft-span'
+import {
+  beginSpan,
+  cancelSpan,
+  rebaseSpan,
+  renderSpan,
+  settleSpan,
+  type DictationSpan,
+  type RenderedSpan,
+} from './draft-span'
 import {
   LiveDictationClient,
   LiveDictationStartError,
@@ -32,6 +40,8 @@ export interface UseLiveDictationOptions {
   startFallback: () => void
   /** The composer's polite live region. */
   announce: (message: string) => void
+  /** Shows a failure where the composer shows its other errors, so it is seen and stays. */
+  onError: (message: string) => void
   /** Dictation ended, however it ended; called after any `setDraft`. */
   onEnd?: () => void
   dependencies?: Partial<LiveDictationDependencies>
@@ -56,6 +66,8 @@ interface Stream {
   rendered?: RenderedSpan
   text: string
   ended: boolean
+  /** Why the stream failed, once it has. */
+  failure?: string
 }
 
 const defaultDependencies: LiveDictationDependencies = {
@@ -86,15 +98,21 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
     timerRef.current = undefined
   }, [])
 
-  /** Ends the stream in this composer and stores `draft`. */
-  const settle = useCallback((stream: Stream, draft?: string, selection?: [number, number]) => {
+  /**
+   * Ends the stream in this composer and stores `result`, the draft the user
+   * saw, keeping whatever reached the stored draft meanwhile.
+   */
+  const settle = useCallback((stream: Stream, result?: string, selection?: [number, number]) => {
     stream.ended = true
     if (streamRef.current === stream) streamRef.current = undefined
     stopTimer()
     setView(undefined)
     setStatus('idle')
     setSeconds(0)
-    if (draft !== undefined) optionsRef.current.setDraft(draft, selection)
+    if (result !== undefined && stream.span) {
+      const settled = settleSpan(stream.span, optionsRef.current.getDraft(), result, selection ?? [result.length, result.length])
+      optionsRef.current.setDraft(settled.draft, settled.selection)
+    }
     optionsRef.current.onEnd?.()
   }, [stopTimer])
 
@@ -141,7 +159,8 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
     ensureSpan(stream)
     const rendered = renderSpan(stream.span!, text)
     settle(stream, rendered.draft, [rendered.end, rendered.end])
-    optionsRef.current.announce('Dictation finished')
+    // A failure was already shown with its reason.
+    optionsRef.current.announce(stream.failure ? 'Dictation stopped' : 'Dictation finished')
   }, [settle])
 
   const stop = useCallback(() => {
@@ -201,7 +220,10 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
       },
       onFinal: (text) => finish(stream, text),
       onError: (error) => {
-        if (!stream.ended && error.fatal) optionsRef.current.announce(error.message)
+        // The first fatal error says why; a closing connection after it adds nothing.
+        if (stream.ended || !error.fatal || stream.failure !== undefined) return
+        stream.failure = error.message
+        optionsRef.current.onError(error.message)
       },
       onInterrupted: () => {
         if (stream.ended) return
@@ -216,7 +238,7 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
       if (stream.ended) return
       if (error instanceof LiveDictationStartError && error.fallback) return fallback(error.message)
       settle(stream)
-      optionsRef.current.announce(error instanceof Error ? error.message : 'Live dictation could not start')
+      optionsRef.current.onError(error instanceof Error && error.message ? error.message : 'Live dictation could not start')
       return
     }
     if (stream.ended) return

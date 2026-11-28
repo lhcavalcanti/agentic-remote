@@ -57,6 +57,42 @@ export function cancelSpan(span: DictationSpan): { draft: string; selectionStart
 }
 
 /**
+ * What the stored draft becomes when dictation ends with `result`, the draft
+ * the user saw, and its `selection`. Dictation started from the span's
+ * original draft; when the stored draft changed meanwhile (`stored`, say a
+ * failed send gave its words back), that change is kept. Text added before or
+ * after the original stays around the result; any other change keeps the
+ * stored draft and adds what was dictated and typed at its end, as a
+ * transcript is added.
+ */
+export function settleSpan(
+  span: DictationSpan,
+  stored: string,
+  result: string,
+  selection: [number, number],
+): { draft: string; selection?: [number, number] } {
+  const base = span.original
+  if (stored === base) return { draft: result, selection }
+  const shifted = (by: number): [number, number] => [selection[0] + by, selection[1] + by]
+  if (base === '') {
+    if (!result) return { draft: stored }
+    const separator = paragraphSeparator(stored)
+    return { draft: `${stored}${separator}${result}`, selection: shifted(stored.length + separator.length) }
+  }
+  if (stored.endsWith(base)) {
+    const added = stored.slice(0, stored.length - base.length)
+    return { draft: `${added}${result}`, selection: shifted(added.length) }
+  }
+  if (stored.startsWith(base)) {
+    return { draft: `${result}${stored.slice(base.length)}`, selection }
+  }
+  const inserted = insertedText(base, result).trim()
+  if (!inserted) return { draft: stored }
+  const draft = `${stored}${paragraphSeparator(stored)}${inserted}`
+  return { draft, selection: [draft.length, draft.length] }
+}
+
+/**
  * The user edited the draft while dictating. The edit is the difference
  * between the drafts; `caret`, where the textarea's caret is after it, places
  * an edit that is ambiguous by text alone, like a letter typed beside the
@@ -98,6 +134,23 @@ function changedRange(previous: string, next: string, caret?: number): { start: 
   let prefix = 0
   while (prefix < shorter - suffix && previous[prefix] === next[prefix]) prefix += 1
   return { start: prefix, end: previous.length - suffix }
+}
+
+/** What `next` has in place of `previous`'s changed middle. */
+function insertedText(previous: string, next: string): string {
+  const shorter = Math.min(previous.length, next.length)
+  let prefix = 0
+  while (prefix < shorter && previous[prefix] === next[prefix]) prefix += 1
+  let suffix = 0
+  while (
+    suffix < shorter - prefix
+    && previous[previous.length - 1 - suffix] === next[next.length - 1 - suffix]
+  ) suffix += 1
+  return next.slice(prefix, next.length - suffix)
+}
+
+function paragraphSeparator(text: string): string {
+  return text ? text.endsWith('\n') ? '\n' : '\n\n' : ''
 }
 
 function separatorBeforeText(span: DictationSpan, text: string): string {

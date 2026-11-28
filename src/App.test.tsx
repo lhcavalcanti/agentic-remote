@@ -10367,6 +10367,80 @@ describe('App', () => {
       Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: originalMediaDevices })
     })
 
+    it('keeps a message a failed send gives back while dictating, with the dictated words after it', async () => {
+      let failSend: (error: Error) => void = () => undefined
+      vi.mocked(sendMessage).mockImplementationOnce(() => new Promise((_resolve, reject) => { failSend = reject }))
+      render(<App />)
+      const textarea = await screen.findByLabelText('Message') as HTMLTextAreaElement
+      fireEvent.change(textarea, { target: { value: 'Sent first' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce())
+      await waitFor(() => expect(textarea).toHaveValue(''))
+      fireEvent.click(screen.getByRole('button', { name: 'Start microphone recording' }))
+      await waitFor(() => expect(liveDictationFake.clients).toHaveLength(1))
+      const client = liveDictationFake.clients[0]
+      await screen.findByText('Listening · 0:00')
+      act(() => client.callbacks.onText({ committed: 'spoken words', tentative: '' }))
+      await act(async () => failSend(new Error('Send failed')))
+      expect(textarea).toHaveValue('spoken words')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Stop dictation' }))
+      act(() => client.callbacks.onFinal('spoken words.'))
+      await waitFor(() => expect(textarea).toHaveValue('Sent first\n\nspoken words.'))
+    })
+
+    it('refuses to edit a queued message while dictating', async () => {
+      const busy: ManagedSession = {
+        ...session,
+        status: 'running',
+        queuedCount: 1,
+        queuedPrompts: [{ id: 'queued-1', content: 'Queued original', createdAt: session.updatedAt }],
+      }
+      vi.mocked(listSessions).mockResolvedValue([busy])
+      vi.mocked(getSession).mockResolvedValue(busy)
+      render(<App />)
+      const { textarea, client } = await startDictating('Draft')
+      act(() => client.callbacks.onText({ committed: 'spoken', tentative: '' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit queued prompt 1' }))
+      expect(await screen.findAllByText('Finish dictation before editing a queued message.')).not.toHaveLength(0)
+      expect(textarea).toHaveValue('Draft spoken')
+
+      fireEvent.click(screen.getByRole('button', { name: 'Stop dictation' }))
+      act(() => client.callbacks.onFinal('spoken'))
+      await waitFor(() => expect(textarea).toHaveValue('Draft spoken'))
+      expect(screen.queryByRole('button', { name: 'Save to queue' })).not.toBeInTheDocument()
+    })
+
+    it('shows why dictation stopped and keeps its confirmed words', async () => {
+      render(<App />)
+      const { textarea, client } = await startDictating('Note:')
+      act(() => client.callbacks.onText({ committed: 'kept words', tentative: 'maybe' }))
+      act(() => {
+        client.callbacks.onError({
+          code: 'engine_failed', message: 'Live dictation could not decode three times in a row', fatal: true,
+        })
+        client.callbacks.onFinal('kept words')
+      })
+      await waitFor(() => expect(textarea).toHaveValue('Note: kept words'))
+      expect(screen.getAllByRole('alert').some((alert) =>
+        alert.textContent?.includes('Live dictation could not decode three times in a row'))).toBe(true)
+      await waitFor(() => expect(document.querySelector('.session-category-announcement'))
+        .toHaveTextContent('Dictation stopped'))
+    })
+
+    it('keeps Ask closed while dictating', async () => {
+      vi.mocked(listComputers).mockResolvedValue([{
+        ...computer,
+        providers: computer.providers?.map((provider) =>
+          provider.id === 'copilot' ? { ...provider, supportsSideQuestions: true } : provider),
+      }])
+      render(<App />)
+      await startDictating('Draft')
+      expect(await screen.findByRole('button', { name: 'Ask a side question' })).toBeDisabled()
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel dictation' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Ask a side question' })).toBeEnabled())
+    })
+
     it('finishes into the session it started in when another session is opened', async () => {
       vi.mocked(listSessions).mockResolvedValue([session, secondSession])
       vi.mocked(getSession).mockImplementation(async (_computerId, sessionId) =>

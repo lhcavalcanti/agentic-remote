@@ -2173,9 +2173,14 @@ clear replacement IDs without losing, duplicating, or reordering content.
   the text to the user and stop dictation.
 - Opening another session MUST stop dictation and put its final text in the
   draft of the session it started in.
+- Ending dictation MUST keep changes the saved draft received meanwhile, such
+  as a failed send's restored words, adding the dictated text instead of
+  replacing them. Side questions and queued-message editing MUST wait until
+  dictation ends.
 - Losing the microphone, backgrounding or locking the page, or an audio
   interruption MUST end dictation visibly and keep the confirmed words. A
-  failed engine or connection MUST also keep them.
+  failed engine or connection MUST also keep them and show the failure where
+  the composer shows its errors.
 - Without the Parakeet engine, with the transcription computer unpaired,
   offline, or on an older release, with another stream running, or without
   AudioWorklet, the microphone MUST fall back to recording and uploading

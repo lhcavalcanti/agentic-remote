@@ -38,6 +38,7 @@ function setup(options: {
   const clients: FakeClient[] = []
   const stored: Array<{ draft: string; selection?: [number, number] }> = []
   const announcements: string[] = []
+  const errors: string[] = []
   const startFallback = vi.fn()
   const onEnd = vi.fn()
   const fetchCapabilities = vi.fn(async () => {
@@ -62,6 +63,7 @@ function setup(options: {
       },
       startFallback,
       announce: (message) => announcements.push(message),
+      onError: (message) => errors.push(message),
       onEnd,
       dependencies: {
         fetchCapabilities,
@@ -96,7 +98,13 @@ function setup(options: {
     textarea.setSelectionRange(caret, caret)
     act(() => hook.current.onUserEdit(previous, next))
   }
-  return { hook, textarea, clients, client, stored, announcements, startFallback, onEnd, begin, text, edit }
+  /** Something else writes the stored draft while dictating, as a failed send gives its words back. */
+  const writeStored = (next: string) => {
+    draft = next
+  }
+  return {
+    hook, textarea, clients, client, stored, announcements, errors, startFallback, onEnd, begin, text, edit, writeStored,
+  }
 }
 
 beforeEach(() => {
@@ -213,6 +221,41 @@ describe('live dictation in a composer', () => {
   })
 })
 
+describe('ending beside other changes', () => {
+  it('keeps words the stored draft gained while dictating, and adds the dictated words after them', async () => {
+    const harness = setup()
+    await harness.begin()
+    harness.text('spoken words')
+    harness.writeStored('Sent first')
+    act(() => harness.client().callbacks.onFinal('spoken words.'))
+    expect(harness.stored).toEqual([{ draft: 'Sent first\n\nspoken words.', selection: [25, 25] }])
+  })
+
+  it('leaves a stored draft that changed while dictating as it is on Cancel', async () => {
+    const harness = setup({ draft: 'Mine' })
+    await harness.begin()
+    harness.text('spoken')
+    harness.writeStored('Restored')
+    act(() => harness.hook.current.cancel())
+    expect(harness.stored).toEqual([{ draft: 'Restored' }])
+  })
+
+  it('shows why a stream failed, keeps its confirmed words and says it stopped', async () => {
+    const harness = setup({ draft: 'Note:' })
+    await harness.begin()
+    harness.text('kept words', 'maybe')
+    act(() => {
+      const { callbacks } = harness.client()
+      callbacks.onError({ code: 'engine_failed', message: 'Live dictation could not decode three times in a row', fatal: true })
+      callbacks.onError({ code: 'unavailable', message: 'The dictation connection closed', fatal: true })
+      callbacks.onFinal('kept words')
+    })
+    expect(harness.errors).toEqual(['Live dictation could not decode three times in a row'])
+    expect(harness.stored.at(-1)?.draft).toBe('Note: kept words')
+    expect(harness.announcements).toEqual(['Listening', 'Dictation stopped'])
+  })
+})
+
 describe('falling back to recording', () => {
   it.each([
     ['live dictation is unavailable', { capabilities: { live: false, reason: 'Studio is offline', computerName: 'Studio' } },
@@ -231,11 +274,12 @@ describe('falling back to recording', () => {
     expect(harness.hook.current.draft).toBeUndefined()
   })
 
-  it('reports a start failure that recording cannot fix', async () => {
+  it('shows a start failure that recording cannot fix', async () => {
     const harness = setup({ failure: new LiveDictationStartError('permission-denied', 'Microphone permission was denied', false) })
     await harness.begin()
     expect(harness.startFallback).not.toHaveBeenCalled()
-    expect(harness.announcements).toEqual(['Microphone permission was denied'])
+    expect(harness.errors).toEqual(['Microphone permission was denied'])
+    expect(harness.announcements).toEqual([])
     expect(harness.hook.current.status).toBe('idle')
   })
 })

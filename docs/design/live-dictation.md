@@ -109,6 +109,14 @@ repeat is fatal `protocol`. Control messages are version 1 JSON
   until the final text arrives ("Finish dictation first").
 - Stop puts the final text in the span. Cancel restores the draft and any
   selection it replaced, keeping edits made beside the span.
+- The saved draft can still change underneath, as when a send that failed
+  gives its words back. Ending dictation keeps that change: text added before
+  or after the draft dictation started from stays around the result, and any
+  other change keeps the saved draft with the dictated words after it.
+- Asking a side question and editing a queued message wait until dictation
+  ends.
+- A failure shows in the composer's error area, the confirmed words stay, and
+  "Dictation stopped" is announced.
 - Opening another session stops dictation, and its final text goes into the
   draft of the session it started in.
 - **Dictate to Oracle** works the same way on Oracle's message. Closing the

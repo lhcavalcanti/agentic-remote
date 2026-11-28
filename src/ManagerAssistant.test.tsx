@@ -1721,6 +1721,23 @@ describe('ManagerAssistant', () => {
         await waitFor(() => expect(input).toHaveValue('Keep this'))
         expect(liveDictationFake.clients[0].cancel).toHaveBeenCalledOnce()
       })
+
+      it('shows why dictation stopped and keeps its confirmed words', async () => {
+        setup()
+        await openPanel()
+        const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+        fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+        await waitFor(() => expect(liveDictationFake.clients).toHaveLength(1))
+        await screen.findByText('Listening · 0:00')
+        const client = liveDictationFake.clients[0]
+        act(() => client.callbacks.onText({ committed: 'kept words', tentative: 'maybe' }))
+        act(() => {
+          client.callbacks.onError({ code: 'stalled', message: 'The dictation connection stopped responding', fatal: true })
+          client.callbacks.onFinal('kept words')
+        })
+        await waitFor(() => expect(input).toHaveValue('kept words'))
+        expect(screen.getByRole('alert')).toHaveTextContent('The dictation connection stopped responding')
+      })
     })
 
     it('discards a cancelled recording, and one left running when the panel closes', async () => {

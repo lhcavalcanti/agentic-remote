@@ -1862,8 +1862,11 @@ export function ManagerAssistant({
                 || voice.starting
               )}
               onClick={() => {
-                if (!dictating) void dictation.start()
-                else if (dictation.status !== 'finishing') dictation.stop()
+                if (!dictating) {
+                  // A failure from the last attempt no longer applies.
+                  setSendError(undefined)
+                  void dictation.start()
+                } else if (dictation.status !== 'finishing') dictation.stop()
               }}
               ref={microphoneRef}
               title={dictating

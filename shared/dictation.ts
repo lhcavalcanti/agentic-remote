@@ -22,10 +22,17 @@ export const DICTATION_LIMITS = {
   heartbeatMs: 5_000,
   stallMs: 15_000,
   finalTimeoutMs: 30_000,
+  /** A stream started while the engine is loading waits this long for it. */
+  engineWarmupMs: 60_000,
 } as const
 
-/** How long the browser waits for `ready` or `final`, past the server's own limit. */
-export const DICTATION_CLIENT_TIMEOUT_MS = 35_000
+/**
+ * How long the browser waits for `ready`: the engine's warm-up, after the
+ * hub has taken up to 10 s to reach the computer that transcribes.
+ */
+export const DICTATION_CLIENT_READY_TIMEOUT_MS = 75_000
+/** How long the browser waits for `final` after Stop, past the server's own limit. */
+export const DICTATION_CLIENT_FINAL_TIMEOUT_MS = 35_000
 export const DICTATION_MAX_CLIENT_MESSAGE_BYTES = 4 * 1024
 export const DICTATION_MAX_TEXT_BYTES = 64 * 1024
 /** Audio frames reuse the Oracle voice codec with one fixed generation. */

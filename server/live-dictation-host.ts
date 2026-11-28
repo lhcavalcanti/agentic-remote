@@ -55,7 +55,7 @@ const DEFAULT_LIMITS: LiveDictationHostLimits = {
   heartbeatMs: DICTATION_LIMITS.heartbeatMs,
   stallMs: DICTATION_LIMITS.stallMs,
   maxBacklogBytes: DICTATION_LIMITS.maxBacklogBytes,
-  readyTimeoutMs: 60_000,
+  readyTimeoutMs: DICTATION_LIMITS.engineWarmupMs,
 }
 const READY_POLL_MS = 100
 const OPEN = 1

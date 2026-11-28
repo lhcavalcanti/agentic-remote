@@ -28,9 +28,10 @@ export function openNodeDictationSocket(
   options: NodeDictationSocketOptions = {},
 ): Promise<WebSocket> {
   const { signal, registrationSignal } = options
-  if (signal?.aborted || registrationSignal?.aborted) {
+  if (signal?.aborted) {
     return Promise.reject(new Error(`${computer.name} dictation connection was cancelled`))
   }
+  if (registrationSignal?.aborted) return Promise.reject(repairedError(computer))
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(nodeWebSocketUrl(computer, '/node-api/dictation'), {
       followRedirects: false,
@@ -41,6 +42,7 @@ export function openNodeDictationSocket(
     const cleanup = () => {
       clearTimeout(timer)
       signal?.removeEventListener('abort', cancel)
+      registrationSignal?.removeEventListener('abort', repaired)
     }
     const fail = (error: Error) => {
       if (settled) return
@@ -50,11 +52,14 @@ export function openNodeDictationSocket(
       reject(error)
     }
     const cancel = () => fail(new Error(`${computer.name} dictation connection was cancelled`))
+    // Audio must never reach a computer that is no longer the one paired under this name.
+    const repaired = () => fail(repairedError(computer))
     const timer = setTimeout(
       () => fail(new Error(`${computer.name} did not answer the dictation connection`)),
       options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS,
     )
     signal?.addEventListener('abort', cancel, { once: true })
+    registrationSignal?.addEventListener('abort', repaired, { once: true })
     socket.once('unexpected-response', (_request, response) => {
       response.resume()
       const statusCode = response.statusCode ?? 500
@@ -66,6 +71,10 @@ export function openNodeDictationSocket(
     socket.once('close', () => fail(new Error(`${computer.name} closed the dictation connection`)))
     socket.once('open', () => {
       if (settled) return
+      if (registrationSignal?.aborted) {
+        repaired()
+        return
+      }
       settled = true
       cleanup()
       if (registrationSignal) {
@@ -76,4 +85,8 @@ export function openNodeDictationSocket(
       resolve(socket)
     })
   })
+}
+
+function repairedError(computer: Pick<RegisteredComputer, 'name'>): Error {
+  return new Error(`${computer.name} was paired again or removed`)
 }

@@ -194,12 +194,13 @@ describe('live dictation client', () => {
     expect(harness.sockets).toEqual([])
   })
 
-  it('gives up on a stream that is not ready in 35 seconds', async () => {
+  it('waits out the engine\'s warm-up, then gives up on a stream that is still not ready', async () => {
     const harness = setup()
     const starting = harness.client.start().catch((error: unknown) => error)
     await vi.advanceTimersByTimeAsync(0)
     harness.socket().open()
-    await vi.advanceTimersByTimeAsync(34_999)
+    // The hub may take 10 s to reach the node, and the node a minute to load Parakeet.
+    await vi.advanceTimersByTimeAsync(74_999)
     expect(harness.socket().closed).toBeUndefined()
     await vi.advanceTimersByTimeAsync(1)
     expect(await starting).toMatchObject({ code: 'unavailable', fallback: true })

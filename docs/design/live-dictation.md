@@ -83,7 +83,7 @@ a word, the earlier of their end times counts.
 | Stop → final timeout | 30 s server side; the client waits 35 s, then keeps the committed text and shows the error |
 | Concurrency | At most one active live stream per transcription computer. A second `start` gets fatal `busy`, and that client falls back to record-and-upload. The node enforces it; the hub also tracks it to fail fast. |
 | Tickets | A separate `VoiceTicketStore` instance (30 s TTL, single use, origin/address bound) |
-| Engine warm-up | A stream started while the worker is still starting waits up to 60 s for it; a stopped worker, before its first use or after a crash, is started first |
+| Engine warm-up | A stream started while the worker is still starting waits up to 60 s for it; a stopped worker, before its first use or after a crash, is started first. The browser waits 75 s for `ready`, so a hub that takes 10 s to reach the node still outlasts the warm-up |
 
 Audio frames reuse the Oracle voice codec (`shared/oracle-voice.ts`) as
 microphone frames of generation 1, numbered from 1 with no gaps; a gap or a

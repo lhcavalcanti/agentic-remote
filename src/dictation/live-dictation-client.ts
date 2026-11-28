@@ -1,5 +1,6 @@
 import {
-  DICTATION_CLIENT_TIMEOUT_MS,
+  DICTATION_CLIENT_FINAL_TIMEOUT_MS,
+  DICTATION_CLIENT_READY_TIMEOUT_MS,
   DICTATION_LIMITS,
   DICTATION_PROTOCOL,
   encodeDictationAudioFrame,
@@ -179,7 +180,7 @@ export class LiveDictationClient {
     this.#send({ protocol: DICTATION_PROTOCOL, type: 'stop' })
     this.#finalTimer = setTimeout(() => {
       this.#fail({ code: 'final_timeout', message: 'The final dictation text did not arrive', fatal: true })
-    }, DICTATION_CLIENT_TIMEOUT_MS)
+    }, DICTATION_CLIENT_FINAL_TIMEOUT_MS)
     return this.#finished
   }
 
@@ -225,7 +226,7 @@ export class LiveDictationClient {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         fail(new LiveDictationStartError('unavailable', 'Live dictation did not start in time', true))
-      }, DICTATION_CLIENT_TIMEOUT_MS)
+      }, DICTATION_CLIENT_READY_TIMEOUT_MS)
       const fail = (error: LiveDictationStartError) => {
         clearTimeout(timer)
         this.#rejectStart = undefined

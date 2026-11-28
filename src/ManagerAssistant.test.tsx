@@ -1737,6 +1737,12 @@ describe('ManagerAssistant', () => {
         })
         await waitFor(() => expect(input).toHaveValue('kept words'))
         expect(screen.getByRole('alert')).toHaveTextContent('The dictation connection stopped responding')
+
+        // Trying again clears the old failure.
+        fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+        await waitFor(() => expect(liveDictationFake.clients).toHaveLength(2))
+        await screen.findByText('Listening · 0:00')
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
       })
     })
 

@@ -30,9 +30,9 @@ draft span at the caret ◀────── text / final ◀──────
    `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER`, else itself. A paired computer is
    reached over its authenticated node API; the hub only relays.
 3. That computer runs one `LiveDictationSession` per stream. About every
-   750 ms it decodes the audio from the first unconfirmed word to the end,
-   plus a second of silence, with the worker's idle-only `tryDecode`, so it
-   never queues behind a recording being transcribed.
+   750 ms it decodes the audio from a second before the last confirmed word
+   to the end, plus a second of silence, with the worker's idle-only
+   `tryDecode`, so it never queues behind a recording being transcribed.
 4. Word agreement confirms the words two consecutive passes agree on
    (LocalAgreement-2); the rest of the latest pass is tentative. Each change
    goes back as `text`: the newly confirmed words, and the tentative words
@@ -47,18 +47,29 @@ uses the same method. It is a design reference only; no code was copied.
 
 | Parameter | Value |
 |---|---|
-| Pass interval | 750 ms; a pass needs 500 ms of new audio and a 400 ms window |
+| Pass interval | 750 ms; a pass needs 500 ms of new audio and 400 ms of unconfirmed audio |
+| Lead-in | Each window starts 1 s before the last confirmed word |
 | Padding | 1 s of zeros after every window |
-| Agreement | Longest common prefix of the two latest hypotheses, compared case- and punctuation-blind; the newest spelling is kept |
-| Window bound | Past 15 s, tentative words ending 5 s before the window's end are confirmed |
-| Silence | A wordless window of 2 s or more moves the next window to 0.5 s before its end |
+| Alignment | A pass is lined up with the confirmed text by finding the last confirmed word again by its text, within 0.3 s of where it was; failing that, words starting more than 0.12 s before the confirmed end are old |
+| Agreement | Longest common prefix of the two latest hypotheses after the confirmed text, compared case- and punctuation-blind; the newest spelling is kept |
+| Window bound | Past 15 s of unconfirmed audio, tentative words ending 5 s before its end are confirmed |
+| Silence | 2 s or more of unconfirmed audio without a word moves the confirmed end to 0.5 s before the window's end |
 | Pass timeout | 10 s; three failed passes in a row end the stream with its confirmed text |
-| Final text | Whole decode up to 12 s of audio; otherwise confirmed words plus a tail decode |
-| Memory | Once a stream is longer than 12 s, audio before the next window less 1 s is dropped |
+| Final text | Whole decode up to 12 s of audio; otherwise confirmed words plus a tail decode from the same lead-in |
+| Memory | Once a stream is longer than 12 s, audio before the next window is dropped |
 
 Words come from the per-token `timestamps` and `durations` Parakeet returns:
 a token starting with a space starts a word, and punctuation joins the word
-before it.
+before it. A word ends no later than the audio in its window; the last
+token's duration otherwise runs on into the padding.
+
+Parakeet drops or garbles a word that starts right at the beginning of its
+window. Starting each window at the first tentative word, as a first version
+did, lost words on real speech: a pass that missed the word at its start
+moved the next window past it for good. The lead-in keeps every unconfirmed
+word in context. Durations are not trusted for alignment either, because a
+word's duration runs on through the pause after it; when two passes confirm
+a word, the earlier of their end times counts.
 
 ## Stream limits and policies
 

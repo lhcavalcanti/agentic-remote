@@ -86,8 +86,9 @@ Live dictation streams 16 kHz microphone PCM from the browser to a ticketed
 `/node-api/dictation` on the computer named by
 `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER`, checking and bounding each message
 and closing either side with the other. The host runs one stream at a time: a
-`LiveDictationSession` re-decodes the unconfirmed audio with the warm Parakeet
-worker about every 750 ms and confirms the words consecutive passes agree on,
+`LiveDictationSession` re-decodes the unconfirmed audio, with a second of
+confirmed audio before it, with the warm Parakeet worker about every 750 ms
+and confirms the words consecutive passes agree on,
 sending text back only to that socket. Nothing is persisted and nothing
 reaches Oracle; see [Live dictation](design/live-dictation.md).
 

@@ -13,10 +13,6 @@ const DECODER_MAX_WINDOW_MS = 30_000
 const FORCED_CONFIRM_LAG_SECONDS = 5
 /** A silence skip keeps the last half second, where speech may be starting. */
 const SILENCE_SKIP_KEEP_SECONDS = 0.5
-/** Audio kept before the next window, so a trimmed buffer can still seek back a little. */
-const TRIM_MARGIN_SECONDS = 1
-/** Words starting this far before the confirmed end are new, not repeats. */
-const TAIL_OVERLAP_SECONDS = 0.08
 const FAILED_PASSES = 3
 
 /** The output of one offline decode; PR A's `ParakeetDecodeResult` has this shape. */
@@ -44,12 +40,18 @@ export interface LiveDictationOptions {
   passIntervalMs: number
   /** No pass until this much audio arrived since the last pass started. */
   minNewAudioMs: number
+  /** No pass until this much audio is unconfirmed. */
   minWindowMs: number
+  /**
+   * Confirmed audio decoded again before the last confirmed word: Parakeet
+   * drops a word that starts right at the beginning of its window.
+   */
+  leadInMs: number
   /** Zeros appended to every window, so its last word can finish. */
   paddingMs: number
-  /** Past this, tentative words ending five seconds before the window's end are confirmed. */
+  /** Past this much unconfirmed audio, tentative words ending five seconds before its end are confirmed. */
   maxWindowMs: number
-  /** A wordless window this long skips to half a second before its end. */
+  /** This much unconfirmed audio without a word skips to half a second before its end. */
   silenceSkipMs: number
   /** At Stop, a stream this short is decoded whole for its final text. */
   fullPassMaxMs: number
@@ -62,6 +64,7 @@ export const DEFAULT_LIVE_DICTATION_OPTIONS: LiveDictationOptions = {
   passIntervalMs: 750,
   minNewAudioMs: 500,
   minWindowMs: 400,
+  leadInMs: 1_000,
   paddingMs: 1_000,
   maxWindowMs: 15_000,
   silenceSkipMs: 2_000,
@@ -118,9 +121,9 @@ type SessionState = 'idle' | 'running' | 'finishing' | 'finished' | 'cancelled' 
 
 /**
  * One live dictation stream on the transcription computer. Every pass decodes
- * the audio from the first unconfirmed word to the end, plus padding, and
- * word agreement decides what becomes confirmed. It holds audio in memory
- * only, and trims what no later pass can need.
+ * the audio from a second before the last confirmed word to the end, plus
+ * padding, and word agreement decides what becomes confirmed. It holds audio
+ * in memory only, and trims what no later pass can need.
  */
 export class LiveDictationSession {
   readonly #decoder: LiveDecoder
@@ -234,11 +237,11 @@ export class LiveDictationSession {
 
   #passDue(): boolean {
     return this.#total - this.#lastPassStart >= samplesFor(this.#options.minNewAudioMs)
-      && this.#total - this.#seekSample() >= samplesFor(this.#options.minWindowMs)
+      && this.#total - this.#confirmedEndSample() >= samplesFor(this.#options.minWindowMs)
   }
 
   async #pass(): Promise<void> {
-    const start = this.#seekSample()
+    const start = this.#windowStartSample()
     const end = Math.min(this.#total, start + this.#decodeCapSamples())
     const previousPassStart = this.#lastPassStart
     this.#lastPassStart = this.#total
@@ -268,18 +271,20 @@ export class LiveDictationSession {
 
   /** Feeds one decoded window to word agreement; returns the words it confirmed. */
   #apply(result: LiveDecodeResult, start: number, end: number): TimedWord[] {
-    const startSeconds = start / SAMPLE_RATE
     const endSeconds = end / SAMPLE_RATE
-    const words = wordsFromTokens(result, startSeconds, endSeconds)
-    const confirmed = this.#agreement.ingest(words)
-    const windowMs = ((end - start) * 1_000) / SAMPLE_RATE
-    if (words.length === 0 && windowMs >= this.#options.silenceSkipMs) {
+    const confirmed = this.#agreement.ingest(wordsFromTokens(result, start / SAMPLE_RATE, endSeconds))
+    const unconfirmedMs = () => (endSeconds - this.#agreement.confirmedEnd) * 1_000
+    if (
+      confirmed.length === 0
+      && this.#agreement.tentative.length === 0
+      && unconfirmedMs() >= this.#options.silenceSkipMs
+    ) {
       this.#agreement.skipSilenceTo(endSeconds - SILENCE_SKIP_KEEP_SECONDS)
     }
-    if (windowMs > this.#options.maxWindowMs) {
+    if (unconfirmedMs() > this.#options.maxWindowMs) {
       confirmed.push(...this.#agreement.forceConfirmThrough(endSeconds - FORCED_CONFIRM_LAG_SECONDS))
-      if (this.#seekSample() <= start) {
-        // A window that still cannot move would grow past what one decode takes.
+      if (unconfirmedMs() > this.#options.maxWindowMs) {
+        // Nothing old enough to confirm: the window would grow past what one decode takes.
         confirmed.push(...this.#agreement.forceConfirmThrough(endSeconds))
         this.#agreement.skipSilenceTo(endSeconds)
       }
@@ -303,7 +308,7 @@ export class LiveDictationSession {
   /** Drops audio no later pass can need, once the stream is too long for a whole final decode. */
   #trim(): void {
     if (this.#total <= samplesFor(this.#options.fullPassMaxMs)) return
-    const keepFrom = Math.floor((this.#agreement.seekTime - TRIM_MARGIN_SECONDS) * SAMPLE_RATE)
+    const keepFrom = this.#windowStartSample()
     let drop = 0
     while (
       drop < this.#chunks.length
@@ -355,18 +360,19 @@ export class LiveDictationSession {
       return joinWords(wordsFromTokens(result, 0, this.#total / SAMPLE_RATE))
     }
     // A decoder that was busy for long may leave more than one decode can take.
-    while (this.#total - this.#seekSample() > this.#decodeCapSamples()) {
-      const start = this.#seekSample()
+    while (this.#total - this.#windowStartSample() > this.#decodeCapSamples()) {
+      const start = this.#windowStartSample()
       const end = start + this.#decodeCapSamples()
       const result = await this.#decoder.decode(this.#window(start, end), options)
       this.#requireFinishing()
       this.#emit(this.#apply(result, start, end))
     }
-    const start = this.#seekSample()
+    const start = this.#windowStartSample()
     const result = await this.#decoder.decode(this.#window(start, this.#total), options)
     this.#requireFinishing()
-    const tail = wordsFromTokens(result, start / SAMPLE_RATE, this.#total / SAMPLE_RATE)
-      .filter((word) => word.start >= this.#agreement.confirmedEnd - TAIL_OVERLAP_SECONDS)
+    const tail = this.#agreement.unconfirmed(
+      wordsFromTokens(result, start / SAMPLE_RATE, this.#total / SAMPLE_RATE),
+    )
     return [this.#committedText, joinWords(tail)].filter(Boolean).join(' ')
   }
 
@@ -389,12 +395,15 @@ export class LiveDictationSession {
     return this.#state === 'running' || this.#state === 'finishing'
   }
 
-  #seekSample(): number {
+  /** A lead-in before the last confirmed word, so the model hears the words after it in context. */
+  #windowStartSample(): number {
     const retainedFrom = this.#chunks[0]?.offset ?? this.#total
-    return Math.min(
-      this.#total,
-      Math.max(retainedFrom, Math.round(this.#agreement.seekTime * SAMPLE_RATE)),
-    )
+    const leadIn = this.#agreement.resumeTime - this.#options.leadInMs / 1_000
+    return Math.min(this.#total, Math.max(retainedFrom, Math.round(leadIn * SAMPLE_RATE)))
+  }
+
+  #confirmedEndSample(): number {
+    return Math.min(this.#total, Math.round(this.#agreement.confirmedEnd * SAMPLE_RATE))
   }
 
   #decodeCapSamples(): number {

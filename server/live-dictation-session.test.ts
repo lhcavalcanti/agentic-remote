@@ -69,6 +69,21 @@ function scriptDecoder(script: Word[], heardUntil: () => number, finalSpelling =
   })
 }
 
+/**
+ * Like Parakeet, it does not hear a word that starts near the beginning of its
+ * window, unless the window starts the stream: a word needs some audio before
+ * it.
+ */
+function contextDecoder(script: Word[], heardUntil: () => number) {
+  return new ScriptedDecoder((call) => {
+    const end = heardUntil()
+    const offset = end - call.seconds
+    return decoded(script
+      .filter(([, start, wordEnd]) => (offset < 1e-6 || start >= offset + 0.6) && wordEnd <= end + 1e-6)
+      .map(([text, start, wordEnd]) => [text, start - offset, wordEnd - offset]))
+  })
+}
+
 const windows = (decoder: ScriptedDecoder) => decoder.calls.map((call) => Number(call.seconds.toFixed(3)))
 
 function feeder(session: LiveDictationSession) {
@@ -127,11 +142,11 @@ describe('LiveDictationSession passes', () => {
     expect(updates).toEqual([{ seq: 1, committedAppend: '', tentative: 'hello world' }])
   })
 
-  it('commits the words two passes agree on and re-decodes from the first unconfirmed word', async () => {
+  it('commits the words two passes agree on and re-decodes from a second before the last of them', async () => {
     const { decoder, session, updates, feed } = setup((heard) =>
       scriptDecoder([['hello', 0.1, 0.4], ['world', 0.5, 0.8], ['how', 2.2, 2.5]], heard))
     session.start()
-    for (let second = 0; second < 4; second += 1) {
+    for (let second = 0; second < 5; second += 1) {
       feed(1)
       await vi.advanceTimersByTimeAsync(750)
     }
@@ -141,8 +156,24 @@ describe('LiveDictationSession passes', () => {
       { seq: 3, committedAppend: '', tentative: 'how' },
       { seq: 4, committedAppend: ' how', tentative: '' },
     ])
-    // Each window starts at the first tentative word, or where "world" was confirmed at 0.8 s.
-    expect(windows(decoder)).toEqual([1, 1.9, 2.2, 1.8])
+    // Windows start at 0 while "world" (0.5 s) is the last confirmed word, then at 1.2 s for "how".
+    expect(windows(decoder)).toEqual([1, 2, 3, 4, 3.8])
+  })
+
+  it('hears the unconfirmed words again with the confirmed audio before them', async () => {
+    const script: Word[] = Array.from({ length: 27 }, (_, index) =>
+      [`w${index}`, 0.1 + index * 0.5, 0.45 + index * 0.5])
+    const { session, updates, feed } = setup((heard) => contextDecoder(script, heard))
+    session.start()
+    for (let second = 0; second < 14; second += 1) {
+      feed(1)
+      await vi.advanceTimersByTimeAsync(750)
+    }
+    const words = committed(updates).split(' ')
+    // Nothing skipped and nothing repeated, all the way through.
+    expect(words).toEqual(script.slice(0, words.length).map(([text]) => text))
+    expect(words.length).toBeGreaterThan(20)
+    await expect(session.finish()).resolves.toBe(script.map(([text]) => text).join(' '))
   })
 
   it('skips a busy pass and keeps its audio for the next one', async () => {
@@ -170,20 +201,22 @@ describe('LiveDictationSession passes', () => {
     await vi.advanceTimersByTimeAsync(750)
     feed(1)
     await vi.advanceTimersByTimeAsync(750)
-    // 1.5 s of silence is kept; 2.5 s is skipped to half a second before its end.
-    expect(windows(decoder)).toEqual([1.5, 2.5, 1.5])
+    // 1.5 s of silence is kept; 2.5 s is skipped to half a second before its end,
+    // and the next window starts a second before that instead of at 0.
+    expect(windows(decoder)).toEqual([1.5, 2.5, 2.5])
     expect(updates).toEqual([])
   })
 
   it('force-confirms words more than five seconds old once the window passes fifteen seconds', async () => {
-    const { decoder, session, updates, feed } = setup(() =>
+    const { decoder, session, updates, feed } = setup((heard) =>
       new ScriptedDecoder((call) => {
         const pass = decoder.calls.length
-        const offset = call.seconds === 16 ? 0 : 12
-        return decoded([
-          [`a${pass}`, 1 - offset, 1.5 - offset], [`b${pass}`, 5 - offset, 5.5 - offset],
-          [`c${pass}`, 10.5 - offset, 11 - offset], [`d${pass}`, 12 - offset, 12.5 - offset],
-        ].filter(([, start]) => (start as number) >= 0) as Word[])
+        const offset = heard() - call.seconds
+        return decoded(([
+          [`a${pass}`, 1, 1.5], [`b${pass}`, 5, 5.5], [`c${pass}`, 10.5, 11], [`d${pass}`, 12, 12.5],
+        ] as Word[])
+          .filter(([, start]) => start >= offset)
+          .map(([text, start, end]) => [text, start - offset, end - offset]))
       }))
     session.start()
     feed(16)
@@ -191,7 +224,8 @@ describe('LiveDictationSession passes', () => {
     expect(updates).toEqual([{ seq: 1, committedAppend: 'a1 b1 c1', tentative: 'd1' }])
     feed(1)
     await vi.advanceTimersByTimeAsync(750)
-    expect(windows(decoder)).toEqual([16, 5])
+    // The next window starts a second before "c1", the last word confirmed.
+    expect(windows(decoder)).toEqual([16, 7.5])
   })
 
   it('emits nothing after it is cancelled, even for a pass already running', async () => {
@@ -252,7 +286,7 @@ describe('LiveDictationSession bounds', () => {
     expect(() => session.appendAudio(new Int16Array(1_600))).toThrow(DictationLimitError)
   })
 
-  it('keeps no more than the window and two seconds over a fifteen-minute stream', async () => {
+  it('keeps no more than the longest window and two seconds over a fifteen-minute stream', async () => {
     // Every pass hears different words, so only the forced confirm moves on.
     const { decoder, session, feed } = setup(() =>
       new ScriptedDecoder((call) => {
@@ -270,9 +304,11 @@ describe('LiveDictationSession bounds', () => {
       largest = Math.max(largest, session.stats().retainedSeconds)
     }
     expect(session.stats().audioSeconds).toBe(900)
+    // The longest window: fifteen unconfirmed seconds, the last confirmed word and a second before it.
+    const longest = Math.max(...decoder.calls.map((call) => call.seconds))
+    expect(longest).toBeLessThanOrEqual(15 + 0.5 + 1 + 1)
     expect(largest).toBeGreaterThan(12)
-    expect(largest).toBeLessThanOrEqual(17)
-    expect(Math.max(...decoder.calls.map((call) => call.seconds))).toBeLessThanOrEqual(16)
+    expect(largest).toBeLessThanOrEqual(longest + 2)
   })
 })
 
@@ -306,10 +342,9 @@ describe('LiveDictationSession finish', () => {
     const final = await session.finish()
     const tail = decoder.calls.at(-1)!
     expect(tail.kind).toBe('decode')
-    expect(tail.seconds).toBeLessThan(3)
-    const tailStart = 14 - tail.seconds
-    const tailWords = script.filter(([, start, end]) => start >= tailStart - 1e-6 && end <= 14)
-      .map(([text]) => text.toUpperCase())
+    // From a second before the last committed word.
+    expect(tail.seconds).toBeLessThan(4)
+    const tailWords = script.slice(words.split(' ').length).map(([text]) => text.toUpperCase())
     expect(tailWords.length).toBeGreaterThan(0)
     expect(final).toBe(`${words} ${tailWords.join(' ')}`)
   })

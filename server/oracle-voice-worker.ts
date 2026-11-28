@@ -28,6 +28,7 @@ import {
   type VoiceWorkerChildMessage,
   type VoiceWorkerParentMessage,
 } from './oracle-voice-worker-protocol.js'
+import { minimalWorkerEnvironment } from './sherpa-module.js'
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000
@@ -619,22 +620,6 @@ export class ChildVoiceEngine implements
 
 function workerEntryPath(): string {
   return fileURLToPath(new URL('./oracle-voice-child.ts', import.meta.url))
-}
-
-function minimalWorkerEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const allowed = [
-    'HOME',
-    'LANG',
-    'LC_ALL',
-    'NODE_ENV',
-    'PATH',
-    'SystemRoot',
-    'TZ',
-    'WINDIR',
-  ] as const
-  return Object.fromEntries(
-    allowed.flatMap((name) => env[name] === undefined ? [] : [[name, env[name]]]),
-  )
 }
 
 function capabilityFromConfig(config: EnabledOracleVoiceConfig): VoiceBackendCapability {

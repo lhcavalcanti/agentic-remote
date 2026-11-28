@@ -34,3 +34,10 @@ multi-speaker Brazilian Portuguese coverage.
 
 All files are 16 kHz mono PCM16 WAV. Raw source archives remain outside the
 repository in the Task 11 session artifacts.
+
+`parakeet-result-pt-BR-short.json` is the unmodified `getResult()` of
+`sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8` (sherpa-onnx-node 1.13.8,
+`nemo_transducer`, greedy search, 128 features, 4 CPU threads, no padding) for
+`pt-BR-short-male-clean.wav`. Live dictation's word agreement tests read its
+tokens and per-token `timestamps` and `durations`, both in seconds. The model
+heard the first word as "Aquí"; the fixture keeps that.

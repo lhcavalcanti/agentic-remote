@@ -10272,14 +10272,23 @@ describe('App', () => {
       return { textarea, client: liveDictationFake.clients[0] }
     }
 
+    let originalMediaDevices: MediaDevices | undefined
+
     beforeEach(() => {
       liveDictationFake.capabilities = { live: true, computerName: 'Development' }
       liveDictationFake.clients.length = 0
+      // A browser that can stream: AudioWorklet and a microphone.
       vi.stubGlobal('AudioWorkletNode', class {})
+      originalMediaDevices = navigator.mediaDevices
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [] })) },
+      })
     })
 
     afterEach(() => {
       liveDictationFake.capabilities = undefined
+      Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: originalMediaDevices })
       vi.unstubAllGlobals()
     })
 

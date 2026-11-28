@@ -33,6 +33,7 @@ function setup(options: {
   caret?: [number, number]
   capabilities?: DictationCapabilities | Error
   audioWorklet?: boolean
+  microphone?: boolean
   failure?: Error
 } = {}) {
   const clients: FakeClient[] = []
@@ -68,6 +69,7 @@ function setup(options: {
       dependencies: {
         fetchCapabilities,
         audioWorkletSupported: () => options.audioWorklet ?? true,
+        microphoneSupported: () => options.microphone ?? true,
         createClient: (callbacks) => {
           const client = new FakeClient(callbacks)
           client.failure = options.failure
@@ -104,6 +106,7 @@ function setup(options: {
   }
   return {
     hook, textarea, clients, client, stored, announcements, errors, startFallback, onEnd, begin, text, edit, writeStored,
+    fetchCapabilities,
   }
 }
 
@@ -262,6 +265,7 @@ describe('falling back to recording', () => {
       'Recording instead. Studio is offline'],
     ['the capabilities cannot be read', { capabilities: new Error('offline') }, 'Recording instead'],
     ['the browser has no AudioWorklet', { audioWorklet: false }, 'Recording instead. This browser cannot stream audio'],
+    ['the page cannot use the microphone', { microphone: false }, 'Recording instead. This page cannot use the microphone'],
     ['the transcription computer is busy', { failure: new LiveDictationStartError('busy', 'Live dictation is already in use on Studio', true) },
       'Recording instead. Live dictation is already in use on Studio'],
   ])('records and uploads when %s', async (_label, options, announcement) => {
@@ -272,6 +276,13 @@ describe('falling back to recording', () => {
     expect(harness.announcements).toEqual([announcement])
     expect(harness.hook.current.status).toBe('idle')
     expect(harness.hook.current.draft).toBeUndefined()
+  })
+
+  it('asks the hub nothing when the page cannot use the microphone', async () => {
+    const harness = setup({ microphone: false })
+    await harness.begin()
+    expect(harness.fetchCapabilities).not.toHaveBeenCalled()
+    expect(harness.clients).toEqual([])
   })
 
   it('shows a start failure that recording cannot fix', async () => {

@@ -28,6 +28,8 @@ export interface LiveDictationDependencies {
   fetchCapabilities(): Promise<DictationCapabilities>
   createClient(callbacks: LiveDictationCallbacks): LiveDictationClientLike
   audioWorkletSupported(): boolean
+  /** False outside a secure context, where browsers offer no microphone. */
+  microphoneSupported(): boolean
 }
 
 export interface UseLiveDictationOptions {
@@ -74,6 +76,7 @@ const defaultDependencies: LiveDictationDependencies = {
   fetchCapabilities: () => fetchDictationCapabilities(),
   createClient: (callbacks) => new LiveDictationClient(callbacks),
   audioWorkletSupported: () => typeof globalThis.AudioWorkletNode === 'function',
+  microphoneSupported: () => typeof globalThis.navigator?.mediaDevices?.getUserMedia === 'function',
 }
 
 /**
@@ -201,6 +204,7 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
       optionsRef.current.announce(reason ? `Recording instead. ${reason}` : 'Recording instead')
     }
     const deps: LiveDictationDependencies = { ...defaultDependencies, ...optionsRef.current.dependencies }
+    if (!deps.microphoneSupported()) return fallback('This page cannot use the microphone')
     let capabilities: DictationCapabilities | undefined
     try {
       capabilities = await deps.fetchCapabilities()

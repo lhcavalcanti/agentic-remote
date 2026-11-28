@@ -81,11 +81,6 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
   const timerRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
   const selectionRef = useRef<[number, number] | undefined>(undefined)
 
-  const dependencies = (): LiveDictationDependencies => ({
-    ...defaultDependencies,
-    ...optionsRef.current.dependencies,
-  })
-
   const stopTimer = useCallback(() => {
     if (timerRef.current !== undefined) clearInterval(timerRef.current)
     timerRef.current = undefined
@@ -186,7 +181,7 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
       optionsRef.current.startFallback()
       optionsRef.current.announce(reason ? `Recording instead. ${reason}` : 'Recording instead')
     }
-    const deps = dependencies()
+    const deps: LiveDictationDependencies = { ...defaultDependencies, ...optionsRef.current.dependencies }
     let capabilities: DictationCapabilities | undefined
     try {
       capabilities = await deps.fetchCapabilities()
@@ -234,8 +229,6 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
       setSeconds(Math.floor((performance.now() - startedAt) / 1_000))
     }, 250)
     optionsRef.current.announce('Listening')
-  // `dependencies` reads the latest options on each call.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finish, settle, show, stop])
 
   const onUserEdit = useCallback((previous: string, next: string) => {

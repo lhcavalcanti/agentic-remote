@@ -20,8 +20,15 @@ import {
 
 export type LiveDictationEngineState = 'stopped' | 'starting' | 'ready' | 'failed'
 
-/** The warm decoder this computer transcribes with, and whether it can take a stream. */
-export type LiveDictationEngine = LiveDecoder & { readonly state: LiveDictationEngineState }
+/**
+ * The warm decoder this computer transcribes with, and whether it can take a
+ * stream. One that can `start` is started on demand, as the Parakeet worker
+ * is before its first use and after a crash.
+ */
+export type LiveDictationEngine = LiveDecoder & {
+  readonly state: LiveDictationEngineState
+  start?(): Promise<void>
+}
 
 export interface LiveDictationLog {
   info(object: Record<string, unknown>, message?: string): void
@@ -123,6 +130,7 @@ export class LiveDictationHost {
     const engine = this.#options.engine
     if (!engine) return `Live dictation needs the Parakeet engine on ${computerName}`
     if (engine.state === 'ready' || engine.state === 'starting') return undefined
+    if (engine.state === 'stopped' && engine.start) return undefined
     return `Parakeet is unavailable on ${computerName}`
   }
 }
@@ -238,8 +246,10 @@ class DictationConnection {
     this.#send({ protocol: DICTATION_PROTOCOL, type: 'ready' })
   }
 
-  /** Waits for an engine that is still warming up; false once the stream has ended. */
+  /** Starts a stopped engine and waits while it warms up; false once the stream has ended. */
   async #engineReady(engine: LiveDictationEngine): Promise<boolean> {
+    // A start that fails leaves the engine failed or stopped, which ends the wait below.
+    if (engine.state === 'stopped') void engine.start?.().catch(() => undefined)
     let waited = 0
     while (engine.state === 'starting' && waited < this.#context.limits.readyTimeoutMs) {
       await new Promise((resolve) => setTimeout(resolve, READY_POLL_MS))

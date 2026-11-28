@@ -78,6 +78,30 @@ class FakeEngine implements LiveDictationEngine {
   }
 }
 
+/** An engine that starts on demand, as the Parakeet worker does after a crash. */
+class LazyEngine extends FakeEngine {
+  starts = 0
+  startFails = false
+
+  constructor() {
+    super()
+    this.state = 'stopped'
+  }
+
+  start(): Promise<void> {
+    this.starts += 1
+    if (this.startFails) {
+      this.state = 'failed'
+      return Promise.reject(new Error('restart budget exhausted'))
+    }
+    this.state = 'starting'
+    return new Promise((resolve) => setTimeout(() => {
+      this.state = 'ready'
+      resolve()
+    }, 2_500))
+  }
+}
+
 /** Words a quarter second apart from the start of the window. */
 function words(_samples: Float32Array, text: string): LiveDecodeResult {
   const list = text.split(' ')
@@ -124,6 +148,10 @@ describe('live dictation host capabilities', () => {
     const engine = new FakeEngine()
     engine.state = state
     expect(host(engine).capabilities()).toMatchObject({ live, computerName: 'Studio' })
+  })
+
+  it('reports an engine that starts on demand as live while it is stopped', () => {
+    expect(host(new LazyEngine()).capabilities()).toMatchObject({ live: true, computerName: 'Studio' })
   })
 
   it('names the Parakeet engine when this computer has none', () => {
@@ -198,6 +226,30 @@ describe('live dictation host streams', () => {
     engine.state = 'ready'
     await vi.advanceTimersByTimeAsync(250)
     expect(socket.types()).toEqual(['ready'])
+  })
+
+  it('starts a stopped engine and waits for it before it is ready', async () => {
+    const engine = new LazyEngine()
+    const socket = attach(host(engine))
+    socket.start()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(engine.starts).toBe(1)
+    expect(socket.types()).toEqual([])
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(socket.types()).toEqual(['ready'])
+  })
+
+  it('reports a stopped engine that cannot start again as unavailable', async () => {
+    const engine = new LazyEngine()
+    engine.startFails = true
+    const socket = attach(host(engine))
+    socket.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(engine.starts).toBe(1)
+    expect(socket.sent).toEqual([{
+      protocol: 1, type: 'error', code: 'unavailable', message: 'Parakeet is unavailable on Studio', fatal: true,
+    }])
+    expect(socket.closed?.code).toBe(1011)
   })
 
   it('abandons a stream cancelled while the engine warms up', async () => {

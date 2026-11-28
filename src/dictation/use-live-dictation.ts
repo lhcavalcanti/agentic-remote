@@ -253,7 +253,7 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
     setView((current) => ({ draft: rendered.draft, tentativeWords: current?.tentativeWords ?? 0 }))
   }, [settle])
 
-  // Leaving keeps what was confirmed and releases the microphone.
+  // Unmounting releases the microphone and drops the stream; what it heard is not stored.
   useEffect(() => () => {
     const stream = streamRef.current
     if (!stream || stream.ended) return

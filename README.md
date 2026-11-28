@@ -497,7 +497,7 @@ and setup keeps these settings across updates.
   any other value stops the service from starting.
 - `AGENTIC_REMOTE_PARAKEET_THREADS` sets its CPU threads, 1 to 16 (default 4,
   or fewer on a smaller CPU).
-- The worker holds about 1.2 GiB of memory. It decodes one recording at a time
+- The worker holds about 1.4 GiB of memory. It decodes one recording at a time
   with one more waiting; a third concurrent recording gets a `429`.
 - Whisper stays the fallback, so keep `whisper-cli` and its model there too. A
   missing model, a worker that exits or stops responding, or a decode past its

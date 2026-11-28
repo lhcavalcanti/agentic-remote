@@ -735,7 +735,7 @@
     ".superpowers/sdd/2026-10-16-oracle-conversation-mode/task-12-report.md": "2304e949b2a567547acea0bce1391c2ef9cc1e28031cec4d9b1febfb2155f49a",
     ".superpowers/sdd/2026-10-16-oracle-conversation-mode/task-9-report.md": "ac55441561d6ec7420901aa98bf892c545ebb5b8c9919db34eabdca53cde729f",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
-    "README.md": "5c52adb0ccb97188856b052d8448bb02e0a0802932d08388429a28e39c827702",
+    "README.md": "35e6a3d8e82473778b5fc792ab76fbeef8e0c291a86a7be30d3464b3f217cb58",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "10dab4534014c1fc33f27a887d8322c2807bbb88c53667225148f0cd9d587ff3",
     "bin/agentic-remote-gate": "a6e8d2b46bf441c15a4b698a68e9ccfef0c359a346e63d8d5e18e511e1a040bf",
@@ -1969,21 +1969,15 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "90a95f1d1ce3ff9c49abb1a902aa0f15be1f69258d2d1eb2b7f7499aa6a11016",
+    "GRAPH_REPORT.md": "def0981eb8103aada14695119ebc8b35e7a6f8bb06f2eb71e94900ca7f1066f4",
     "communities.json": "85f1aa08ecceb302c7a60e58e03c9a23aaf7783b93b1aef431c31a73e7ac435f",
-    "graph.html": "6878add6f02dcc1fdfc4d6231cca26e2d8630ff6b1c33125bde71a5587a91eff",
-    "graph.json": "cacb707e6e9901ac86a565f1c917311caaf376b56ff16570e23422cf79232fa5"
+    "graph.html": "51972a6ce9655496e30f55f6b7790cd3c14a128bd8772591170724456f497a65",
+    "graph.json": "fa3e19fde214f14c2c1d76b0328dc0a2acb1e43ced2303a72c3c5e189ff35ee9"
   },
   "schema_version": 1,
-  "source_commit": "ce553f2fae6500a3115f11514d9f3ad392a37b91",
-  "source_fingerprint": "d006d1b54f1b772e5f9e3cbdf9bc6e45f2c24c7a1c0b88d5818a6fe12f3c0c5b",
+  "source_commit": "92ab4255614a24599a859ba8990b7c0458c434c7",
+  "source_fingerprint": "7cf42ba9298b6d9bb349215aa54f285b5b0486b21a4a9ef59ad93210408fe237",
   "working_tree_changes": [
-    "README.md",
-    "package.json",
-    "scripts/transcription-benchmark.ts",
-    "shell/README.md",
-    "shell/package.json",
-    "shell/src-tauri/Cargo.toml",
-    "shell/src-tauri/tauri.conf.json"
+    "README.md"
   ]
 }

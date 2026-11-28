@@ -805,6 +805,22 @@ export class ComputerManager extends EventEmitter<ComputerManagerEvents> {
     return this.requireClient(computerId).connectVoice(streamId, { signal })
   }
 
+  connectDictation(computerId: string, signal?: AbortSignal) {
+    const computer = this.requireComputer(computerId)
+    if (computer.isLocal) {
+      throw new Error('Local live dictation does not use a remote connection')
+    }
+    return this.requireClient(computerId).connectDictation(signal)
+  }
+
+  dictationCapabilities(computerId: string, signal?: AbortSignal) {
+    const computer = this.requireComputer(computerId)
+    if (computer.isLocal) {
+      throw new Error('Local live dictation does not use a remote connection')
+    }
+    return this.requireClient(computerId).dictationCapabilities(signal)
+  }
+
   async transcribeAudio(
     computerId: string,
     filename: string,

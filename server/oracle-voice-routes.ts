@@ -252,7 +252,7 @@ export async function registerOracleVoiceRoutes(
   })
 }
 
-function isWebSocketUpgrade(
+export function isWebSocketUpgrade(
   headers: Record<string, string | string[] | undefined>,
 ): boolean {
   if (headers.upgrade?.toString().toLowerCase() !== 'websocket') return false
@@ -765,11 +765,13 @@ function unavailableSelection(
   }
 }
 
-function ticketClient(
+/** The browser a ticket is bound to; `feature` names what needs the Origin header. */
+export function ticketClient(
   origin: string | undefined,
   address: string,
+  feature = 'Oracle voice',
 ): VoiceTicketClient {
-  if (!origin) throw Object.assign(new Error('Oracle voice requires an Origin header'), {
+  if (!origin) throw Object.assign(new Error(`${feature} requires an Origin header`), {
     statusCode: 400,
   })
   return { origin, address }

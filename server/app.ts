@@ -99,6 +99,9 @@ import {
   registerTranscriptionRoutes,
   transcriptionMultipartOptions,
 } from './transcription-routes.js'
+import { registerDictationRoutes } from './dictation-routes.js'
+import { LiveDictationHost, type LiveDictationEngine } from './live-dictation-host.js'
+import type { LiveDictationOptions } from './live-dictation-session.js'
 import { silentStartupPhases, type StartupPhases } from './startup-phases.js'
 import { registerDreamerRoutes } from './dreamer-routes.js'
 import { DreamerService } from './dreamer-service.js'
@@ -137,6 +140,14 @@ export interface BuildAppOptions {
   voiceEngineFactory?: VoiceEngineFactory
   /** Injected voice transport seam; Task 6 constructs the runtime backend. */
   voiceBackend?: VoiceBackend
+  /**
+   * The warm decoder live dictation uses on this computer. Without one, live
+   * dictation reports that it needs the Parakeet engine, and browsers record
+   * and upload instead.
+   */
+  liveDecoder?: LiveDictationEngine
+  /** Pass timing for live dictation streams; tests shorten it. */
+  liveDictationSession?: Partial<LiveDictationOptions>
   /**
    * The session manager agent. Built on a hub with the built-in session
    * service unless false or turned off with AGENTIC_REMOTE_MANAGER=off.
@@ -404,6 +415,12 @@ export async function buildApp(
       })
     })
   }
+  const liveDictation = new LiveDictationHost({
+    engine: options.liveDecoder,
+    computerName: () => identity.info.name,
+    log: app.log,
+    session: options.liveDictationSession,
+  })
   await registerNodeRoutes(
     app,
     service,
@@ -414,6 +431,7 @@ export async function buildApp(
     hostTelemetryLifetime?.signal,
     scheduleWorktrees,
     skillSettings,
+    liveDictation,
   )
 
   let manager: ComputerManager | undefined
@@ -900,6 +918,12 @@ export async function buildApp(
       : localTranscription
     await app.register(fastifyMultipart, transcriptionMultipartOptions)
     await registerTranscriptionRoutes(app, transcriptionService)
+    await registerDictationRoutes(app, {
+      host: liveDictation,
+      computers: manager,
+      computerName: delegate,
+      log: app.log,
+    })
     await registerFileUploadRoutes(app, manager)
     app.get('/api/version', async (_request, reply) => {
       reply.header('cache-control', 'no-store')
@@ -990,6 +1014,7 @@ export async function buildApp(
     if (forwardHubToDreamer) manager?.off('event', forwardHubToDreamer)
     if (forwardManagerToDreamer) managerAgent?.off('event', forwardManagerToDreamer)
     await voiceService?.stop()
+    await liveDictation.close()
     await proactiveCoordinator?.stop()
     await dreamerService?.stop()
     await managerAgent?.stop()

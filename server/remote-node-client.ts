@@ -43,11 +43,13 @@ import type {
   WorkspaceSearchResponse,
   SideQuestionExchange,
 } from '../shared/contracts.js'
+import type { DictationCapabilities } from '../shared/dictation.js'
 import type { RegisteredComputer } from './computer-registry.js'
 import {
   RemoteVoiceClient,
   type RemoteVoiceClientOptions,
 } from './remote-voice-client.js'
+import { openNodeDictationSocket } from './remote-dictation-client.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
 import { LONGEST_TRANSCRIPTION_MS } from './transcription-service.js'
 import { parseSubmissionReceipt } from '../shared/submission-error.js'
@@ -251,6 +253,23 @@ export class RemoteNodeClient extends EventEmitter<RemoteNodeClientEvents> {
       ...options,
       registrationSignal: this.resourceLifetime.signal,
     })
+  }
+
+  /** Opens the node's live dictation socket; a node without it rejects with status 404. */
+  connectDictation(signal?: AbortSignal): Promise<WebSocket> {
+    return openNodeDictationSocket(this.computer, {
+      signal,
+      registrationSignal: this.resourceLifetime.signal,
+    })
+  }
+
+  dictationCapabilities(signal?: AbortSignal): Promise<DictationCapabilities> {
+    return this.request<DictationCapabilities>(
+      '/node-api/dictation/capabilities',
+      { signal: signal ? AbortSignal.any([signal, this.resourceLifetime.signal]) : this.resourceLifetime.signal },
+      5_000,
+      false,
+    )
   }
 
   async listSessions(): Promise<SessionDetail[]> {

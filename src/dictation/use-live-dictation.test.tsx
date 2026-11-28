@@ -100,7 +100,7 @@ function setup(options: {
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] })
 })
 
 afterEach(() => {

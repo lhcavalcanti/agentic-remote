@@ -228,10 +228,10 @@ export function useLiveDictation(options: UseLiveDictationOptions): LiveDictatio
     ensureSpan(stream)
     setView({ draft: stream.rendered!.draft, tentativeWords: 0 })
     setStatus('listening')
-    const startedAt = Date.now()
+    const startedAt = performance.now()
     setSeconds(0)
     timerRef.current = setInterval(() => {
-      setSeconds(Math.floor((Date.now() - startedAt) / 1_000))
+      setSeconds(Math.floor((performance.now() - startedAt) / 1_000))
     }, 250)
     optionsRef.current.announce('Listening')
   // `dependencies` reads the latest options on each call.

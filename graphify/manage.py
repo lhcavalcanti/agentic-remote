@@ -19,6 +19,8 @@ import venv
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUTS = ("graph.json", "graph.html", "GRAPH_REPORT.md", "communities.json")
+# The viewer draws every node up to this many; past it, only communities.
+VIZ_NODE_LIMIT = 15_000
 GENERATOR_INPUTS = (
     "manage.py", "scope.json", "requirements.in", "requirements.lock",
     "vendor/vis-network.min.js",
@@ -143,7 +145,7 @@ def environment() -> dict[str, str]:
         "GRAPHIFY_OUT": "graphify",
         "GRAPHIFY_QUERY_LOG_DISABLE": "1",
         "GRAPHIFY_NO_BACKUP": "1",
-        "GRAPHIFY_VIZ_NODE_LIMIT": "10000",
+        "GRAPHIFY_VIZ_NODE_LIMIT": str(VIZ_NODE_LIMIT),
         "PYTHONNOUSERSITE": "1",
         "PYTHONHASHSEED": "0",
     })
@@ -353,7 +355,7 @@ def update(force: bool) -> None:
             validate_graph(data)
             (stage / "graph.json").write_bytes(json_bytes(data))
             if not to_html(graph, communities, str(stage / "graph.html"),
-                           community_labels=labels, node_limit=10_000):
+                           community_labels=labels, node_limit=VIZ_NODE_LIMIT):
                 raise ValueError("Graphify did not generate a visualization.")
             offline_html(stage / "graph.html", scope, before["source_fingerprint"])
             report = generate(

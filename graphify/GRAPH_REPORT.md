@@ -2,7 +2,7 @@
 
 Snapshot: `7942e7f5d1c53b1c6df90461f0f6268a6f95994e68ea7d63c098a4b1a90e4314`
 
-Source checkout: `245eb624deafd850c1ef67a4b89eaf1bd46eb278`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
+Source checkout: `f9ae4125cd1aac965a407c4339540902e93bf942`; working-tree contents are hashed in `metadata.json`. Check freshness by content, not by comparing HEAD.
 
 Run `python3 graphify/manage.py check` before querying and `python3 graphify/manage.py update` after source changes.
 

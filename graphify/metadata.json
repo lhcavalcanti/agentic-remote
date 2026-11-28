@@ -730,7 +730,7 @@
   "communities": 297,
   "community_algorithm": "louvain-seed-42",
   "edges": 29175,
-  "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
+  "generator_fingerprint": "efc11db632e3c5e441643308ced6c7326b5b9a9b8aa9473b24ee5e05771dd834",
   "graphify_version": "0.9.54",
   "inputs": {
     ".github/CODEOWNERS": "334716e0471a01eadddb55757e7794ef5d9a4a11f8ea1d68487604c64a0cb421",
@@ -2023,13 +2023,13 @@
     "fixtures/voice/parakeet-result-pt-BR-short.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "4bae85a9290e65ad589aef4bc06db5d0d8b83feb36ddf146f73c703c9607ec09",
+    "GRAPH_REPORT.md": "d8adf2b142873c17b8edb6dcd472987f0f779bab96055a0f17b0806cdda9cfcb",
     "communities.json": "60ee2aa8b51aa16f3fc0f628d7389f46149439956988269381d51c68d11129d0",
-    "graph.html": "1ddec4e44482cc65bcd3b56fe4f3ad09c75a24bfc4510a534bd40aac11a69233",
-    "graph.json": "3152e1db9c637b61c686aeb35af91d99e9e8f7c52bc8cf72d73e0db16d4fa238"
+    "graph.html": "327cfceaf5c2eb257298683f060852ac3b871c8e52d8576595bfb910cf9e9280",
+    "graph.json": "f8828142d16a9d8ab4e2980ffe407eaa506615aef4da8b4752dc3f8815b13955"
   },
   "schema_version": 1,
-  "source_commit": "245eb624deafd850c1ef67a4b89eaf1bd46eb278",
+  "source_commit": "f9ae4125cd1aac965a407c4339540902e93bf942",
   "source_fingerprint": "7942e7f5d1c53b1c6df90461f0f6268a6f95994e68ea7d63c098a4b1a90e4314",
   "working_tree_changes": []
 }

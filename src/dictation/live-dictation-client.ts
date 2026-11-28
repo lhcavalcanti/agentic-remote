@@ -289,7 +289,7 @@ export class LiveDictationClient {
         this.#callbacks.onText({ committed: this.#committed, tentative: this.#tentative })
         return
       case 'final':
-        this.#finish(message.text)
+        this.#finish(message.text, false)
         return
       case 'error':
         this.#callbacks.onError({ code: message.code, message: message.message, fatal: message.fatal })
@@ -319,16 +319,17 @@ export class LiveDictationClient {
     this.#finish(this.#committed)
   }
 
-  #finish(text: string): void {
+  /** `cancel` tells a server that has not finished the stream to drop it. */
+  #finish(text: string, cancel = true): void {
     if (this.#state !== 'live' && this.#state !== 'stopping') return
     this.#state = 'ended'
-    this.#abandon()
+    this.#abandon(cancel)
     this.#callbacks.onFinal(text)
     this.#resolveFinished?.()
   }
 
-  /** Releases the microphone and the connection, telling the server to drop the stream. */
-  #abandon(): void {
+  /** Releases the microphone and the connection. */
+  #abandon(cancel = true): void {
     if (this.#heartbeat !== undefined) clearInterval(this.#heartbeat)
     if (this.#stall !== undefined) clearTimeout(this.#stall)
     if (this.#finalTimer !== undefined) clearTimeout(this.#finalTimer)
@@ -343,7 +344,7 @@ export class LiveDictationClient {
     socket.onmessage = null
     socket.onclose = null
     if (socket.readyState === OPEN) {
-      this.#send({ protocol: DICTATION_PROTOCOL, type: 'cancel' })
+      if (cancel) this.#send({ protocol: DICTATION_PROTOCOL, type: 'cancel' })
       socket.close(1000, 'Dictation ended')
     } else if (socket.readyState === 0) {
       socket.close(1000, 'Dictation ended')

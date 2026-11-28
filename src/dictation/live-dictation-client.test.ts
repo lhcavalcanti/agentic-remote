@@ -163,6 +163,8 @@ describe('live dictation client', () => {
     socket.receive({ type: 'final', text: 'Hello world.', reason: 'stop' })
     await stopping
     expect(harness.finals).toEqual(['Hello world.'])
+    // A finished stream has nothing to cancel.
+    expect(socket.controls()).toEqual(['start', 'stop'])
     expect(harness.capture.stopped).toBe(true)
     expect(socket.closed).toBeDefined()
   })

@@ -15,6 +15,13 @@ export interface DelegatedTranscriptionOptions {
 }
 
 /**
+ * The assigned computer admits as many as its engine allows (Parakeet queues
+ * one recording behind the active one; Whisper takes one) and refuses the
+ * rest with 429, so the hub forwards no more than the larger of the two.
+ */
+const MAX_FORWARDED_RECORDINGS = 2
+
+/**
  * Runs transcription on a paired computer instead of the hub, so the computer
  * that owns the microphone-facing UI does not have to own Whisper, its model,
  * or the hardware that makes it fast.
@@ -22,8 +29,7 @@ export interface DelegatedTranscriptionOptions {
 export class DelegatedTranscriptionService implements TranscriptionService {
   private readonly manager: ComputerManager
   private readonly local: TranscriptionService
-  private busy = false
-  private activeAbortController?: AbortController
+  private readonly active = new Set<AbortController>()
 
   readonly computerName: string
 
@@ -57,7 +63,7 @@ export class DelegatedTranscriptionService implements TranscriptionService {
         503,
       )
     }
-    if (this.busy) {
+    if (this.active.size >= MAX_FORWARDED_RECORDINGS) {
       throw new TranscriptionError(
         'Another audio recording is already being transcribed',
         429,
@@ -67,9 +73,8 @@ export class DelegatedTranscriptionService implements TranscriptionService {
       throw new TranscriptionError('Unsupported audio file type', 415)
     }
 
-    this.busy = true
     const controller = new AbortController()
-    this.activeAbortController = controller
+    this.active.add(controller)
     const abort = () => controller.abort(signal?.reason)
     signal?.addEventListener('abort', abort, { once: true })
     if (signal?.aborted) {
@@ -107,13 +112,12 @@ export class DelegatedTranscriptionService implements TranscriptionService {
       )
     } finally {
       signal?.removeEventListener('abort', abort)
-      this.activeAbortController = undefined
-      this.busy = false
+      this.active.delete(controller)
     }
   }
 
   async stop(): Promise<void> {
-    this.activeAbortController?.abort()
+    for (const controller of this.active) controller.abort()
     await this.local.stop()
   }
 }
@@ -169,4 +173,13 @@ function statusCodeOf(error: unknown): number | undefined {
 
 export function transcriptionComputerName(): string | undefined {
   return process.env.AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER?.trim() || undefined
+}
+
+/** Whether an assignment names this computer, matched as the computer list matches it. */
+export function namesComputer(
+  assignment: string,
+  computer: { id: string; name: string },
+): boolean {
+  const wanted = assignment.trim().toLowerCase()
+  return computer.id.toLowerCase() === wanted || computer.name.toLowerCase() === wanted
 }

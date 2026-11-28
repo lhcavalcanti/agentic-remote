@@ -25,6 +25,7 @@ import {
   type VoiceWorkerChildMessage,
   type VoiceWorkerParentMessage,
 } from './oracle-voice-worker-protocol.js'
+import { importSherpaModule, sherpaExport } from './sherpa-module.js'
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000
 const DEFAULT_MAX_UTTERANCE_SAMPLES = ORACLE_VOICE_SAMPLE_RATE * 30
@@ -893,8 +894,7 @@ async function sendProcessMessage(message: VoiceWorkerChildMessage): Promise<voi
 }
 
 async function runChildProcess(): Promise<void> {
-  const imported = await import('sherpa-onnx-node')
-  const sherpa = normalizeSherpaModule(imported)
+  const sherpa = normalizeSherpaModule(await importSherpaModule())
   const worker = createVoiceWorker({
     sherpa,
     spawnPiper: defaultSpawnPiper,
@@ -913,43 +913,24 @@ async function runChildProcess(): Promise<void> {
 }
 
 export function normalizeSherpaModule(imported: unknown): SherpaModule {
-  const named = propertyCarrier(imported)
-  const defaults = propertyCarrier(named?.default)
-  const OnlineRecognizer = onlineRecognizerConstructor(named?.OnlineRecognizer)
-    ?? onlineRecognizerConstructor(defaults?.OnlineRecognizer)
+  const OnlineRecognizer = sherpaExport(imported, 'OnlineRecognizer', isOnlineRecognizer)
   if (!OnlineRecognizer) {
     throw new Error('sherpa-onnx-node OnlineRecognizer export is unavailable')
   }
-  const OfflineTts = offlineTtsConstructor(named?.OfflineTts)
-    ?? offlineTtsConstructor(defaults?.OfflineTts)
+  const OfflineTts = sherpaExport(imported, 'OfflineTts', isOfflineTts)
   if (!OfflineTts) {
     throw new Error('sherpa-onnx-node OfflineTts export is unavailable')
   }
   return { OnlineRecognizer, OfflineTts }
 }
 
-function propertyCarrier(value: unknown): Record<string, unknown> | undefined {
-  if ((typeof value !== 'object' || value === null) && typeof value !== 'function') {
-    return undefined
-  }
-  return value as Record<string, unknown>
-}
-
-function onlineRecognizerConstructor(
-  value: unknown,
-): SherpaModule['OnlineRecognizer'] | undefined {
+function isOnlineRecognizer(value: unknown): value is SherpaModule['OnlineRecognizer'] {
   return typeof value === 'function'
-    ? value as SherpaModule['OnlineRecognizer']
-    : undefined
 }
 
-function offlineTtsConstructor(
-  value: unknown,
-): SherpaModule['OfflineTts'] | undefined {
-  const candidate = propertyCarrier(value)
-  return typeof candidate?.createAsync === 'function'
-    ? candidate as unknown as SherpaModule['OfflineTts']
-    : undefined
+function isOfflineTts(value: unknown): value is SherpaModule['OfflineTts'] {
+  return ((typeof value === 'object' && value !== null) || typeof value === 'function')
+    && typeof Reflect.get(value, 'createAsync') === 'function'
 }
 
 const entry = process.argv[1] ? path.resolve(process.argv[1]) : ''

@@ -92,6 +92,7 @@ it never downloads a model, selects a profile, or enables Conversation mode.
 | --- | --- | --- | ---: |
 | `fast-en` | sherpa-onnx Zipformer English 20M int8; resident sherpa VITS; Piper `en_US-ljspeech-medium` | `en` | 195,057,566 bytes |
 | `multilingual-quality` | sherpa-onnx Nemotron 3.5 0.6B 160 ms int8; resident sherpa VITS; Faber medium (**research-only ancestry**) | `pt-BR` | 542,456,707 bytes |
+| `parakeet-ultra` | **Transcription profile, not used by Conversation mode**: sherpa-onnx Parakeet TDT 0.6B Ultra int8 for dictation (see the README's Parakeet engine) | 25 European languages | 487,134,290 bytes |
 
 `multilingual-quality` names the STT model's multilingual capability. Its
 shipped TTS voice is specifically Brazilian Portuguese, so the generated
@@ -253,7 +254,8 @@ version is idempotent and reactivates it without downloading again.
 ## Troubleshooting
 
 - `unknown voice profile`: use exactly `fast-en` or
-  `multilingual-quality`.
+  `multilingual-quality` for Conversation mode (`parakeet-ultra` installs the
+  dictation engine instead).
 - Size/checksum/extraction failure: retry after checking network and disk
   space; the prior active profile remains selected.
 - Research-only acknowledgement required: review the printed Faber/Lessac

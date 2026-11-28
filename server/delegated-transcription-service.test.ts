@@ -247,11 +247,11 @@ describe('delegated transcription service', () => {
     })
   })
 
-  it('refuses a second recording while one is in flight', async () => {
-    let release: (() => void) | undefined
+  it('forwards a second recording for the assigned computer to queue and refuses a third', async () => {
+    const releases: Array<() => void> = []
     const hub = manager([hubComputer, workstation], async () => {
       await new Promise<void>((resolve) => {
-        release = resolve
+        releases.push(resolve)
       })
       return { transcript: 'Remote transcript', durationSeconds: 3 }
     })
@@ -262,14 +262,16 @@ describe('delegated transcription service', () => {
     })
 
     const first = service.transcribe(audio())
-    await vi.waitFor(() => expect(release).toBeDefined())
+    const second = service.transcribe(audio())
+    await vi.waitFor(() => expect(releases).toHaveLength(2))
     await expect(service.transcribe(audio())).rejects.toMatchObject({
       statusCode: 429,
     })
-    release?.()
-    await expect(first).resolves.toMatchObject({
-      transcript: 'Remote transcript',
-    })
+    for (const release of releases) release()
+    await expect(Promise.all([first, second])).resolves.toMatchObject([
+      { transcript: 'Remote transcript' },
+      { transcript: 'Remote transcript' },
+    ])
   })
 
   it('cancels the in-flight request when the caller aborts', async () => {

@@ -71,6 +71,7 @@ import {
 } from './transcription-service.js'
 import {
   DelegatedTranscriptionService,
+  namesComputer,
   transcriptionComputerName,
 } from './delegated-transcription-service.js'
 import {
@@ -89,6 +90,11 @@ import {
   type VoiceBackend,
 } from './oracle-voice-session.js'
 import { ChildVoiceEngine } from './oracle-voice-worker.js'
+import { ParakeetWorker } from './parakeet-worker.js'
+import {
+  readTranscriptionEngineConfig,
+  type TranscriptionEngineConfig,
+} from './transcription-engine-config.js'
 import {
   registerTranscriptionRoutes,
   transcriptionMultipartOptions,
@@ -167,6 +173,11 @@ export async function buildApp(
   pushService?: PushNotificationService
   notificationCenter?: NotificationCenterService
   transcriptionService?: TranscriptionService
+  /** The engine this computer transcribes with, and its worker when it is Parakeet. */
+  transcriptionEngine: {
+    config: TranscriptionEngineConfig
+    worker?: ParakeetWorker
+  }
   knowledgeStore?: KnowledgeStore
   sessionKnowledgeStore?: SessionKnowledgeStore
   sessionOrderStore?: SessionOrderStore
@@ -348,10 +359,51 @@ export async function buildApp(
       maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
     },
   })
+  // Only the computer that transcribes reads its engine, and an invalid one
+  // fails its startup. A hub that sends recordings elsewhere loads none.
+  const assignedComputer = role === 'hub' ? transcriptionComputerName() : undefined
+  const transcribesHere = !assignedComputer || namesComputer(assignedComputer, identity.info)
+  const transcriptionEngine: TranscriptionEngineConfig = transcribesHere
+    ? readTranscriptionEngineConfig(process.env, dataDirectory)
+    : { engine: 'whisper' }
+  if (!transcribesHere && process.env.AGENTIC_REMOTE_TRANSCRIPTION_ENGINE?.trim()) {
+    app.log.info(
+      { transcriptionComputer: assignedComputer },
+      'AGENTIC_REMOTE_TRANSCRIPTION_ENGINE is ignored: this hub sends recordings to another computer',
+    )
+  }
+  const parakeetWorker = !options.transcriptionService && transcriptionEngine.engine === 'parakeet'
+    ? new ParakeetWorker(transcriptionEngine.parakeet)
+    : undefined
   const localTranscription =
     options.transcriptionService ??
-    new LocalTranscriptionService(localTranscriptionOptions(dataDirectory))
+    new LocalTranscriptionService({
+      ...localTranscriptionOptions(dataDirectory),
+      engine: transcriptionEngine,
+      parakeetWorker,
+      logger: app.log,
+    })
   await localTranscription.initialize()
+  if (parakeetWorker && transcriptionEngine.engine === 'parakeet') {
+    const { modelDirectory, threads } = transcriptionEngine.parakeet
+    // The model loads in the background; recordings meanwhile wait for it.
+    app.addHook('onReady', async () => {
+      const started = performance.now()
+      void parakeetWorker.start().then(() => {
+        app.log.info({
+          engine: 'parakeet',
+          threads,
+          loadMs: Math.round(performance.now() - started),
+        }, 'Parakeet transcription engine is ready')
+      }, (error: unknown) => {
+        app.log.warn({
+          engine: 'parakeet',
+          modelDirectory,
+          reason: error instanceof Error ? error.message : String(error),
+        }, 'Parakeet transcription engine is unavailable; Whisper transcribes instead')
+      })
+    })
+  }
   await registerNodeRoutes(
     app,
     service,
@@ -946,6 +998,7 @@ export async function buildApp(
     pushService?.stop()
     await notificationCenter?.flush()
     await (transcriptionService ?? localTranscription).stop()
+    await parakeetWorker?.stop()
     await service.stop()
   })
 
@@ -957,6 +1010,10 @@ export async function buildApp(
     pushService,
     notificationCenter,
     transcriptionService: transcriptionService ?? localTranscription,
+    transcriptionEngine: {
+      config: transcriptionEngine,
+      ...(parakeetWorker ? { worker: parakeetWorker } : {}),
+    },
     knowledgeStore,
     sessionKnowledgeStore,
     sessionOrderStore,

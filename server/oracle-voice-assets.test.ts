@@ -15,6 +15,11 @@ import {
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  installedParakeetModelDirectory,
+  PARAKEET_MODEL_NAME,
+  PARAKEET_PROFILE_ID,
+} from './transcription-engine-config.js'
 
 const exec = promisify(execFile)
 const repositoryManifest = new URL(
@@ -50,6 +55,7 @@ type Asset = {
 
 type Profile = {
   id: string
+  kind?: 'transcription'
   version: string
   description: string
   language: string
@@ -179,6 +185,7 @@ async function installerFixture(options: {
     | 'duplicate-path'
     | 'type-conflict'
   researchOnly?: boolean
+  kind?: 'transcription'
 } = {}) {
   const root = await testRoot()
   const repository = path.join(root, 'repository')
@@ -299,16 +306,22 @@ async function installerFixture(options: {
       + 3
     ),
     ...(options.researchOnly ? { researchOnly: true } : {}),
-    configuration: {
-      AGENTIC_REMOTE_VOICE_STT_PROFILE: 'zipformer',
-      AGENTIC_REMOTE_VOICE_LANGUAGE: 'en',
-      AGENTIC_REMOTE_VOICE_THREADS: '1',
-      AGENTIC_REMOTE_VOICE_ENDPOINT_MS: '800',
-      AGENTIC_REMOTE_VOICE_STT_MODEL_DIR: 'stt-model',
-      AGENTIC_REMOTE_VOICE_TTS_BIN: 'stt-model/piper',
-      AGENTIC_REMOTE_VOICE_TTS_MODEL: 'stt-model/voice.onnx',
-      AGENTIC_REMOTE_VOICE_TTS_CONFIG: 'stt-model/voice.onnx.json',
-    },
+    ...(options.kind ? { kind: options.kind } : {}),
+    configuration: options.kind === 'transcription'
+      ? {
+          AGENTIC_REMOTE_TRANSCRIPTION_ENGINE: 'parakeet',
+          AGENTIC_REMOTE_PARAKEET_MODEL_DIR: 'stt-model',
+        }
+      : {
+          AGENTIC_REMOTE_VOICE_STT_PROFILE: 'zipformer',
+          AGENTIC_REMOTE_VOICE_LANGUAGE: 'en',
+          AGENTIC_REMOTE_VOICE_THREADS: '1',
+          AGENTIC_REMOTE_VOICE_ENDPOINT_MS: '800',
+          AGENTIC_REMOTE_VOICE_STT_MODEL_DIR: 'stt-model',
+          AGENTIC_REMOTE_VOICE_TTS_BIN: 'stt-model/piper',
+          AGENTIC_REMOTE_VOICE_TTS_MODEL: 'stt-model/voice.onnx',
+          AGENTIC_REMOTE_VOICE_TTS_CONFIG: 'stt-model/voice.onnx.json',
+        },
     notices: [{
       name: 'Fixture license',
       license: 'Fixture-1.0',
@@ -450,7 +463,47 @@ describe('Oracle voice profile manifest', () => {
     expect(manifest.profiles.map(({ id }) => id)).toEqual([
       'fast-en',
       'multilingual-quality',
+      'parakeet-ultra',
     ])
+  })
+
+  it('pins the Parakeet transcription model where the server looks for it', async () => {
+    const manifest = await readManifest()
+    const parakeet = manifest.profiles.find(({ id }) => id === PARAKEET_PROFILE_ID)
+
+    expect(parakeet).toMatchObject({
+      kind: 'transcription',
+      expandedBytes: 671_342_366,
+      entryCount: 11,
+      configuration: {
+        AGENTIC_REMOTE_TRANSCRIPTION_ENGINE: 'parakeet',
+        AGENTIC_REMOTE_PARAKEET_MODEL_DIR: PARAKEET_MODEL_NAME,
+      },
+      assets: [{
+        url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/'
+          + 'sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8.tar.bz2',
+        bytes: 487_134_290,
+        sha256: 'd216b71d7f628b3f2f2a20ee7ead39ff0b075984959eb4bf6ddf8dc8da737c09',
+        expandedBytes: 671_342_366,
+        entryCount: 11,
+        archive: 'tar.bz2',
+        destination: '.',
+      }],
+    })
+    expect(Object.keys(parakeet!.configuration)).toHaveLength(2)
+    expect(parakeet!.notices).toContainEqual(expect.objectContaining({
+      license: 'CC-BY-4.0',
+      url: 'https://huggingface.co/moondream/parakeet-ultra',
+    }))
+    expect(parakeet!.notices).toContainEqual(expect.objectContaining({
+      license: 'CC-BY-4.0',
+      url: 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3',
+    }))
+    expect(installedParakeetModelDirectory('/data')).toBe(path.join(
+      '/data/models/oracle-voice/active',
+      parakeet!.id,
+      parakeet!.configuration.AGENTIC_REMOTE_PARAKEET_MODEL_DIR,
+    ))
   })
 
   it('pins every voice asset by HTTPS URL, bytes, sha256, and license', async () => {
@@ -542,7 +595,7 @@ describe('Oracle voice profile manifest', () => {
       'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR',
     ]
 
-    for (const profile of manifest.profiles) {
+    for (const profile of manifest.profiles.filter(({ kind }) => kind === undefined)) {
       expect(['zipformer', 'nemotron']).toContain(
         profile.configuration.AGENTIC_REMOTE_VOICE_STT_PROFILE,
       )
@@ -632,6 +685,67 @@ describe('agentic-remote voice-install', () => {
     expect(result.stdout).toContain(
       'Oracle voice remains disabled until AGENTIC_REMOTE_ORACLE_VOICE=on is set.',
     )
+  })
+
+  it('installs a transcription profile and prints only its two settings', async () => {
+    const fixture = await installerFixture({ kind: 'transcription' })
+
+    const result = await fixture.run()
+
+    expect(result, result.stderr).toMatchObject({ code: 0 })
+    expect(result.stdout).toContain('Transcription profile: fixture')
+    expect(result.stdout.indexOf('Fixture-1.0'))
+      .toBeLessThan(result.stdout.indexOf('Downloading stt'))
+    const settings = result.stdout
+      .slice(result.stdout.indexOf('Set these values in'))
+      .split('\n')
+      .filter((line) => /^[A-Z_]+=/.test(line))
+    expect(settings).toEqual([
+      'AGENTIC_REMOTE_TRANSCRIPTION_ENGINE=parakeet',
+      `AGENTIC_REMOTE_PARAKEET_MODEL_DIR=${path.join(
+        fixture.data,
+        'models/oracle-voice/active/fixture/stt-model',
+      )}`,
+    ])
+    expect(result.stdout).not.toContain('AGENTIC_REMOTE_ORACLE_VOICE')
+    const active = path.join(fixture.data, 'models', 'oracle-voice', 'active', 'fixture')
+    expect(await readFile(path.join(active, 'stt-model', 'tokens.txt'), 'utf8')).toBe('tokens\n')
+  })
+
+  it.each([
+    [
+      'an Oracle voice setting',
+      { AGENTIC_REMOTE_VOICE_STT_PROFILE: 'zipformer' },
+      'unsupported voice profile configuration key: AGENTIC_REMOTE_VOICE_STT_PROFILE',
+    ],
+    [
+      'another engine',
+      { AGENTIC_REMOTE_TRANSCRIPTION_ENGINE: 'whisper' },
+      'unsupported transcription engine: whisper',
+    ],
+  ])('refuses a transcription profile with %s', async (_label, configuration, message) => {
+    const fixture = await installerFixture({ kind: 'transcription' })
+
+    const result = await fixture.runWithProfile({
+      ...fixture.profile,
+      configuration: { ...fixture.profile.configuration, ...configuration },
+    }, 'invalid-transcription')
+
+    expect(result.code).not.toBe(0)
+    expect(result.stderr).toContain(message)
+    await expect(readFile(fixture.downloadLog, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('refuses an unknown profile kind', async () => {
+    const fixture = await installerFixture()
+
+    const result = await fixture.runWithProfile({
+      ...fixture.profile,
+      kind: 'dictation' as 'transcription',
+    }, 'unknown-kind')
+
+    expect(result.code).not.toBe(0)
+    expect(result.stderr).toContain('unsupported voice profile kind')
   })
 
   it('preserves the active profile when a checksum does not match', async () => {

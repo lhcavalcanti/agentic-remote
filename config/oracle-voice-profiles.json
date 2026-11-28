@@ -182,6 +182,57 @@
           "modelVersion": "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
         }
       ]
+    },
+    {
+      "id": "parakeet-ultra",
+      "kind": "transcription",
+      "version": "sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8",
+      "description": "Transcription profile, not an Oracle Conversation profile: Moondream's Parakeet Ultra post-training of NVIDIA Parakeet TDT 0.6B v3, int8, decoding dictation for /api/transcriptions on the computer that transcribes.",
+      "language": "25 European languages including en and pt",
+      "modelType": "sherpa-onnx NeMo Parakeet TDT offline transducer",
+      "modelVersion": "parakeet-tdt-0.6b-ultra-int8",
+      "platforms": [
+        "linux-x64"
+      ],
+      "expandedBytes": 671342366,
+      "entryCount": 11,
+      "configuration": {
+        "AGENTIC_REMOTE_TRANSCRIPTION_ENGINE": "parakeet",
+        "AGENTIC_REMOTE_PARAKEET_MODEL_DIR": "sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8"
+      },
+      "notices": [
+        {
+          "name": "Moondream Parakeet Ultra model, converted for sherpa-onnx",
+          "license": "CC-BY-4.0",
+          "url": "https://huggingface.co/moondream/parakeet-ultra"
+        },
+        {
+          "name": "NVIDIA parakeet-tdt-0.6b-v3 base model",
+          "license": "CC-BY-4.0",
+          "url": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"
+        },
+        {
+          "name": "sherpa-onnx runtime",
+          "license": "Apache-2.0",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/blob/v1.13.8/LICENSE"
+        }
+      ],
+      "assets": [
+        {
+          "id": "parakeet-tdt-0.6b-ultra-int8",
+          "destination": ".",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8.tar.bz2",
+          "bytes": 487134290,
+          "sha256": "d216b71d7f628b3f2f2a20ee7ead39ff0b075984959eb4bf6ddf8dc8da737c09",
+          "expandedBytes": 671342366,
+          "entryCount": 11,
+          "licenseUrl": "https://huggingface.co/moondream/parakeet-ultra",
+          "language": "25 European languages including en and pt",
+          "modelType": "sherpa-onnx NeMo Parakeet TDT transducer int8",
+          "modelVersion": "parakeet-tdt-0.6b-ultra-int8",
+          "archive": "tar.bz2"
+        }
+      ]
     }
   ]
 }

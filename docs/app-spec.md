@@ -973,9 +973,10 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
   confirmed complete version. Failure MUST leave the prior active profile
   unchanged. A research-only profile MUST print its full notices and require
   explicit noninteractive acknowledgement before network access. Existing
-  `AGENTIC_REMOTE_ORACLE_VOICE` and
-  `AGENTIC_REMOTE_VOICE_*` values MUST survive setup in the mode-`0600`
-  environment file without being printed.
+  `AGENTIC_REMOTE_ORACLE_VOICE`, `AGENTIC_REMOTE_VOICE_*`,
+  `AGENTIC_REMOTE_TRANSCRIPTION_ENGINE`, and `AGENTIC_REMOTE_PARAKEET_*`
+  values MUST survive setup in the mode-`0600` environment file without being
+  printed.
 - Oracle is one Copilot SDK conversation on the hub, run by a runtime process
   of its own. Its tools only manage sessions and its own memory, so it MUST NOT
   run commands or edit files; work it accepts becomes a normal session on a
@@ -2113,6 +2114,22 @@ clear replacement IDs without losing, duplicating, or reordering content.
   forward the recording over the authenticated node API and MUST NOT retain it.
 - An assignment naming an unpaired or offline computer MUST fail the recording
   with an actionable error instead of silently transcribing elsewhere.
+- The computer that transcribes MAY select the Parakeet engine. It MUST load the
+  model once in a worker process isolated from the server, decode one recording
+  at a time with at most one more waiting, and refuse further concurrent
+  recordings with `429`. An unknown engine MUST fail that computer's startup; a
+  hub that assigns transcription to another computer MUST NOT read or load an
+  engine of its own.
+- When the Parakeet model is missing, or its worker exits, stops responding, or
+  exceeds the 10-minute decode deadline, transcription MUST fall back to
+  Whisper. When Whisper is unavailable or fails too, the error MUST name both
+  causes. A hub MUST wait for the assigned computer longer than a Parakeet
+  deadline and a Whisper fallback together.
+- A successful (`200`) response MUST NOT carry an empty transcript; a recording
+  without recognized speech MUST fail with `422`.
+- The Parakeet model MUST be installed only explicitly, by
+  `agentic-remote voice-install parakeet-ultra` with the voice installer's
+  pinned and verified download; setup and startup MUST NOT download it.
 - Source, converted WAV, and transcript artifacts MUST use private temporary
   storage and MUST be deleted after success or failure.
 - Only transcript text MAY be retained in the draft.

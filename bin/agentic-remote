@@ -41,7 +41,8 @@ Commands:
   rollback
       Activate the previous immutable release and restart the service.
   voice-install [--accept-research-only] <profile>
-      Explicitly download, verify, and atomically activate a local voice profile.
+      Explicitly download, verify, and atomically activate a local voice or
+      transcription profile.
   uninstall
       Stop and remove the service. Application data is preserved.
   help
@@ -813,18 +814,27 @@ if (!Array.isArray(profile.platforms) || profile.platforms.length === 0) {
   fail('voice profile must declare platforms')
 }
 for (const platform of profile.platforms) safeName(platform, 'profile platform')
+// A transcription profile installs a dictation model, not Oracle voice.
+if (profile.kind !== undefined && profile.kind !== 'transcription') {
+  fail('unsupported voice profile kind')
+}
+const transcription = profile.kind === 'transcription'
 
-const requiredConfiguration = new Set([
-  'AGENTIC_REMOTE_VOICE_STT_MODEL_DIR',
-  'AGENTIC_REMOTE_VOICE_STT_PROFILE',
-  'AGENTIC_REMOTE_VOICE_LANGUAGE',
-  'AGENTIC_REMOTE_VOICE_THREADS',
-  'AGENTIC_REMOTE_VOICE_ENDPOINT_MS',
-  'AGENTIC_REMOTE_VOICE_TTS_MODEL',
-  'AGENTIC_REMOTE_VOICE_TTS_CONFIG',
-])
+const requiredConfiguration = new Set(transcription
+  ? ['AGENTIC_REMOTE_TRANSCRIPTION_ENGINE', 'AGENTIC_REMOTE_PARAKEET_MODEL_DIR']
+  : [
+      'AGENTIC_REMOTE_VOICE_STT_MODEL_DIR',
+      'AGENTIC_REMOTE_VOICE_STT_PROFILE',
+      'AGENTIC_REMOTE_VOICE_LANGUAGE',
+      'AGENTIC_REMOTE_VOICE_THREADS',
+      'AGENTIC_REMOTE_VOICE_ENDPOINT_MS',
+      'AGENTIC_REMOTE_VOICE_TTS_MODEL',
+      'AGENTIC_REMOTE_VOICE_TTS_CONFIG',
+    ])
 const ttsEngine = profile.configuration?.AGENTIC_REMOTE_VOICE_TTS_ENGINE
-if (ttsEngine === 'sherpa-vits') {
+if (transcription) {
+  // Oracle voice keys are refused below as unsupported.
+} else if (ttsEngine === 'sherpa-vits') {
   requiredConfiguration.add('AGENTIC_REMOTE_VOICE_TTS_ENGINE')
   requiredConfiguration.add('AGENTIC_REMOTE_VOICE_TTS_TOKENS')
   requiredConfiguration.add('AGENTIC_REMOTE_VOICE_TTS_DATA_DIR')
@@ -833,7 +843,7 @@ if (ttsEngine === 'sherpa-vits') {
 } else {
   fail(`unsupported voice TTS engine: ${ttsEngine}`)
 }
-const optionalConfiguration = new Set([
+const optionalConfiguration = new Set(transcription ? [] : [
   'AGENTIC_REMOTE_VOICE_COMPUTER',
   'AGENTIC_REMOTE_VOICE_TTS_SPEAKER',
 ])
@@ -859,16 +869,21 @@ for (const [key, value] of Object.entries(profile.configuration)) {
     safeRelative(value, key)
   }
 }
-if (!['zipformer', 'nemotron'].includes(profile.configuration.AGENTIC_REMOTE_VOICE_STT_PROFILE)) {
-  fail('unsupported voice STT profile')
-}
-const threads = Number(profile.configuration.AGENTIC_REMOTE_VOICE_THREADS)
-const endpointMs = Number(profile.configuration.AGENTIC_REMOTE_VOICE_ENDPOINT_MS)
-if (!Number.isInteger(threads) || threads < 1 || threads > 16) {
-  fail('voice threads must be an integer from 1 to 16')
-}
-if (!Number.isInteger(endpointMs) || endpointMs < 300 || endpointMs > 3000) {
-  fail('voice endpoint must be an integer from 300 to 3000 milliseconds')
+if (transcription) {
+  const engine = profile.configuration.AGENTIC_REMOTE_TRANSCRIPTION_ENGINE
+  if (engine !== 'parakeet') fail(`unsupported transcription engine: ${engine}`)
+} else {
+  if (!['zipformer', 'nemotron'].includes(profile.configuration.AGENTIC_REMOTE_VOICE_STT_PROFILE)) {
+    fail('unsupported voice STT profile')
+  }
+  const threads = Number(profile.configuration.AGENTIC_REMOTE_VOICE_THREADS)
+  const endpointMs = Number(profile.configuration.AGENTIC_REMOTE_VOICE_ENDPOINT_MS)
+  if (!Number.isInteger(threads) || threads < 1 || threads > 16) {
+    fail('voice threads must be an integer from 1 to 16')
+  }
+  if (!Number.isInteger(endpointMs) || endpointMs < 300 || endpointMs > 3000) {
+    fail('voice endpoint must be an integer from 300 to 3000 milliseconds')
+  }
 }
 if (!Array.isArray(profile.notices) || profile.notices.length === 0) {
   fail('voice profile must include notices')
@@ -952,6 +967,7 @@ if (mode === 'metadata') {
   console.log(profile.researchOnly === true ? '1' : '0')
   console.log(profile.expandedBytes)
   console.log(profile.entryCount)
+  console.log(transcription ? 'transcription' : 'oracle-voice')
 } else if (mode === 'assets') {
   for (const asset of profile.assets) {
     console.log([
@@ -971,7 +987,7 @@ if (mode === 'metadata') {
     console.log(`${key}=${value}`)
   }
 } else if (mode === 'notices') {
-  console.log(`Oracle voice profile: ${profile.id}`)
+  console.log(`${transcription ? 'Transcription' : 'Oracle voice'} profile: ${profile.id}`)
   console.log(`Version: ${profile.version}`)
   console.log(`Language: ${profile.language}`)
   if (profile.researchOnly === true) {
@@ -1346,11 +1362,14 @@ cleanup_voice_install() {
 }
 
 print_voice_configuration() {
-  local profile_id="$1"
+  local profile_id="$1" kind="$2" data_directory="$3"
   printf '\nSet these values in %s:\n' "$ENV_FILE"
   local key value
   while IFS='=' read -r key value; do
     case "$key" in
+      AGENTIC_REMOTE_PARAKEET_MODEL_DIR)
+        value="$data_directory/models/oracle-voice/active/$profile_id/$value"
+        ;;
       AGENTIC_REMOTE_VOICE_STT_MODEL_DIR | \
         AGENTIC_REMOTE_VOICE_TTS_BIN | \
         AGENTIC_REMOTE_VOICE_TTS_MODEL | \
@@ -1362,8 +1381,13 @@ print_voice_configuration() {
     esac
     printf '%s=%s\n' "$key" "$value"
   done < <(voice_manifest_query "$profile_id" configuration)
-  printf '%s\n' \
-    "Oracle voice remains disabled until AGENTIC_REMOTE_ORACLE_VOICE=on is set."
+  if [[ "$kind" == transcription ]]; then
+    printf '%s\n' \
+      "Set them on the computer that transcribes, then restart Agentic Remote there; Whisper remains the fallback."
+  else
+    printf '%s\n' \
+      "Oracle voice remains disabled until AGENTIC_REMOTE_ORACLE_VOICE=on is set."
+  fi
 }
 
 voice_install() {
@@ -1396,7 +1420,7 @@ voice_install() {
   require_command stat
 
   local metadata version profile_digest platforms research_only
-  local profile_expanded_bytes profile_entry_count
+  local profile_expanded_bytes profile_entry_count profile_kind
   metadata="$(voice_manifest_query "$profile_id" metadata)"
   version="$(sed -n '1p' <<<"$metadata")"
   profile_digest="$(sed -n '2p' <<<"$metadata")"
@@ -1404,6 +1428,7 @@ voice_install() {
   research_only="$(sed -n '4p' <<<"$metadata")"
   profile_expanded_bytes="$(sed -n '5p' <<<"$metadata")"
   profile_entry_count="$(sed -n '6p' <<<"$metadata")"
+  profile_kind="$(sed -n '7p' <<<"$metadata")"
   local platform
   case "$(uname -s):$(uname -m)" in
     Linux:x86_64 | Linux:amd64)
@@ -1426,6 +1451,8 @@ voice_install() {
   local data_directory voice_root profiles_root final_directory marker tree_marker
   data_directory="${AGENTIC_REMOTE_DATA_DIR:-$(config_value AGENTIC_REMOTE_DATA_DIR)}"
   data_directory="${data_directory:-$HOME/.agentic-remote}"
+  # Printed paths must not depend on the directory the installer ran from.
+  [[ "$data_directory" == /* ]] || data_directory="$PWD/$data_directory"
   voice_root="$data_directory/models/oracle-voice"
   profiles_root="$voice_root/profiles/$profile_id"
   final_directory="$profiles_root/$version"
@@ -1454,7 +1481,7 @@ voice_install() {
     flock -u "$lock_fd"
     trap - EXIT
     printf 'Voice profile %s %s is already installed.\n' "$profile_id" "$version"
-    print_voice_configuration "$profile_id"
+    print_voice_configuration "$profile_id" "$profile_kind" "$data_directory"
     return
   fi
   flock -u "$lock_fd"
@@ -1536,7 +1563,7 @@ voice_install() {
       die "voice profile activation could not be confirmed: $profile_id $version"
     trap - EXIT
     printf 'Voice profile %s %s is already installed.\n' "$profile_id" "$version"
-    print_voice_configuration "$profile_id"
+    print_voice_configuration "$profile_id" "$profile_kind" "$data_directory"
     return
   fi
 
@@ -1556,7 +1583,7 @@ voice_install() {
   trap - EXIT
 
   printf 'Installed and activated voice profile %s %s.\n' "$profile_id" "$version"
-  print_voice_configuration "$profile_id"
+  print_voice_configuration "$profile_id" "$profile_kind" "$data_directory"
 }
 
 append_preserved_voice_configuration() {
@@ -1569,7 +1596,8 @@ append_preserved_voice_configuration() {
       key="${line%%=*}"
       value="${line#*=}"
       case "$key" in
-        AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_* | AGENTIC_REMOTE_FEATURE_* | AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS | AGENTIC_REMOTE_SESSION_SCOPE)
+        AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_* | AGENTIC_REMOTE_FEATURE_* | AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS | AGENTIC_REMOTE_SESSION_SCOPE | \
+          AGENTIC_REMOTE_TRANSCRIPTION_ENGINE | AGENTIC_REMOTE_PARAKEET_MODEL_DIR | AGENTIC_REMOTE_PARAKEET_THREADS)
           voice_configuration["$key"]="$value"
           ;;
       esac
@@ -1577,7 +1605,8 @@ append_preserved_voice_configuration() {
   fi
   while IFS= read -r key; do
     case "$key" in
-      AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_* | AGENTIC_REMOTE_FEATURE_* | AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS | AGENTIC_REMOTE_SESSION_SCOPE)
+      AGENTIC_REMOTE_ORACLE_VOICE | AGENTIC_REMOTE_VOICE_* | AGENTIC_REMOTE_FEATURE_* | AGENTIC_REMOTE_SCHEDULE_WORKTREE_ROOTS | AGENTIC_REMOTE_SESSION_SCOPE | \
+        AGENTIC_REMOTE_TRANSCRIPTION_ENGINE | AGENTIC_REMOTE_PARAKEET_MODEL_DIR | AGENTIC_REMOTE_PARAKEET_THREADS)
         voice_configuration["$key"]="${!key}"
         ;;
     esac

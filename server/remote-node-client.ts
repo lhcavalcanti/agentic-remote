@@ -49,6 +49,7 @@ import {
   type RemoteVoiceClientOptions,
 } from './remote-voice-client.js'
 import { AUDIO_FILENAME_HEADER, AUDIO_TYPE_HEADER } from './node-routes.js'
+import { LONGEST_TRANSCRIPTION_MS } from './transcription-service.js'
 import { parseSubmissionReceipt } from '../shared/submission-error.js'
 import { TERMINAL_REQUEST_TIMEOUT_MS } from '../shared/terminal-timing.js'
 import {
@@ -77,10 +78,11 @@ import {
 } from '../shared/schedule-worktrees.js'
 
 /**
- * Conversion, whisper, and probing each carry their own timeout on the owning
- * computer, so the caller waits slightly longer than their sum before giving up.
+ * Probing, conversion, Parakeet, and the Whisper fallback each carry their own
+ * timeout on the owning computer, so the caller waits slightly longer than
+ * their sum before giving up.
  */
-const TRANSCRIPTION_TIMEOUT_MS = 13 * 60_000
+export const TRANSCRIPTION_TIMEOUT_MS = LONGEST_TRANSCRIPTION_MS + 60_000
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
 const DEFINITE_DISPATCH_REFUSALS = new Set([

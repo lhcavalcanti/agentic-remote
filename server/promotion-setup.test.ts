@@ -66,6 +66,9 @@ async function setupFixture() {
       'AGENTIC_REMOTE_VOICE_TTS_TOKENS=models/tokens.txt',
       'AGENTIC_REMOTE_VOICE_TTS_DATA_DIR=models/espeak-ng-data',
       'AGENTIC_REMOTE_VOICE_TRANSCRIPT=private words',
+      'AGENTIC_REMOTE_TRANSCRIPTION_ENGINE=parakeet',
+      'AGENTIC_REMOTE_PARAKEET_MODEL_DIR=/fictional/models/parakeet',
+      'AGENTIC_REMOTE_PARAKEET_THREADS=3',
       'AGENTIC_REMOTE_NODE_TOKEN=do-not-print',
     ].join('\n') + '\n',
   )
@@ -324,6 +327,23 @@ describe('reproducible promotion setup', () => {
     expect((await stat(fixture.environment)).mode & 0o777).toBe(0o600)
     expect(`${result.stdout}${result.stderr}`).not.toContain('private words')
     expect(`${result.stdout}${result.stderr}`).not.toContain('do-not-print')
+  })
+
+  it.each(['setup_service', 'update_service'])('preserves the transcription engine across %s', async (command) => {
+    const fixture = await setupFixture()
+
+    const result = await fixture.run({}, command)
+    await fixture.run({}, command)
+
+    const environment = await readFile(fixture.environment, 'utf8')
+    for (const preserved of [
+      'AGENTIC_REMOTE_TRANSCRIPTION_ENGINE=parakeet',
+      'AGENTIC_REMOTE_PARAKEET_MODEL_DIR=/fictional/models/parakeet',
+      'AGENTIC_REMOTE_PARAKEET_THREADS=3',
+    ]) {
+      expect(environment.split(preserved)).toHaveLength(2)
+    }
+    expect(result.stdout).not.toContain('/fictional/models/parakeet')
   })
 
   it('preserves the diagnostic tunnel selection across setup without querying it', async () => {

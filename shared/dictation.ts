@@ -82,12 +82,12 @@ export interface DictationCapabilities {
 }
 
 export class DictationProtocolError extends Error {
-  constructor(
-    message: string,
-    readonly code: Extract<DictationErrorCode, 'protocol' | 'frame_too_large'> = 'protocol',
-  ) {
+  readonly code: Extract<DictationErrorCode, 'protocol' | 'frame_too_large'>
+
+  constructor(message: string, code: Extract<DictationErrorCode, 'protocol' | 'frame_too_large'> = 'protocol') {
     super(message)
     this.name = 'DictationProtocolError'
+    this.code = code
   }
 }
 

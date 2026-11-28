@@ -129,7 +129,7 @@ export class LiveDictationClient {
       createSocket: deps.createSocket ?? ((url) => new WebSocket(url)),
       createCapture: deps.createCapture ?? (() => createPcmCapture()),
       baseUrl: deps.baseUrl ?? (() => new URL(globalThis.location.href)),
-      streamId: deps.streamId ?? (() => globalThis.crypto.randomUUID()),
+      streamId: deps.streamId ?? newStreamId,
     }
   }
 
@@ -238,7 +238,14 @@ export class LiveDictationClient {
       }
       this.#rejectStart = fail
       socket.onopen = () => {
-        this.#send({ protocol: DICTATION_PROTOCOL, type: 'start', streamId: this.#deps.streamId() })
+        let streamId: string
+        try {
+          streamId = this.#deps.streamId()
+        } catch (error) {
+          fail(new LiveDictationStartError('unavailable', errorMessage(error, 'Live dictation could not start'), true))
+          return
+        }
+        this.#send({ protocol: DICTATION_PROTOCOL, type: 'start', streamId })
         this.#heartbeat = setInterval(() => {
           this.#send({ protocol: DICTATION_PROTOCOL, type: 'heartbeat' })
         }, DICTATION_LIMITS.heartbeatMs)
@@ -372,6 +379,11 @@ export class LiveDictationClient {
 
 function cancelled(): LiveDictationStartError {
   return new LiveDictationStartError('cancelled', 'Live dictation was cancelled', false)
+}
+
+/** crypto.randomUUID exists only in secure contexts; getRandomValues works everywhere. */
+function newStreamId(): string {
+  return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 function errorMessage(error: unknown, fallback: string): string {

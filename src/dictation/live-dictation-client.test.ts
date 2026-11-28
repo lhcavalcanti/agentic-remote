@@ -86,7 +86,7 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
 
-function setup() {
+function setup(overrides: Partial<ConstructorParameters<typeof LiveDictationClient>[1]> = {}) {
   const sockets: FakeSocket[] = []
   const capture = new FakeCapture()
   const fetch = vi.fn(async (input: string, _init?: RequestInit) =>
@@ -110,6 +110,7 @@ function setup() {
     createCapture: () => capture,
     baseUrl: () => new URL('https://hub.test/app/'),
     streamId: () => 'stream-1',
+    ...overrides,
   })
   const socket = () => sockets[0]
   const ready = async () => {
@@ -192,6 +193,37 @@ describe('live dictation client', () => {
     harness.fetch.mockResolvedValueOnce(json({ error: 'Origin is not allowed' }, 403))
     await expect(harness.client.start()).rejects.toMatchObject({ fallback: true, message: 'Origin is not allowed' })
     expect(harness.sockets).toEqual([])
+  })
+
+  it('falls back at once when the stream cannot be opened', async () => {
+    const harness = setup({ streamId: () => { throw new TypeError('crypto.randomUUID is not a function') } })
+    const starting = harness.client.start()
+    const outcome = starting.then(() => 'started', (error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(0)
+    harness.socket().open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(await outcome).toMatchObject({ fallback: true })
+    expect(harness.socket().closed).toBeDefined()
+    expect(harness.capture.started).toBe(false)
+  })
+
+  it('names its stream on a page that is not a secure context', async () => {
+    // Outside a secure context crypto has getRandomValues but no randomUUID.
+    vi.stubGlobal('crypto', {
+      getRandomValues: (array: Uint8Array) => array.map((_, index) => (index * 37 + 11) % 256),
+    })
+    try {
+      const harness = setup({ streamId: undefined })
+      const starting = harness.client.start()
+      await vi.advanceTimersByTimeAsync(0)
+      harness.socket().open()
+      harness.socket().receive({ type: 'ready' })
+      await starting
+      const start = JSON.parse(harness.socket().sent[0] as string) as { type: string; streamId: string }
+      expect(start).toEqual({ protocol: 1, type: 'start', streamId: '0b30557a9fc4e90e33587da2c7ec1136' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('waits out the engine\'s warm-up, then gives up on a stream that is still not ready', async () => {

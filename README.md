@@ -465,6 +465,46 @@ Knowledge are unaffected, and naming the hub's own computer matches the default.
   survives updates. Clear it by deleting the line and re-running setup.
 - An unpaired or offline computer fails the recording with a `503`; one on a
   release without the endpoint reports a `409`.
+- The hub forwards at most two recordings at a time and leaves the rest of the
+  admission to that computer's engine.
+
+#### Parakeet engine
+
+Whisper is the default engine. The computer that transcribes can instead keep
+Parakeet TDT 0.6B (Moondream's Parakeet Ultra post-training of NVIDIA's v3)
+loaded in a warm worker process, which returns a ten-second dictation in well
+under a second on a CPU. Install it only on that computer, the hub itself or
+the one `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER` names:
+
+```bash
+agentic-remote voice-install parakeet-ultra
+```
+
+The installer shows the CC-BY-4.0 notices before downloading 487 MB, verifies
+the archive like the voice profiles, and prints the two settings to add to that
+computer's environment file:
+
+```text
+AGENTIC_REMOTE_TRANSCRIPTION_ENGINE=parakeet
+AGENTIC_REMOTE_PARAKEET_MODEL_DIR=<data dir>/models/oracle-voice/active/parakeet-ultra/sherpa-onnx-nemo-parakeet-tdt-0.6b-ultra-int8
+```
+
+Restart the service to load the model. Neither setup nor startup downloads it,
+and setup keeps these settings across updates.
+
+- `AGENTIC_REMOTE_TRANSCRIPTION_ENGINE` is `whisper` (default) or `parakeet`;
+  any other value stops the service from starting.
+- `AGENTIC_REMOTE_PARAKEET_THREADS` sets its CPU threads, 1 to 16 (default 4,
+  or fewer on a smaller CPU).
+- The worker holds about 1.2 GiB of memory. It decodes one recording at a time
+  with one more waiting; a third concurrent recording gets a `429`.
+- Whisper stays the fallback, so keep `whisper-cli` and its model there too. A
+  missing model, a worker that exits or stops responding, or a decode past its
+  10-minute deadline sends the recording to Whisper; when both fail, the `503`
+  names both causes. A crashing worker restarts up to three times in ten
+  minutes, and a missing model disables Parakeet until the next restart.
+- Parakeet covers 25 European languages, including English and Portuguese.
+  Keep Whisper as the engine for other languages.
 
 ### Oracle
 

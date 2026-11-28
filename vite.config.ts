@@ -133,6 +133,7 @@ const slowTests = [
   'server/submission-error-http.test.ts',
   'server/terminal-send-uncertainty.test.ts',
   'server/tmux-errors.test.ts',
+  'server/transcription-app.test.ts',
   'server/transcription-media-digests.test.ts',
   'server/transcription-routes.test.ts',
   'server/transcription-service.test.ts',

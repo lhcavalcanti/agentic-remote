@@ -494,16 +494,20 @@ Restart the service to load the model. Neither setup nor startup downloads it,
 and setup keeps these settings across updates.
 
 - `AGENTIC_REMOTE_TRANSCRIPTION_ENGINE` is `whisper` (default) or `parakeet`;
-  any other value stops the service from starting.
+  any other value stops the service from starting. Only the computer that
+  transcribes reads it: a hub that sends recordings to another computer
+  ignores its own and loads no model.
 - `AGENTIC_REMOTE_PARAKEET_THREADS` sets its CPU threads, 1 to 16 (default 4,
   or fewer on a smaller CPU).
 - The worker holds about 1.4 GiB of memory. It decodes one recording at a time
   with one more waiting; a third concurrent recording gets a `429`.
 - Whisper stays the fallback, so keep `whisper-cli` and its model there too. A
   missing model, a worker that exits or stops responding, or a decode past its
-  10-minute deadline sends the recording to Whisper; when both fail, the `503`
-  names both causes. A crashing worker restarts up to three times in ten
-  minutes, and a missing model disables Parakeet until the next restart.
+  10-minute deadline sends the recording to Whisper, which gets 10 minutes of
+  its own; when both fail, the `503` names both causes. A crashing worker
+  restarts up to three times in ten minutes, and a missing model disables
+  Parakeet until the next restart. A hub waits for the assigned computer
+  longer than both deadlines together.
 - Parakeet covers 25 European languages, including English and Portuguese.
   Keep Whisper as the engine for other languages.
 

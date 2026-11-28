@@ -18,6 +18,7 @@ import type { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 import type { AudioTranscription } from '../shared/contracts.js'
 import {
+  PARAKEET_TRANSCRIPTION_TIMEOUT_MS,
   ParakeetSpeechEngine,
   type ParakeetDecoder,
 } from './parakeet-transcription.js'
@@ -25,6 +26,22 @@ import type { TranscriptionEngineConfig } from './transcription-engine-config.js
 
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024
 export const MAX_AUDIO_DURATION_SECONDS = 15 * 60
+
+const PROBE_TIMEOUT_MS = 30_000
+const CONVERSION_TIMEOUT_MS = 90_000
+/** Also covers waiting for an earlier Whisper run to finish. */
+const WHISPER_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * The longest one recording can take on the computer that transcribes it:
+ * probing, conversion, a Parakeet attempt that reaches its deadline, and the
+ * Whisper fallback after it.
+ */
+export const LONGEST_TRANSCRIPTION_MS =
+  PROBE_TIMEOUT_MS
+  + CONVERSION_TIMEOUT_MS
+  + PARAKEET_TRANSCRIPTION_TIMEOUT_MS
+  + WHISPER_TIMEOUT_MS
 
 const execFileAsync = promisify(execFile)
 const require = createRequire(import.meta.url)
@@ -223,6 +240,19 @@ async function accessible(target: string, mode: number): Promise<boolean> {
   }
 }
 
+/** Waits for `turn`, or rejects once `signal` aborts. */
+function untilAborted(turn: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    void turn.then(() => {
+      signal.removeEventListener('abort', abort)
+      resolve()
+    })
+  })
+}
+
 function elapsedMs(started: number): number {
   return Math.round(performance.now() - started)
 }
@@ -398,15 +428,13 @@ export class LocalTranscriptionService implements TranscriptionService {
     audioSeconds: number,
     signal: AbortSignal,
   ): Promise<AudioTranscription> {
-    const started = performance.now()
     let reason: string
     try {
-      const transcript = await parakeet.transcribe(wavPath, signal)
-      this.logger.info(
-        { engine: 'parakeet', audioSeconds, decodeMs: elapsedMs(started) },
-        'Audio transcribed',
-      )
-      return { transcript: spoken(transcript), durationSeconds: audioSeconds, engine: 'parakeet' }
+      return await this.measured({ engine: 'parakeet', audioSeconds }, signal, async () => ({
+        transcript: spoken(await parakeet.transcribe(wavPath, signal)),
+        durationSeconds: audioSeconds,
+        engine: 'parakeet',
+      }))
     } catch (error) {
       if (error instanceof TranscriptionError || signal.aborted) throw error
       reason = error instanceof Error && error.message ? error.message : 'Parakeet failed'
@@ -442,29 +470,53 @@ export class LocalTranscriptionService implements TranscriptionService {
     signal: AbortSignal,
     fallback = false,
   ): Promise<AudioTranscription> {
+    const deadline = Date.now() + WHISPER_TIMEOUT_MS
     // A Parakeet computer admits two recordings, and both may fall back here.
     const previous = this.whisperTurn
     let finished = () => undefined as void
-    this.whisperTurn = new Promise<void>((resolve) => {
+    const turn = new Promise<void>((resolve) => {
       finished = resolve
     })
+    // The next run waits for this turn and the run before it, even if this
+    // recording is cancelled while waiting.
+    this.whisperTurn = previous.then(() => turn)
     try {
-      await previous
-      const started = performance.now()
-      await this.runWhisper(wavPath, outputPrefix, signal)
-      const transcript = await readFile(`${outputPrefix}.txt`, 'utf8')
-      this.logger.info(
-        {
-          engine: 'whisper',
-          audioSeconds,
-          decodeMs: elapsedMs(started),
-          ...(fallback ? { fallback: true } : {}),
+      return await this.measured(
+        { engine: 'whisper', audioSeconds, ...(fallback ? { fallback: true } : {}) },
+        signal,
+        async () => {
+          await untilAborted(previous, signal)
+          await this.runWhisper(wavPath, outputPrefix, signal, deadline - Date.now())
+          const transcript = await readFile(`${outputPrefix}.txt`, 'utf8')
+          return { transcript: spoken(transcript), durationSeconds: audioSeconds, engine: 'whisper' }
         },
-        'Audio transcribed',
       )
-      return { transcript: spoken(transcript), durationSeconds: audioSeconds, engine: 'whisper' }
     } finally {
       finished()
+    }
+  }
+
+  /** Logs how one engine attempt went: never audio or text, only its timing and outcome. */
+  private async measured<T>(
+    details: { engine: 'whisper' | 'parakeet'; audioSeconds: number; fallback?: true },
+    signal: AbortSignal,
+    attempt: () => Promise<T>,
+  ): Promise<T> {
+    const started = performance.now()
+    let outcome = 'failed'
+    try {
+      const result = await attempt()
+      outcome = 'transcribed'
+      return result
+    } catch (error) {
+      if (signal.aborted) outcome = 'cancelled'
+      else if (error instanceof TranscriptionError && error.statusCode === 422) outcome = 'no-speech'
+      throw error
+    } finally {
+      this.logger.info(
+        { ...details, decodeMs: elapsedMs(started), outcome },
+        'Transcription engine finished',
+      )
     }
   }
 
@@ -552,7 +604,7 @@ export class LocalTranscriptionService implements TranscriptionService {
           'default=noprint_wrappers=1:nokey=1',
           inputPath,
         ],
-        { signal, timeoutMs: 30_000 },
+        { signal, timeoutMs: PROBE_TIMEOUT_MS },
       )
     } catch (error) {
       if (signal.aborted) {
@@ -596,7 +648,7 @@ export class LocalTranscriptionService implements TranscriptionService {
           'pcm_s16le',
           wavPath,
         ],
-        { signal, timeoutMs: 90_000 },
+        { signal, timeoutMs: CONVERSION_TIMEOUT_MS },
       )
     } catch (error) {
       if (signal.aborted) {
@@ -613,8 +665,10 @@ export class LocalTranscriptionService implements TranscriptionService {
     wavPath: string,
     outputPrefix: string,
     signal: AbortSignal,
+    timeoutMs: number,
   ): Promise<void> {
     try {
+      if (timeoutMs <= 0) throw new Error('Whisper did not start before its deadline')
       await this.runCommand(
         this.whisperBinary,
         [
@@ -631,7 +685,7 @@ export class LocalTranscriptionService implements TranscriptionService {
           '--output-file',
           outputPrefix,
         ],
-        { signal, timeoutMs: 10 * 60_000 },
+        { signal, timeoutMs },
       )
     } catch (error) {
       if (signal.aborted) {

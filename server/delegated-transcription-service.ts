@@ -174,3 +174,12 @@ function statusCodeOf(error: unknown): number | undefined {
 export function transcriptionComputerName(): string | undefined {
   return process.env.AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER?.trim() || undefined
 }
+
+/** Whether an assignment names this computer, matched as the computer list matches it. */
+export function namesComputer(
+  assignment: string,
+  computer: { id: string; name: string },
+): boolean {
+  const wanted = assignment.trim().toLowerCase()
+  return computer.id.toLowerCase() === wanted || computer.name.toLowerCase() === wanted
+}

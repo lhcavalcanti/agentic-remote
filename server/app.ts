@@ -71,6 +71,7 @@ import {
 } from './transcription-service.js'
 import {
   DelegatedTranscriptionService,
+  namesComputer,
   transcriptionComputerName,
 } from './delegated-transcription-service.js'
 import {
@@ -217,8 +218,6 @@ export async function buildApp(
   registerResponseCompression(app)
   if (hubFlags) app.log.info({ hubFlags }, 'Hub feature flags')
   const dataDirectory = options.dataDirectory ?? resolveDataDirectory()
-  // An invalid engine fails startup rather than transcribing with another one.
-  const transcriptionEngine = readTranscriptionEngineConfig(process.env, dataDirectory)
   const startupPhases = options.startupPhases ?? silentStartupPhases
   const voiceSelection = readOracleVoiceSelection()
   let voiceConfig: OracleVoiceConfig = { enabled: false }
@@ -360,6 +359,19 @@ export async function buildApp(
       maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxQueueBytes,
     },
   })
+  // Only the computer that transcribes reads its engine, and an invalid one
+  // fails its startup. A hub that sends recordings elsewhere loads none.
+  const assignedComputer = role === 'hub' ? transcriptionComputerName() : undefined
+  const transcribesHere = !assignedComputer || namesComputer(assignedComputer, identity.info)
+  const transcriptionEngine: TranscriptionEngineConfig = transcribesHere
+    ? readTranscriptionEngineConfig(process.env, dataDirectory)
+    : { engine: 'whisper' }
+  if (!transcribesHere && process.env.AGENTIC_REMOTE_TRANSCRIPTION_ENGINE?.trim()) {
+    app.log.info(
+      { transcriptionComputer: assignedComputer },
+      'AGENTIC_REMOTE_TRANSCRIPTION_ENGINE is ignored: this hub sends recordings to another computer',
+    )
+  }
   const parakeetWorker = !options.transcriptionService && transcriptionEngine.engine === 'parakeet'
     ? new ParakeetWorker(transcriptionEngine.parakeet)
     : undefined

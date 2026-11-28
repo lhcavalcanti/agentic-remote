@@ -2117,11 +2117,14 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - The computer that transcribes MAY select the Parakeet engine. It MUST load the
   model once in a worker process isolated from the server, decode one recording
   at a time with at most one more waiting, and refuse further concurrent
-  recordings with `429`. An unknown engine MUST fail startup.
+  recordings with `429`. An unknown engine MUST fail that computer's startup; a
+  hub that assigns transcription to another computer MUST NOT read or load an
+  engine of its own.
 - When the Parakeet model is missing, or its worker exits, stops responding, or
   exceeds the 10-minute decode deadline, transcription MUST fall back to
   Whisper. When Whisper is unavailable or fails too, the error MUST name both
-  causes.
+  causes. A hub MUST wait for the assigned computer longer than a Parakeet
+  deadline and a Whisper fallback together.
 - A successful (`200`) response MUST NOT carry an empty transcript; a recording
   without recognized speech MUST fail with `422`.
 - The Parakeet model MUST be installed only explicitly, by

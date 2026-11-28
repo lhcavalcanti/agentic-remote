@@ -18,8 +18,11 @@ import {
   ParakeetUnavailableError,
   type ParakeetDecodeResult,
 } from './parakeet-worker.js'
+import { PARAKEET_TRANSCRIPTION_TIMEOUT_MS } from './parakeet-transcription.js'
+import { TRANSCRIPTION_TIMEOUT_MS } from './remote-node-client.js'
 import {
   LocalTranscriptionService,
+  LONGEST_TRANSCRIPTION_MS,
   MAX_AUDIO_DURATION_SECONDS,
   supportsAudioUpload,
   type CommandRunner,
@@ -277,8 +280,13 @@ describe('LocalTranscriptionService engines', () => {
     expect(engine.decode.mock.calls[0][0]).toHaveLength(16_000)
     expect(commands).toEqual(['ffprobe', 'ffmpeg'])
     expect(logger.info).toHaveBeenCalledWith(
-      { engine: 'parakeet', audioSeconds: 42.5, decodeMs: expect.any(Number) },
-      'Audio transcribed',
+      {
+        engine: 'parakeet',
+        audioSeconds: 42.5,
+        decodeMs: expect.any(Number),
+        outcome: 'transcribed',
+      },
+      'Transcription engine finished',
     )
     expect(JSON.stringify(logger.lines)).not.toContain('Parakeet transcript')
     expect(await jobsLeft(dataDirectory)).toEqual([])
@@ -330,8 +338,23 @@ describe('LocalTranscriptionService engines', () => {
       'Parakeet could not transcribe; falling back to Whisper',
     )
     expect(logger.info).toHaveBeenCalledWith(
-      { engine: 'whisper', audioSeconds: 42.5, decodeMs: expect.any(Number), fallback: true },
-      'Audio transcribed',
+      {
+        engine: 'parakeet',
+        audioSeconds: 42.5,
+        decodeMs: expect.any(Number),
+        outcome: 'failed',
+      },
+      'Transcription engine finished',
+    )
+    expect(logger.info).toHaveBeenCalledWith(
+      {
+        engine: 'whisper',
+        audioSeconds: 42.5,
+        decodeMs: expect.any(Number),
+        fallback: true,
+        outcome: 'transcribed',
+      },
+      'Transcription engine finished',
     )
     expect(JSON.stringify(logger.lines)).not.toContain('Walking note transcript')
     expect(await jobsLeft(dataDirectory)).toEqual([])
@@ -391,6 +414,96 @@ describe('LocalTranscriptionService engines', () => {
       .rejects.toMatchObject({ statusCode: 499 })
     expect(commands).not.toContain('whisper-cli')
     expect(await jobsLeft(dataDirectory)).toEqual([])
+  })
+
+  it('records the engine, duration, and decode time when Whisper fails', async () => {
+    const logger = recordingLogger()
+    const { service } = await fixture({
+      whisper: async () => { throw new Error('exit code 1') },
+      logger,
+    })
+
+    await expect(service.transcribe(recording())).rejects.toMatchObject({ statusCode: 500 })
+
+    expect(logger.info).toHaveBeenCalledWith(
+      {
+        engine: 'whisper',
+        audioSeconds: 42.5,
+        decodeMs: expect.any(Number),
+        outcome: 'failed',
+      },
+      'Transcription engine finished',
+    )
+  })
+
+  it('stops waiting for its Whisper turn when its recording is cancelled', async () => {
+    let releaseFirst: (() => void) | undefined
+    const whisperRuns: string[] = []
+    const logger = recordingLogger()
+    const { dataDirectory, service } = await fixture({
+      parakeet: parakeet(async () => { throw new ParakeetUnavailableError('worker is stopped') }),
+      whisper: async (_command, args) => {
+        whisperRuns.push('run')
+        await new Promise<void>((resolve) => { releaseFirst = resolve })
+        await writeFile(`${args[args.indexOf('--output-file') + 1]}.txt`, 'first\n')
+        return { stdout: '', stderr: '' }
+      },
+      logger,
+    })
+    const first = service.transcribe(recording())
+    await vi.waitFor(() => expect(releaseFirst).toBeDefined())
+    const controller = new AbortController()
+    const waiting = service.transcribe(recording(), controller.signal)
+    // The second recording has fallen back and queues behind the first Whisper run.
+    await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledTimes(2))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    controller.abort()
+
+    await expect(waiting).rejects.toMatchObject({ statusCode: 499 })
+    expect(await jobsLeft(dataDirectory)).toHaveLength(1)
+    expect(whisperRuns).toHaveLength(1)
+    releaseFirst?.()
+    await expect(first).resolves.toMatchObject({ transcript: 'first' })
+  })
+
+  it('gives a Whisper fallback what remains of its deadline after waiting its turn', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const start = new Date('2026-11-28T04:00:00Z')
+      vi.setSystemTime(start)
+      const deadlines: number[] = []
+      let releaseFirst: (() => void) | undefined
+      const { service } = await fixture({
+        parakeet: parakeet(async () => { throw new ParakeetUnavailableError('worker is stopped') }),
+        whisper: async (_command, args, options) => {
+          deadlines.push(options.timeoutMs)
+          if (deadlines.length === 1) {
+            await new Promise<void>((resolve) => { releaseFirst = resolve })
+          }
+          await writeFile(`${args[args.indexOf('--output-file') + 1]}.txt`, 'fallback\n')
+          return { stdout: '', stderr: '' }
+        },
+      })
+
+      const first = service.transcribe(recording())
+      // vi.waitFor would move the faked clock; poll on real timers instead.
+      while (!releaseFirst) await new Promise((resolve) => setTimeout(resolve, 5))
+      const second = service.transcribe(recording())
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      vi.setSystemTime(start.getTime() + 120_000)
+      releaseFirst?.()
+      await Promise.all([first, second])
+
+      expect(deadlines).toEqual([600_000, 480_000])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('outwaits the slowest recording on the computer that transcribes from the hub', () => {
+    expect(LONGEST_TRANSCRIPTION_MS).toBeGreaterThanOrEqual(PARAKEET_TRANSCRIPTION_TIMEOUT_MS + 600_000)
+    expect(TRANSCRIPTION_TIMEOUT_MS).toBeGreaterThan(LONGEST_TRANSCRIPTION_MS)
   })
 
   it('runs Whisper fallbacks one at a time', async () => {

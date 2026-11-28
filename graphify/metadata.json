@@ -702,9 +702,9 @@
     "tsconfig.server.json",
     "vite.config.ts"
   ],
-  "communities": 278,
+  "communities": 275,
   "community_algorithm": "louvain-seed-42",
-  "edges": 28136,
+  "edges": 28152,
   "generator_fingerprint": "08c823dc2dc2c740a200281b099e3d9008219f34dc0aa7241e75a08387d494e7",
   "graphify_version": "0.9.54",
   "inputs": {
@@ -735,7 +735,7 @@
     ".superpowers/sdd/2026-10-16-oracle-conversation-mode/task-12-report.md": "2304e949b2a567547acea0bce1391c2ef9cc1e28031cec4d9b1febfb2155f49a",
     ".superpowers/sdd/2026-10-16-oracle-conversation-mode/task-9-report.md": "ac55441561d6ec7420901aa98bf892c545ebb5b8c9919db34eabdca53cde729f",
     "LICENSE": "e4ab62476ac56875016485266f64f70fd18fbb0fa0a0df295d8ffe69b5d85e91",
-    "README.md": "35e6a3d8e82473778b5fc792ab76fbeef8e0c291a86a7be30d3464b3f217cb58",
+    "README.md": "ae2e6ba5254c4fa2865b87f0523d3be64b5b64f3b40cdb0a320c2c707309b975",
     "SECURITY.md": "0ca9e2f11fcae48c9e7b9d701246a82dff710da83fd457044cacf551a99ad1fc",
     "bin/agentic-remote": "10dab4534014c1fc33f27a887d8322c2807bbb88c53667225148f0cd9d587ff3",
     "bin/agentic-remote-gate": "a6e8d2b46bf441c15a4b698a68e9ccfef0c359a346e63d8d5e18e511e1a040bf",
@@ -744,7 +744,7 @@
     "config/agentic-remote-promotion.env.example": "e6be6d1dbec52df9c0193db5e64e5075462d545480bcfae017340a363d890e50",
     "config/oracle-voice-profiles.json": "437cf9e5bbba0a4c7d786239b0a8ae41a61902540971ed169f5a0445c2d40b6d",
     "docs/activity-display.md": "ffde615deac4dc99f248d839d9fbb5e6ca694cffefae43617adcb3e6f1defba7",
-    "docs/app-spec.md": "fa5ee524e29a962f96db6bb18ffda0e59ca48617b3452b57874609dea0768ae5",
+    "docs/app-spec.md": "4b2b6276273868f2407423ca61a0343dcb4144c1aa70f7a2d5403a566bcc56e6",
     "docs/architecture.md": "5a0e3be00b0cdd5ed66a760d733eac2bd3712456be77962a52ebd01ebbc7d508",
     "docs/background-tasks-empty.svg": "5b6523ac19bb5cea7bc4c8e9b20749ec3a0cd2f6274706b0cb07fa58a05c8643",
     "docs/background-tasks-failed.svg": "31c310c0b448a5de6ab9c8551a4797531f8f06e24be2d7a534c9eb33023ca60e",
@@ -1051,7 +1051,7 @@
     "server/app-build.test.ts": "b23bface64cffcc9299af27c87cce1786b48c069ae8f620d20ad55006d363d62",
     "server/app-icon-assets.test.ts": "e012a26d81b12ce5c40c04b08e9dda274332b7cfc3a4ab1d025bed20af8de060",
     "server/app-provenance.test.ts": "6698943be1ec6fe6f59e714c4330463a69dd8bf396566327d0fe34b6676a1496",
-    "server/app.ts": "f37126f2669d18b2b9eca0cdf8dee6a7259b72fbf8953409dbbcf9b366f9820f",
+    "server/app.ts": "99c0af1e1eea6f24f425917ef34d9603c11bc666236e52f82bdba03049302235",
     "server/background-task-adapter.test.ts": "fbde847eb45823cd722c6b413f4937d4ca091bc6733d22f7bad6c9ce5cbf51e9",
     "server/background-task-adapter.ts": "c74ccff43cd73ea6b46d2c2c0f04360b3d4e83efafe547a43a068cf6d90f0f60",
     "server/background-task-stop.test.ts": "590635785010a0739afc00a129242c08c8e92af2f7555b27e36f67e859d360a3",
@@ -1076,7 +1076,7 @@
     "server/copilot-sdk-client.test.ts": "a6c8705de67941610f956512c54bb205a31213d57e5ce6dd999a17aa068ffd6c",
     "server/copilot-sdk-client.ts": "50fc9074ceaef59bdd9d4234a79a52c36fea198d2df91fd0a6fe02e20d5757fe",
     "server/delegated-transcription-service.test.ts": "cd1f2691faa7ad52a208da3e17b3e12f09558c1a5e490e2ac57c1ac120826d8e",
-    "server/delegated-transcription-service.ts": "d649084207e0272dd448cadbc70250a6182f2df9d528a1cabd0e1ba91f2950cd",
+    "server/delegated-transcription-service.ts": "22c549906d64738009040d53445a3cee3daa1d36e379c49795d6b9f2d060177b",
     "server/directory-browser.test.ts": "9952e56f0dbc161daaa8e5ad8da3498629d83e2b934963266f6ee87ab9385ccb",
     "server/directory-browser.ts": "5d730a0c7bb9447c4308f744ed724af55d838c7e9f56fbdf89f403195142a26b",
     "server/display-name.test.ts": "c303e5620e0a83b20d1cb730a89c02066fd7d38e0513be388e96bbe0213914a9",
@@ -1241,7 +1241,7 @@
     "server/refusal-metrics.ts": "b89728ec3ba5d2f0a487c9e9d42a50cb2f1e817bee29e984eb7ce03e249ce11d",
     "server/release-publication.test.ts": "50777f86c4889c312bb6310ba4cbc07da19a4fc261db8a94f003e146993a13f7",
     "server/remote-node-client.test.ts": "a8531166ae1175f433a058429d7cb69dae7040d2d25f4560227b773f15ff924c",
-    "server/remote-node-client.ts": "1f397edde894bb08f47ea16df953c6fd3773251736deafbf292bf588e28460dc",
+    "server/remote-node-client.ts": "0e941f9f93efbe29d67764629bb1967944c8a4879d017afb773fc1cb499b99bb",
     "server/remote-node-errors.ts": "9e56c83b925976648587e98da0d6becec0c43d15edadc1811f564912f2792c76",
     "server/remote-voice-client.test.ts": "16e8c31f055a519f64cd0760e8c5c979113dc344c4d7435630211a92ed3f7856",
     "server/remote-voice-client.ts": "a240dec15c9d4778373260b2025a5a2b77629fa26615019ee3da59e9a96ebfc4",
@@ -1351,14 +1351,14 @@
     "server/tmux-test-helpers.ts": "5d9b2331b786b6c1dcd8641767affd536641eddb93c13d2b874af076ad1804b0",
     "server/transcript-test-helpers.ts": "4ce718e633ba153c02b01cf80c3674fb1e3bbc1dec793829669a248910f1cb75",
     "server/transcript-window-query.ts": "48d1c3060920f58dc4edaf9799d78bcabd4fbba613ed2ed8d854dd25cec90e8b",
-    "server/transcription-app.test.ts": "cd2291c6e7d9424b34b727e720729bfdd77a7af3d87054f59d46b5194cd4473a",
+    "server/transcription-app.test.ts": "c8340f68fde73d20a849b7d14a6941d8d854fb84f37529fcc3a08434b9531612",
     "server/transcription-engine-config.test.ts": "e9c1a2484612c28cf99221265324542ba6395a1fd32d29e21c899b44fb19c954",
     "server/transcription-engine-config.ts": "4e7e37c9766500430feef1100b257117490766c840808771fa9995b1ba2841c0",
     "server/transcription-media-digests.test.ts": "dc7e6f6658dc2bdab766874a8e850c8fe837fb25252e82c8e6f255c0254ddd8d",
     "server/transcription-routes.test.ts": "60c7b050221db2d94015c288f29d422fb2aab628ce6e7e43a60f4f8073d16b09",
     "server/transcription-routes.ts": "ec42a48a512934c3dd4c613ea112886a1bf59d07aa277661ec3fddd40de29a56",
-    "server/transcription-service.test.ts": "431ff2270892e12c6de53a7292e79f19d2dc2f9d87323544b65c3754cfd7d164",
-    "server/transcription-service.ts": "612f02dbcbfe2ff9f10ced50c6ce6cee150baa8aacc33442afc402492cd30dd0",
+    "server/transcription-service.test.ts": "78ccb1d487addea1780ddbdeb5393c6125c2b07c1a65f34a52478801acf28e82",
+    "server/transcription-service.ts": "b790a0dd32847c74435516d462c45ce21d09de34b626b511370840a979c2ff9d",
     "server/upload-storage.ts": "cba85d6849e19f40f9ecd67e4080f04e656e589c7a89a8de0a4892b1673434a3",
     "server/version-policy.test.ts": "dc3af030f41b75cda97fbc1068e7f846a8f1d65061d3723619060b09de0f6577",
     "server/worker-environment.ts": "0181ee50d47e7143c39f5e1ee1b56bd83ae82a07113b7e5a455cba035d498ac6",
@@ -1688,7 +1688,7 @@
     "vite.config.ts": "014d86c99cb2300ba242f7b2aa4280364034f60968449e43a564e1697baaec8e"
   },
   "mode": "local-ast-only",
-  "nodes": 9753,
+  "nodes": 9758,
   "not_semantically_extracted": [
     ".github/CODEOWNERS",
     ".github/copilot-instructions.md",
@@ -1969,15 +1969,22 @@
     "config/oracle-voice-profiles.json"
   ],
   "outputs": {
-    "GRAPH_REPORT.md": "def0981eb8103aada14695119ebc8b35e7a6f8bb06f2eb71e94900ca7f1066f4",
-    "communities.json": "85f1aa08ecceb302c7a60e58e03c9a23aaf7783b93b1aef431c31a73e7ac435f",
-    "graph.html": "51972a6ce9655496e30f55f6b7790cd3c14a128bd8772591170724456f497a65",
-    "graph.json": "fa3e19fde214f14c2c1d76b0328dc0a2acb1e43ced2303a72c3c5e189ff35ee9"
+    "GRAPH_REPORT.md": "7a8fd34abe01d8b19d8a4275b65f8d806e7f3a6cc34da203c3240997033f8a1f",
+    "communities.json": "2eb2cf916caa2a3cd969c5ce44a7c39e80ad951e94ab8876f68d50b5a5a22817",
+    "graph.html": "b122f2cb28a3e7f9db16df2d4014c4c1397d48d02984d19c21ac9b367d5e932b",
+    "graph.json": "844e2154e9e6e2e1665ea52bf983bba4789cc65a593fabffaafadc769e1907bf"
   },
   "schema_version": 1,
-  "source_commit": "92ab4255614a24599a859ba8990b7c0458c434c7",
-  "source_fingerprint": "7cf42ba9298b6d9bb349215aa54f285b5b0486b21a4a9ef59ad93210408fe237",
+  "source_commit": "6e32c272673a33f558e7147846ecb5c21c4a2bfb",
+  "source_fingerprint": "96fb4b0e50531a3a74e25052f69dff30cb313f63bd1287a114cf0042a4b58874",
   "working_tree_changes": [
-    "README.md"
+    "README.md",
+    "docs/app-spec.md",
+    "server/app.ts",
+    "server/delegated-transcription-service.ts",
+    "server/remote-node-client.ts",
+    "server/transcription-app.test.ts",
+    "server/transcription-service.test.ts",
+    "server/transcription-service.ts"
   ]
 }

@@ -95,6 +95,28 @@ describe('transcription engine wiring', () => {
       .rejects.toThrow('AGENTIC_REMOTE_TRANSCRIPTION_ENGINE must be whisper or parakeet')
   })
 
+  it('ignores the engine on a hub that sends recordings to another computer', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_ENGINE', 'gpu')
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', 'workstation')
+    const dataDirectory = await fixtureDirectory()
+    const runtime = await buildApp({ dataDirectory, logger: false, managerAgent: false })
+    try {
+      expect(runtime.transcriptionEngine).toEqual({ config: { engine: 'whisper' } })
+    } finally {
+      await runtime.app.close()
+    }
+  })
+
+  it('reads the engine on a hub assigned to transcribe for itself', async () => {
+    vi.stubEnv('AGENTIC_REMOTE_NODE_NAME', 'hub-host')
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER', ' HUB-HOST ')
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_ENGINE', 'gpu')
+    const dataDirectory = await fixtureDirectory()
+
+    await expect(buildApp({ dataDirectory, logger: false, managerAgent: false }))
+      .rejects.toThrow('AGENTIC_REMOTE_TRANSCRIPTION_ENGINE must be whisper or parakeet')
+  })
+
   it('keeps Whisper without a Parakeet worker by default', async () => {
     const dataDirectory = await fixtureDirectory()
     const runtime = await buildApp({ dataDirectory, logger: false, managerAgent: false })

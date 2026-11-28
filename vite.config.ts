@@ -40,6 +40,7 @@ const tmuxTests = [
 const slowTests = [
   'e2e/capture-screens.test.ts',
   'graphify/manage.test.ts',
+  'scripts/live-dictation-benchmark.test.ts',
   'scripts/precompress-assets.test.ts',
   'server/activity-details.test.ts',
   'server/agent-service-event-projection.test.ts',

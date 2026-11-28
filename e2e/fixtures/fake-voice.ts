@@ -20,6 +20,7 @@ import type {
 import type { VoiceBackendCapability } from '../../shared/contracts'
 import { buildApp } from '../../server/app'
 import type { ManagerRouteAgent } from '../../server/manager-routes'
+import { FakeDictationEngine, registerFakeDictationControls } from './fake-dictation'
 import {
   DEFAULT_VOICE_BACKEND_LIMITS,
   type VoiceBackend,
@@ -879,6 +880,7 @@ async function startFixtureServer(port: number): Promise<void> {
   await rm(root, { recursive: true, force: true })
   const manager = new FakeManager()
   const voice = new FakeVoiceBackend()
+  const dictation = new FakeDictationEngine()
   const service = new BrowserTestSessionService()
   const transcriptionService = {
     async initialize() {},
@@ -893,7 +895,9 @@ async function startFixtureServer(port: number): Promise<void> {
     service: service as never,
     transcriptionService: transcriptionService as never,
     voiceBackend: voice,
+    liveDecoder: dictation,
   })
+  registerFakeDictationControls(built.app, dictation)
 
   built.app.post<{ Body: ScriptedUtterance }>(
     '/__e2e/voice/utterance',
@@ -940,6 +944,7 @@ async function startFixtureServer(port: number): Promise<void> {
   built.app.post('/__e2e/reset', async () => {
     manager.resetState()
     voice.resetState()
+    dictation.reset()
     return { ok: true }
   })
   built.app.get('/__e2e/state', async (): Promise<FakeVoiceState> => ({

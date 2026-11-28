@@ -7049,6 +7049,92 @@ button {
   background: #963d3d;
 }
 
+/* Live dictation keeps the composer's own row: the microphone becomes Stop,
+   Cancel sits beside it, and the status says in words what is happening. The
+   accent edge marks a text box that dictation is writing into. */
+.composer.composer--dictating {
+  border-color: var(--accent-border-strong);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
+.composer-record-button.composer-record-button--dictating,
+.manager-composer__mic.manager-composer__mic--dictating {
+  color: var(--accent-contrast);
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.composer-record-button.composer-record-button--dictating:hover,
+.manager-composer__mic.manager-composer__mic--dictating:hover {
+  color: var(--accent-contrast);
+  background: var(--accent-hover);
+}
+
+.composer-record-button--dictating[aria-disabled='true'],
+.composer-record-button--dictating[aria-disabled='true']:hover,
+.manager-composer__mic--dictating[aria-disabled='true'],
+.manager-composer__mic--dictating[aria-disabled='true']:hover {
+  color: var(--muted);
+  background: var(--panel-soft);
+  cursor: default;
+}
+
+.composer-dictation-cancel {
+  color: var(--muted-strong);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+}
+
+.composer-dictation-cancel:hover {
+  color: var(--text);
+  background: var(--panel-soft);
+}
+
+.dictation-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dictation-status i {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-tint-strong);
+}
+
+.dictation-status--connecting i,
+.dictation-status--finishing i {
+  background: var(--muted);
+  box-shadow: none;
+}
+
+.composer-dictation-status {
+  flex: 1;
+  padding-inline: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .dictation-status--listening i {
+    animation: dictation-listening 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes dictation-listening {
+  50% {
+    opacity: 0.4;
+  }
+}
+
 .composer-hint {
   margin: 6px 0 0;
   color: #676b61;
@@ -9334,6 +9420,7 @@ button {
 
   .composer-actions > .composer-attachment-button,
   .composer-actions > .composer-record-button,
+  .composer-actions > .composer-dictation-cancel,
   .composer-actions > .send-button--queue,
   .composer-actions > .send-button--stop {
     width: 40px;
@@ -10606,6 +10693,16 @@ button {
 
 .manager-composer__recording {
   margin-bottom: 6px;
+}
+
+.manager-composer__dictation {
+  margin: 0 0 6px;
+}
+
+.manager-composer__dictation-cancel {
+  width: 44px;
+  height: 44px;
+  color: var(--muted-strong);
 }
 
 .manager-conversation-toggle,

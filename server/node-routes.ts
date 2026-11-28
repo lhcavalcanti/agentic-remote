@@ -49,6 +49,8 @@ import {
   TranscriptionError,
   type TranscriptionService,
 } from './transcription-service.js'
+import type { LiveDictationHost } from './live-dictation-host.js'
+import { isWebSocketUpgrade } from './oracle-voice-routes.js'
 import {
   VoiceSessionError,
   type VoiceBackend,
@@ -342,6 +344,7 @@ export async function registerNodeRoutes(
   hostTelemetrySignal?: AbortSignal,
   scheduleWorktrees?: ScheduleWorktreeService,
   skillSettings?: SkillSettingsService,
+  dictation?: LiveDictationHost,
 ): Promise<void> {
   await app.register(
     async (node) => {
@@ -515,6 +518,35 @@ export async function registerNodeRoutes(
               closeVoiceSocket(socket, error)
             }
           })
+        },
+      )
+
+      // A hub that sends this computer its audio to transcribe relays live
+      // dictation here as well.
+      node.get('/dictation/capabilities', async (_request, reply) => {
+        reply.header('cache-control', 'no-store')
+        return dictation?.capabilities() ?? {
+          live: false,
+          reason: `Live dictation needs the Parakeet engine on ${identity.info.name}`,
+          computerName: identity.info.name,
+        }
+      })
+      node.get(
+        '/dictation',
+        {
+          websocket: true,
+          preValidation: async (request, reply) => {
+            if (!isWebSocketUpgrade(request.headers)) {
+              return reply.code(404).send({ error: 'Live dictation requires a WebSocket upgrade' })
+            }
+          },
+        },
+        (socket) => {
+          if (!dictation) {
+            socket.close(1011, 'Live dictation is unavailable')
+            return
+          }
+          dictation.attach(socket)
         },
       )
 

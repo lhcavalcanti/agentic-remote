@@ -54,6 +54,8 @@ import { remarkSafeBreaks } from './remark-safe-breaks'
 import { useOracleConversation } from './use-oracle-conversation'
 import type { OracleConversation } from './use-oracle-conversation'
 import { recordingDuration, useVoiceRecorder } from './voice-recorder'
+import { DictationStatus } from './dictation/DictationStatus'
+import { useLiveDictation } from './dictation/use-live-dictation'
 import {
   authoritativeRefresh,
   DreamerMorningPlan,
@@ -894,6 +896,25 @@ export function ManagerAssistant({
     onFinalTranscript: returnFinalTranscript,
     onError: announce,
   })
+  const dictation = useLiveDictation({
+    textarea: () => inputRef.current,
+    getDraft: () => draftRef.current,
+    setDraft: (next, selection) => {
+      setRecoveredDraft(false)
+      setDraft(next)
+      if (!selection) return
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current
+        if (input && document.activeElement === input) input.setSelectionRange(selection[0], selection[1])
+      })
+    },
+    startFallback: () => void voice.start(),
+    announce: (message) => announce(message),
+    onError: (message) => setSendError(message),
+  })
+  const dictating = dictation.status !== 'idle'
+  // The microphone control becomes Stop while dictating, so focus stays on it.
+  const microphoneRef = useRef<HTMLButtonElement>(null)
   const { recording: voiceRecording, stop: stopVoice } = voice
   const conversationAvailable = conversation.capability?.available === true
   const conversationActive = conversation.state !== 'off'
@@ -917,10 +938,12 @@ export function ManagerAssistant({
     setDraftStorageError(error)
   }, [draft, editing, attachments.uploaded])
 
-  // A closed panel never keeps the microphone on.
+  // A closed panel never keeps the microphone on. Dictation keeps what it heard.
+  const { status: dictationStatus, stop: stopDictation } = dictation
   useEffect(() => {
     if (!open && voiceRecording) stopVoice(true)
-  }, [open, voiceRecording, stopVoice])
+    if (!open && (dictationStatus === 'connecting' || dictationStatus === 'listening')) stopDictation()
+  }, [open, voiceRecording, stopVoice, dictationStatus, stopDictation])
 
   const editingId = editing?.id
   useEffect(() => {
@@ -1212,6 +1235,10 @@ export function ManagerAssistant({
   }
 
   async function send(content = draft, onlyOracle = answerOnly) {
+    if (dictating) {
+      announce('Finish dictation first')
+      return
+    }
     const text = content.trim()
     const files = attachments.forSubmission()
     if (!text || sending || draftStorageError || files === undefined) return
@@ -1697,6 +1724,11 @@ export function ManagerAssistant({
             Oracle is answering; anything you send now waits its turn.
           </p>
         ) : null}
+        {dictation.status !== 'idle' ? (
+          <p className="manager-composer__dictation">
+            <DictationStatus seconds={dictation.seconds} status={dictation.status} />
+          </p>
+        ) : null}
         {voice.recording ? (
           <div className="recording-panel manager-composer__recording" role="status">
             <button className="recording-panel__cancel" onClick={() => voice.stop(true)} type="button">
@@ -1778,6 +1810,10 @@ export function ManagerAssistant({
             aria-label="Message Oracle"
             enterKeyHint={phoneEnterCreatesNewline() ? 'enter' : 'send'}
             onChange={(event) => {
+              if (dictation.draft !== undefined) {
+                dictation.onUserEdit(dictation.draft, event.target.value)
+                return
+              }
               setRecoveredDraft(false)
               setDraft(event.target.value)
             }}
@@ -1794,7 +1830,7 @@ export function ManagerAssistant({
             placeholder="Ask me anything"
             ref={inputRef}
             rows={2}
-            value={draft}
+            value={dictation.draft ?? draft}
           />
           <div className={`manager-composer__actions${
             conversationAvailable ? ' manager-composer__actions--conversation' : ''
@@ -1806,7 +1842,7 @@ export function ManagerAssistant({
               <button
                 aria-label="Start conversation"
                 className="manager-conversation-toggle"
-                disabled={voice.transcribing || voice.recording || voice.starting}
+                disabled={voice.transcribing || voice.recording || voice.starting || dictating}
                 onClick={() => void startConversation()}
                 title="Start a hands-free conversation with Oracle"
                 type="button"
@@ -1816,24 +1852,50 @@ export function ManagerAssistant({
               </button>
             ) : null}
             <button
-              aria-label={voice.transcribing ? 'Transcribing audio' : 'Dictate to Oracle'}
-              className="icon-button manager-composer__mic"
-              disabled={
+              aria-disabled={dictation.status === 'finishing' || undefined}
+              aria-label={dictating ? 'Stop dictation' : voice.transcribing ? 'Transcribing audio' : 'Dictate to Oracle'}
+              className={`icon-button manager-composer__mic${dictating ? ' manager-composer__mic--dictating' : ''}`}
+              disabled={!dictating && (
                 conversationOwnsMicrophone
                 || voice.transcribing
                 || voice.recording
                 || voice.starting
-              }
-              onClick={() => void voice.start()}
-              title={conversationOwnsMicrophone
-                ? 'Stop Conversation before using dictation'
-                : 'Record and transcribe'}
+              )}
+              onClick={() => {
+                if (!dictating) {
+                  // A failure from the last attempt no longer applies.
+                  setSendError(undefined)
+                  void dictation.start()
+                } else if (dictation.status !== 'finishing') dictation.stop()
+              }}
+              ref={microphoneRef}
+              title={dictating
+                ? 'Stop dictation and keep the text'
+                : conversationOwnsMicrophone
+                  ? 'Stop Conversation before using dictation'
+                  : 'Record and transcribe'}
               type="button"
             >
-              {voice.transcribing
-                ? <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={17} />
-                : <Mic aria-hidden="true" size={17} />}
+              {dictating
+                ? <Square aria-hidden="true" fill="currentColor" size={13} />
+                : voice.transcribing
+                  ? <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={17} />
+                  : <Mic aria-hidden="true" size={17} />}
             </button>
+            {dictating ? (
+              <button
+                aria-label="Cancel dictation"
+                className="icon-button manager-composer__dictation-cancel"
+                onClick={() => {
+                  dictation.cancel()
+                  microphoneRef.current?.focus()
+                }}
+                title="Remove the dictated text"
+                type="button"
+              >
+                <X aria-hidden="true" size={17} />
+              </button>
+            ) : null}
             {working ? (
               <button aria-label="Stop Oracle's reply" className="icon-button manager-composer__stop" onClick={() => void cancelManager()} title="Stop" type="button">
                 <CircleStop aria-hidden="true" size={18} />
@@ -1842,8 +1904,8 @@ export function ManagerAssistant({
             <button
               aria-label={working ? 'Queue message' : 'Send message'}
               className="manager-composer__send"
-              disabled={!draft.trim() || sending || tooLong || Boolean(draftStorageError) || attachments.blocked}
-              title={working ? 'Queue (answered after the current reply)' : 'Send'}
+              disabled={!draft.trim() || sending || tooLong || Boolean(draftStorageError) || attachments.blocked || dictating}
+              title={dictating ? 'Finish dictation first' : working ? 'Queue (answered after the current reply)' : 'Send'}
               type="submit"
             >
               {sending ? <LoaderCircle aria-hidden="true" className="activity-message__spinner" size={17} /> : <ArrowUp aria-hidden="true" size={18} />}

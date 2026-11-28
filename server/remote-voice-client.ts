@@ -162,22 +162,16 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     if (!Number.isSafeInteger(connectTimeoutMs) || connectTimeoutMs <= 0) {
       return Promise.reject(new RangeError('connectTimeoutMs must be a positive safe integer'))
     }
-    const url = new URL(computer.baseUrl)
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-    url.pathname = '/node-api/oracle-voice'
-    url.search = new URLSearchParams({
+    const url = nodeWebSocketUrl(computer, '/node-api/oracle-voice', new URLSearchParams({
       protocol: String(ORACLE_VOICE_PROTOCOL),
       streamId,
-    }).toString()
-    url.hash = ''
+    }))
 
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(url, {
         followRedirects: false,
         maxPayload: DEFAULT_VOICE_BACKEND_LIMITS.maxFrameBytes,
-        headers: {
-          authorization: `Bearer ${computer.token}`,
-        },
+        headers: nodeAuthorization(computer),
       })
       let settled = false
       let opened = false
@@ -571,6 +565,24 @@ export class RemoteVoiceClient extends EventEmitter<RemoteVoiceClientEvents> {
     clearTimeout(this.heartbeatTimer)
     this.heartbeatTimer = undefined
   }
+}
+
+/** The WebSocket address of a paired node's route, on the scheme its pairing uses. */
+export function nodeWebSocketUrl(
+  computer: Pick<RegisteredComputer, 'baseUrl'>,
+  pathname: string,
+  search?: URLSearchParams,
+): URL {
+  const url = new URL(computer.baseUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = pathname
+  url.search = search?.toString() ?? ''
+  url.hash = ''
+  return url
+}
+
+export function nodeAuthorization(computer: Pick<RegisteredComputer, 'token'>): { authorization: string } {
+  return { authorization: `Bearer ${computer.token}` }
 }
 
 function sendSocket(socket: WebSocket, payload: string | Buffer): Promise<void> {

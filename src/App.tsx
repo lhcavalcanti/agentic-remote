@@ -191,6 +191,7 @@ import {
   MoveToCategoryDialog,
 } from './SessionCategoryDialogs'
 import { useSessionCategories } from './use-session-categories'
+import { useLiveDictation } from './dictation/use-live-dictation'
 import { sessionListCollisions } from './session-list-collisions'
 import {
   applySessionCategoryChange,
@@ -4682,6 +4683,30 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   const recordingTimerRef = useRef<number | undefined>(undefined)
   const recordingStartedAtRef = useRef(0)
   const discardRecordingRef = useRef(false)
+  // The session live dictation writes into: the one it started in, wherever
+  // the reader is when its final text arrives.
+  const [dictationTarget, setDictationTarget] = useState<string>()
+  const dictationTargetRef = useRef<string | undefined>(undefined)
+  const liveDictation = useLiveDictation({
+    textarea: () => composerRef.current,
+    getDraft: () => {
+      const key = dictationTargetRef.current
+      return key
+        ? composerInputValue(composerDraftsRef.current[followReplacementsRef.current(key)]?.text || '')
+        : ''
+    },
+    setDraft: (draft, selection) => {
+      const key = dictationTargetRef.current
+      if (key) storeDictatedDraft(key, draft, selection)
+    },
+    startFallback: () => void startRecording(),
+    announce: (message) => announceCategory(message),
+    onError: (message) => setError(message),
+    onEnd: () => {
+      dictationTargetRef.current = undefined
+      setDictationTarget(undefined)
+    },
+  })
   const selectedRef = useRef<ManagedSession | undefined>(undefined)
   const eventSequenceRef = useRef(currentSessionEventSequence())
   const backgroundTaskSnapshotsRef = useRef(backgroundTaskSnapshots)
@@ -5586,6 +5611,17 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     selected?.status === 'running' ||
     (selected?.executionMode === 'sdk' && selectedHasRunningBackgroundAgent)
   const composer = selectedKey ? composerDrafts[selectedKey]?.text || '' : ''
+  // Dictation shows its words in the composer of the session it writes into.
+  const dictationHere = liveDictation.status !== 'idle' && dictationTarget !== undefined &&
+    selectedKey === dictationTarget
+
+  // Opening another session finishes dictation into the one it started in.
+  const { status: dictationStatus, stop: stopDictation } = liveDictation
+  useEffect(() => {
+    if (!dictationTarget || (dictationStatus !== 'connecting' && dictationStatus !== 'listening')) return
+    if (selectedKey !== dictationTarget) stopDictation()
+  }, [selectedKey, dictationTarget, dictationStatus, stopDictation])
+
   const selectedAttachments = selectedKey
     ? composerAttachments[selectedKey] || []
     : []
@@ -11230,6 +11266,10 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     // A held message, sent to its session wherever the reader is by then.
     held?: HeldSubmission,
   ): Promise<HeldDeliveryOutcome | undefined> {
+    if (!held && dictationHere) {
+      announceCategory('Finish dictation first')
+      return undefined
+    }
     const composeKey = selectedKey && followReplacementsRef.current(selectedKey)
     if (
       !held &&
@@ -11755,6 +11795,36 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     setRecordingSeconds(0)
   }
 
+  /** Live dictation into the selected session, or recording when it cannot run. */
+  function startDictation() {
+    if (!selected || !selectedKey || recording || transcribing || uploadingFile ||
+        liveDictation.status !== 'idle') {
+      return
+    }
+    setError(undefined)
+    dictationTargetRef.current = followReplacementsRef.current(selectedKey)
+    setDictationTarget(selectedKey)
+    void liveDictation.start()
+  }
+
+  /** Stores what dictation leaves in a session's draft, as an edit of what is there. */
+  function storeDictatedDraft(rawKey: string, value: string, selection?: [number, number]) {
+    const targetKey = followReplacementsRef.current(rawKey)
+    if (removedSessions.current.has(targetKey)) return
+    updateComposerDrafts([targetKey], (current) => {
+      const existing = current[targetKey] || { text: '', pastes: [] }
+      return writeComposerEdit(current, targetKey, reconcileComposerEdit(existing, value))
+    })
+    reconcileComposerAttachmentRows(targetKey)
+    if (!selection) return
+    window.requestAnimationFrame(() => {
+      const textarea = composerRef.current
+      if (textarea && document.activeElement === textarea && selectedKeyStateRef.current === targetKey) {
+        textarea.setSelectionRange(selection[0], selection[1])
+      }
+    })
+  }
+
   async function startRecording() {
     if (
       !selected ||
@@ -12166,6 +12236,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
       return
     }
     event.preventDefault()
+    // Its path would land in the stored draft behind the words being dictated.
+    if (dictationHere) return
     void attachedFiles(files)
   }
 
@@ -12279,6 +12351,11 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
     // row in its baseline, so canceling would discard it.
     if (recording) {
       setError('Stop recording before editing a queued message.')
+      return
+    }
+    // The draft it would replace is still taking dictated words.
+    if (dictationHere) {
+      setError('Finish dictation before editing a queued message.')
       return
     }
     if (pendingAttachmentIntakeRef.current > 0) {
@@ -13143,7 +13220,8 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
   }
 
   function composerPasted(event: ReactClipboardEvent<HTMLTextAreaElement>) {
-    if (!selectedKey) {
+    // While dictating, a paste is plain typing beside the dictated words.
+    if (!selectedKey || dictationHere) {
       return
     }
     const files = pastedFiles(event.clipboardData)
@@ -13237,6 +13315,16 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
 
   function composerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.nativeEvent.isComposing) {
+      return
+    }
+    if (dictationHere) {
+      // Words are still arriving: sending waits for them, and the message
+      // history would replace them.
+      if (event.key === 'Enter' &&
+          (event.metaKey || event.ctrlKey || (!event.shiftKey && !phoneEnterCreatesNewline()))) {
+        event.preventDefault()
+        announceCategory('Finish dictation first')
+      }
       return
     }
     // The menu is what Escape is about while it is open -- it sits over the
@@ -14646,7 +14734,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
               className={`icon-button side-question-toggle ${
                 askingAside ? 'icon-button--active' : ''
               }`}
-              disabled={!askingAside && (Boolean(editingQueuedPromptId) || recording)}
+              disabled={!askingAside && (Boolean(editingQueuedPromptId) || recording || dictationHere)}
               onClick={() => askingAside ? closeSideQuestion() : openSideQuestion()}
               title={askingAside
                 ? 'Back to your message (Esc)'
@@ -15108,7 +15196,7 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             sending={selected ? sending : false}
             editingQueuedPromptId={editingQueuedPromptId}
             queuedEditUnconfirmed={queuedEditUnconfirmed}
-            composer={composer}
+            composer={dictationHere && liveDictation.draft !== undefined ? liveDictation.draft : composer}
             expandedComposer={terminalDraftExpandedContent}
             uploadingFile={uploadingFile}
             transcribing={transcribing}
@@ -15147,6 +15235,9 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
             selectedAttachments={selectedAttachments}
             recording={recording}
             recordingSeconds={recordingSeconds}
+            dictation={dictationHere && liveDictation.status !== 'idle'
+              ? { status: liveDictation.status, seconds: liveDictation.seconds }
+              : undefined}
             cancelling={cancelling}
             readonlyResourceCommand={selected ? readonlyResourceCommand : undefined}
             composerDraftRecovered={composerDraftRecovered}
@@ -15192,16 +15283,22 @@ function AppWorkspace({ settingsClient }: { settingsClient: SettingsProfileClien
                 updateSideThread(sessionKey(selected), (thread) => ({ ...thread, draft }))
                 return
               }
+              if (dictationHere && liveDictation.draft !== undefined) {
+                liveDictation.onUserEdit(liveDictation.draft, event.target.value)
+                return
+              }
               composerChanged(event.target.value, (event.nativeEvent as InputEvent).inputType)
             }}
             onKeyDown={askingAside ? sideQuestionKeyDown : composerKeyDown}
             onPaste={composerPasted}
             onFileChange={audioFileChanged}
             onStopRecording={stopRecording}
+            onStopDictation={liveDictation.stop}
+            onCancelDictation={liveDictation.cancel}
             onSubmitSideQuestion={submitSideQuestion}
             onStopSession={() => void stopSelectedSession()}
             onOpenAttachmentInput={() => audioInputRef.current?.click()}
-            onStartRecording={() => void startRecording()}
+            onStartRecording={startDictation}
             onSubmitMessage={(enqueue) => void submitMessage(enqueue)}
             onOpenRuntime={() => setRuntimeOpen(true)}
             loadingEarlierMessages={selected ? earlierLoads[sessionKey(selected)] === 'loading' : false}

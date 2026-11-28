@@ -1600,6 +1600,11 @@ export async function setupWorkspaceFixture(
       })
       return
     }
+    if (method === 'GET' && path === '/api/dictation/capabilities') {
+      // Recording and uploading, as on a hub without the Parakeet engine.
+      await respond({ live: false, reason: 'Live dictation needs the Parakeet engine on Studio', computerName: 'Studio' })
+      return
+    }
     if (method === 'POST' && path === '/api/transcriptions') {
       const file = await multipartFile(route, 'audio')
       if (!file || !file.type.startsWith('audio/')) {

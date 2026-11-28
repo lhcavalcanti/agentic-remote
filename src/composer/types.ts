@@ -28,6 +28,11 @@ export type ComposerAttachment = {
   promptText?: string
 }
 
+export type ComposerDictation = {
+  status: 'connecting' | 'listening' | 'finishing'
+  seconds: number
+}
+
 export type ComposerProps = {
   selected: ManagedSession
   selectedRetained: boolean
@@ -60,6 +65,8 @@ export type ComposerProps = {
   selectedAttachments: ComposerAttachment[]
   recording: boolean
   recordingSeconds: number
+  /** Live dictation into this composer, while it runs. */
+  dictation?: ComposerDictation
   cancelling: boolean
   readonlyResourceCommand?: { tab: SessionResourceTab; filter: string }
   composerDraftRecovered: boolean
@@ -88,6 +95,8 @@ export type ComposerProps = {
   onPaste: ClipboardEventHandler<HTMLTextAreaElement>
   onFileChange: ChangeEventHandler<HTMLInputElement>
   onStopRecording: (discard?: boolean) => void
+  onStopDictation?: () => void
+  onCancelDictation?: () => void
   onSubmitSideQuestion: () => void
   onStopSession: () => void
   onOpenAttachmentInput: () => void

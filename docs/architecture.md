@@ -78,6 +78,20 @@ Proposal journal deduplication survives journal rotation in the owner-only `mana
 
 Scheduler change events retain the single-run `runId` and include `runIds` for every run affected by an atomic overlap decision. Scheduled-run notifications classify those committed snapshots together, then batch durable admission and exactly-once claims before any channel delivery.
 
+### Live dictation stream
+
+Live dictation streams 16 kHz microphone PCM from the browser to a ticketed
+`/api/dictation` WebSocket on the hub. The hub attaches it to its own
+`LiveDictationHost` when it transcribes audio itself, or relays it to
+`/node-api/dictation` on the computer named by
+`AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER`, checking and bounding each message
+and closing either side with the other. The host runs one stream at a time: a
+`LiveDictationSession` re-decodes the unconfirmed audio, with a second of
+confirmed audio before it, with the warm Parakeet worker about every 750 ms
+and confirms the words consecutive passes agree on,
+sending text back only to that socket. Nothing is persisted and nothing
+reaches Oracle; see [Live dictation](design/live-dictation.md).
+
 ### Oracle Conversation speech path
 
 Conversation mode is an optional extension of the hub-owned Oracle

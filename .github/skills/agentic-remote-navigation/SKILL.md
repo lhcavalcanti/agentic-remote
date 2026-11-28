@@ -117,6 +117,7 @@ landmarks rather than reading it end to end; source locations can change.
 | Folder picker containment | `server/directory-browser.ts` |
 | Audio transcription | `server/transcription-service.ts` |
 | Transcription on another computer | `server/delegated-transcription-service.ts` |
+| Live dictation (stream, word agreement, composer span) | `server/live-dictation-session.ts`, `server/dictation-agreement.ts`, `server/live-dictation-host.ts`, `server/dictation-routes.ts`, `shared/dictation.ts`, `src/dictation/`; `docs/design/live-dictation.md` |
 | Push notifications | `server/push-notification-service.ts`, `public/sw.js` |
 | Install and service management | `bin/agentic-remote` |
 | Merge gate (full checks on an exact SHA) | `bin/agentic-remote-gate` |

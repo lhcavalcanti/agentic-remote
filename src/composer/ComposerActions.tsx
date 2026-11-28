@@ -1,7 +1,8 @@
 import {
-  ArrowUp, History, ListPlus, LoaderCircle, MessageCircleQuestion, Mic, Plus, Search, SlidersHorizontal, Square,
+  ArrowUp, History, ListPlus, LoaderCircle, MessageCircleQuestion, Mic, Plus, Search, SlidersHorizontal, Square, X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { DictationStatus } from '../dictation/DictationStatus'
 import { SessionActions } from '../SessionActions'
 import { ContextRing } from './ContextRing'
 import { RuntimeStatus } from './RuntimeStatus'
@@ -13,6 +14,8 @@ import type { ComposerProps } from './types'
 /** Why files cannot be attached to a session that is still starting. */
 export const startingAttachmentReason = 'Attach files once the session has started'
 const recordWaitReason = 'Record once the session has started'
+/** Why Send and Queue wait while words are still arriving. */
+export const dictationSendReason = 'Finish dictation first'
 
 export function ComposerActions({
   selected,
@@ -22,6 +25,7 @@ export function ComposerActions({
   supportsQueuedPromptDispatch,
   recording,
   recordingSeconds,
+  dictation,
   askingAside,
   sideQuestionDraft,
   sideQuestionPending,
@@ -38,6 +42,8 @@ export function ComposerActions({
   recordingDuration,
   compactTokens,
   onStopRecording,
+  onStopDictation,
+  onCancelDictation,
   onSubmitSideQuestion,
   onStopSession,
   onOpenAttachmentInput,
@@ -55,21 +61,24 @@ export function ComposerActions({
   startingSession,
 }: Pick<ComposerProps,
   'selected' | 'selectedComputerOnline' | 'selectedQueueAvailable' | 'foregroundTurnActive' | 'supportsQueuedPromptDispatch' |
-  'recording' | 'recordingSeconds' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
+  'recording' | 'recordingSeconds' | 'dictation' | 'askingAside' | 'sideQuestionDraft' | 'sideQuestionPending' |
   'cancelling' | 'transcribing' | 'uploadingFile' | 'composer' | 'expandedComposer' | 'sending' | 'queueActionId' |
   'queuedEditUnconfirmed' | 'editingQueuedPromptId' | 'readonlyResourceCommand' |
-  'recordingDuration' | 'compactTokens' | 'onStopRecording' | 'onSubmitSideQuestion' | 'onStopSession' |
+  'recordingDuration' | 'compactTokens' | 'onStopRecording' | 'onStopDictation' | 'onCancelDictation' |
+  'onSubmitSideQuestion' | 'onStopSession' |
   'onOpenAttachmentInput' | 'onStartRecording' | 'onSubmitMessage' | 'onOpenRuntime' | 'sessionActions' |
   'onRecallSentMessage' | 'onCancelSentMessage' | 'providerCapability' | 'onUseSentMessage' | 'phoneEnterCreatesNewline' |
   'loadingEarlierMessages' | 'onLoadEarlierMessages' | 'startingSession'
 >) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyChosen, setHistoryChosen] = useState(false)
+  // The microphone control becomes Stop while dictating, so focus stays on it.
+  const microphoneRef = useRef<HTMLButtonElement>(null)
   const busyChoices = foregroundTurnActive &&
     !readonlyResourceCommand && !editingQueuedPromptId && !expandedComposer.trim().startsWith('/')
   // Where Return adds a line, as on a phone, no keyboard shortcut is named.
   const shortcut = (keys: string) => phoneEnterCreatesNewline ? '' : ` (${keys})`
-  const sendDisabled = !composer.trim() || sending || transcribing || uploadingFile ||
+  const sendDisabled = !composer.trim() || sending || transcribing || uploadingFile || Boolean(dictation) ||
     (!readonlyResourceCommand && (
       Boolean(queueActionId) || Boolean(selected.queuedDispatch) ||
       queuedEditUnconfirmed ||
@@ -140,7 +149,7 @@ export function ComposerActions({
           ? 'Transcribing audio'
           : uploadingFile ? 'Uploading file' : 'Attach file or audio recording'}
         className="send-button composer-attachment-button"
-        disabled={startingSession || transcribing || uploadingFile}
+        disabled={startingSession || transcribing || uploadingFile || Boolean(dictation)}
         onClick={onOpenAttachmentInput}
         title={startingSession ? startingAttachmentReason : undefined}
         type="button"
@@ -150,8 +159,9 @@ export function ComposerActions({
         ) : <Plus size={19} />}
       </button>
       {/* The session's own setup, history and actions wait for it to exist;
-          its model and mode are the ones it is being started with. */}
-      {startingSession ? null : (
+          its model and mode are the ones it is being started with. Dictation
+          takes their room for its own controls. */}
+      {startingSession || dictation ? null : (
         <div className="composer-secondary-tools">
           {setupButton}
           {historyButton}
@@ -159,17 +169,39 @@ export function ComposerActions({
         </div>
       )}
       <button
-        aria-description={startingSession ? recordWaitReason : undefined}
-        aria-label="Start microphone recording"
-        className="send-button composer-record-button"
-        disabled={startingSession || transcribing || uploadingFile}
-        onClick={onStartRecording}
-        title={startingSession ? recordWaitReason : 'Record and transcribe'}
+        aria-description={!dictation && startingSession ? recordWaitReason : undefined}
+        aria-disabled={dictation?.status === 'finishing' || undefined}
+        aria-label={dictation ? 'Stop dictation' : 'Start microphone recording'}
+        className={`send-button composer-record-button${dictation ? ' composer-record-button--dictating' : ''}`}
+        disabled={!dictation && (startingSession || transcribing || uploadingFile)}
+        onClick={dictation
+          ? () => { if (dictation.status !== 'finishing') onStopDictation?.() }
+          : onStartRecording}
+        ref={microphoneRef}
+        title={dictation
+          ? 'Stop dictation and keep the text'
+          : startingSession ? recordWaitReason : 'Record and transcribe'}
         type="button"
       >
-        <Mic size={17} />
+        {dictation ? <Square aria-hidden="true" fill="currentColor" size={13} /> : <Mic size={17} />}
       </button>
-      {startingSession ? <span className="composer-actions__spacer" /> : (
+      {dictation ? (
+        <>
+          <button
+            aria-label="Cancel dictation"
+            className="send-button composer-dictation-cancel"
+            onClick={() => {
+              onCancelDictation?.()
+              microphoneRef.current?.focus()
+            }}
+            title="Remove the dictated text"
+            type="button"
+          >
+            <X aria-hidden="true" size={17} />
+          </button>
+          <DictationStatus className="composer-dictation-status" seconds={dictation.seconds} status={dictation.status} />
+        </>
+      ) : startingSession ? <span className="composer-actions__spacer" /> : (
         <>
           <SessionActions className="composer-session-panel" label="Session panel" description="This session">
             <div className="composer-secondary-overflow">
@@ -193,10 +225,11 @@ export function ComposerActions({
           aria-description="Queues this message for later delivery"
           aria-label="Queue message"
           className="send-button send-button--queue"
-          disabled={!composer.trim() || sending || transcribing || uploadingFile ||
+          disabled={!composer.trim() || sending || transcribing || uploadingFile || Boolean(dictation) ||
             Boolean(queueActionId) || Boolean(selected.queuedDispatch) || queuedEditUnconfirmed}
           onClick={() => onSubmitMessage(true)}
-          title={`${startingSession ? 'Queue once the session has started' : 'Queue for later delivery'}${shortcut('Ctrl/⌘+Enter')}`}
+          title={dictation ? dictationSendReason
+            : `${startingSession ? 'Queue once the session has started' : 'Queue for later delivery'}${shortcut('Ctrl/⌘+Enter')}`}
           type="button"
         >
           <ListPlus size={17} />
@@ -219,7 +252,7 @@ export function ComposerActions({
         disabled={sendDisabled}
         {...triggerProps}
         title={
-          readonlyResourceCommand
+          dictation ? dictationSendReason : readonlyResourceCommand
             ? 'Open the read-only resource view without sending a prompt'
             : editingQueuedPromptId
               ? supportsQueuedPromptDispatch ? 'Send this queued message now' : 'Put this back in the queue'

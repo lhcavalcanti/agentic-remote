@@ -40,6 +40,7 @@ const tmuxTests = [
 const slowTests = [
   'e2e/capture-screens.test.ts',
   'graphify/manage.test.ts',
+  'scripts/live-dictation-benchmark.test.ts',
   'scripts/precompress-assets.test.ts',
   'server/activity-details.test.ts',
   'server/agent-service-event-projection.test.ts',
@@ -58,6 +59,7 @@ const slowTests = [
   'server/computer-manager-metadata.test.ts',
   'server/conversation-recovery.test.ts',
   'server/delegated-transcription-service.test.ts',
+  'server/dictation-routes.test.ts',
   'server/doctor-cli.test.ts',
   'server/dreamer-app.test.ts',
   'server/dreamer-planner.test.ts',
@@ -75,6 +77,8 @@ const slowTests = [
   'server/host-telemetry/transport.test.ts',
   'server/hub-routes.test.ts',
   'server/launch-identity.test.ts',
+  'server/live-dictation-host.test.ts',
+  'server/live-dictation-session.test.ts',
   'server/logs-cli.test.ts',
   'server/manager-agent.test.ts',
   'server/manager-routes.test.ts',
@@ -99,6 +103,7 @@ const slowTests = [
   'server/refusal-metrics-routes.test.ts',
   'server/refusal-metrics.test.ts',
   'server/release-publication.test.ts',
+  'server/remote-dictation-client.test.ts',
   'server/remote-node-client.test.ts',
   'server/response-compression.test.ts',
   'server/schedule-launcher.test.ts',
@@ -187,6 +192,9 @@ const slowTests = [
   'src/ScheduleProposalCards.test.tsx',
   'src/SessionOriginBadge.test.tsx',
   'src/composer/Composer.test.tsx',
+  'src/dictation/capture.test.ts',
+  'src/dictation/live-dictation-client.test.ts',
+  'src/dictation/use-live-dictation.test.tsx',
   'src/composer/ComposerActions.test.tsx',
   'src/composer/RuntimeStatus.test.tsx',
   'src/composer/SendControl.test.tsx',
@@ -329,7 +337,9 @@ export default defineConfig(({ command, mode }) => {
       : undefined,
     build: {
       assetsInlineLimit(filePath) {
-        return oracleVoiceAssetNames.has(filePath.split(/[\\/]/).at(-1) ?? '')
+        const name = filePath.split(/[\\/]/).at(-1) ?? ''
+        // Audio worklet modules load from a URL of their own, not a data: URL.
+        return oracleVoiceAssetNames.has(name) || name === 'pcm-capture-worklet.js'
           ? false
           : undefined
       },

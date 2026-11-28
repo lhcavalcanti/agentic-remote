@@ -42,6 +42,47 @@ vi.mock('./api', () => ({
   removeManagerFile: vi.fn(),
 }))
 
+// Live dictation is off unless a test turns it on, so the mic records and
+// uploads as before.
+const liveDictationFake = vi.hoisted(() => ({
+  capabilities: undefined as undefined | { live: boolean; reason?: string; computerName: string },
+  clients: [] as Array<{
+    callbacks: {
+      onText(state: { committed: string; tentative: string }): void
+      onFinal(text: string): void
+      onError(error: { code: string; message: string; fatal: boolean }): void
+      onInterrupted?(reason: string): void
+    }
+    start: ReturnType<typeof vi.fn>
+    stop: ReturnType<typeof vi.fn>
+    cancel: ReturnType<typeof vi.fn>
+  }>,
+}))
+
+vi.mock('./dictation/live-dictation-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./dictation/live-dictation-client')>()
+  class FakeLiveDictationClient {
+    readonly start = vi.fn(async () => undefined)
+    readonly stop = vi.fn(async () => undefined)
+    readonly cancel = vi.fn()
+    readonly callbacks: (typeof liveDictationFake.clients)[number]['callbacks']
+
+    constructor(callbacks: (typeof liveDictationFake.clients)[number]['callbacks']) {
+      this.callbacks = callbacks
+      liveDictationFake.clients.push(this)
+    }
+  }
+  return {
+    ...actual,
+    fetchDictationCapabilities: vi.fn(async () => liveDictationFake.capabilities ?? {
+      live: false,
+      reason: 'Live dictation needs the Parakeet engine on Development',
+      computerName: 'Development',
+    }),
+    LiveDictationClient: FakeLiveDictationClient,
+  }
+})
+
 vi.mock('./use-oracle-conversation', () => ({
   useOracleConversation: vi.fn(),
 }))
@@ -1631,12 +1672,86 @@ describe('ManagerAssistant', () => {
       expect(sendManagerMessage).not.toHaveBeenCalled()
     })
 
+    describe('live', () => {
+      beforeEach(() => {
+        liveDictationFake.capabilities = { live: true, computerName: 'Development' }
+        liveDictationFake.clients.length = 0
+        vi.stubGlobal('AudioWorkletNode', class {})
+      })
+
+      afterEach(() => {
+        liveDictationFake.capabilities = undefined
+      })
+
+      it('shows words in the Oracle message while speaking and keeps the final text', async () => {
+        setup()
+        await openPanel()
+        const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+        fireEvent.change(input, { target: { value: 'Quick one:' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+        await waitFor(() => expect(liveDictationFake.clients).toHaveLength(1))
+        const client = liveDictationFake.clients[0]
+        expect(await screen.findByText('Listening · 0:00')).toBeVisible()
+        act(() => client.callbacks.onText({ committed: '', tentative: 'what is running' }))
+        expect(input).toHaveValue('Quick one: what is running')
+        const send = screen.getByRole('button', { name: 'Send message' })
+        expect(send).toBeDisabled()
+        expect(send).toHaveAttribute('title', 'Finish dictation first')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Stop dictation' }))
+        expect(client.stop).toHaveBeenCalledOnce()
+        act(() => client.callbacks.onFinal('what is running now'))
+        await waitFor(() => expect(input).toHaveValue('Quick one: what is running now'))
+        expect(screen.getByRole('button', { name: 'Dictate to Oracle' })).toBeEnabled()
+        expect(sendManagerMessage).not.toHaveBeenCalled()
+        expect(transcribeAudio).not.toHaveBeenCalled()
+      })
+
+      it('restores the Oracle message on Cancel', async () => {
+        setup()
+        await openPanel()
+        const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+        fireEvent.change(input, { target: { value: 'Keep this' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+        await waitFor(() => expect(liveDictationFake.clients).toHaveLength(1))
+        await screen.findByText('Listening · 0:00')
+        act(() => liveDictationFake.clients[0].callbacks.onText({ committed: 'not this', tentative: '' }))
+        expect(input).toHaveValue('Keep this not this')
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel dictation' }))
+        await waitFor(() => expect(input).toHaveValue('Keep this'))
+        expect(liveDictationFake.clients[0].cancel).toHaveBeenCalledOnce()
+      })
+
+      it('shows why dictation stopped and keeps its confirmed words', async () => {
+        setup()
+        await openPanel()
+        const input = screen.getByRole('textbox', { name: 'Message Oracle' })
+        fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+        await waitFor(() => expect(liveDictationFake.clients).toHaveLength(1))
+        await screen.findByText('Listening · 0:00')
+        const client = liveDictationFake.clients[0]
+        act(() => client.callbacks.onText({ committed: 'kept words', tentative: 'maybe' }))
+        act(() => {
+          client.callbacks.onError({ code: 'stalled', message: 'The dictation connection stopped responding', fatal: true })
+          client.callbacks.onFinal('kept words')
+        })
+        await waitFor(() => expect(input).toHaveValue('kept words'))
+        expect(screen.getByRole('alert')).toHaveTextContent('The dictation connection stopped responding')
+
+        // Trying again clears the old failure.
+        fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
+        await waitFor(() => expect(liveDictationFake.clients).toHaveLength(2))
+        await screen.findByText('Listening · 0:00')
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      })
+    })
+
     it('discards a cancelled recording, and one left running when the panel closes', async () => {
       setup()
       await openPanel()
       fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
       fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
-      await waitFor(() => expect(screen.queryByText(/Recording/)).not.toBeInTheDocument())
+      await waitFor(() => expect(screen.queryByText(/Recording \d/)).not.toBeInTheDocument())
       expect(track.stop).toHaveBeenCalledTimes(1)
       fireEvent.click(screen.getByRole('button', { name: 'Dictate to Oracle' }))
       await screen.findByText(/Recording 0:00/)

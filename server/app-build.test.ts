@@ -117,6 +117,11 @@ describe('production app build identity', () => {
       [...files.keys()].filter((name) => !perBuild.includes(name)).sort()
     expect(shared(second)).toEqual(shared(first))
     expect(shared(first).filter((name) => name.startsWith('assets/')).length).toBeGreaterThan(50)
+    // AudioWorklet modules load from a file of their own, never an inlined data: URL.
+    expect(shared(first).filter((name) => /^assets\/pcm-capture-worklet-[\w-]+\.js$/.test(name))).toHaveLength(1)
+    for (const name of shared(first)) {
+      expect(first.get(name), name).not.toContain('data:text/javascript')
+    }
     for (const name of perBuild) {
       expect(second.get(name)).toBe(first.get(name)?.replaceAll(before.buildId!, after.buildId!))
     }

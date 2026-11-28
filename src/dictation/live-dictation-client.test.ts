@@ -285,6 +285,7 @@ describe('live dictation client', () => {
 
   it.each([
     [new PcmCaptureError('audio-worklet-unavailable', 'No worklet'), true],
+    [new PcmCaptureError('audio-suspended', 'The browser did not start microphone audio'), true],
     [new PcmCaptureError('permission-denied', 'Microphone permission was denied'), false],
   ])('cancels the stream when the microphone cannot start: %s', async (failure, fallback) => {
     const harness = setup()

@@ -124,6 +124,26 @@ describe('PCM capture', () => {
     expect(harness.interruptions).toHaveLength(1)
   })
 
+  it('gives up on audio the browser keeps suspended and releases the microphone', async () => {
+    const refused = setup()
+    refused.context.state = 'suspended'
+    refused.context.resume.mockImplementation(async () => undefined)
+    await expect(refused.start()).rejects.toMatchObject({ code: 'audio-suspended' })
+    expect(refused.track.stopped).toBe(true)
+
+    vi.useFakeTimers()
+    try {
+      const pending = setup()
+      pending.context.state = 'suspended'
+      pending.context.resume.mockImplementation(() => new Promise<void>(() => undefined))
+      const starting = pending.start().catch((error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(await starting).toMatchObject({ code: 'audio-suspended' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('refuses a browser without AudioWorklet before asking for the microphone', async () => {
     const { start, getUserMedia } = setup({ audioWorkletSupported: () => false })
     await expect(start()).rejects.toMatchObject({ code: 'audio-worklet-unavailable' })

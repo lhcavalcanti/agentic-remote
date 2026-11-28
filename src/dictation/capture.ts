@@ -9,7 +9,11 @@ export type PcmCaptureErrorCode =
   | 'audio-worklet-unavailable'
   | 'media-devices-unavailable'
   | 'permission-denied'
+  | 'audio-suspended'
   | 'capture-failed'
+
+/** How long the browser gets to start audio it created suspended. */
+const RESUME_TIMEOUT_MS = 2_000
 
 export class PcmCaptureError extends Error {
   readonly code: PcmCaptureErrorCode
@@ -119,7 +123,11 @@ export function createPcmCapture(overrides: Partial<CaptureDeps> = {}): PcmCaptu
       }
       try {
         context = deps.createAudioContext()
-        if (context.state === 'suspended') await context.resume()
+        if (context.state === 'suspended') await resumeWithin(context, RESUME_TIMEOUT_MS)
+        // A browser may keep audio suspended outside a tap, as iPhones can.
+        if (context.state !== 'running') {
+          throw new PcmCaptureError('audio-suspended', 'The browser did not start microphone audio')
+        }
         await context.audioWorklet.addModule(deps.workletUrl)
         if (current !== run) throw new PcmCaptureError('capture-failed', 'Capture was stopped')
         source = context.createMediaStreamSource(stream)
@@ -167,6 +175,17 @@ export function createPcmCapture(overrides: Partial<CaptureDeps> = {}): PcmCaptu
       await releasing?.()
     },
   }
+}
+
+async function resumeWithin(context: AudioContext, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    context.resume().catch(() => undefined),
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, timeoutMs)
+    }),
+  ])
+  clearTimeout(timer)
 }
 
 function errorMessage(error: unknown): string {

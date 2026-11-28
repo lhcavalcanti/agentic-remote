@@ -73,6 +73,7 @@ const FALLBACK_CODES = new Set([
   'node_outdated',
   'audio-worklet-unavailable',
   'media-devices-unavailable',
+  'audio-suspended',
 ])
 const OPEN = 1
 

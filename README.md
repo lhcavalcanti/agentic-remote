@@ -511,6 +511,22 @@ and setup keeps these settings across updates.
 - Parakeet covers 25 European languages, including English and Portuguese.
   Keep Whisper as the engine for other languages.
 
+### Live dictation
+
+When the computer that transcribes audio runs the Parakeet engine, the
+microphone in a session composer and **Dictate to Oracle** show the words in
+the text box while you speak; Stop leaves the final text about a second later,
+and Cancel takes the dictated words back out. Nothing is sent until you send
+it. The hub relays the stream to that computer (itself, or the one named by
+`AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER`), which decodes it with the warm
+worker; audio and text stay in memory and are never logged.
+
+One live stream runs at a time per transcription computer. Without the
+Parakeet engine, with that computer offline or on an older release, with
+another stream running, or in a browser without AudioWorklet, the microphone
+records and uploads as before. See
+[Live dictation](docs/design/live-dictation.md) for the method and limits.
+
 ### Oracle
 
 The **Oracle** bubble at the bottom right of a conversation opens an agent

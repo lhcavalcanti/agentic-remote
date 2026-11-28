@@ -848,10 +848,12 @@ settings (`AGENTIC_REMOTE_MANAGER*`), and the data folder keep the manager name.
 - Oracle's message field reads "Ask me anything" and is labelled "Message
   Oracle". While Oracle is answering, a line above it says that anything sent
   now waits its turn, and Send becomes **Queue message**. **Dictate to
-  Oracle** records from the microphone (Cancel, a timer, **Stop &
-  transcribe**; at most 15 minutes), transcribes on the hub as a session's
-  recording does, and adds the words to the message rather than sending them.
-  Closing the panel discards a recording in progress.
+  Oracle** dictates live into the message where the transcription computer
+  can (§7.3); otherwise it records from the microphone (Cancel, a timer,
+  **Stop & transcribe**; at most 15 minutes), transcribes on the hub as a
+  session's recording does, and adds the words to the message rather than
+  sending them. Closing the panel discards a recording in progress and stops
+  live dictation, keeping its text.
 - Oracle's typed composer MUST accept files through its picker, paste, and
   drop, keeping source order without sending automatically. Chips MUST show
   name, size, upload state, Retry for a failed upload, and Remove. Send waits
@@ -2140,6 +2142,42 @@ clear replacement IDs without losing, duplicating, or reordering content.
 - GPU acceleration MAY be enabled only when a working driver produces a
   measured improvement. CPU transcription MUST remain a safe fallback.
 
+### 7.3 Live dictation
+
+- When the transcription computer runs the Parakeet engine, the session
+  composer's microphone and **Dictate to Oracle** MUST show dictated words in
+  the text box while the user speaks: confirmed and tentative words at the
+  caret, replacing any selection. Nothing MAY be sent or queued automatically.
+- The browser MUST stream 16 kHz mono PCM16 over a same-origin WebSocket that
+  takes a single-use ticket bound to its Origin and address, under the hub's
+  Host and Origin policy. The hub MUST route the stream to the computer that
+  transcribes its audio, relaying to a paired computer over the authenticated
+  node API, and MUST NOT retain what it relays.
+- Partial and final text MUST reach only the socket that sent the audio. Audio,
+  partial text, and final text MUST NOT be written to disk, logs, or the
+  browser's saved drafts before dictation ends; logs MAY carry stream IDs,
+  counters, durations, and outcomes. Live dictation MUST NOT submit anything
+  to Oracle or synthesize speech.
+- A transcription computer MUST run at most one live stream; another start
+  MUST be refused as busy. Streams MUST be bounded: frames of at most 32 KiB,
+  15 minutes of audio (then a final text), at most 12 s of backlog, 5 s
+  heartbeats with a 15 s stall limit, and a final text within 30 s of Stop.
+- While dictating, the microphone control MUST become **Stop dictation** with
+  **Cancel dictation** beside it, keep 40×40 px targets at 320 px, and show the
+  state in words. Send and Queue MUST wait for the final text. Stop MUST put
+  the final text in the span; Cancel MUST restore the draft and any replaced
+  selection. Edits beside the span MUST survive; an edit inside it MUST hand
+  the text to the user and stop dictation.
+- Opening another session MUST stop dictation and put its final text in the
+  draft of the session it started in.
+- Losing the microphone, backgrounding or locking the page, or an audio
+  interruption MUST end dictation visibly and keep the confirmed words. A
+  failed engine or connection MUST also keep them.
+- Without the Parakeet engine, with the transcription computer unpaired,
+  offline, or on an older release, with another stream running, or without
+  AudioWorklet, the microphone MUST fall back to recording and uploading
+  (§7.2), announcing why.
+
 ## 8. Session files and Knowledge
 
 ### 8.1 Read-only workspace browser
@@ -2792,6 +2830,7 @@ Every material release SHOULD preserve:
 | Knowledge persistence | `server/knowledge-store.ts` |
 | Audio transcription | `server/transcription-service.ts` |
 | Transcription on another computer | `server/delegated-transcription-service.ts` |
+| Live dictation | `server/live-dictation-session.ts`, `server/live-dictation-host.ts`, `server/dictation-routes.ts`, `src/dictation/` |
 | Push notifications | `server/push-notification-service.ts`, `public/sw.js` |
 | PWA update logic | `src/pwa.ts`, `public/sw.js` |
 

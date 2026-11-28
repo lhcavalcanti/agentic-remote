@@ -472,9 +472,10 @@ Knowledge are unaffected, and naming the hub's own computer matches the default.
 
 Whisper is the default engine. The computer that transcribes can instead keep
 Parakeet TDT 0.6B (Moondream's Parakeet Ultra post-training of NVIDIA's v3)
-loaded in a warm worker process, which returns a ten-second dictation in well
-under a second on a CPU. Install it only on that computer, the hub itself or
-the one `AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER` names:
+loaded in a warm worker process. On four CPU threads it turns a ten-second
+dictation into text in about 0.7 s, where Whisper small takes about 4 s.
+Install it only on that computer, the hub itself or the one
+`AGENTIC_REMOTE_TRANSCRIPTION_COMPUTER` names:
 
 ```bash
 agentic-remote voice-install parakeet-ultra

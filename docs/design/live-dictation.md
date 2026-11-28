@@ -141,5 +141,28 @@ text. Nothing is submitted to Oracle and nothing is spoken.
 
 ## Measured results
 
-Measured on development once the Parakeet worker is wired; see the pull
-request for the numbers and the method in `scripts/live-dictation-benchmark.ts`.
+`scripts/live-dictation-benchmark.ts` streams the clean voice fixtures in real
+time, in 100 ms frames, through an in-process hub and paired node to the
+node's Parakeet worker, and compares the final text with the batch engine's
+on the same audio. It also dictates the four clips joined by 0.5 s pauses
+(35.5 s), three times. On development (Xeon W-2235, 4 threads, Parakeet Ultra
+int8):
+
+| Measure | Result | Target |
+|---|---|---|
+| First text after speech starts, p50 | 523 ms (clips 388–1,231 ms) | ≤ 1.5 s |
+| Stop → final text, 35.5 s dictation, p50 | 251 ms (clips 334–815 ms) | ≤ 1 s |
+| Word errors, the four clips | 4 of 77 words, the same as batch | ≤ batch |
+| Word errors, 35.5 s dictation | 3 of 77 words per run; batch 34 of 77 | ≤ batch |
+
+Three clips are 12 s or shorter and end with a whole decode; the 12.9 s one
+ends with its confirmed words and a tail decode, and matched the batch text as
+well. On the long dictation, live dictation did far better than the batch
+engine, whose decode of the same audio dropped its English half. The one word
+it lost there ("bhajans", where one speaker stops and another starts after the
+pause) was left out by two passes in a row.
+
+```bash
+AGENTIC_REMOTE_PARAKEET_MODEL_DIR=<model directory> \
+  node --import tsx scripts/live-dictation-benchmark.ts [--runs 3] [--show-text]
+```

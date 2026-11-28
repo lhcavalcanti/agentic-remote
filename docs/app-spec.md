@@ -2158,6 +2158,9 @@ clear replacement IDs without losing, duplicating, or reordering content.
   browser's saved drafts before dictation ends; logs MAY carry stream IDs,
   counters, durations, and outcomes. Live dictation MUST NOT submit anything
   to Oracle or synthesize speech.
+- Live dictation MUST decode with the transcription computer's Parakeet worker,
+  and a live pass MUST run only while that worker is idle, so recordings never
+  wait behind it.
 - A transcription computer MUST run at most one live stream; another start
   MUST be refused as busy. Streams MUST be bounded: frames of at most 32 KiB,
   15 minutes of audio (then a final text), at most 12 s of backlog, 5 s

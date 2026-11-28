@@ -28,7 +28,7 @@ import {
   type VoiceWorkerChildMessage,
   type VoiceWorkerParentMessage,
 } from './oracle-voice-worker-protocol.js'
-import { minimalWorkerEnvironment } from './sherpa-module.js'
+import { minimalWorkerEnvironment } from './worker-environment.js'
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000
 const DEFAULT_OPERATION_TIMEOUT_MS = 30_000

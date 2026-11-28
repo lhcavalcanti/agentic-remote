@@ -12,10 +12,16 @@ import {
 import { createReadStream, createWriteStream } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { pipeline } from 'node:stream/promises'
 import type { Readable } from 'node:stream'
 import { promisify } from 'node:util'
 import type { AudioTranscription } from '../shared/contracts.js'
+import {
+  ParakeetSpeechEngine,
+  type ParakeetDecoder,
+} from './parakeet-transcription.js'
+import type { TranscriptionEngineConfig } from './transcription-engine-config.js'
 
 export const MAX_AUDIO_BYTES = 25 * 1024 * 1024
 export const MAX_AUDIO_DURATION_SECONDS = 15 * 60
@@ -122,6 +128,17 @@ export type CommandRunner = (
   options: CommandOptions,
 ) => Promise<CommandResult>
 
+/** Metrics and fallbacks only; never audio or transcript text. */
+export interface TranscriptionLogger {
+  info(details: object, message: string): void
+  warn(details: object, message: string): void
+}
+
+const silentLogger: TranscriptionLogger = {
+  info: () => undefined,
+  warn: () => undefined,
+}
+
 interface LocalTranscriptionOptions {
   dataDirectory: string
   ffmpegBinary?: string
@@ -130,6 +147,10 @@ interface LocalTranscriptionOptions {
   modelPath?: string
   threads?: number
   runCommand?: CommandRunner
+  /** Whisper unless set; the Parakeet engine needs `parakeetWorker`. */
+  engine?: TranscriptionEngineConfig
+  parakeetWorker?: ParakeetDecoder
+  logger?: TranscriptionLogger
 }
 
 async function defaultCommandRunner(
@@ -193,6 +214,28 @@ export function supportsAudioUpload(filename: string, mimeType: string): boolean
   )
 }
 
+async function accessible(target: string, mode: number): Promise<boolean> {
+  try {
+    await access(target, mode)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function elapsedMs(started: number): number {
+  return Math.round(performance.now() - started)
+}
+
+/** A transcript that reaches the caller is never empty. */
+function spoken(transcript: string): string {
+  const text = transcript.trim()
+  if (!text) {
+    throw new TranscriptionError('No speech was detected in the recording', 422)
+  }
+  return text
+}
+
 export class LocalTranscriptionService implements TranscriptionService {
   private readonly transcriptionDirectory: string
   private readonly ffmpegBinary: string
@@ -201,11 +244,23 @@ export class LocalTranscriptionService implements TranscriptionService {
   private readonly modelPath: string
   private readonly threads: number
   private readonly runCommand: CommandRunner
-  private busy = false
-  private activeAbortController?: AbortController
+  private readonly parakeet?: ParakeetSpeechEngine
+  private readonly logger: TranscriptionLogger
+  /** Parakeet takes one recording beside the active one; Whisper one at a time. */
+  private readonly admissionLimit: number
+  private readonly active = new Set<AbortController>()
+  private whisperTurn: Promise<void> = Promise.resolve()
   private packagedMediaValidated = false
 
   constructor(options: LocalTranscriptionOptions) {
+    if (options.engine?.engine === 'parakeet') {
+      if (!options.parakeetWorker) {
+        throw new Error('The Parakeet transcription engine needs a Parakeet worker')
+      }
+      this.parakeet = new ParakeetSpeechEngine(options.parakeetWorker)
+    }
+    this.admissionLimit = this.parakeet ? 2 : 1
+    this.logger = options.logger ?? silentLogger
     this.transcriptionDirectory = path.join(
       options.dataDirectory,
       'tmp',
@@ -244,7 +299,7 @@ export class LocalTranscriptionService implements TranscriptionService {
     upload: AudioUpload,
     signal?: AbortSignal,
   ): Promise<AudioTranscription> {
-    if (this.busy) {
+    if (this.active.size >= this.admissionLimit) {
       throw new TranscriptionError(
         'Another audio recording is already being transcribed',
         429,
@@ -254,9 +309,8 @@ export class LocalTranscriptionService implements TranscriptionService {
       throw new TranscriptionError('Unsupported audio file type', 415)
     }
 
-    this.busy = true
     const controller = new AbortController()
-    this.activeAbortController = controller
+    this.active.add(controller)
     const abort = () => controller.abort(signal?.reason)
     signal?.addEventListener('abort', abort, { once: true })
     if (signal?.aborted) {
@@ -271,7 +325,8 @@ export class LocalTranscriptionService implements TranscriptionService {
       const inputPath = path.join(jobDirectory, 'input')
       const wavPath = path.join(jobDirectory, 'audio.wav')
       const outputPrefix = path.join(jobDirectory, 'transcript')
-      await this.assertRuntimeAvailable()
+      // Whisper is required up front only when it is the engine.
+      await this.assertRuntimeAvailable(!this.parakeet)
       await pipeline(
         upload.stream,
         createWriteStream(inputPath, { flags: 'wx', mode: 0o600 }),
@@ -296,15 +351,20 @@ export class LocalTranscriptionService implements TranscriptionService {
       }
 
       await this.convertAudio(inputPath, wavPath, controller.signal)
-      await this.runWhisper(wavPath, outputPrefix, controller.signal)
-      const transcript = (await readFile(`${outputPrefix}.txt`, 'utf8')).trim()
-      if (!transcript) {
-        throw new TranscriptionError(
-          'No speech was detected in the recording',
-          422,
-        )
-      }
-      return { transcript, durationSeconds }
+      return this.parakeet
+        ? await this.transcribeWithParakeet(
+            this.parakeet,
+            wavPath,
+            outputPrefix,
+            durationSeconds,
+            controller.signal,
+          )
+        : await this.transcribeWithWhisper(
+            wavPath,
+            outputPrefix,
+            durationSeconds,
+            controller.signal,
+          )
     } catch (error) {
       if (error instanceof TranscriptionError) {
         throw error
@@ -320,8 +380,7 @@ export class LocalTranscriptionService implements TranscriptionService {
       )
     } finally {
       signal?.removeEventListener('abort', abort)
-      this.activeAbortController = undefined
-      this.busy = false
+      this.active.delete(controller)
       if (jobDirectory) {
         await rm(jobDirectory, { force: true, recursive: true })
       }
@@ -329,15 +388,102 @@ export class LocalTranscriptionService implements TranscriptionService {
   }
 
   async stop(): Promise<void> {
-    this.activeAbortController?.abort()
+    for (const controller of this.active) controller.abort()
   }
 
-  private async assertRuntimeAvailable(): Promise<void> {
+  private async transcribeWithParakeet(
+    parakeet: ParakeetSpeechEngine,
+    wavPath: string,
+    outputPrefix: string,
+    audioSeconds: number,
+    signal: AbortSignal,
+  ): Promise<AudioTranscription> {
+    const started = performance.now()
+    let reason: string
+    try {
+      const transcript = await parakeet.transcribe(wavPath, signal)
+      this.logger.info(
+        { engine: 'parakeet', audioSeconds, decodeMs: elapsedMs(started) },
+        'Audio transcribed',
+      )
+      return { transcript: spoken(transcript), durationSeconds: audioSeconds, engine: 'parakeet' }
+    } catch (error) {
+      if (error instanceof TranscriptionError || signal.aborted) throw error
+      reason = error instanceof Error && error.message ? error.message : 'Parakeet failed'
+    }
+    this.logger.warn(
+      { engine: 'parakeet', fallback: 'whisper', reason },
+      'Parakeet could not transcribe; falling back to Whisper',
+    )
+    const whisperProblem = await this.whisperUnavailableReason()
+    if (whisperProblem) {
+      throw new TranscriptionError(
+        `Parakeet is unavailable (${reason}) and Whisper is unavailable (${whisperProblem})`,
+        503,
+      )
+    }
+    try {
+      return await this.transcribeWithWhisper(wavPath, outputPrefix, audioSeconds, signal, true)
+    } catch (error) {
+      if (signal.aborted || (error instanceof TranscriptionError && error.statusCode === 422)) {
+        throw error
+      }
+      throw new TranscriptionError(
+        `Parakeet is unavailable (${reason}) and Whisper could not transcribe the audio`,
+        503,
+      )
+    }
+  }
+
+  private async transcribeWithWhisper(
+    wavPath: string,
+    outputPrefix: string,
+    audioSeconds: number,
+    signal: AbortSignal,
+    fallback = false,
+  ): Promise<AudioTranscription> {
+    // A Parakeet computer admits two recordings, and both may fall back here.
+    const previous = this.whisperTurn
+    let finished = () => undefined as void
+    this.whisperTurn = new Promise<void>((resolve) => {
+      finished = resolve
+    })
+    try {
+      await previous
+      const started = performance.now()
+      await this.runWhisper(wavPath, outputPrefix, signal)
+      const transcript = await readFile(`${outputPrefix}.txt`, 'utf8')
+      this.logger.info(
+        {
+          engine: 'whisper',
+          audioSeconds,
+          decodeMs: elapsedMs(started),
+          ...(fallback ? { fallback: true } : {}),
+        },
+        'Audio transcribed',
+      )
+      return { transcript: spoken(transcript), durationSeconds: audioSeconds, engine: 'whisper' }
+    } finally {
+      finished()
+    }
+  }
+
+  private async whisperUnavailableReason(): Promise<string | undefined> {
+    if (!(await accessible(this.whisperBinary, constants.X_OK))) return 'missing whisper-cli'
+    if (!(await accessible(this.modelPath, constants.R_OK))) return 'missing Whisper model'
+    return undefined
+  }
+
+  private async assertRuntimeAvailable(includeWhisper: boolean): Promise<void> {
     const requirements: Array<[string, string, number]> = [
       ['FFmpeg', this.ffmpegBinary, constants.X_OK],
       ['FFprobe', this.ffprobeBinary, constants.X_OK],
-      ['Whisper', this.whisperBinary, constants.X_OK],
-      ['Whisper model', this.modelPath, constants.R_OK],
+      ...(includeWhisper
+        ? [
+            ['Whisper', this.whisperBinary, constants.X_OK],
+            ['Whisper model', this.modelPath, constants.R_OK],
+          ] as Array<[string, string, number]>
+        : []),
     ]
     for (const [name, target, mode] of requirements) {
       try {

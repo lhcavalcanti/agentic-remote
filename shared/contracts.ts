@@ -839,6 +839,8 @@ export interface SendMessageInput {
 export interface AudioTranscription {
   transcript: string
   durationSeconds: number
+  /** The engine that produced the text; computers before 2.12 omit it. */
+  engine?: 'whisper' | 'parakeet'
 }
 
 export interface SessionFileUpload {

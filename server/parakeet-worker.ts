@@ -11,7 +11,7 @@ import {
   type ParakeetDecodeResult,
   type ParakeetParentMessage,
 } from './parakeet-worker-protocol.js'
-import { minimalWorkerEnvironment } from './sherpa-module.js'
+import { minimalWorkerEnvironment } from './worker-environment.js'
 import type { ParakeetConfig } from './transcription-engine-config.js'
 
 export type { ParakeetDecodeResult } from './parakeet-worker-protocol.js'

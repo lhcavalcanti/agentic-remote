@@ -335,7 +335,9 @@ export default defineConfig(({ command, mode }) => {
       : undefined,
     build: {
       assetsInlineLimit(filePath) {
-        return oracleVoiceAssetNames.has(filePath.split(/[\\/]/).at(-1) ?? '')
+        const name = filePath.split(/[\\/]/).at(-1) ?? ''
+        // Audio worklet modules load from a URL of their own, not a data: URL.
+        return oracleVoiceAssetNames.has(name) || name === 'pcm-capture-worklet.js'
           ? false
           : undefined
       },

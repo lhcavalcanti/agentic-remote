@@ -75,6 +75,7 @@ const slowTests = [
   'server/host-telemetry/transport.test.ts',
   'server/hub-routes.test.ts',
   'server/launch-identity.test.ts',
+  'server/live-dictation-session.test.ts',
   'server/logs-cli.test.ts',
   'server/manager-agent.test.ts',
   'server/manager-routes.test.ts',

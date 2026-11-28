@@ -5,30 +5,27 @@ import {
   wordsFromTokens,
   type TimedWord,
 } from './dictation-agreement.js'
+import {
+  PARAKEET_MAX_WINDOW_SECONDS,
+  type ParakeetDecodeOptions,
+  type ParakeetDecodeResult,
+} from './parakeet-worker.js'
 
 const SAMPLE_RATE = DICTATION_LIMITS.sampleRate
 /** The longest window the Parakeet worker decodes at once, padding included. */
-const DECODER_MAX_WINDOW_MS = 30_000
+const DECODER_MAX_WINDOW_MS = PARAKEET_MAX_WINDOW_SECONDS * 1_000
 /** A forced confirm leaves the last five seconds of a long window tentative. */
 const FORCED_CONFIRM_LAG_SECONDS = 5
 /** A silence skip keeps the last half second, where speech may be starting. */
 const SILENCE_SKIP_KEEP_SECONDS = 0.5
 const FAILED_PASSES = 3
 
-/** The output of one offline decode; PR A's `ParakeetDecodeResult` has this shape. */
-export interface LiveDecodeResult {
-  text: string
-  tokens: readonly string[]
-  timestamps: readonly number[]
-  durations: readonly number[]
-}
+/** The output of one offline decode. */
+export type LiveDecodeResult = ParakeetDecodeResult
 
-export interface LiveDecodeOptions {
-  timeoutMs: number
-  signal?: AbortSignal
-}
+export type LiveDecodeOptions = ParakeetDecodeOptions
 
-/** Structurally satisfied by the Parakeet worker. */
+/** The part of the Parakeet worker live dictation decodes with. */
 export interface LiveDecoder {
   decode(samples: Float32Array, options: LiveDecodeOptions): Promise<LiveDecodeResult>
   /** Decodes only when the decoder is idle; resolves null instead of queueing. */

@@ -141,9 +141,9 @@ export interface BuildAppOptions {
   /** Injected voice transport seam; Task 6 constructs the runtime backend. */
   voiceBackend?: VoiceBackend
   /**
-   * The warm decoder live dictation uses on this computer. Without one, live
-   * dictation reports that it needs the Parakeet engine, and browsers record
-   * and upload instead.
+   * The warm decoder live dictation uses on this computer, in place of its
+   * Parakeet worker. With neither, live dictation reports that it needs the
+   * Parakeet engine, and browsers record and upload instead.
    */
   liveDecoder?: LiveDictationEngine
   /** Pass timing for live dictation streams; tests shorten it. */
@@ -416,7 +416,7 @@ export async function buildApp(
     })
   }
   const liveDictation = new LiveDictationHost({
-    engine: options.liveDecoder,
+    engine: options.liveDecoder ?? parakeetWorker,
     computerName: () => identity.info.name,
     log: app.log,
     session: options.liveDictationSession,

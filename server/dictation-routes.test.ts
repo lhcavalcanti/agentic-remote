@@ -141,6 +141,7 @@ interface Runtime {
   wsUrl: string
   root: string
   identity: Awaited<ReturnType<typeof buildApp>>['identity']
+  transcriptionEngine: Awaited<ReturnType<typeof buildApp>>['transcriptionEngine']
   close(): Promise<unknown>
 }
 
@@ -184,6 +185,7 @@ async function runtime(options: {
     wsUrl: `ws://127.0.0.1:${port}`,
     root,
     identity: built.identity,
+    transcriptionEngine: built.transcriptionEngine,
     close: () => built.app.close(),
   }
 }
@@ -363,6 +365,22 @@ describe('live dictation routes', () => {
     const warming = await runtime({ role: 'hub', engine })
     expect((await requestJson(warming.baseUrl, 'GET', '/api/dictation/capabilities')).body)
       .toEqual({ live: true, computerName: warming.identity.info.name })
+  })
+
+  it('offers the Parakeet worker of the computer that transcribes, until it fails', async () => {
+    // An empty model directory: the worker starts, finds no model and fails.
+    vi.stubEnv('AGENTIC_REMOTE_TRANSCRIPTION_ENGINE', 'parakeet')
+    vi.stubEnv('AGENTIC_REMOTE_PARAKEET_MODEL_DIR', await testRoot('parakeet-model'))
+    vi.stubEnv('AGENTIC_REMOTE_PARAKEET_THREADS', '1')
+    const hub = await runtime({ role: 'hub' })
+    const name = hub.identity.info.name
+    const worker = hub.transcriptionEngine.worker
+    expect(worker).toBeDefined()
+    expect((await requestJson(hub.baseUrl, 'GET', '/api/dictation/capabilities')).body)
+      .toEqual({ live: true, computerName: name })
+    await vi.waitFor(() => expect(worker?.state).toBe('failed'), { timeout: 15_000, interval: 50 })
+    expect((await requestJson(hub.baseUrl, 'GET', '/api/dictation/capabilities')).body)
+      .toEqual({ live: false, reason: `Parakeet is unavailable on ${name}`, computerName: name })
   })
 
   it('streams text only to the requesting browser, with no Oracle turn, speech, or stored data', async () => {
